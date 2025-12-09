@@ -1,16 +1,14 @@
 <div align="center">
 
 # URDF Architect
-
-**下一代可视化机器人设计平台**
-
-**在线体验：** https://urdf.d-robotics.cc/
-
 [![React](https://img.shields.io/badge/React-19.2-blue?logo=react)](https://reactjs.org/)
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-purple?logo=vite)](https://vitejs.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+**下一代可视化机器人设计平台**
+
+**在线体验：** https://urdf.d-robotics.cc/
 
 [English](./README.md) | [中文](./README_CN.md)
 
@@ -24,7 +22,6 @@
 
 该平台覆盖了机器人建模的全生命周期——从运动学骨架的构建，到高保真几何细节的打磨，再到精密硬件参数的配置。结合 **生成式 AI** 的强大能力，UrdfArchitect 显著加速了原型设计流程，并确保与 MuJoCo 等工业级仿真生态系统的无缝兼容。
 
-UrdfArchitect 现已在线部署于 https://urdf.d-robotics.cc/，可直接在浏览器中体验。
 
 ## ✨ 核心能力
 
