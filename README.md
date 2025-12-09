@@ -1,16 +1,15 @@
 <div align="center">
 
 # URDF Architect
-
-**Next-Generation Visual Robot Design Platform**
-
-**Live demo:** https://urdf.d-robotics.cc/
-
 [![React](https://img.shields.io/badge/React-19.2-blue?logo=react)](https://reactjs.org/)
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-purple?logo=vite)](https://vitejs.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**Next-Generation Visual Robot Design Platform**
+
+**Live demo:** https://urdf.d-robotics.cc/
 
 [English](./README.md) | [中文](./README_CN.md)
 
