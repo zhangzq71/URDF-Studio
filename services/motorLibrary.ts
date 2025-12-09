@@ -409,5 +409,70 @@ export const DEFAULT_MOTOR_LIBRARY: Record<string, MotorSpec[]> = {
         url: 'http://encos.cn/productinfo/57101.html',
         description: 'Motor for EC-A13720-P1-11.4.'
     }
-]
+],
+  'High Torque': [
+    { 
+        name: 'HTDW-3532-02-DNE', 
+        armature: 0.0001, 
+        velocity: 300, 
+        effort: 3.7,
+        url: 'https://www.hightorque.cn/',
+        description: 'Mini Pi gripper and head.'
+    },
+    { 
+        name: 'HTDW-4530-02-DNE', 
+        armature: 0.0001, 
+        velocity: 160, 
+        effort: 10,
+        url: 'https://www.hightorque.cn/product?id=467',
+        description: 'Mini Pi's arms and three-degree-of-freedom waist.' 
+    },
+    { 
+        name: 'HTDW-5047-36-NE', 
+        armature: 0.0001, 
+        velocity: 60, 
+        effort: 21,
+        url: 'https://www.hightorque.cn/product?id=309',
+        description: 'The legs of Mini Pi and the arms of Mini Hi.'
+    }
+   { 
+        name: 'HTDW-5036-02-DNE', 
+        armature: 0.0001, 
+        velocity: 75, 
+        effort: 21,
+        url: 'https://www.hightorque.cn/',
+        description: 'The legs of Mini Pi and the arms of Mini Hi.'
+    }
+   { 
+        name: 'HTDW-6036-02-DNE', 
+        armature: 0.0001, 
+        velocity: 60, 
+        effort: 36,
+        url: 'https://www.hightorque.cn/product?id=941',
+        description: 'Mini Hi legs and a single-degree-of-freedom waist.'
+    }
+   { 
+        name: 'HTDW-7535-02-CNE', 
+        armature: 0.0001, 
+        velocity: 60, 
+        effort: 60,
+        url: 'https://www.hightorque.cn/product?id=1380',
+        description: 'Applied to robotic arms.'
+    }
+   { 
+        name: 'HTPU-6035-04-CNE', 
+        armature: 0.0001, 
+        velocity: 60, 
+        effort: 36,
+        url: 'https://www.hightorque.cn/product?id=1762',
+        description: 'Applied in the field of robotic manipulators.'
+    }
+   { 
+        name: 'HTCP-5031-06-CYC', 
+        armature: 0.0001, 
+        velocity: 75, 
+        effort: 14,
+        url: 'https://www.hightorque.cn/',
+        description: 'Mini Pi Hollow Wiring Waist.'
+    }]
 };
