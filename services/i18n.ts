@@ -4,7 +4,7 @@ export type Language = 'en' | 'zh';
 export const translations = {
   en: {
     // Header
-    appName: "UrdfArchitect",
+    appName: "URDF Designer",
     skeleton: "Skeleton",
     detail: "Detail",
     hardware: "Hardware",
