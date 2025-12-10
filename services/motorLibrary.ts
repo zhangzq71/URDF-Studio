@@ -425,7 +425,7 @@ export const DEFAULT_MOTOR_LIBRARY: Record<string, MotorSpec[]> = {
         velocity: 160, 
         effort: 10,
         url: 'https://www.hightorque.cn/product?id=467',
-        description: 'Mini Pi's arms and three-degree-of-freedom waist.' 
+        description: 'arms and three-degree-of-freedom waist of Mini Pi .' 
     },
     { 
         name: 'HTDW-5047-36-NE', 
