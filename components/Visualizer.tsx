@@ -81,7 +81,8 @@ interface RobotNodeProps extends CommonVisualizerProps {
 const STLRenderer = ({ url, material }: { url: string, material: THREE.Material }) => {
     const geometry = useLoader(STLLoader, url);
     const clone = useMemo(() => geometry.clone(), [geometry]);
-    return <mesh geometry={clone} material={material} />;
+    // URDF uses Z-up, Three.js uses Y-up. Rotate -90 degrees around X-axis to convert
+    return <mesh geometry={clone} material={material} rotation={[0, 0, 0]} />;
 };
 
 const OBJRenderer = ({ url, material, color }: { url: string, material: THREE.Material, color: string }) => {
@@ -95,7 +96,8 @@ const OBJRenderer = ({ url, material, color }: { url: string, material: THREE.Ma
         });
         return c;
     }, [obj, material]);
-    return <primitive object={clone} />;
+    // URDF uses Z-up, Three.js uses Y-up. Rotate -90 degrees around X-axis to convert
+    return <group rotation={[0, 0, 0]}><primitive object={clone} /></group>;
 };
 
 const DAERenderer = ({ url, material }: { url: string, material: THREE.Material }) => {
@@ -113,7 +115,8 @@ const DAERenderer = ({ url, material }: { url: string, material: THREE.Material 
         });
         return c;
     }, [dae, material]);
-    return <primitive object={clone} />;
+    // URDF uses Z-up, Three.js uses Y-up. Rotate -90 degrees around X-axis to convert
+    return <group rotation={[1.57, 0, 0]}><primitive object={clone} /></group>;
 };
 
 
