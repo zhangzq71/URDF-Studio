@@ -1,6 +1,7 @@
 
 import OpenAI from "openai";
-import { RobotState, GeometryType, JointType, MotorSpec } from '../types';
+import { RobotState, GeometryType, JointType, MotorSpec, InspectionReport } from '../types';
+import { INSPECTION_CRITERIA, calculateItemScore, calculateCategoryScore, calculateOverallScore, getInspectionItem } from './inspectionCriteria';
 
 interface AIResponse {
   explanation: string;
@@ -276,6 +277,203 @@ export const generateRobotFromPrompt = async (
     return {
       explanation: `API 调用失败: ${e?.message || '未知错误'}${e?.status ? ` (状态码: ${e.status})` : ''}`,
       actionType: 'advice' as const
+    };
+  }
+};
+
+// Helper function to get simplified robot context
+const getContextRobot = (robot: RobotState) => {
+  return {
+    name: robot.name,
+    links: Object.values(robot.links).map(l => ({
+      id: l.id,
+      name: l.name,
+      mass: l.inertial.mass,
+      inertia: l.inertial.inertia
+    })),
+    joints: Object.values(robot.joints).map(j => ({
+      id: j.id,
+      name: j.name,
+      type: j.type,
+      parent: j.parentLinkId,
+      child: j.childLinkId,
+      axis: j.axis
+    })),
+    rootId: robot.rootLinkId
+  };
+};
+
+export const runRobotInspection = async (robot: RobotState, selectedItems?: Record<string, string[]>): Promise<InspectionReport | null> => {
+  if (!process.env.API_KEY) {
+    console.error("API Key missing");
+    return {
+      summary: "API Key is missing. Please configure the environment.",
+      issues: [{ type: 'error', title: "Configuration Error", description: "API Key is missing. Please configure the environment." }]
+    };
+  }
+
+  const openai = new OpenAI({ 
+    apiKey: process.env.API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    dangerouslyAllowBrowser: true
+  });
+
+  const modelName = process.env.OPENAI_MODEL || 'bce/deepseek-v3.2';
+  const contextRobot = getContextRobot(robot);
+
+  // 构建评估标准说明（只包含选中的检查项）
+  const criteriaDescription = INSPECTION_CRITERIA.map(category => {
+    const selectedItemIds = selectedItems?.[category.id] || [];
+    if (selectedItemIds.length === 0) return null;
+    
+    const itemsDesc = category.items
+      .filter(item => selectedItemIds.includes(item.id))
+      .map(item => 
+        `    - ${item.name} (${item.id}): ${item.description}`
+      ).join('\n');
+    
+    if (itemsDesc) {
+      return `  ${category.id} (${category.nameZh}, weight: ${category.weight * 100}%):\n${itemsDesc}`;
+    }
+    return null;
+  }).filter(Boolean).join('\n\n');
+
+  const systemPrompt = `
+  You are an expert URDF Robot Inspector. Your job is to analyze the provided robot structure and identify potential errors, warnings, and improvements.
+
+  **EVALUATION CRITERIA:**
+${criteriaDescription}
+
+  **SCORING GUIDELINES:**
+  - For each check item, assign a score (0-10):
+    - Error found: 0-3 points
+    - Warning found: 4-6 points
+    - Suggestion/improvement: 7-9 points
+    - Pass (no issues): 10 points
+
+  **OUTPUT FORMAT:**
+  Return a pure JSON object with the following structure:
+  {
+    "summary": "Overall inspection summary",
+    "issues": [
+      {
+        "type": "error" | "warning" | "suggestion",
+        "title": "Issue title",
+        "description": "Detailed description",
+        "category": "category_id (e.g., 'physical', 'kinematics', 'naming', 'symmetry', 'hardware')",
+        "itemId": "item_id (e.g., 'mass_check', 'axis_zero')",
+        "score": 0-10,
+        "relatedIds": ["link_id1", "joint_id1"]
+      }
+    ]
+  }
+
+  **IMPORTANT:**
+  - Each issue MUST include 'category' and 'itemId' fields matching the criteria above
+  - Assign appropriate scores based on severity
+  - Include relatedIds when the issue is specific to certain links/joints
+  `;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: modelName,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Inspect this robot structure:\n${JSON.stringify(contextRobot)}` }
+      ],
+      response_format: { 
+        type: "json_object"
+      },
+      temperature: 0.7,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      return {
+        summary: "Failed to get inspection response.",
+        issues: [{ type: 'error', title: "Inspection Error", description: "The AI service returned empty content." }]
+      };
+    }
+
+    let result;
+    try {
+      result = JSON.parse(content);
+    } catch (parseError: any) {
+      console.error("Failed to parse inspection JSON", parseError);
+      return {
+        summary: "Failed to parse inspection results.",
+        issues: [{ type: 'error', title: "Parse Error", description: `Failed to parse JSON: ${parseError?.message || 'unknown error'}` }]
+      };
+    }
+
+    // 处理返回的 issues，确保包含评分信息
+    const issues = (result.issues || []).map((issue: any) => {
+      // 如果没有 score，根据 type 计算
+      if (issue.score === undefined) {
+        issue.score = calculateItemScore(issue.type, true);
+      }
+      // 确保 category 和 itemId 存在
+      if (!issue.category) {
+        // 尝试从 title 推断 category（简单映射）
+        if (issue.title.toLowerCase().includes('mass') || issue.title.toLowerCase().includes('inertia')) {
+          issue.category = 'physical';
+        } else if (issue.title.toLowerCase().includes('axis') || issue.title.toLowerCase().includes('joint')) {
+          issue.category = 'kinematics';
+        } else if (issue.title.toLowerCase().includes('name')) {
+          issue.category = 'naming';
+        } else if (issue.title.toLowerCase().includes('symmetry') || issue.title.toLowerCase().includes('left') || issue.title.toLowerCase().includes('right')) {
+          issue.category = 'symmetry';
+        } else if (issue.title.toLowerCase().includes('motor') || issue.title.toLowerCase().includes('hardware')) {
+          issue.category = 'hardware';
+        }
+      }
+      return issue;
+    });
+
+    // 计算章节得分
+    const categoryScores: Record<string, number[]> = {};
+    INSPECTION_CRITERIA.forEach(category => {
+      categoryScores[category.id] = [];
+    });
+
+    // 收集每个章节的得分
+    issues.forEach((issue: any) => {
+      if (issue.category && issue.score !== undefined) {
+        if (!categoryScores[issue.category]) {
+          categoryScores[issue.category] = [];
+        }
+        categoryScores[issue.category].push(issue.score);
+      }
+    });
+
+    // 计算每个章节的平均分
+    const categoryScoreMap: Record<string, number> = {};
+    Object.keys(categoryScores).forEach(categoryId => {
+      const scores = categoryScores[categoryId];
+      if (scores.length > 0) {
+        categoryScoreMap[categoryId] = calculateCategoryScore(scores);
+      } else {
+        // 如果该章节没有检查项，默认给满分
+        categoryScoreMap[categoryId] = 10;
+      }
+    });
+
+    // 计算总分
+    const overallScore = calculateOverallScore(categoryScoreMap);
+
+    return {
+      summary: result.summary || "Inspection completed.",
+      issues: issues,
+      overallScore: Math.round(overallScore * 10) / 10, // 保留一位小数
+      categoryScores: categoryScoreMap,
+      maxScore: 100
+    } as InspectionReport;
+
+  } catch (e: any) {
+    console.error("Inspection failed", e);
+    return {
+      summary: "Failed to complete inspection due to an AI error.",
+      issues: [{ type: 'error', title: "Inspection Error", description: `The AI service could not process the request: ${e?.message || 'unknown error'}` }]
     };
   }
 };

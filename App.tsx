@@ -3,14 +3,15 @@ import React, { useState, useRef } from 'react';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
-import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec } from './types';
+import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, InspectionReport } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
 import { parseURDF } from './services/urdfParser';
-import { generateRobotFromPrompt } from './services/geminiService';
+import { generateRobotFromPrompt, runRobotInspection } from './services/geminiService';
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe } from 'lucide-react';
+import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight } from 'lucide-react';
 import JSZip from 'jszip';
 
 const INITIAL_ID = 'base_link';
@@ -38,11 +39,32 @@ export default function App() {
   const [lang, setLang] = useState<Language>('en');
   const t = translations[lang];
 
-  // AI Modal State
+  // AI Inspector Window State
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [aiPanelPos, setAiPanelPos] = useState({ x: 320, y: 80 }); // Initial position near top-left of visualizer
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  // Chat/Mod/Gen Response
   const [aiResponse, setAiResponse] = useState<{ explanation: string, type: string, data?: any } | null>(null);
+  // Inspection Report
+  const [inspectionReport, setInspectionReport] = useState<InspectionReport | null>(null);
+  // Category expansion state
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(INSPECTION_CRITERIA.map(c => c.id)));
+  // Selected inspection items (categoryId -> Set of itemIds)
+  const [selectedItems, setSelectedItems] = useState<Record<string, Set<string>>>(() => {
+    const initial: Record<string, Set<string>> = {};
+    INSPECTION_CRITERIA.forEach(category => {
+      initial[category.id] = new Set(category.items.map(item => item.id));
+    });
+    return initial;
+  });
+  // Inspection progress
+  const [inspectionProgress, setInspectionProgress] = useState<{
+    currentCategory?: string;
+    currentItem?: string;
+    completed: number;
+    total: number;
+  } | null>(null);
 
   // --- Actions ---
 
@@ -336,6 +358,7 @@ export default function App() {
     
     setIsGeneratingAI(true);
     setAiResponse(null); // Clear previous
+    setInspectionReport(null);
     try {
         const response = await generateRobotFromPrompt(aiPrompt, robot, motorLibrary);
         if (response) {
@@ -356,6 +379,120 @@ export default function App() {
     }
   };
 
+  const handleRunInspection = async () => {
+      setIsGeneratingAI(true);
+      setAiResponse(null);
+      setInspectionReport(null);
+      
+      // 计算总检查项数量和列表
+      let totalItems = 0;
+      const selectedItemsList: Array<{ categoryId: string; itemId: string; categoryName: string; itemName: string }> = [];
+      Object.keys(selectedItems).forEach(categoryId => {
+          const category = INSPECTION_CRITERIA.find(c => c.id === categoryId);
+          if (!category) return;
+          const categoryName = lang === 'zh' ? category.nameZh : category.name;
+          const items = Array.from(selectedItems[categoryId]);
+          items.forEach(itemId => {
+              const item = category.items.find(i => i.id === itemId);
+              if (item) {
+                  selectedItemsList.push({ categoryId, itemId, categoryName, itemName: item.name });
+                  totalItems++;
+              }
+          });
+      });
+      
+      // 将选中的项目转换为格式：{ categoryId: [itemId1, itemId2, ...] }
+      const selectedItemsMap: Record<string, string[]> = {};
+      Object.keys(selectedItems).forEach(categoryId => {
+          const items = Array.from(selectedItems[categoryId]);
+          if (items.length > 0) {
+              selectedItemsMap[categoryId] = items;
+          }
+      });
+      
+      // 初始化进度
+      setInspectionProgress({ completed: 0, total: totalItems });
+      
+      try {
+          // 模拟逐条检查进度
+          let currentIndex = 0;
+          const progressInterval = setInterval(() => {
+              currentIndex++;
+              if (currentIndex <= totalItems) {
+                  const currentItem = selectedItemsList[currentIndex - 1];
+                  setInspectionProgress({
+                      currentCategory: currentItem?.categoryName,
+                      currentItem: currentItem?.itemName,
+                      completed: currentIndex,
+                      total: totalItems
+                  });
+              } else {
+                  clearInterval(progressInterval);
+              }
+          }, 300); // 每300ms更新一次进度
+          
+          const report = await runRobotInspection(robot, selectedItemsMap);
+          
+          clearInterval(progressInterval);
+          
+          // 完成所有检查
+          setInspectionProgress({
+              currentCategory: undefined,
+              currentItem: undefined,
+              completed: totalItems,
+              total: totalItems
+          });
+          
+          // 短暂延迟后清除进度显示并显示结果
+          setTimeout(() => {
+              setInspectionProgress(null);
+              if (report) {
+                  setInspectionReport(report);
+              }
+          }, 500);
+      } catch(e: any) {
+          console.error("Inspection Error", e);
+          setInspectionProgress(null);
+      } finally {
+          setIsGeneratingAI(false);
+      }
+  };
+
+  const toggleCategorySelection = (categoryId: string) => {
+      setSelectedItems(prev => {
+          const newItems = { ...prev };
+          const category = INSPECTION_CRITERIA.find(c => c.id === categoryId);
+          if (!category) return prev;
+          
+          const allSelected = category.items.every(item => newItems[categoryId]?.has(item.id));
+          if (allSelected) {
+              // 取消全选
+              newItems[categoryId] = new Set();
+          } else {
+              // 全选
+              newItems[categoryId] = new Set(category.items.map(item => item.id));
+          }
+          return newItems;
+      });
+  };
+
+  const toggleItemSelection = (categoryId: string, itemId: string) => {
+      setSelectedItems(prev => {
+          const newItems = { ...prev };
+          if (!newItems[categoryId]) {
+              newItems[categoryId] = new Set();
+          }
+          const itemSet = new Set(newItems[categoryId]);
+          if (itemSet.has(itemId)) {
+              itemSet.delete(itemId);
+          } else {
+              itemSet.add(itemId);
+          }
+          newItems[categoryId] = itemSet;
+          return newItems;
+      });
+  };
+
   const applyAIChanges = () => {
       if (aiResponse?.data) {
           const generated = aiResponse.data;
@@ -372,6 +509,216 @@ export default function App() {
           setAiPrompt('');
           setAiResponse(null);
       }
+  };
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    e.preventDefault(); 
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialX = aiPanelPos.x;
+    const initialY = aiPanelPos.y;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        setAiPanelPos({ x: initialX + dx, y: initialY + dy });
+    };
+
+    const handleMouseUp = () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const renderInspectionReport = () => {
+      if (!inspectionReport) return null;
+
+      const overallScore = inspectionReport.overallScore ?? 0;
+      const maxScore = inspectionReport.maxScore ?? 100;
+      const scorePercentage = (overallScore / maxScore) * 100;
+
+      // 根据分数确定颜色
+      const getScoreColor = (score: number) => {
+        if (score >= 80) return 'text-green-400';
+        if (score >= 60) return 'text-yellow-400';
+        return 'text-red-400';
+      };
+
+      const getScoreBgColor = (score: number) => {
+        if (score >= 80) return 'bg-green-500';
+        if (score >= 60) return 'bg-yellow-500';
+        return 'bg-red-500';
+      };
+
+      // 按章节分组 issues
+      const issuesByCategory: Record<string, typeof inspectionReport.issues> = {};
+      INSPECTION_CRITERIA.forEach(category => {
+        issuesByCategory[category.id] = [];
+      });
+
+      inspectionReport.issues.forEach(issue => {
+        const categoryId = issue.category || 'physical';
+        if (!issuesByCategory[categoryId]) {
+          issuesByCategory[categoryId] = [];
+        }
+        issuesByCategory[categoryId].push(issue);
+      });
+
+      const toggleCategory = (categoryId: string) => {
+        setExpandedCategories(prev => {
+          const newSet = new Set(prev);
+          if (newSet.has(categoryId)) {
+            newSet.delete(categoryId);
+          } else {
+            newSet.add(categoryId);
+          }
+          return newSet;
+        });
+      };
+
+      return (
+          <div className="space-y-4">
+               {/* 总分显示 */}
+               <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 p-4 rounded-lg border border-slate-700">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-slate-400 uppercase font-bold">{t.overallScore}</div>
+                        <div className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
+                            {overallScore.toFixed(1)}/{maxScore}
+                        </div>
+                    </div>
+                    {/* 进度条 */}
+                    <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div 
+                            className={`h-full transition-all duration-500 ${getScoreBgColor(overallScore)}`}
+                            style={{ width: `${scorePercentage}%` }}
+                        />
+                    </div>
+               </div>
+
+               {/* 总结 */}
+               <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
+                    <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.inspectorSummary}</div>
+                    <div className="text-sm text-slate-300 font-medium">{inspectionReport.summary}</div>
+               </div>
+
+               {/* 按章节分组展示 */}
+               <div className="space-y-2">
+                   {INSPECTION_CRITERIA.map(category => {
+                       const categoryIssues = issuesByCategory[category.id] || [];
+                       const categoryScore = inspectionReport.categoryScores?.[category.id] ?? 10;
+                       const isExpanded = expandedCategories.has(category.id);
+                       const categoryName = lang === 'zh' ? category.nameZh : category.name;
+
+                       // 获取该章节下所有条目的得分
+                       const itemScores = categoryIssues.map(issue => issue.score ?? 10);
+                       const avgScore = itemScores.length > 0 
+                           ? itemScores.reduce((a, b) => a + b, 0) / itemScores.length 
+                           : 10;
+
+                       return (
+                           <div key={category.id} className="border border-slate-700 rounded-lg overflow-hidden">
+                               {/* 章节标题栏 */}
+                               <button
+                                   onClick={() => toggleCategory(category.id)}
+                                   className="w-full flex items-center justify-between p-3 bg-slate-800/50 hover:bg-slate-800/70 transition-colors"
+                               >
+                                   <div className="flex items-center gap-2">
+                                       {isExpanded ? (
+                                           <ChevronDown className="w-4 h-4 text-slate-400" />
+                                       ) : (
+                                           <ChevronRight className="w-4 h-4 text-slate-400" />
+                                       )}
+                                       <span className="text-sm font-bold text-slate-200">{categoryName}</span>
+                                       <span className="text-xs text-slate-400">({category.weight * 100}%)</span>
+                                   </div>
+                                   <div className="flex items-center gap-2">
+                                       <span className={`text-sm font-bold ${getScoreColor(categoryScore)}`}>
+                                           {categoryScore.toFixed(1)}/10
+                                       </span>
+                                       <div className="w-16 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                           <div 
+                                               className={`h-full ${getScoreBgColor(categoryScore)}`}
+                                               style={{ width: `${(categoryScore / 10) * 100}%` }}
+                                           />
+                                       </div>
+                                   </div>
+                               </button>
+
+                               {/* 章节内容 */}
+                               {isExpanded && (
+                                   <div className="p-3 bg-slate-900/30 space-y-2">
+                                       {categoryIssues.length === 0 ? (
+                                           <div className="flex items-center gap-2 p-2 bg-green-900/20 border border-green-700/30 rounded text-green-300 text-xs">
+                                               <Check className="w-3 h-3" />
+                                               <span>All checks passed for this category</span>
+                                           </div>
+                                       ) : (
+                                           categoryIssues.map((issue, idx) => {
+                                               const issueScore = issue.score ?? 10;
+                                               let colorClass = "bg-slate-800 border-slate-700 text-slate-300";
+                                               let icon = <Info className="w-4 h-4" />;
+                                               let titleColor = "text-slate-200";
+
+                                               if (issue.type === 'error') {
+                                                   colorClass = "bg-red-900/20 border-red-800/50";
+                                                   icon = <AlertCircle className="w-4 h-4 text-red-500" />;
+                                                   titleColor = "text-red-300";
+                                               } else if (issue.type === 'warning') {
+                                                   colorClass = "bg-amber-900/20 border-amber-800/50";
+                                                   icon = <AlertTriangle className="w-4 h-4 text-amber-500" />;
+                                                   titleColor = "text-amber-300";
+                                               } else if (issue.type === 'suggestion') {
+                                                   colorClass = "bg-blue-900/20 border-blue-800/50";
+                                                   icon = <Sparkles className="w-4 h-4 text-blue-500" />;
+                                                   titleColor = "text-blue-300";
+                                               }
+
+                                               return (
+                                                   <div key={idx} className={`p-3 rounded border flex gap-3 ${colorClass}`}>
+                                                       <div className="mt-0.5 shrink-0">{icon}</div>
+                                                       <div className="flex-1">
+                                                           <div className="flex items-center justify-between mb-1">
+                                                               <div className={`text-sm font-bold ${titleColor}`}>{issue.title}</div>
+                                                               <div className={`text-xs font-bold ${getScoreColor(issueScore)}`}>
+                                                                   {issueScore.toFixed(1)}/10
+                                                               </div>
+                                                           </div>
+                                                           <div className="text-xs text-slate-400 leading-relaxed">{issue.description}</div>
+                                                           {issue.relatedIds && issue.relatedIds.length > 0 && (
+                                                               <div className="flex flex-wrap gap-1 mt-2">
+                                                                   {issue.relatedIds.map(id => {
+                                                                       const name = robot.links[id]?.name || robot.joints[id]?.name || id;
+                                                                       return (
+                                                                        <span 
+                                                                            key={id} 
+                                                                            className="text-[10px] bg-slate-900/50 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700/50 cursor-pointer hover:bg-slate-800 hover:text-white"
+                                                                            onClick={() => {
+                                                                                const type = robot.links[id] ? 'link' : 'joint';
+                                                                                handleSelect(type, id);
+                                                                            }}
+                                                                        >
+                                                                            {name}
+                                                                        </span>
+                                                                       );
+                                                                   })}
+                                                               </div>
+                                                           )}
+                                                       </div>
+                                                   </div>
+                                               );
+                                           })
+                                       )}
+                                   </div>
+                               )}
+                           </div>
+                       );
+                   })}
+               </div>
+          </div>
+      );
   };
 
   return (
@@ -436,10 +783,10 @@ export default function App() {
 
         <div className="flex items-center gap-2">
             <button
-                onClick={() => { setIsAIModalOpen(true); setAiResponse(null); setAiPrompt(''); }}
+                onClick={() => { setIsAIModalOpen(true); setAiResponse(null); setInspectionReport(null); setAiPrompt(''); }}
                 className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded text-sm transition-all shadow-md"
             >
-                <Sparkles className="w-4 h-4" />
+                <ScanSearch className="w-4 h-4" />
                 {t.aiAssistant}
             </button>
             <button 
@@ -491,110 +838,308 @@ export default function App() {
         />
       </div>
 
-      {/* AI Assistant Modal */}
+      {/* AI Inspector Floating Window */}
       {isAIModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-slate-800 rounded-lg shadow-2xl w-full max-w-lg border border-slate-700 flex flex-col max-h-[90vh]">
-                  <div className="flex items-center justify-between p-4 border-b border-slate-700 shrink-0">
-                      <div className="flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-purple-400" />
-                          <h2 className="text-lg font-bold text-white">{t.aiTitle}</h2>
+          <div 
+            style={{ left: aiPanelPos.x, top: aiPanelPos.y }}
+            className="fixed z-50 w-[900px] flex flex-col bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-600"
+          >
+              <div 
+                onMouseDown={handleDragStart}
+                className="flex items-center justify-between p-3 border-b border-slate-700 shrink-0 cursor-move bg-slate-800/50 rounded-t-lg select-none"
+              >
+                  <div className="flex items-center gap-2">
+                      <ScanSearch className="w-4 h-4 text-purple-400" />
+                      <h2 className="text-sm font-bold text-white">{t.aiTitle}</h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                     <Move className="w-3 h-3 text-slate-500" />
+                     <button onClick={() => setIsAIModalOpen(false)} className="text-slate-400 hover:text-white">
+                        <X className="w-4 h-4" />
+                     </button>
+                  </div>
+              </div>
+              
+              <div className="flex flex-1 overflow-hidden">
+                  {/* 左侧：检查项目选择器和运行按钮 */}
+                  <div className="w-64 border-r border-slate-700 flex flex-col bg-slate-800/30">
+                      <div className="p-3 border-b border-slate-700">
+                          <h3 className="text-xs font-bold text-slate-300 uppercase mb-2">{t.inspectionItems}</h3>
+                          <button
+                              onClick={handleRunInspection}
+                              disabled={isGeneratingAI}
+                              className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                          >
+                              {isGeneratingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
+                              {isGeneratingAI ? t.thinking : t.runInspection}
+                          </button>
                       </div>
-                      <button onClick={() => setIsAIModalOpen(false)} className="text-slate-400 hover:text-white">
-                          <X className="w-5 h-5" />
-                      </button>
+                      
+                      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                          {INSPECTION_CRITERIA.map(category => {
+                              const categoryName = lang === 'zh' ? category.nameZh : category.name;
+                              const selectedItemIds = selectedItems[category.id] || new Set();
+                              const allSelected = category.items.every(item => selectedItemIds.has(item.id));
+                              const someSelected = category.items.some(item => selectedItemIds.has(item.id));
+                              
+                              return (
+                                  <div key={category.id} className="border border-slate-700 rounded-lg overflow-hidden">
+                                      {/* 章节标题 */}
+                                      <div className="w-full flex items-center justify-between p-2 bg-slate-800/50 hover:bg-slate-800/70 transition-colors">
+                                          <div className="flex items-center gap-2 flex-1">
+                                              <input
+                                                  type="checkbox"
+                                                  checked={allSelected}
+                                                  ref={(el) => {
+                                                      if (el) el.indeterminate = someSelected && !allSelected;
+                                                  }}
+                                                  onChange={() => toggleCategorySelection(category.id)}
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
+                                              />
+                                              <button
+                                                  onClick={() => {
+                                                      setExpandedCategories(prev => {
+                                                          const newSet = new Set(prev);
+                                                          if (newSet.has(category.id)) {
+                                                              newSet.delete(category.id);
+                                                          } else {
+                                                              newSet.add(category.id);
+                                                          }
+                                                          return newSet;
+                                                      });
+                                                  }}
+                                                  className="flex-1 text-left"
+                                              >
+                                                  <span className="text-xs font-bold text-slate-200">{categoryName}</span>
+                                              </button>
+                                          </div>
+                                          <button
+                                              onClick={() => {
+                                                  setExpandedCategories(prev => {
+                                                      const newSet = new Set(prev);
+                                                      if (newSet.has(category.id)) {
+                                                          newSet.delete(category.id);
+                                                      } else {
+                                                          newSet.add(category.id);
+                                                      }
+                                                      return newSet;
+                                                  });
+                                              }}
+                                          >
+                                              {expandedCategories.has(category.id) ? (
+                                                  <ChevronDown className="w-3 h-3 text-slate-400" />
+                                              ) : (
+                                                  <ChevronRight className="w-3 h-3 text-slate-400" />
+                                              )}
+                                          </button>
+                                      </div>
+                                      
+                                      {/* 子项列表 */}
+                                      {expandedCategories.has(category.id) && (
+                                          <div className="p-2 space-y-1 bg-slate-900/30">
+                                              {category.items.map(item => (
+                                                  <label
+                                                      key={item.id}
+                                                      className="flex items-center gap-2 p-1.5 hover:bg-slate-800/50 rounded cursor-pointer"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                  >
+                                                      <input
+                                                          type="checkbox"
+                                                          checked={selectedItemIds.has(item.id)}
+                                                          onChange={() => toggleItemSelection(category.id, item.id)}
+                                                          className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
+                                                      />
+                                                      <span className="text-[10px] text-slate-300">{item.name}</span>
+                                                  </label>
+                                              ))}
+                                          </div>
+                                      )}
+                                  </div>
+                              );
+                          })}
+                      </div>
                   </div>
                   
-                  <div className="p-4 flex-1 overflow-y-auto">
-                      {!aiResponse ? (
+                  {/* 右侧：检查结果 */}
+                  <div className="flex-1 p-4 overflow-y-auto custom-scrollbar max-h-[60vh]">
+                      {inspectionProgress ? (
+                          <div className="space-y-4">
+                              <div className="bg-gradient-to-r from-purple-900/20 to-blue-900/20 border border-purple-500/30 rounded-lg p-4">
+                                  <div className="flex items-center justify-between mb-3">
+                                      <h3 className="text-sm font-bold text-purple-200">{t.runInspection}</h3>
+                                      <span className="text-xs text-slate-400">
+                                          {inspectionProgress.completed} / {inspectionProgress.total}
+                                      </span>
+                                  </div>
+                                  <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden mb-3">
+                                      <div 
+                                          className="h-full bg-gradient-to-r from-purple-500 to-blue-500 transition-all duration-300"
+                                          style={{ width: `${(inspectionProgress.completed / inspectionProgress.total) * 100}%` }}
+                                      />
+                                  </div>
+                                  {inspectionProgress.currentCategory && inspectionProgress.currentItem && (
+                                      <div className="flex items-center gap-2 text-sm text-slate-300">
+                                          <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                                          <span>
+                                              {lang === 'zh' ? '正在检查' : 'Checking'}: <span className="font-bold text-purple-300">{inspectionProgress.currentCategory}</span> - <span className="text-slate-400">{inspectionProgress.currentItem}</span>
+                                          </span>
+                                      </div>
+                                  )}
+                                  {inspectionProgress.completed === inspectionProgress.total && (
+                                      <div className="flex items-center gap-2 text-sm text-green-400">
+                                          <Check className="w-4 h-4" />
+                                          <span>{lang === 'zh' ? '检查完成，正在生成报告...' : 'Inspection completed, generating report...'}</span>
+                                      </div>
+                                  )}
+                              </div>
+                              <div className="space-y-2">
+                                  {INSPECTION_CRITERIA.map(category => {
+                                      const categoryName = lang === 'zh' ? category.nameZh : category.name;
+                                      const selectedItemIds = selectedItems[category.id] || new Set();
+                                      const categoryItems = category.items.filter(item => selectedItemIds.has(item.id));
+                                      if (categoryItems.length === 0) return null;
+                                      return (
+                                          <div key={category.id} className="border border-slate-700 rounded-lg p-3 bg-slate-800/30">
+                                              <div className="text-xs font-bold text-slate-300 mb-2">{categoryName}</div>
+                                              <div className="space-y-1">
+                                                  {categoryItems.map((item, idx) => {
+                                                      const globalIndex = (() => {
+                                                          let count = 0;
+                                                          for (const cat of INSPECTION_CRITERIA) {
+                                                              if (cat.id === category.id) break;
+                                                              const items = cat.items.filter(i => selectedItems[cat.id]?.has(i.id));
+                                                              count += items.length;
+                                                          }
+                                                          return count + idx;
+                                                      })();
+                                                      const isCurrent = inspectionProgress.completed === globalIndex + 1 && 
+                                                                        inspectionProgress.currentItem === item.name;
+                                                      const isCompleted = inspectionProgress.completed > globalIndex + 1;
+                                                      return (
+                                                          <div 
+                                                              key={item.id} 
+                                                              className={`flex items-center gap-2 p-1.5 rounded text-xs ${
+                                                                  isCurrent ? 'bg-purple-900/30 text-purple-300' :
+                                                                  isCompleted ? 'bg-green-900/20 text-green-400' :
+                                                                  'text-slate-400'
+                                                              }`}
+                                                          >
+                                                              {isCurrent ? (
+                                                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                                              ) : isCompleted ? (
+                                                                  <Check className="w-3 h-3" />
+                                                              ) : (
+                                                                  <div className="w-3 h-3 rounded-full border border-slate-600" />
+                                                              )}
+                                                              <span>{item.name}</span>
+                                                          </div>
+                                                      );
+                                                  })}
+                                              </div>
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </div>
+                      ) : !aiResponse && !inspectionReport ? (
                           <>
-                            <p className="text-sm text-slate-400 mb-3">
+                            <div className="bg-purple-900/10 border border-purple-500/20 rounded p-4 mb-4">
+                                <h3 className="text-sm font-bold text-purple-200 mb-2">{t.runInspection}</h3>
+                                <p className="text-xs text-slate-400 mb-3">{t.aiExamples}</p>
+                            </div>
+
+                            <p className="text-sm text-slate-400 mb-3 border-t border-slate-700 pt-4">
                                 {t.aiIntro}
                             </p>
-                            <p className="text-xs text-slate-500 mb-3 italic whitespace-pre-wrap">
-                                {t.aiExamples}
-                            </p>
+                            
                             <textarea 
                                 value={aiPrompt}
                                 onChange={(e) => setAiPrompt(e.target.value)}
-                                className="w-full h-32 bg-slate-900 border border-slate-700 rounded p-3 text-slate-200 text-sm focus:border-purple-500 focus:outline-none resize-none"
+                                className="w-full h-24 bg-slate-900 border border-slate-700 rounded p-3 text-slate-200 text-sm focus:border-purple-500 focus:outline-none resize-none"
                                 placeholder={t.aiPlaceholder}
                             />
                           </>
                       ) : (
-                          <div className="space-y-4">
-                              <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
-                                  <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.yourRequest}</div>
-                                  <div className="text-sm text-slate-300">{aiPrompt}</div>
-                              </div>
-                              
-                              <div className="bg-purple-900/20 p-3 rounded border border-purple-500/30">
-                                  <div className="flex items-center gap-2 mb-1">
-                                      <Sparkles className="w-3 h-3 text-purple-400" />
-                                      <div className="text-xs text-purple-300 uppercase font-bold">{t.aiResponse} ({aiResponse.type})</div>
-                                  </div>
-                                  <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
-                                      {aiResponse.explanation}
-                                  </div>
-                              </div>
-                              
-                              {aiResponse.data && (
-                                  <div className="flex items-center gap-2 text-xs text-yellow-500 bg-yellow-900/20 p-2 rounded border border-yellow-700/30">
-                                      <Box className="w-3 h-3" />
-                                      {t.actionWarning}
-                                  </div>
-                              )}
-                          </div>
+                          <>
+                            {inspectionReport && renderInspectionReport()}
+                            
+                            {aiResponse && (
+                                <div className="space-y-4">
+                                    <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
+                                        <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.yourRequest}</div>
+                                        <div className="text-sm text-slate-300">{aiPrompt}</div>
+                                    </div>
+                                    
+                                    <div className="bg-purple-900/20 p-3 rounded border border-purple-500/30">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <Sparkles className="w-3 h-3 text-purple-400" />
+                                            <div className="text-xs text-purple-300 uppercase font-bold">{t.aiResponse} ({aiResponse.type})</div>
+                                        </div>
+                                        <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
+                                            {aiResponse.explanation}
+                                        </div>
+                                    </div>
+                                    
+                                    {aiResponse.data && (
+                                        <div className="flex items-center gap-2 text-xs text-yellow-500 bg-yellow-900/20 p-2 rounded border border-yellow-700/30">
+                                            <Box className="w-3 h-3" />
+                                            {t.actionWarning}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                          </>
                       )}
                   </div>
+              </div>
 
-                  <div className="p-4 border-t border-slate-700 flex justify-between gap-2 shrink-0">
-                      {aiResponse ? (
-                          <>
-                             <button 
-                                onClick={() => { setAiResponse(null); }}
-                                className="px-4 py-2 text-sm text-slate-400 hover:text-white"
-                             >
-                                {t.back}
-                             </button>
-                             {aiResponse.data && (
-                                <button 
-                                    onClick={applyAIChanges}
-                                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded transition-colors flex items-center gap-2"
-                                >
-                                    <Check className="w-4 h-4" />
-                                    {t.applyChanges}
-                                </button>
-                             )}
-                          </>
-                      ) : (
-                          <>
+              <div className="p-3 border-t border-slate-700 flex justify-between gap-2 shrink-0 bg-slate-800/30 rounded-b-lg">
+                  {(aiResponse || inspectionReport) ? (
+                      <>
+                          <button 
+                            onClick={() => { setAiResponse(null); setInspectionReport(null); setAiPrompt(''); }}
+                            className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                          >
+                            {t.back}
+                          </button>
+                          {aiResponse?.data && (
                             <button 
-                                onClick={() => setIsAIModalOpen(false)}
-                                className="px-4 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                                onClick={applyAIChanges}
+                                className="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs rounded transition-colors flex items-center gap-2"
                             >
-                                {t.cancel}
+                                <Check className="w-3 h-3" />
+                                {t.applyChanges}
                             </button>
-                            <button 
-                                onClick={handleGenerateAI}
-                                disabled={isGeneratingAI || !aiPrompt.trim()}
-                                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm rounded transition-colors flex items-center gap-2"
-                            >
-                                {isGeneratingAI ? (
-                                    <>
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                        {t.thinking}
-                                    </>
-                                ) : (
-                                    <>
-                                        <ArrowRight className="w-4 h-4" />
-                                        {t.send}
-                                    </>
-                                )}
-                            </button>
-                          </>
-                      )}
-                  </div>
+                          )}
+                      </>
+                  ) : (
+                      <>
+                        <button 
+                            onClick={() => setIsAIModalOpen(false)}
+                            className="px-3 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                        >
+                            {t.cancel}
+                        </button>
+                        <button 
+                            onClick={handleGenerateAI}
+                            disabled={isGeneratingAI || !aiPrompt.trim()}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs rounded transition-colors flex items-center gap-2"
+                        >
+                            {isGeneratingAI ? (
+                                <>
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    {t.thinking}
+                                </>
+                            ) : (
+                                <>
+                                    <ArrowRight className="w-3 h-3" />
+                                    {t.send}
+                                </>
+                            )}
+                        </button>
+                      </>
+                  )}
               </div>
           </div>
       )}
