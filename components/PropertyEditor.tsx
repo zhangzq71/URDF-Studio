@@ -1,7 +1,6 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { RobotState, JointType, GeometryType, AppMode, UrdfLink, MotorSpec } from '../types';
-import { Upload, File, Wand, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { RobotState, JointType, GeometryType, AppMode, UrdfLink, MotorSpec, Theme } from '../types';
+import { Upload, File, Wand, ExternalLink, ChevronRight, PanelRightOpen } from 'lucide-react';
 import * as THREE from 'three';
 import { translations, Language } from '../services/i18n';
 
@@ -13,11 +12,14 @@ interface PropertyEditorProps {
   onUploadAsset: (file: File) => void;
   motorLibrary: Record<string, MotorSpec[]>;
   lang: Language;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  theme: Theme;
 }
 
 const InputGroup = ({ label, children }: { label: string, children?: React.ReactNode }) => (
   <div className="mb-4">
-    <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">{label}</label>
+    <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">{label}</label>
     {children}
   </div>
 );
@@ -60,8 +62,9 @@ const NumberInput = ({ value, onChange, label, step = 0.1 }: { value: number, on
         value={localValue}
         onChange={handleChange}
         onBlur={handleBlur}
+        onFocus={(e) => e.target.select()}
         onKeyDown={handleKeyDown}
-        className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500 w-full"
+        className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-google-blue w-full"
       />
     </div>
   );
@@ -119,14 +122,11 @@ const GeometryEditor = ({
         }
     };
 
-    const handleAutoAlign = () => {
+    const calculateAutoAlign = () => {
        // Find the child joint connected to this link
        const childJoint = Object.values(robot.joints).find(j => j.parentLinkId === data.id);
        
-       if (!childJoint) {
-           // No child joint to align to
-           return;
-       }
+       if (!childJoint) return null;
 
        // Vector from Parent (Link Origin 0,0,0) to Child Joint
        const start = new THREE.Vector3(0, 0, 0);
@@ -136,11 +136,9 @@ const GeometryEditor = ({
        const midpoint = vector.clone().multiplyScalar(0.5);
 
        // Calculate Rotation to align Z-axis with the vector
-       // URDF Cylinders are Z-up by convention
        const zAxis = new THREE.Vector3(0, 0, 1);
        const direction = vector.clone().normalize();
        
-       // Handle edge case where direction is exactly opposite to Z
        const quaternion = new THREE.Quaternion();
        if (direction.y === 0 && direction.x === 0 && direction.z === -1) {
             quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
@@ -150,28 +148,37 @@ const GeometryEditor = ({
        
        const euler = new THREE.Euler().setFromQuaternion(quaternion);
 
-       // Update Dimensions (Set Length) and Origin
+       return {
+           dimensions: { y: length }, // Only length is determined by joint distance
+           origin: {
+               xyz: { x: midpoint.x, y: midpoint.y, z: midpoint.z },
+               rpy: { r: euler.x, p: euler.y, y: euler.z }
+           }
+       };
+    };
+
+    const handleAutoAlign = () => {
+       const result = calculateAutoAlign();
+       if (!result) return;
+
        const currentDims = geomData.dimensions || { x: 0.05, y: 0.5, z: 0.05 };
-       // For Cylinder, Y in our data model corresponds to length (from Visualizer logic/URDF generator)
-       const newDims = { ...currentDims, y: length };
+       // Keep existing radius (x, z) but update length (y)
+       const newDims = { ...currentDims, y: result.dimensions.y };
 
        update({
           dimensions: newDims,
-          origin: {
-             xyz: { x: midpoint.x, y: midpoint.y, z: midpoint.z },
-             rpy: { r: euler.x, p: euler.y, y: euler.z }
-          }
+          origin: result.origin
        });
     };
 
     return (
-        <div className="border-t border-slate-700 pt-4">
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
             <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-bold text-slate-200 capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>
                 {geomData.type === GeometryType.CYLINDER && (
                     <button 
                         onClick={handleAutoAlign}
-                        className="p-1 hover:bg-slate-700 rounded text-blue-400 hover:text-blue-300 transition-colors"
+                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
                         title={t.autoAlign}
                     >
                         <Wand className="w-4 h-4" />
@@ -182,8 +189,80 @@ const GeometryEditor = ({
             <InputGroup label={t.type}>
                 <select 
                     value={geomData.type || GeometryType.CYLINDER}
-                    onChange={(e) => update({ type: e.target.value })}
-                    className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full"
+                    onChange={(e) => {
+                        const newType = e.target.value;
+                        const currentDims = geomData.dimensions || { x: 0.1, y: 0.5, z: 0.1 };
+                        let newDims = { ...currentDims };
+                        let newOrigin = geomData.origin || { xyz: {x:0,y:0,z:0}, rpy: {r:0,p:0,y:0} };
+                        
+                        // Adjust dimensions when switching geometry types
+                        if (newType === GeometryType.CYLINDER) {
+                            // Smart conversion: Detect dominant axis and rotate cylinder to match
+                            // Preserve existing rotation by composing it
+                            const { x, y, z } = currentDims;
+                            const maxDim = Math.max(x, y, z);
+                            
+                            let length = maxDim;
+                            let radius = 0.1;
+                            
+                            // Get current rotation
+                            const currentRpy = geomData.origin?.rpy || { r: 0, p: 0, y: 0 };
+                            const currentQuat = new THREE.Quaternion().setFromEuler(
+                                new THREE.Euler(currentRpy.r, currentRpy.p, currentRpy.y, 'XYZ')
+                            );
+
+                            const zAxis = new THREE.Vector3(0, 0, 1);
+                            let targetAxis = new THREE.Vector3(0, 0, 1);
+
+                            // Determine orientation based on longest dimension
+                            if (x === maxDim) {
+                                length = x;
+                                radius = Math.max(y, z) / 2;
+                                targetAxis.set(1, 0, 0);
+                            } else if (y === maxDim) {
+                                length = y;
+                                radius = Math.max(x, z) / 2;
+                                targetAxis.set(0, 1, 0);
+                            } else {
+                                length = z;
+                                radius = Math.max(x, y) / 2;
+                                targetAxis.set(0, 0, 1);
+                            }
+                            
+                            // Calculate alignment rotation (from Z to Target Axis)
+                            const alignQuat = new THREE.Quaternion().setFromUnitVectors(zAxis, targetAxis);
+                            
+                            // Compose: New = Old * Align
+                            currentQuat.multiply(alignQuat);
+                            
+                            const newEuler = new THREE.Euler().setFromQuaternion(currentQuat, 'XYZ');
+                            const newRpy = { r: newEuler.x, p: newEuler.y, y: newEuler.z };
+                            
+                            const newDims = { x: radius, y: length, z: radius };
+                            
+                            update({ 
+                                type: newType, 
+                                dimensions: newDims,
+                                origin: { ...(geomData.origin || { xyz: {x:0,y:0,z:0} }), rpy: newRpy }
+                            });
+                            return; 
+                        } else if (newType === GeometryType.SPHERE) {
+                            // Use average dimension as radius
+                            const radius = Math.max(0.05, (currentDims.x + currentDims.y + currentDims.z) / 3);
+                            newDims = { x: radius, y: radius, z: radius };
+                        } else if (newType === GeometryType.BOX) {
+                            // If coming from cylinder, convert radius/length back to box
+                            if (geomData.type === GeometryType.CYLINDER) {
+                                newDims = { x: currentDims.x * 2, y: currentDims.x * 2, z: currentDims.y };
+                            } else if (geomData.type === GeometryType.SPHERE) {
+                                const diameter = currentDims.x * 2;
+                                newDims = { x: diameter, y: diameter, z: diameter };
+                            }
+                        }
+                        
+                        update({ type: newType, dimensions: newDims, origin: newOrigin });
+                    }}
+                    className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                 >
                     <option value={GeometryType.BOX}>Box</option>
                     <option value={GeometryType.CYLINDER}>Cylinder</option>
@@ -195,7 +274,7 @@ const GeometryEditor = ({
 
             {/* Mesh Selection UI */}
             {geomData.type === GeometryType.MESH && (
-                <div className="mb-4 bg-slate-900/50 p-2 rounded border border-slate-700">
+                <div className="mb-4 bg-slate-100 dark:bg-google-dark-surface p-2 rounded-lg border border-slate-200 dark:border-google-dark-border">
                     <InputGroup label={t.meshLibrary}>
                         <div className="flex flex-col gap-2">
                              <div className="flex items-center gap-2">
@@ -208,7 +287,7 @@ const GeometryEditor = ({
                                 />
                                 <button 
                                     onClick={() => fileInputRef.current?.click()}
-                                    className="flex items-center gap-1 bg-blue-600 hover:bg-blue-500 text-white text-xs px-2 py-1 rounded transition-colors"
+                                    className="flex items-center gap-1 bg-google-blue hover:bg-blue-600 text-white text-xs px-2 py-1 rounded transition-colors"
                                 >
                                     <Upload className="w-3 h-3" />
                                     {t.upload}
@@ -225,7 +304,7 @@ const GeometryEditor = ({
                                         onClick={() => update({ meshPath: filename })}
                                         className={`
                                             flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs
-                                            ${geomData.meshPath === filename ? 'bg-blue-900/50 text-blue-200 border border-blue-800' : 'hover:bg-slate-700 text-slate-300'}
+                                            ${geomData.meshPath === filename ? 'bg-blue-100 dark:bg-blue-900/50 text-google-blue dark:text-blue-200 border border-blue-200 dark:border-blue-800' : 'hover:bg-slate-200 dark:hover:bg-google-dark-bg text-slate-700 dark:text-slate-300'}
                                         `}
                                     >
                                         <File className="w-3 h-3 shrink-0" />
@@ -234,8 +313,8 @@ const GeometryEditor = ({
                                 ))}
                              </div>
                              {geomData.meshPath && (
-                                 <div className="text-[10px] text-slate-400 truncate mt-1">
-                                     {t.selected}: <span className="text-blue-400">{geomData.meshPath}</span>
+                                 <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-1">
+                                     {t.selected}: <span className="text-google-blue dark:text-blue-400">{geomData.meshPath}</span>
                                  </div>
                              )}
                         </div>
@@ -290,7 +369,7 @@ const GeometryEditor = ({
                             type="text"
                             value={geomData.color || '#ffffff'}
                             onChange={(e) => update({ color: e.target.value })}
-                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white flex-1"
+                            className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white flex-1"
                         />
                     </div>
                 </InputGroup>
@@ -302,16 +381,29 @@ const GeometryEditor = ({
 export const PropertyEditor: React.FC<PropertyEditorProps> = ({ 
   robot, 
   onUpdate, 
-  mode,
-  assets,
-  onUploadAsset,
-  motorLibrary,
-  lang
+  mode, 
+  assets, 
+  onUploadAsset, 
+  motorLibrary, 
+  lang, 
+  collapsed, 
+  onToggle, 
+  theme 
 }) => {
   const { selection } = robot;
   const isLink = selection.type === 'link';
   const data = selection.id ? (isLink ? robot.links[selection.id] : robot.joints[selection.id]) : null;
   const t = translations[lang];
+
+  // Width state for resizable sidebar
+  const [width, setWidth] = useState(320);
+  const isResizing = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  // Compute the actual width to use based on collapsed state
+  // Force a minimum width of 280px when expanded to prevent "squashed" content
+  const displayWidth = collapsed ? 40 : Math.max(width, 280);
 
   // Local state for Motor Brand selection
   const [motorBrand, setMotorBrand] = useState<string>('');
@@ -319,130 +411,184 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   useEffect(() => {
     // Initialize default brand if empty or invalid
     if (Object.keys(motorLibrary).length > 0) {
-        if (!motorBrand || !motorLibrary[motorBrand]) {
-            setMotorBrand(Object.keys(motorLibrary)[0]);
-        }
+      if (!motorBrand || !motorLibrary[motorBrand]) {
+        setMotorBrand(Object.keys(motorLibrary)[0]);
+      }
     }
-  }, [motorLibrary]);
+  }, [motorLibrary, motorBrand]);
 
   useEffect(() => {
     // When selection changes, attempt to infer brand if the motor is in library
     if (data && !isLink) {
-        const type = (data as any).hardware?.motorType;
-        if (type) {
-            for (const [brand, motors] of Object.entries(motorLibrary)) {
-                if (motors.some(m => m.name === type)) {
-                    setMotorBrand(brand);
-                    break;
-                }
-            }
+      const type = (data as any).hardware?.motorType;
+      if (type) {
+        for (const [brand, motors] of Object.entries(motorLibrary)) {
+          if (motors.some(m => m.name === type)) {
+            setMotorBrand(brand);
+            break;
+          }
         }
+      }
     }
   }, [selection.id, isLink, data, motorLibrary]);
 
-  if (!data) {
-    return (
-      <div className="w-80 bg-slate-800 border-l border-slate-700 p-8 flex flex-col items-center justify-center text-slate-500 text-center h-full">
-        <p>{t.selectLinkOrJoint}</p>
-      </div>
-    );
-  }
+  // Resize handler callback
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    isResizing.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [width]);
+
+  // Resize mouse move/up effect
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      const delta = startX.current - e.clientX;
+      const newWidth = Math.max(250, Math.min(800, startWidth.current + delta));
+      setWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizing.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   // --- MOTOR LOGIC ---
-  const currentMotorType = (data as any).hardware?.motorType || 'None';
+  const currentMotorType = (data as any)?.hardware?.motorType || 'None';
   
   // Determine Mode: 'None', 'Library' (if in LIBRARY), or 'Custom'
   let motorSource = 'Custom';
   if (currentMotorType === 'None') {
-      motorSource = 'None';
+    motorSource = 'None';
   } else {
-      let foundInLib = false;
-      for (const motors of Object.values(motorLibrary)) {
-          if (motors.some(m => m.name === currentMotorType)) {
-              foundInLib = true;
-              break;
-          }
+    let foundInLib = false;
+    for (const motors of Object.values(motorLibrary)) {
+      if (motors.some(m => m.name === currentMotorType)) {
+        foundInLib = true;
+        break;
       }
-      if (foundInLib) motorSource = 'Library';
+    }
+    if (foundInLib) motorSource = 'Library';
   }
   
   // Helper to find current library motor object
   const currentLibMotor = motorSource === 'Library' && motorBrand 
-      ? motorLibrary[motorBrand]?.find(m => m.name === currentMotorType) 
-      : null;
-
+    ? motorLibrary[motorBrand]?.find(m => m.name === currentMotorType) 
+    : null;
 
   const handleSourceChange = (newSource: string) => {
-      let updates = {};
-      const newHardware = { ...(data as any).hardware };
-      const newLimit = { ...(data as any).limit };
+    let updates = {};
+    const newHardware = { ...(data as any).hardware };
+    const newLimit = { ...(data as any).limit };
 
-      if (newSource === 'None') {
-          newHardware.motorType = 'None';
-          newHardware.armature = 0;
-      } else if (newSource === 'Library') {
-          // Default to first brand, first motor
-          const brands = Object.keys(motorLibrary);
-          if (brands.length > 0) {
-              const defaultBrand = brands[0];
-              setMotorBrand(defaultBrand);
-              const motor = motorLibrary[defaultBrand][0];
-              if (motor) {
-                  newHardware.motorType = motor.name;
-                  newHardware.armature = motor.armature;
-                  newLimit.velocity = motor.velocity;
-                  newLimit.effort = motor.effort;
-              }
-          }
-      } else if (newSource === 'Custom') {
-          // If switching to Custom, verify if we need to reset or keep
-          if (currentMotorType === 'None' || motorSource === 'Library') {
-             newHardware.motorType = 'my_motor';
-          }
-          // else keep existing custom name
+    if (newSource === 'None') {
+      newHardware.motorType = 'None';
+      newHardware.armature = 0;
+    } else if (newSource === 'Library') {
+      const brands = Object.keys(motorLibrary);
+      if (brands.length > 0) {
+        const defaultBrand = brands[0];
+        setMotorBrand(defaultBrand);
+        const motor = motorLibrary[defaultBrand][0];
+        if (motor) {
+          newHardware.motorType = motor.name;
+          newHardware.armature = motor.armature;
+          newLimit.velocity = motor.velocity;
+          newLimit.effort = motor.effort;
+        }
       }
-      
-      updates = { hardware: newHardware, limit: newLimit };
-      onUpdate('joint', selection.id!, { ...data, ...updates });
+    } else if (newSource === 'Custom') {
+      if (currentMotorType === 'None' || motorSource === 'Library') {
+        newHardware.motorType = 'my_motor';
+      }
+    }
+    
+    updates = { hardware: newHardware, limit: newLimit };
+    onUpdate('joint', selection.id!, { ...data, ...updates });
   };
 
   const handleBrandChange = (newBrand: string) => {
-      setMotorBrand(newBrand);
-      // Auto select first motor of new brand
-      const motor = motorLibrary[newBrand]?.[0];
-      if (motor) {
-          const updates = {
-              hardware: { ...(data as any).hardware, motorType: motor.name, armature: motor.armature },
-              limit: { ...(data as any).limit, velocity: motor.velocity, effort: motor.effort }
-          };
-          onUpdate('joint', selection.id!, { ...data, ...updates });
-      }
+    setMotorBrand(newBrand);
+    const motor = motorLibrary[newBrand]?.[0];
+    if (motor) {
+      const updates = {
+        hardware: { ...(data as any).hardware, motorType: motor.name, armature: motor.armature },
+        limit: { ...(data as any).limit, velocity: motor.velocity, effort: motor.effort }
+      };
+      onUpdate('joint', selection.id!, { ...data, ...updates });
+    }
   };
 
   const handleLibraryMotorChange = (motorName: string) => {
-      // Find motor specs
-      const motor = motorLibrary[motorBrand]?.find(m => m.name === motorName);
-      if (motor) {
-          const updates = {
-              hardware: { ...(data as any).hardware, motorType: motor.name, armature: motor.armature },
-              limit: { ...(data as any).limit, velocity: motor.velocity, effort: motor.effort }
-          };
-          onUpdate('joint', selection.id!, { ...data, ...updates });
-      }
+    const motor = motorLibrary[motorBrand]?.find(m => m.name === motorName);
+    if (motor) {
+      const updates = {
+        hardware: { ...(data as any).hardware, motorType: motor.name, armature: motor.armature },
+        limit: { ...(data as any).limit, velocity: motor.velocity, effort: motor.effort }
+      };
+      onUpdate('joint', selection.id!, { ...data, ...updates });
+    }
   };
 
   return (
-    <div className="w-80 bg-slate-800 border-l border-slate-700 flex flex-col h-full overflow-y-auto custom-scrollbar">
-      <div className="p-4 border-b border-slate-700 bg-slate-900">
-        <div className="flex items-center gap-2 mb-1">
-             <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${isLink ? 'bg-blue-900 text-blue-200' : 'bg-orange-900 text-orange-200'}`}>
-                {selection.type}
-             </span>
-             <h2 className="font-semibold text-slate-100 truncate">{data.name}</h2>
-        </div>
-      </div>
+    <div 
+      className={`bg-slate-50 dark:bg-google-dark-bg border-l border-slate-200 dark:border-google-dark-border flex flex-col h-full z-20 relative ${collapsed ? 'items-center py-4' : ''}`}
+      style={{ 
+        width: `${displayWidth}px`, 
+        minWidth: `${displayWidth}px`, 
+        flex: `0 0 ${displayWidth}px`,
+        overflow: 'hidden'
+      }}
+    >
+      {collapsed ? (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
+          className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-google-dark-surface rounded transition-colors relative z-50 cursor-pointer"
+          title={t.properties}
+        >
+          <PanelRightOpen className="w-5 h-5" />
+        </button>
+      ) : (
+        <>
+          <div className="w-full flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-google-dark-border bg-white dark:bg-google-dark-surface shrink-0 relative z-30">
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
+              className="p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-google-dark-surface rounded transition-colors shrink-0 cursor-pointer"
+              title={t.collapseSidebar}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            {data ? (
+              <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${isLink ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-200' : 'bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-200'}`}>
+                  {selection.type}
+                </span>
+                <h2 className="font-semibold text-slate-900 dark:text-white truncate">{data.name}</h2>
+              </div>
+            ) : (
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-2">{t.properties}</span>
+            )}
+          </div>
 
-      <div className="p-4 space-y-6">
+          {!data ? (
+            <div className="w-full flex-1 flex items-center justify-center p-8 text-slate-500 text-center">
+              <p>{t.selectLinkOrJoint}</p>
+            </div>
+          ) : (
+            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+        
+        {/* --- LINK PROPERTIES --- */}
         
         {/* --- LINK PROPERTIES --- */}
         {isLink ? (
@@ -453,7 +599,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                         type="text"
                         value={data.name}
                         onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
-                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full focus:border-blue-500 focus:outline-none"
+                        className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
                     />
                 </InputGroup>
 
@@ -483,8 +629,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 
                 {/* Hardware Mode: Inertial */}
                 {mode === 'hardware' && (
-                  <div className="border-t border-slate-700 pt-4">
-                      <h3 className="text-sm font-bold text-slate-200 mb-3">{t.inertial}</h3>
+                  <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-3">{t.inertial}</h3>
                       <InputGroup label={t.mass}>
                           <NumberInput 
                               value={(data as UrdfLink).inertial.mass}
@@ -536,7 +682,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                           </div>
                       </InputGroup>
                       
-                      <h4 className="text-xs font-bold text-slate-400 mt-4 mb-2">{t.inertiaTensor}</h4>
+                      <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-4 mb-2">{t.inertiaTensor}</h4>
                       <div className="grid grid-cols-3 gap-2">
                           <NumberInput 
                               label="ixx" 
@@ -600,7 +746,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                             type="text"
                             value={data.name}
                             onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
-                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full focus:border-blue-500 focus:outline-none"
+                            className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
                         />
                     </InputGroup>
                 )}
@@ -612,7 +758,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                             <select 
                                 value={(data as any).type}
                                 onChange={(e) => onUpdate('joint', selection.id!, { ...data, type: e.target.value })}
-                                className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full"
+                                className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                             >
                                 <option value={JointType.REVOLUTE}>Revolute</option>
                                 <option value={JointType.CONTINUOUS}>Continuous</option>
@@ -621,8 +767,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                             </select>
                         </InputGroup>
 
-                        <div className="border-t border-slate-700 pt-4">
-                            <h3 className="text-sm font-bold text-slate-200 mb-3">{t.kinematics}</h3>
+                        <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-3">{t.kinematics}</h3>
                             <InputGroup label={t.originRelativeParent + " (XYZ)"}>
                                 <Vec3Input 
                                     value={(data as any).origin.xyz}
@@ -662,14 +808,14 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 {mode === 'hardware' && (data as any).type !== JointType.FIXED && (
                     <>
                          {/* 1. Hardware Section (Moved to Top) */}
-                        <div className="border-t border-slate-700 pt-4">
-                            <h3 className="text-sm font-bold text-slate-200 mb-3">{t.hardwareConfig}</h3>
+                        <div className="border-t border-slate-200 dark:border-google-dark-border pt-4">
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-3">{t.hardwareConfig}</h3>
                             
                             <InputGroup label={t.motorSource}>
                                 <select
                                     value={motorSource}
                                     onChange={(e) => handleSourceChange(e.target.value)}
-                                    className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full"
+                                    className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                                 >
                                     <option value="None">{t.none}</option>
                                     <option value="Library">{t.library}</option>
@@ -678,12 +824,12 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                             </InputGroup>
 
                             {motorSource === 'Library' && (
-                                <div className="space-y-4 pl-2 border-l-2 border-slate-700 mb-4">
+                                <div className="space-y-4 pl-2 border-l-2 border-slate-200 dark:border-google-dark-border mb-4">
                                      <InputGroup label={t.brand}>
                                         <select
                                             value={motorBrand}
                                             onChange={(e) => handleBrandChange(e.target.value)}
-                                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full"
+                                            className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                                         >
                                             {Object.keys(motorLibrary).map(brand => (
                                                 <option key={brand} value={brand}>{brand}</option>
@@ -694,7 +840,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                         <select
                                             value={currentMotorType}
                                             onChange={(e) => handleLibraryMotorChange(e.target.value)}
-                                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full"
+                                            className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                                         >
                                             {motorLibrary[motorBrand]?.map(m => (
                                                 <option key={m.name} value={m.name}>{m.name}</option>
@@ -708,7 +854,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                                 href={currentLibMotor.url} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
-                                                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                                className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
                                             >
                                                 {t.viewMotor}
                                                 <ExternalLink className="w-3 h-3" />
@@ -722,12 +868,12 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                 <InputGroup label={t.customType}>
                                     <input
                                         type="text"
-                                        placeholder="Enter motor type..."
+                                        placeholder={t.enterMotorType}
                                         value={currentMotorType}
                                         onChange={(e) => onUpdate('joint', selection.id!, { 
                                             ...data, hardware: { ...(data as any).hardware, motorType: e.target.value } 
                                         })}
-                                        className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full focus:outline-none focus:border-blue-500"
+                                        className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:outline-none focus:border-google-blue"
                                     />
                                 </InputGroup>
                             )}
@@ -742,7 +888,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                                 onChange={(e) => onUpdate('joint', selection.id!, { 
                                                     ...data, hardware: { ...(data as any).hardware, motorId: e.target.value } 
                                                 })}
-                                                className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full focus:outline-none focus:border-blue-500"
+                                                className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:outline-none focus:border-google-blue"
                                             />
                                         </InputGroup>
                                         <InputGroup label={t.direction}>
@@ -751,7 +897,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                                                 onChange={(e) => onUpdate('joint', selection.id!, { 
                                                     ...data, hardware: { ...(data as any).hardware, motorDirection: parseInt(e.target.value) } 
                                                 })}
-                                                className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white w-full"
+                                                className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
                                             >
                                                 <option value={1}>1 ({t.normal})</option>
                                                 <option value={-1}>-1 ({t.inverted})</option>
@@ -772,8 +918,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                         </div>
 
                         {/* 2. Limits */}
-                        <div className="border-t border-slate-700 pt-4">
-                            <h3 className="text-sm font-bold text-slate-200 mb-3">{t.limits}</h3>
+                        <div className="border-t border-slate-200 dark:border-google-dark-border pt-4">
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-3">{t.limits}</h3>
                             <div className="grid grid-cols-2 gap-2">
                                 <InputGroup label={t.lower}>
                                     <NumberInput 
@@ -811,8 +957,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                         </div>
 
                         {/* 3. Dynamics */}
-                        <div className="border-t border-slate-700 pt-4">
-                            <h3 className="text-sm font-bold text-slate-200 mb-3">{t.dynamics}</h3>
+                        <div className="border-t border-slate-200 dark:border-google-dark-border pt-4">
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 mb-3">{t.dynamics}</h3>
                             <div className="grid grid-cols-2 gap-2">
                                 <InputGroup label={t.friction}>
                                     <NumberInput 
@@ -836,7 +982,16 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 )}
             </>
         )}
-      </div>
+            </div>
+          )}
+
+          {/* Resize Handle - only show when expanded */}
+          <div 
+            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-10"
+            onMouseDown={handleResizeMouseDown}
+          />
+        </>
+      )}
     </div>
   );
 };

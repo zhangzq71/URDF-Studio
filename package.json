@@ -9,16 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.4.2",
-    "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.555.0",
     "openai": "^4.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "three": "^0.181.2"
+    "three": "^0.181.2",
+    "urdf-loader": "^0.12.6"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

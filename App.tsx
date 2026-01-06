@@ -1,17 +1,19 @@
-
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
-import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, InspectionReport, InspectionIssue } from './types';
+import { URDFViewer } from './components/URDFViewer';
+import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, Theme, InspectionReport, InspectionIssue } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
 import { parseURDF } from './services/urdfParser';
+import { parseMJCF, isMJCF } from './services/mjcfParser';
+import { parseUSDA, isUSDA } from './services/usdParser';
 import { generateRobotFromPrompt, runRobotInspection } from './services/geminiService';
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
 import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon } from 'lucide-react';
 import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 
@@ -34,11 +36,29 @@ export default function App() {
   const [appMode, setAppMode] = useState<AppMode>('skeleton');
   const [assets, setAssets] = useState<Record<string, string>>({});
   const [motorLibrary, setMotorLibrary] = useState<Record<string, MotorSpec[]>>(DEFAULT_MOTOR_LIBRARY);
+  const [originalUrdfContent, setOriginalUrdfContent] = useState<string>('');
   const importInputRef = useRef<HTMLInputElement>(null);
+  const importFolderInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Sidebar collapse state
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
   // Language State
   const [lang, setLang] = useState<Language>('en');
   const t = translations[lang];
+
+  // Theme State
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme');
+      if (saved === 'dark' || saved === 'light') {
+        return saved;
+      }
+    }
+    return 'light';
+  });
 
   // AI Inspector Window State
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
@@ -76,6 +96,16 @@ export default function App() {
   // Single item retest state
   const [retestingItem, setRetestingItem] = useState<{ categoryId: string; itemId: string } | null>(null);
 
+  // Update theme class on document element
+  useEffect(() => {
+    localStorage.setItem('theme', theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
   // --- Actions ---
 
   const handleSelect = (type: 'link' | 'joint', id: string) => {
@@ -87,13 +117,23 @@ export default function App() {
   };
 
   const handleUpdate = (type: 'link' | 'joint', id: string, data: any) => {
-    setRobot(prev => ({
-      ...prev,
-      [type === 'link' ? 'links' : 'joints']: {
-        ...prev[type === 'link' ? 'links' : 'joints'],
-        [id]: data
+    setRobot(prev => {
+      const newState = {
+        ...prev,
+        [type === 'link' ? 'links' : 'joints']: {
+          ...prev[type === 'link' ? 'links' : 'joints'],
+          [id]: data
+        }
+      };
+      
+      // If we have imported URDF content, regenerate it to reflect changes
+      if (originalUrdfContent) {
+        const newUrdf = generateURDF(newState);
+        setTimeout(() => setOriginalUrdfContent(newUrdf), 0);
       }
-    }));
+      
+      return newState;
+    });
   };
 
   const handleAddChild = (parentId: string) => {
@@ -179,7 +219,10 @@ export default function App() {
   };
 
   const generateBOM = (robot: RobotState): string => {
-      const headers = ['Joint Name', 'Type', 'Motor Type', 'Motor ID', 'Direction', 'Armature', 'Lower Limit', 'Upper Limit'];
+      const headers = lang === 'zh' 
+        ? ['关节名称', '类型', '电机型号', '电机 ID', '方向', '电枢', '下限', '上限']
+        : ['Joint Name', 'Type', 'Motor Type', 'Motor ID', 'Direction', 'Armature', 'Lower Limit', 'Upper Limit'];
+      
       const rows = Object.values(robot.joints).map(j => {
           if (j.type === 'fixed') return null;
           // Skip if motor type is None or empty
@@ -265,101 +308,204 @@ export default function App() {
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    try {
-        const zip = await JSZip.loadAsync(file);
-        
-        // 0. Parse Motor Library (if present)
-        // Expected structure: library/motor library/[Brand]/[MotorName].txt
-        const libraryFolder = zip.folder("library/motor library");
-        if (libraryFolder) {
-            const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-            
-            const libPromises: Promise<void>[] = [];
-            
-            libraryFolder.forEach((relativePath: string, fileEntry: any) => {
-                if (!fileEntry.dir && relativePath.endsWith('.txt')) {
-                    // Path is like "Brand/Motor.txt"
-                    const parts = relativePath.split('/');
-                    if (parts.length === 2) {
-                        const brand = parts[0];
-                        const p = fileEntry.async("string").then((content: string) => {
-                            try {
-                                const spec = JSON.parse(content) as MotorSpec;
-                                if (!newLibrary[brand]) newLibrary[brand] = [];
-                                // Avoid duplicates
-                                if (!newLibrary[brand].some(m => m.name === spec.name)) {
-                                    newLibrary[brand].push(spec);
-                                }
-                            } catch (err: any) {
-                                console.warn("Failed to parse motor spec", relativePath);
-                            }
-                        });
-                        libPromises.push(p);
-                    }
-                }
-            });
-            await Promise.all(libPromises);
-            setMotorLibrary(newLibrary);
+    // Helper to process a "virtual filesystem" (map of filename -> blob/url)
+    const processVirtualFS = async (
+        robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null, 
+        assetFiles: { name: string, blob: Blob }[],
+        libraryFiles: { path: string, content: string }[]
+    ) => {
+        // 0. Process Motor Library if found
+        if (libraryFiles.length > 0) {
+             const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
+             libraryFiles.forEach(f => {
+                 try {
+                     const parts = f.path.split('/');
+                     // Expecting .../Brand/Motor.txt
+                     if (parts.length >= 2) {
+                         const brand = parts[parts.length - 2];
+                         const spec = JSON.parse(f.content) as MotorSpec;
+                         if (!newLibrary[brand]) newLibrary[brand] = [];
+                         if (!newLibrary[brand].some(m => m.name === spec.name)) {
+                             newLibrary[brand].push(spec);
+                         }
+                     }
+                 } catch (err) {
+                     console.warn("Failed to parse motor spec", f.path);
+                 }
+             });
+             setMotorLibrary(newLibrary);
         }
 
-        // 1. Find and Parse URDF
-        // Search in root or 'urdf/' folder
-        const urdfFiles = zip.file(/\.urdf$/i);
-        if (urdfFiles.length === 0) {
-            // It might be just a library import? 
-            if (libraryFolder) {
-                alert("Library imported successfully!");
+        // 1. Process Robot File
+        if (!robotFile) {
+            if (libraryFiles.length > 0) {
+                alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
                 return;
             }
-            alert("No URDF file found in the archive.");
+            alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
             return;
         }
 
-        const urdfContent = await urdfFiles[0].async("string") as string;
-        const newState = parseURDF(urdfContent);
+        // Parse based on format
+        let newState: RobotState | null = null;
+        
+        switch (robotFile.format) {
+            case 'urdf':
+                newState = parseURDF(robotFile.content);
+                if (newState) {
+                    setOriginalUrdfContent(robotFile.content);
+                }
+                break;
+            case 'mjcf':
+                newState = parseMJCF(robotFile.content);
+                if (newState) {
+                    // Clear URDF content since this is MJCF
+                    setOriginalUrdfContent('');
+                }
+                break;
+            case 'usd':
+                newState = parseUSDA(robotFile.content);
+                if (newState) {
+                    // Clear URDF content since this is USD
+                    setOriginalUrdfContent('');
+                }
+                break;
+        }
 
         if (newState) {
-            // 2. Load Assets (Meshes)
-            // Look for any supported mesh files in the ZIP, regardless of folder
+            
+            // 2. Load Assets
             const newAssets: Record<string, string> = {};
-            const meshPromises: Promise<void>[] = [];
-            
-            zip.forEach((relativePath: string, fileEntry: any) => {
-                if (fileEntry.dir) return;
-                
-                const ext = relativePath.split('.').pop()?.toLowerCase();
-                if (['stl', 'obj', 'dae'].includes(ext || '')) {
-                     const p = fileEntry.async("blob").then((blob: Blob) => {
-                         // We use the basename as the key, because URDF usually references "package://robot/meshes/basename.stl"
-                         // and our parser extracts just "basename.stl".
-                         const filename = relativePath.split('/').pop()!; 
-                         const url = URL.createObjectURL(blob);
-                         newAssets[filename] = url;
-                     });
-                     meshPromises.push(p);
-                }
+            const assetPromises = assetFiles.map(async f => {
+                 const ext = f.name.split('.').pop()?.toLowerCase();
+                 if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
+                     // Use basename for simple matching
+                     const filename = f.name.split('/').pop()!;
+                     const url = URL.createObjectURL(f.blob);
+                     newAssets[filename] = url;
+                 }
             });
-            
-            await Promise.all(meshPromises);
+            await Promise.all(assetPromises);
 
             // Cleanup old assets
             Object.values(assets).forEach(url => URL.revokeObjectURL(url));
             
             setAssets(newAssets);
             setRobot(newState);
-            setAppMode('skeleton'); // Reset view
+            setAppMode('detail'); // Start with detail mode
         } else {
-            alert("Failed to parse URDF.");
+            const msg = lang === 'zh' 
+                ? `解析 ${robotFile.format.toUpperCase()} 文件失败。` 
+                : `Failed to parse ${robotFile.format.toUpperCase()} file.`;
+            alert(msg);
+        }
+    };
+
+    // Helper to detect file format from content
+    const detectFormat = (content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | null => {
+        const lowerName = filename.toLowerCase();
+        
+        // Check by extension first
+        if (lowerName.endsWith('.urdf')) return 'urdf';
+        if (lowerName.endsWith('.usda') || lowerName.endsWith('.usdc') || lowerName.endsWith('.usd')) return 'usd';
+        
+        // For XML files, check content
+        if (lowerName.endsWith('.xml')) {
+            if (isMJCF(content)) return 'mjcf';
+            // Could also be URDF (though rare with .xml extension)
+            if (content.includes('<robot')) return 'urdf';
+        }
+        
+        // Try content-based detection
+        if (isUSDA(content)) return 'usd';
+        if (isMJCF(content)) return 'mjcf';
+        if (content.includes('<robot')) return 'urdf';
+        
+        return null;
+    };
+
+    try {
+        // Mode 1: Single ZIP file
+        if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+            const zip = await JSZip.loadAsync(files[0]);
+            
+            let robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null = null;
+            const assetFiles: { name: string, blob: Blob }[] = [];
+            const libraryFiles: { path: string, content: string }[] = [];
+
+            // Iterate ZIP
+            const promises: Promise<void>[] = [];
+            zip.forEach((relativePath, fileEntry) => {
+                if (fileEntry.dir) return;
+                
+                const lowerPath = relativePath.toLowerCase();
+                const p = (async () => {
+                    // Check for robot definition files (URDF, MJCF, USD)
+                    if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') || 
+                        lowerPath.endsWith('.usda') || lowerPath.endsWith('.usd')) {
+                        const content = await fileEntry.async("string");
+                        const format = detectFormat(content, relativePath);
+                        if (format && !robotFile) {
+                            robotFile = { name: relativePath, content, format };
+                        }
+                    } else if (lowerPath.includes('motor library') && lowerPath.endsWith('.txt')) {
+                        const content = await fileEntry.async("string");
+                        libraryFiles.push({ path: relativePath, content });
+                    } else {
+                        // Assume asset
+                        const blob = await fileEntry.async("blob");
+                        assetFiles.push({ name: relativePath, blob });
+                    }
+                })();
+                promises.push(p);
+            });
+            await Promise.all(promises);
+
+            // Use the generic processor
+            await processVirtualFS(robotFile, assetFiles, libraryFiles);
+
+        } else {
+            // Mode 2: Multiple Files (Folder upload or Multi-select)
+            const fileList = Array.from(files);
+            
+            let robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null = null;
+            const assetFiles: { name: string, blob: Blob }[] = [];
+            const libraryFiles: { path: string, content: string }[] = [];
+
+            const promises = fileList.map(async f => {
+                const lowerName = f.name.toLowerCase();
+                // Note: file.webkitRelativePath gives path if directory upload, else just empty or filename
+                const path = f.webkitRelativePath || f.name;
+
+                // Check for robot definition files (URDF, MJCF, USD)
+                if (lowerName.endsWith('.urdf') || lowerName.endsWith('.xml') || 
+                    lowerName.endsWith('.usda') || lowerName.endsWith('.usd')) {
+                    const content = await f.text();
+                    const format = detectFormat(content, f.name);
+                    if (format && !robotFile) {
+                        robotFile = { name: path, content, format };
+                    }
+                } else if (path.includes('motor library') && lowerName.endsWith('.txt')) {
+                    const content = await f.text();
+                    libraryFiles.push({ path: path, content });
+                } else {
+                    assetFiles.push({ name: path, blob: f });
+                }
+            });
+            await Promise.all(promises);
+
+            await processVirtualFS(robotFile, assetFiles, libraryFiles);
         }
 
     } catch (error: any) {
         console.error("Import failed:", error);
-        alert("Failed to import package. Ensure it is a valid zip file.");
+        alert(lang === 'zh' ? "导入失败。请检查文件是否有效。" : "Failed to import. Please check if the file(s) are valid.");
     } finally {
         if (importInputRef.current) importInputRef.current.value = "";
+        if (importFolderInputRef.current) importFolderInputRef.current.value = "";
     }
   };
 
@@ -889,9 +1035,9 @@ export default function App() {
       // 注意：这是针对10分制的单项得分，总分需要按比例计算
       const getScoreColor = (score: number, maxScoreForItem: number = 10) => {
         const normalizedScore = (score / maxScoreForItem) * 10; // 归一化到10分制
-        if (normalizedScore >= 9) return 'text-green-400';
-        if (normalizedScore >= 6) return 'text-yellow-400';
-        return 'text-red-400';
+        if (normalizedScore >= 9) return 'text-green-600 dark:text-green-400';
+        if (normalizedScore >= 6) return 'text-yellow-600 dark:text-yellow-400';
+        return 'text-red-600 dark:text-red-400';
       };
 
       const getScoreBgColor = (score: number, maxScoreForItem: number = 10) => {
@@ -930,9 +1076,9 @@ export default function App() {
       return (
           <div className="space-y-4">
                {/* 总分显示和下载按钮 */}
-               <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 p-4 rounded-lg border border-slate-700">
+               <div className="bg-gradient-to-r from-slate-100 dark:from-slate-800/80 to-slate-200 dark:to-slate-900/80 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
                     <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs text-slate-400 uppercase font-bold">{t.overallScore}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{t.overallScore}</div>
                         <div className="flex items-center gap-3">
                             <div className={`text-2xl font-bold ${getScoreColor(overallScore, maxScore)}`}>
                                 {overallScore.toFixed(1)}/{maxScore}
@@ -948,7 +1094,7 @@ export default function App() {
                         </div>
                     </div>
                     {/* 进度条 */}
-                    <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div className="w-full h-2 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
                         <div 
                             className={`h-full transition-all duration-500 ${getScoreBgColor(overallScore, maxScore)}`}
                             style={{ width: `${scorePercentage}%` }}
@@ -957,9 +1103,9 @@ export default function App() {
                </div>
 
                {/* 总结 */}
-               <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
+               <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded border border-slate-200 dark:border-slate-700">
                     <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.inspectorSummary}</div>
-                    <div className="text-sm text-slate-300 font-medium">{inspectionReport.summary}</div>
+                    <div className="text-sm text-slate-700 dark:text-slate-300 font-medium">{inspectionReport.summary}</div>
                </div>
 
                {/* 按章节分组展示 */}
@@ -977,26 +1123,26 @@ export default function App() {
                            : 10;
 
                        return (
-                           <div key={category.id} className="border border-slate-700 rounded-lg overflow-hidden">
+                           <div key={category.id} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
                                {/* 章节标题栏 */}
                                <button
                                    onClick={() => toggleCategory(category.id)}
-                                   className="w-full flex items-center justify-between p-3 bg-slate-800/50 hover:bg-slate-800/70 transition-colors"
+                                   className="w-full flex items-center justify-between p-3 bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800/70 transition-colors"
                                >
                                    <div className="flex items-center gap-2">
                                        {isExpanded ? (
-                                           <ChevronDown className="w-4 h-4 text-slate-400" />
+                                           <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                                        ) : (
-                                           <ChevronRight className="w-4 h-4 text-slate-400" />
+                                           <ChevronRight className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                                        )}
-                                       <span className="text-sm font-bold text-slate-200">{categoryName}</span>
-                                       <span className="text-xs text-slate-400">({category.weight * 100}%)</span>
+                                       <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{categoryName}</span>
+                                       <span className="text-xs text-slate-500 dark:text-slate-400">({category.weight * 100}%)</span>
                                    </div>
                                    <div className="flex items-center gap-2">
                                        <span className={`text-sm font-bold ${getScoreColor(categoryScore)}`}>
                                            {categoryScore.toFixed(1)}/10
                                        </span>
-                                       <div className="w-16 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                       <div className="w-16 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
                                            <div 
                                                className={`h-full ${getScoreBgColor(categoryScore)}`}
                                                style={{ width: `${(categoryScore / 10) * 100}%` }}
@@ -1007,35 +1153,35 @@ export default function App() {
 
                                {/* 章节内容 */}
                                {isExpanded && (
-                                   <div className="p-3 bg-slate-900/30 space-y-2">
+                                   <div className="p-3 bg-slate-50 dark:bg-slate-900/30 space-y-2">
                                        {categoryIssues.length === 0 ? (
-                                           <div className="flex items-center gap-2 p-2 bg-green-900/20 border border-green-700/30 rounded text-green-300 text-xs">
+                                           <div className="flex items-center gap-2 p-2 bg-green-100 dark:bg-green-900/20 border border-green-300 dark:border-green-700/30 rounded text-green-600 dark:text-green-300 text-xs">
                                                <Check className="w-3 h-3" />
-                                               <span>All checks passed for this category</span>
+                                               <span>{lang === 'zh' ? '✓ 该章节所有检查项均通过' : 'All checks passed for this category'}</span>
                                            </div>
                                        ) : (
                                            categoryIssues.map((issue, idx) => {
                                                const issueScore = issue.score ?? 10;
-                                               let colorClass = "bg-slate-800 border-slate-700 text-slate-300";
+                                               let colorClass = "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300";
                                                let icon = <Info className="w-4 h-4" />;
-                                               let titleColor = "text-slate-200";
+                                               let titleColor = "text-slate-700 dark:text-slate-200";
 
                                                if (issue.type === 'error') {
-                                                   colorClass = "bg-red-900/20 border-red-800/50";
+                                                   colorClass = "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50";
                                                    icon = <AlertCircle className="w-4 h-4 text-red-500" />;
-                                                   titleColor = "text-red-300";
+                                                   titleColor = "text-red-600 dark:text-red-300";
                                                } else if (issue.type === 'warning') {
-                                                   colorClass = "bg-amber-900/20 border-amber-800/50";
+                                                   colorClass = "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/50";
                                                    icon = <AlertTriangle className="w-4 h-4 text-amber-500" />;
-                                                   titleColor = "text-amber-300";
+                                                   titleColor = "text-amber-600 dark:text-amber-300";
                                                } else if (issue.type === 'suggestion') {
-                                                   colorClass = "bg-blue-900/20 border-blue-800/50";
+                                                   colorClass = "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50";
                                                    icon = <Sparkles className="w-4 h-4 text-blue-500" />;
-                                                   titleColor = "text-blue-300";
+                                                   titleColor = "text-blue-600 dark:text-blue-300";
                                                } else if (issue.type === 'pass') {
-                                                   colorClass = "bg-green-900/20 border-green-800/50";
+                                                   colorClass = "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/50";
                                                    icon = <Check className="w-4 h-4 text-green-500" />;
-                                                   titleColor = "text-green-300";
+                                                   titleColor = "text-green-600 dark:text-green-300";
                                                }
 
                                                const isRetesting = retestingItem?.categoryId === issue.category && retestingItem?.itemId === issue.itemId;
@@ -1054,7 +1200,7 @@ export default function App() {
                                                                        <button
                                                                            onClick={() => handleRetestItem(issue.category!, issue.itemId!)}
                                                                            disabled={isRetesting || isGeneratingAI}
-                                                                           className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-[10px] rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                                                                           className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-[10px] rounded transition-colors disabled:opacity-50 flex items-center gap-1"
                                                                            title={t.retestItem}
                                                                        >
                                                                            {isRetesting ? (
@@ -1066,7 +1212,7 @@ export default function App() {
                                                                    )}
                                                                </div>
                                                            </div>
-                                                           <div className="text-xs text-slate-400 leading-relaxed">{issue.description}</div>
+                                                           <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{issue.description}</div>
                                                            {issue.relatedIds && issue.relatedIds.length > 0 && (
                                                                <div className="flex flex-wrap gap-1 mt-2">
                                                                    {issue.relatedIds.map(id => {
@@ -1074,7 +1220,7 @@ export default function App() {
                                                                        return (
                                                                         <span 
                                                                             key={id} 
-                                                                            className="text-[10px] bg-slate-900/50 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700/50 cursor-pointer hover:bg-slate-800 hover:text-white"
+                                                                            className="text-[10px] bg-slate-200 dark:bg-slate-900/50 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700/50 cursor-pointer hover:bg-slate-300 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white"
                                                                             onClick={() => {
                                                                                 const type = robot.links[id] ? 'link' : 'joint';
                                                                                 handleSelect(type, id);
@@ -1102,59 +1248,84 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-200 font-sans">
+    <div className="flex flex-col h-screen font-sans bg-google-light-bg dark:bg-google-dark-bg text-slate-800 dark:text-slate-200">
       <input 
         type="file" 
-        accept=".zip" 
+        accept=".zip,.urdf,.xml,.usda,.usd" 
         ref={importInputRef} 
         onChange={handleImport} 
         className="hidden" 
       />
+      <input 
+        type="file" 
+        ref={importFolderInputRef}
+        onChange={handleImport} 
+        className="hidden"
+        {...{ webkitdirectory: "", directory: "" } as any}
+      />
 
       {/* Header */}
-      <header className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 shrink-0 relative">
+      <header className="h-14 border-b flex items-center justify-between px-4 shrink-0 relative bg-white dark:bg-google-dark-surface border-slate-200 dark:border-google-dark-border">
         <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold text-white tracking-tight">{t.appName}</h1>
+            <h1 className="text-lg font-bold tracking-tight text-slate-800 dark:text-white">{t.appName}</h1>
             
             <button 
                 onClick={() => setLang(prev => prev === 'en' ? 'zh' : 'en')}
-                className="flex items-center justify-center p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded transition-colors"
-                title="Switch Language"
+                className="flex items-center justify-center p-2 border rounded transition-colors bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-200 dark:hover:bg-google-dark-border text-slate-600 dark:text-slate-300 border-slate-300 dark:border-google-dark-border"
+                title={lang === 'zh' ? "切换语言" : "Switch Language"}
             >
                 <Globe className="w-4 h-4" />
                 <span className="ml-1 text-xs font-bold">{lang === 'en' ? 'EN' : '中'}</span>
+            </button>
+
+            <button
+                onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                className="flex items-center justify-center p-2 border rounded transition-colors bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-200 dark:hover:bg-google-dark-border text-slate-600 dark:text-slate-300 border-slate-300 dark:border-google-dark-border"
+                title={lang === 'zh' ? "切换主题" : "Toggle Theme"}
+            >
+                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
             <a 
                 href="https://github.com/OpenLegged/URDF-Architect"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-center p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded transition-colors"
-                title="View on GitHub"
+                className="flex items-center justify-center p-2 border rounded transition-colors bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-200 dark:hover:bg-google-dark-border text-slate-600 dark:text-slate-300 border-slate-300 dark:border-google-dark-border"
+                title={lang === 'zh' ? "查看 GitHub" : "View on GitHub"}
             >
                 <Github className="w-4 h-4" />
+            </a>
+            <a
+                href="https://www.d-robotics.cn/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center p-2 border rounded transition-colors bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-200 dark:hover:bg-google-dark-border text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 font-bold gap-1"
+                title={lang === 'zh' ? "感谢地瓜机器人!" : "Thanks to D-Robotics!"}
+            >
+                <Heart className="w-3 h-3 text-red-500 fill-red-500" />
+                <span className="text-xs font-bold">{lang === 'zh' ? '地瓜机器人' : 'D-Robotics'}</span>
             </a>
         </div>
 
         {/* Mode Switcher */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex bg-slate-800 rounded-lg p-1 border border-slate-700">
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex rounded-lg p-1 border bg-slate-200 dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border">
             <button 
                 onClick={() => setAppMode('skeleton')}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${appMode === 'skeleton' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${appMode === 'skeleton' ? 'bg-white dark:bg-google-dark-surface text-slate-800 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
                 <Activity className="w-4 h-4" />
                 {t.skeleton}
             </button>
             <button 
                 onClick={() => setAppMode('detail')}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${appMode === 'detail' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${appMode === 'detail' ? 'bg-white dark:bg-google-dark-surface text-slate-800 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
                 <Box className="w-4 h-4" />
                 {t.detail}
             </button>
             <button 
                 onClick={() => setAppMode('hardware')}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${appMode === 'hardware' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all ${appMode === 'hardware' ? 'bg-white dark:bg-google-dark-surface text-slate-800 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
             >
                 <Cpu className="w-4 h-4" />
                 {t.hardware}
@@ -1164,23 +1335,24 @@ export default function App() {
         <div className="flex items-center gap-2">
             <button
                 onClick={() => { setIsAIModalOpen(true); setAiResponse(null); setInspectionReport(null); setAiPrompt(''); setInspectionProgress(null); setReportGenerationTimer(null); }}
-                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded text-sm transition-all shadow-md"
+                className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 dark:bg-purple-900/40 hover:bg-slate-800 dark:hover:bg-purple-900/60 text-white dark:text-purple-100 rounded text-sm transition-all shadow-sm border border-slate-900 dark:border-purple-500/30"
             >
                 <ScanSearch className="w-4 h-4" />
                 {t.aiAssistant}
             </button>
             <button 
-                onClick={() => importInputRef.current?.click()}
-                className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-sm transition-colors"
+                onClick={() => importFolderInputRef.current?.click()}
+                className="flex items-center gap-2 px-3 py-1.5 border rounded text-sm transition-colors bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-600"
+                title={t.importFolder}
             >
-                <Upload className="w-4 h-4" />
+                <Download className="w-4 h-4" />
                 {t.import}
             </button>
             <button 
                 onClick={handleExport}
-                className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 border rounded text-sm transition-colors bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-white border-slate-300 dark:border-slate-500"
             >
-                <Download className="w-4 h-4" />
+                <Upload className="w-4 h-4" />
                 {t.export}
             </button>
         </div>
@@ -1196,16 +1368,31 @@ export default function App() {
             onNameChange={handleNameChange}
             mode={appMode}
             lang={lang}
+            theme={theme}
+            collapsed={leftSidebarCollapsed}
+            onToggle={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
         />
         
-        <Visualizer 
-            robot={robot} 
-            onSelect={handleSelect}
-            onUpdate={handleUpdate}
-            mode={appMode}
-            assets={assets}
-            lang={lang}
-        />
+        {(appMode === 'detail' || appMode === 'hardware') && originalUrdfContent ? (
+            <URDFViewer
+                urdfContent={originalUrdfContent}
+                assets={assets}
+                lang={lang}
+                mode={appMode}
+                onSelect={handleSelect}
+                theme={theme}
+            />
+        ) : (
+            <Visualizer 
+                robot={robot} 
+                onSelect={handleSelect}
+                onUpdate={handleUpdate}
+                mode={appMode}
+                assets={assets}
+                lang={lang}
+                theme={theme}
+            />
+        )}
         
         <PropertyEditor 
             robot={robot} 
@@ -1215,40 +1402,43 @@ export default function App() {
             onUploadAsset={handleUploadAsset}
             motorLibrary={motorLibrary}
             lang={lang}
+            theme={theme}
+            collapsed={rightSidebarCollapsed}
+            onToggle={() => setRightSidebarCollapsed(!rightSidebarCollapsed)}
         />
       </div>
 
       {/* AI Inspector Floating Window */}
-      {isAIModalOpen && (
-          <div 
-            style={{ left: aiPanelPos.x, top: aiPanelPos.y }}
-            className="fixed z-50 w-[900px] flex flex-col bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-600"
-          >
-              <div 
-                onMouseDown={handleDragStart}
-                className="flex items-center justify-between p-3 border-b border-slate-700 shrink-0 cursor-move bg-slate-800/50 rounded-t-lg select-none"
-              >
+            {isAIModalOpen && (
+                    <div 
+                        style={{ left: aiPanelPos.x, top: aiPanelPos.y }}
+                        className="fixed z-50 w-[900px] flex flex-col bg-slate-100 dark:bg-[#181c20] backdrop-blur-md shadow-2xl rounded-lg border border-slate-300 dark:border-slate-700"
+                    >
+                            <div 
+                                onMouseDown={handleDragStart}
+                                className="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700 shrink-0 cursor-move bg-slate-200/80 dark:bg-[#23272b] rounded-t-lg select-none"
+                            >
                   <div className="flex items-center gap-2">
-                      <ScanSearch className="w-4 h-4 text-purple-400" />
-                      <h2 className="text-sm font-bold text-white">{t.aiTitle}</h2>
+                      <ScanSearch className="w-4 h-4 text-purple-600 dark:text-purple-300" />
+                      <h2 className="text-sm font-bold text-slate-800 dark:text-white">{t.aiTitle}</h2>
                   </div>
                   <div className="flex items-center gap-2">
-                     <Move className="w-3 h-3 text-slate-500" />
-                     <button onClick={() => { setIsAIModalOpen(false); setInspectionProgress(null); setReportGenerationTimer(null); }} className="text-slate-400 hover:text-white">
+                     <Move className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+                     <button onClick={() => { setIsAIModalOpen(false); setInspectionProgress(null); setReportGenerationTimer(null); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-white">
                         <X className="w-4 h-4" />
                      </button>
                   </div>
               </div>
               
-              <div className="flex flex-1 overflow-hidden">
+              <div className="flex flex-1 overflow-hidden bg-white dark:bg-[#181c20]">
                   {/* 左侧：检查项目选择器和运行按钮 */}
-                  <div className="w-64 border-r border-slate-700 flex flex-col bg-slate-800/30">
-                      <div className="p-3 border-b border-slate-700">
-                          <h3 className="text-xs font-bold text-slate-300 uppercase mb-2">{t.inspectionItems}</h3>
+                  <div className="w-64 border-r border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50/30 dark:bg-[#23272b]">
+                      <div className="p-3 border-b border-slate-200 dark:border-slate-700">
+                          <h3 className="text-xs font-bold text-slate-500 dark:text-slate-300 uppercase mb-2">{t.inspectionItems}</h3>
                           <button
                               onClick={handleRunInspection}
                               disabled={isGeneratingAI}
-                              className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                              className="w-full py-2 bg-slate-800 dark:bg-[#23272b] hover:bg-slate-700 dark:hover:bg-[#181c20] text-white rounded text-sm flex items-center justify-center gap-2 transition-colors border border-slate-700 dark:border-slate-600 disabled:opacity-50"
                           >
                               {isGeneratingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
                               {isGeneratingAI ? t.thinking : t.runInspection}
@@ -1263,9 +1453,9 @@ export default function App() {
                               const someSelected = category.items.some(item => selectedItemIds.has(item.id));
                               
                               return (
-                                  <div key={category.id} className="border border-slate-700 rounded-lg overflow-hidden">
+                                  <div key={category.id} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
                                       {/* 章节标题 */}
-                                      <div className="w-full flex items-center justify-between p-2 bg-slate-800/50 hover:bg-slate-800/70 transition-colors">
+                                      <div className="w-full flex items-center justify-between p-2 bg-slate-100/50 dark:bg-slate-800/50 hover:bg-slate-200/50 dark:hover:bg-slate-800/70 transition-colors">
                                           <div className="flex items-center gap-2 flex-1">
                                               <input
                                                   type="checkbox"
@@ -1275,7 +1465,7 @@ export default function App() {
                                                   }}
                                                   onChange={() => toggleCategorySelection(category.id)}
                                                   onClick={(e) => e.stopPropagation()}
-                                                  className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
+                                                  className="rounded border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-700 text-purple-600 focus:ring-purple-500"
                                               />
                                               <button
                                                   onClick={() => {
@@ -1291,7 +1481,7 @@ export default function App() {
                                                   }}
                                                   className="flex-1 text-left"
                                               >
-                                                  <span className="text-xs font-bold text-slate-200">{categoryName}</span>
+                                                  <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{categoryName}</span>
                                               </button>
                                           </div>
                                           <button
@@ -1317,20 +1507,20 @@ export default function App() {
                                       
                                       {/* 子项列表 */}
                                       {expandedCategories.has(category.id) && (
-                                          <div className="p-2 space-y-1 bg-slate-900/30">
+                                          <div className="p-2 space-y-1 bg-slate-50/50 dark:bg-slate-900/30">
                                               {category.items.map(item => (
                                                   <label
                                                       key={item.id}
-                                                      className="flex items-center gap-2 p-1.5 hover:bg-slate-800/50 rounded cursor-pointer"
+                                                      className="flex items-center gap-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded cursor-pointer"
                                                       onClick={(e) => e.stopPropagation()}
                                                   >
                                                       <input
                                                           type="checkbox"
                                                           checked={selectedItemIds.has(item.id)}
                                                           onChange={() => toggleItemSelection(category.id, item.id)}
-                                                          className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-purple-500"
+                                                          className="rounded border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-700 text-purple-600 focus:ring-purple-500"
                                                       />
-                                                      <span className="text-[10px] text-slate-300">{lang === 'zh' ? item.nameZh : item.name}</span>
+                                                      <span className="text-[10px] text-slate-600 dark:text-slate-300">{lang === 'zh' ? item.nameZh : item.name}</span>
                                                   </label>
                                               ))}
                                           </div>
@@ -1342,39 +1532,39 @@ export default function App() {
                   </div>
                   
                   {/* 右侧：检查结果 */}
-                  <div className="flex-1 p-4 overflow-y-auto custom-scrollbar max-h-[60vh]">
+                  <div className="flex-1 p-4 overflow-y-auto custom-scrollbar max-h-[60vh] bg-white dark:bg-[#181c20]">
                       {inspectionProgress ? (
                           <div className="space-y-4">
-                              <div className="bg-gradient-to-r from-purple-900/20 to-blue-900/20 border border-purple-500/30 rounded-lg p-4">
+                              <div className="bg-slate-100 dark:bg-[#23272b] border border-slate-300 dark:border-slate-700 rounded-lg p-4">
                                   <div className="flex items-center justify-between mb-3">
-                                      <h3 className="text-sm font-bold text-purple-200">{t.runInspection}</h3>
-                                      <span className="text-xs text-slate-400">
+                                      <h3 className="text-sm font-bold text-purple-700 dark:text-purple-200">{t.runInspection}</h3>
+                                      <span className="text-xs text-slate-500 dark:text-slate-400">
                                           {inspectionProgress.completed} / {inspectionProgress.total}
                                       </span>
                                   </div>
-                                  <div className="w-full h-2 bg-slate-700 rounded-full overflow-hidden mb-3">
+                                  <div className="w-full h-2 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
                                       <div 
-                                          className="h-full bg-gradient-to-r from-purple-500 to-blue-500 transition-all duration-300"
+                                          className="h-full bg-slate-800 dark:bg-[#23272b] transition-all duration-300"
                                           style={{ width: `${(inspectionProgress.completed / inspectionProgress.total) * 100}%` }}
                                       />
                                   </div>
                                   {inspectionProgress.currentCategory && inspectionProgress.currentItem && (
-                                      <div className="flex items-center gap-2 text-sm text-slate-300">
-                                          <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                                      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                                          <Loader2 className="w-4 h-4 animate-spin text-purple-500 dark:text-purple-400" />
                                           <span>
-                                              {lang === 'zh' ? '正在检查' : 'Checking'}: <span className="font-bold text-purple-300">{inspectionProgress.currentCategory}</span> - <span className="text-slate-400">{inspectionProgress.currentItem}</span>
+                                              {lang === 'zh' ? '正在检查' : 'Checking'}: <span className="font-bold text-purple-600 dark:text-purple-300">{inspectionProgress.currentCategory}</span> - <span className="text-slate-500 dark:text-slate-400">{inspectionProgress.currentItem}</span>
                                           </span>
                                       </div>
                                   )}
                                   {inspectionProgress.completed === inspectionProgress.total && (
                                       <div className="space-y-2">
-                                          <div className="flex items-center gap-2 text-sm text-green-400">
+                                          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
                                               <Check className="w-4 h-4" />
                                               <span>{lang === 'zh' ? '检查完成' : 'Inspection completed'}</span>
                                           </div>
                                           {reportGenerationTimer !== null && (
-                                              <div className="flex items-center gap-2 text-sm text-purple-300">
-                                                  <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                                              <div className="flex items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
+                                                  <Loader2 className="w-4 h-4 animate-spin text-slate-800 dark:text-slate-200" />
                                                   <span>
                                                       {lang === 'zh' 
                                                           ? `生成报告中，预计时间是30s (${reportGenerationTimer}s)` 
@@ -1392,8 +1582,8 @@ export default function App() {
                                       const categoryItems = category.items.filter(item => selectedItemIds.has(item.id));
                                       if (categoryItems.length === 0) return null;
                                       return (
-                                          <div key={category.id} className="border border-slate-700 rounded-lg p-3 bg-slate-800/30">
-                                              <div className="text-xs font-bold text-slate-300 mb-2">{categoryName}</div>
+                                          <div key={category.id} className="border border-slate-200 dark:border-slate-700 rounded-lg p-3 bg-slate-50 dark:bg-[#23272b]">
+                                              <div className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2">{categoryName}</div>
                                               <div className="space-y-1">
                                                   {categoryItems.map((item, idx) => {
                                                       const globalIndex = (() => {
@@ -1407,23 +1597,23 @@ export default function App() {
                                                       })();
                                                       const itemName = lang === 'zh' ? item.nameZh : item.name;
                                                       const isCurrent = inspectionProgress.completed === globalIndex + 1 && 
-                                                                        inspectionProgress.currentItem === itemName;
+                                                                       inspectionProgress.currentItem === itemName;
                                                       const isCompleted = inspectionProgress.completed > globalIndex + 1;
                                                       return (
                                                           <div 
-                                                              key={item.id} 
+                                                              key={item.id}
                                                               className={`flex items-center gap-2 p-1.5 rounded text-xs ${
-                                                                  isCurrent ? 'bg-purple-900/30 text-purple-300' :
-                                                                  isCompleted ? 'bg-green-900/20 text-green-400' :
-                                                                  'text-slate-400'
-                                                              }`}
+                                                                      isCurrent ? 'bg-slate-200 dark:bg-[#23272b] text-slate-800 dark:text-slate-200' :
+                                                                      isCompleted ? 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400' :
+                                                                      'text-slate-500 dark:text-slate-400'
+                                                                  }`}
                                                           >
                                                               {isCurrent ? (
                                                                   <Loader2 className="w-3 h-3 animate-spin" />
                                                               ) : isCompleted ? (
                                                                   <Check className="w-3 h-3" />
                                                               ) : (
-                                                                  <div className="w-3 h-3 rounded-full border border-slate-600" />
+                                                                  <div className="w-3 h-3 rounded-full border border-slate-400 dark:border-slate-600" />
                                                               )}
                                                               <span>{itemName}</span>
                                                           </div>
@@ -1437,19 +1627,19 @@ export default function App() {
                           </div>
                       ) : !aiResponse && !inspectionReport ? (
                           <>
-                            <div className="bg-purple-900/10 border border-purple-500/20 rounded p-4 mb-4">
-                                <h3 className="text-sm font-bold text-purple-200 mb-2">{t.runInspection}</h3>
-                                <p className="text-xs text-slate-400 mb-3">{t.aiExamples}</p>
+                              <div className="bg-slate-100 dark:bg-[#23272b] border border-slate-300 dark:border-slate-700 rounded p-4 mb-4">
+                                <h3 className="text-sm font-bold text-purple-700 dark:text-purple-200 mb-2">{t.runInspection}</h3>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{t.aiExamples}</p>
                             </div>
 
-                            <p className="text-sm text-slate-400 mb-3 border-t border-slate-700 pt-4">
+                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-3 border-t border-slate-200 dark:border-slate-700 pt-4">
                                 {t.aiIntro}
                             </p>
                             
                             <textarea 
                                 value={aiPrompt}
                                 onChange={(e) => setAiPrompt(e.target.value)}
-                                className="w-full h-24 bg-slate-900 border border-slate-700 rounded p-3 text-slate-200 text-sm focus:border-purple-500 focus:outline-none resize-none"
+                                className="w-full h-24 bg-slate-50 dark:bg-[#23272b] border border-slate-200 dark:border-slate-700 rounded p-3 text-slate-700 dark:text-slate-200 text-sm focus:border-slate-800 dark:focus:border-slate-400 focus:outline-none resize-none"
                                 placeholder={t.aiPlaceholder}
                             />
                           </>
@@ -1461,19 +1651,19 @@ export default function App() {
                                 
                                 {/* Chat Dialog - Bottom Right of Report */}
                                 {isReportChatOpen && (
-                                  <div className="fixed bottom-4 right-4 z-50 w-96 h-[500px] flex flex-col bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-600">
-                                    <div className="flex items-center justify-between p-3 border-b border-slate-700 shrink-0 bg-slate-800/50 rounded-t-lg">
-                                      <div className="flex items-center gap-2">
-                                        <MessageCircle className="w-4 h-4 text-blue-400" />
-                                        <h3 className="text-sm font-bold text-white">{t.chatTitle}</h3>
-                                      </div>
+                                  <div className="fixed bottom-4 right-4 z-50 w-96 h-[500px] flex flex-col bg-white/95 dark:bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-300 dark:border-slate-600">
+                                    <div className="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100/50 dark:bg-slate-800/50 rounded-t-lg">
+                                        <div className="flex items-center gap-2">
+                                            <MessageCircle className="w-4 h-4 text-blue-500 dark:text-blue-400" />
+                                            <h3 className="text-sm font-bold text-slate-800 dark:text-white">{t.chatTitle}</h3>
+                                        </div>
                                       <button
                                         onClick={() => {
                                           setIsReportChatOpen(false);
                                           setReportChatMessages([]);
                                           setReportChatInput('');
                                         }}
-                                        className="text-slate-400 hover:text-white"
+                                        className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
                                       >
                                         <X className="w-4 h-4" />
                                       </button>
@@ -1481,7 +1671,7 @@ export default function App() {
 
                                     <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                                       {reportChatMessages.length === 0 ? (
-                                        <div className="text-sm text-slate-400 text-center py-8">
+                                        <div className="text-sm text-slate-500 dark:text-slate-400 text-center py-8">
                                           {lang === 'zh' ? '询问检测报告中的问题...' : 'Ask about issues in the inspection report...'}
                                         </div>
                                       ) : (
@@ -1494,7 +1684,7 @@ export default function App() {
                                               className={`max-w-[80%] rounded-lg p-3 ${
                                                 msg.role === 'user'
                                                   ? 'bg-blue-600 text-white'
-                                                  : 'bg-slate-800 text-slate-200'
+                                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
                                               }`}
                                             >
                                               <div className="text-xs whitespace-pre-wrap leading-relaxed">{msg.content}</div>
@@ -1504,14 +1694,14 @@ export default function App() {
                                       )}
                                       {isChatGenerating && (
                                         <div className="flex justify-start">
-                                          <div className="bg-slate-800 rounded-lg p-3">
-                                            <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                                          <div className="bg-slate-200 dark:bg-slate-800 rounded-lg p-3">
+                                            <Loader2 className="w-4 h-4 animate-spin text-blue-500 dark:text-blue-400" />
                                           </div>
                                         </div>
                                       )}
                                     </div>
 
-                                    <div className="p-3 border-t border-slate-700 shrink-0">
+                                    <div className="p-3 border-t border-slate-200 dark:border-slate-700 shrink-0">
                                       <div className="flex gap-2">
                                         <input
                                           type="text"
@@ -1524,13 +1714,13 @@ export default function App() {
                                             }
                                           }}
                                           placeholder={t.chatPlaceholder}
-                                          className="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 text-sm focus:border-blue-500 focus:outline-none"
+                                          className="flex-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-3 py-2 text-slate-700 dark:text-slate-200 text-sm focus:border-blue-500 focus:outline-none"
                                           disabled={isChatGenerating}
                                         />
                                         <button
                                           onClick={handleReportChatSend}
                                           disabled={isChatGenerating || !reportChatInput.trim()}
-                                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded transition-colors flex items-center gap-2"
+                                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 text-white rounded transition-colors flex items-center gap-2"
                                         >
                                           {isChatGenerating ? (
                                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -1558,25 +1748,25 @@ export default function App() {
                             
                             {aiResponse && (
                                 <div className="space-y-4">
-                                    <div className="bg-slate-900/50 p-3 rounded border border-slate-700">
+                                      <div className="bg-slate-50 dark:bg-[#23272b] p-3 rounded border border-slate-200 dark:border-slate-700">
                                         <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.yourRequest}</div>
-                                        <div className="text-sm text-slate-300">{aiPrompt}</div>
+                                        <div className="text-sm text-slate-700 dark:text-slate-300">{aiPrompt}</div>
                                     </div>
                                     
-                                    <div className="bg-purple-900/20 p-3 rounded border border-purple-500/30">
+                                    <div className="bg-slate-100 dark:bg-[#23272b] p-3 rounded border border-slate-300 dark:border-slate-700">
                                         <div className="flex items-center gap-2 mb-1">
-                                            <Sparkles className="w-3 h-3 text-purple-400" />
-                                            <div className="text-xs text-purple-300 uppercase font-bold">
+                                            <Sparkles className="w-3 h-3 text-slate-800 dark:text-slate-200" />
+                                            <div className="text-xs text-slate-800 dark:text-slate-200 uppercase font-bold">
                                                 {t.aiResponse} {aiResponse.type ? `(${aiResponse.type})` : ''}
                                             </div>
                                         </div>
-                                        <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
+                                        <div className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
                                             {aiResponse.explanation || (lang === 'zh' ? '正在处理...' : 'Processing...')}
                                         </div>
                                     </div>
                                     
                                     {aiResponse.data && (
-                                        <div className="flex items-center gap-2 text-xs text-yellow-500 bg-yellow-900/20 p-2 rounded border border-yellow-700/30">
+                                        <div className="flex items-center gap-2 text-xs text-yellow-600 dark:text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded border border-yellow-300 dark:border-yellow-700/30">
                                             <Box className="w-3 h-3" />
                                             {t.actionWarning}
                                         </div>
@@ -1588,12 +1778,12 @@ export default function App() {
                   </div>
               </div>
 
-              <div className="p-3 border-t border-slate-700 flex justify-between gap-2 shrink-0 bg-slate-800/30 rounded-b-lg">
+              <div className="p-3 border-t border-slate-200 dark:border-slate-700 flex justify-between gap-2 shrink-0 bg-slate-100/30 dark:bg-[#23272b] rounded-b-lg">
                   {(aiResponse || inspectionReport) ? (
                       <>
                           <button 
                             onClick={() => { setAiResponse(null); setInspectionReport(null); setAiPrompt(''); setInspectionProgress(null); setReportGenerationTimer(null); }}
-                            className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                            className="px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white"
                           >
                             {t.back}
                           </button>
@@ -1611,14 +1801,14 @@ export default function App() {
                       <>
                         <button 
                             onClick={() => { setIsAIModalOpen(false); setInspectionProgress(null); setReportGenerationTimer(null); }}
-                            className="px-3 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                            className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#23272b] rounded transition-colors"
                         >
                             {t.cancel}
                         </button>
                         <button 
                             onClick={handleGenerateAI}
                             disabled={isGeneratingAI || !aiPrompt.trim()}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs rounded transition-colors flex items-center gap-2"
+                            className="px-3 py-1.5 bg-slate-800 dark:bg-[#23272b] hover:bg-slate-700 dark:hover:bg-[#181c20] disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs rounded transition-colors flex items-center gap-2 border border-slate-700 dark:border-slate-600"
                         >
                             {isGeneratingAI ? (
                                 <>
