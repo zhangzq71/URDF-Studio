@@ -8,10 +8,12 @@ import React, { Suspense, useState, useMemo, useRef, useEffect, useCallback } fr
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, GizmoHelper, GizmoViewport, Html, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { RotateCcw, Move, ArrowUpRight } from 'lucide-react';
 // @ts-ignore
 import URDFLoader from 'urdf-loader';
 import { translations, Language } from '../services/i18n';
-import { Theme } from '../types';
+import { MathUtils } from '../services/mathUtils';
+import { Theme, UrdfLink } from '../types';
 
 interface URDFViewerProps {
     urdfContent: string;
@@ -23,6 +25,7 @@ interface URDFViewerProps {
     theme: Theme;
     selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
     hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
+    robotLinks?: Record<string, UrdfLink>; // Link data from the app state, contains inertial info
 }
 
 // Clean file path (remove '..' and '.', normalize slashes)
@@ -306,6 +309,9 @@ interface RobotModelProps {
     highlightMode?: 'link' | 'collision';
     showInertia?: boolean;
     showCenterOfMass?: boolean;
+    showOrigins?: boolean;
+    showJointAxes?: boolean;
+    robotLinks?: Record<string, UrdfLink>; // Link data from the app state, contains inertial info
 }
 
 // Empty raycast function to disable raycast on collision meshes
@@ -337,7 +343,7 @@ const collisionBaseMaterial = new THREE.MeshBasicMaterial({
     depthTest: false
 });
 
-function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
+function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, showJointAxes = false, robotLinks }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [robotVersion, setRobotVersion] = useState(0); // Track async loading updates
@@ -419,6 +425,9 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                 // Stop if we hit another joint (not the root)
                 if (!isRoot && c.isURDFJoint) return;
                 
+                // Skip gizmos (CoM, Inertia visuals)
+                if (c.userData?.isGizmo) return;
+
                 if (c.isMesh) {
                     const isCollider = c.isURDFCollider || c.userData.isCollisionMesh;
                     // If meshToHighlight is provided, only highlight that specific mesh.
@@ -480,6 +489,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         const findNearestJoint = (obj: THREE.Object3D | null): any => {
             let curr = obj;
             while (curr) {
+                if (curr.userData?.isGizmo) return null; // Ignore gizmos
                 if ((curr as any).isURDFJoint && (curr as any).jointType !== 'fixed') {
                     return curr;
                 }
@@ -492,6 +502,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         const findParentLink = (hitObject: THREE.Object3D): THREE.Object3D | null => {
             let current: THREE.Object3D | null = hitObject;
             while (current) {
+                if (current.userData?.isGizmo) return null; // Ignore gizmos
                 // Check if is URDFLink
                 if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
                     return current;
@@ -617,7 +628,15 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             const intersections = raycasterRef.current.intersectObject(robot, true);
             
             // Filter intersections based on current mode
+            // Also filter out gizmo objects (CoM, inertia, axes, etc.)
             const validHits = intersections.filter(hit => {
+                // Skip gizmo objects
+                if (hit.object.userData?.isGizmo) return false;
+                let p = hit.object.parent;
+                while (p) {
+                    if (p.userData?.isGizmo) return false;
+                    p = p.parent;
+                }
                 const isCollider = (hit.object as any).isURDFCollider || hit.object.userData.isCollisionMesh;
                 return isCollisionMode ? isCollider : !isCollider;
             });
@@ -725,7 +744,15 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         
         if (intersections.length > 0) {
             // Filter intersections based on current mode (visual vs collision)
+            // Also filter out gizmo objects (CoM, inertia, axes, etc.)
             const validHits = intersections.filter(hit => {
+                // Skip gizmo objects
+                if (hit.object.userData?.isGizmo) return false;
+                let p = hit.object.parent;
+                while (p) {
+                    if (p.userData?.isGizmo) return false;
+                    p = p.parent;
+                }
                 const isCollider = (hit.object as any).isURDFCollider || hit.object.userData.isCollisionMesh;
                 return isCollisionMode ? isCollider : !isCollider;
             });
@@ -834,111 +861,358 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
     useEffect(() => {
         if (!robot) return;
 
-        let foundInertia = false;
+        console.log('[URDFViewer] Updating CoM/Inertia visibility:', { showInertia, showCenterOfMass, hasRobotLinks: !!robotLinks });
+        let linkCount = 0;
+        let inertialCount = 0;
 
         robot.traverse((child: any) => {
-            if (child.isURDFLink && child.inertial) {
-                foundInertia = true;
-                // Check if visualization group already exists
-                let vizGroup = child.children.find((c: any) => c.name === '__inertia_visual__');
+            if (child.isURDFLink) {
+                linkCount++;
                 
-                if (!vizGroup) {
-                    vizGroup = new THREE.Group();
-                    vizGroup.name = '__inertia_visual__';
-                    child.add(vizGroup);
-                }
-
-                // --- 1. CoM Frame (Axes) ---
-                let axesHelper = vizGroup.children.find((c: any) => c.name === '__com_axis__');
-                if (!axesHelper) {
-                    axesHelper = new THREE.AxesHelper(0.15); // 15cm axes
-                    axesHelper.name = '__com_axis__';
-                    // Make axes visible through objects
-                    (axesHelper.material as THREE.Material).depthTest = false;
-                    (axesHelper.material as THREE.Material).transparent = true;
-                    axesHelper.renderOrder = 999;
-                    vizGroup.add(axesHelper);
-                }
-                axesHelper.visible = showCenterOfMass;
-
-                // --- 2. Inertia Box ---
-                let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
+                // Get inertial data from robotLinks (passed from app state) instead of urdf-loader
+                const linkName = child.name || child.urdfName;
+                const linkData = robotLinks?.[linkName];
+                const inertialData = linkData?.inertial;
                 
-                // Only try to create/update box if we don't have one
-                if (!inertiaBox) {
-                    const mass = child.inertial.mass || 0;
-                    const inertia = child.inertial.inertia || {};
+                // Check if we have valid inertial data with mass > 0
+                if (inertialData && inertialData.mass > 0) {
+                    inertialCount++;
+                    // Found a link with inertial data
+                    // Check if visualization group already exists
+                    let vizGroup = child.children.find((c: any) => c.name === '__inertia_visual__');
                     
-                    if (mass > 0 && inertia.ixx !== undefined) {
-                        const { ixx, iyy, izz } = inertia;
-                        // Calculate box dimensions for solid box
-                        const calcDim = (a: number, b: number, c: number) => {
-                            const val = 6 * (a + b - c) / mass;
-                            return val > 0 ? Math.sqrt(val) : 0.01;
-                        };
-                        
-                        const dimX = calcDim(iyy, izz, ixx);
-                        const dimY = calcDim(ixx, izz, iyy);
-                        const dimZ = calcDim(ixx, iyy, izz);
-                        
-                        const geom = new THREE.BoxGeometry(dimX, dimY, dimZ);
-                        
-                        // Create a group for the box + edges
-                        inertiaBox = new THREE.Group();
-                        inertiaBox.name = '__inertia_box__';
+                    if (!vizGroup) {
+                        vizGroup = new THREE.Group();
+                        vizGroup.name = '__inertia_visual__';
+                        vizGroup.userData = { isGizmo: true }; // Mark as gizmo
+                        child.add(vizGroup);
+                    }
 
-                        // Solid transparent mesh
-                        const mat = new THREE.MeshBasicMaterial({ 
-                            color: 0xffffff, 
-                            transparent: true,
-                            opacity: 0.3,
-                            depthWrite: false
+                    // --- 1. CoM Indicator (Sphere) ---
+                    let comVisual = vizGroup.children.find((c: any) => c.name === '__com_visual__');
+                    if (!comVisual) {
+                        comVisual = new THREE.Group();
+                        comVisual.name = '__com_visual__';
+                        comVisual.userData = { isGizmo: true }; // Mark as gizmo
+                        
+                        const radius = 0.03; // Increased radius for visibility
+                        const geometry = new THREE.SphereGeometry(radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2);
+                        const matBlack = new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: false, transparent: true, opacity: 0.8 });
+                        const matWhite = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.8 });
+                        
+                        const positions = [
+                            [0, 0, 0], [0, Math.PI/2, 0], [0, Math.PI, 0], [0, -Math.PI/2, 0], 
+                            [Math.PI, 0, 0], [Math.PI, Math.PI/2, 0], [Math.PI, Math.PI, 0], [Math.PI, -Math.PI/2, 0]
+                        ];
+                        
+                        positions.forEach((rot, i) => {
+                            const mesh = new THREE.Mesh(geometry, (i % 2 === 0) ? matBlack : matWhite);
+                            mesh.rotation.set(rot[0], rot[1], rot[2]);
+                            mesh.renderOrder = 999; // Draw on top
+                            mesh.userData = { isGizmo: true };
+                            mesh.raycast = () => {}; // Disable raycasting
+                            comVisual.add(mesh);
                         });
-                        const mesh = new THREE.Mesh(geom, mat);
-                        inertiaBox.add(mesh);
+                        
+                        // Small axes for orientation reference
+                        const axes = new THREE.AxesHelper(0.1);
+                        (axes.material as THREE.Material).depthTest = false;
+                        (axes.material as THREE.Material).transparent = true;
+                        axes.renderOrder = 999;
+                        axes.userData = { isGizmo: true };
+                        axes.raycast = () => {}; // Disable raycasting
+                        comVisual.add(axes);
 
-                        // Edges
-                        const edges = new THREE.EdgesGeometry(geom);
-                        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5 }));
-                        inertiaBox.add(line);
-
-                        vizGroup.add(inertiaBox);
+                        vizGroup.add(comVisual);
                     }
-                }
-                
-                if (inertiaBox) {
-                    inertiaBox.visible = showInertia;
-                }
+                    comVisual.visible = showCenterOfMass;
+                    
+                    // Remove old __com_axis__ if it exists to avoid clutter
+                    const oldAxis = vizGroup.children.find((c: any) => c.name === '__com_axis__');
+                    if (oldAxis) vizGroup.remove(oldAxis);
 
-                // Apply Inertial Origin transform to the whole visual group
-                if (child.inertial.origin) {
-                    const origin = child.inertial.origin;
-                    if (origin.position && origin.quaternion) {
-                        // If already parsed as THREE objects
-                        vizGroup.position.copy(origin.position);
-                        vizGroup.quaternion.copy(origin.quaternion);
-                    } else {
-                        // Manual fallback
+                    // --- 2. Inertia Box ---
+                    let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
+                    
+                    // Only try to create/update box if we don't have one
+                    if (!inertiaBox) {
+                        // Use MathUtils to compute box from full inertia tensor
+                        // This handles off-diagonal elements (rotations) correctly
+                        const boxData = MathUtils.computeInertiaBox(inertialData);
+                        
+                        if (boxData) {
+                            const { width, height, depth, rotation } = boxData;
+                            const geom = new THREE.BoxGeometry(width, height, depth);
+                            
+                            // Create a group for the box + edges
+                            inertiaBox = new THREE.Group();
+                            inertiaBox.name = '__inertia_box__';
+                            inertiaBox.userData = { isGizmo: true };
+
+                            // Solid transparent mesh
+                            const mat = new THREE.MeshBasicMaterial({ 
+                                color: 0x4a9eff, 
+                                transparent: true,
+                                opacity: 0.2,
+                                depthWrite: false,
+                                depthTest: false  // Render on top of transparent objects
+                            });
+                            const mesh = new THREE.Mesh(geom, mat);
+                            mesh.quaternion.copy(rotation); // Apply inertia tensor rotation
+                            mesh.userData = { isGizmo: true };
+                            mesh.raycast = () => {}; // Disable raycasting
+                            mesh.renderOrder = 999; // Render after other objects
+                            inertiaBox.add(mesh);
+
+                            // Edges
+                            const edges = new THREE.EdgesGeometry(geom);
+                            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ 
+                                color: 0x4a9eff, 
+                                transparent: true, 
+                                opacity: 0.6,
+                                depthWrite: false,
+                                depthTest: false  // Render on top of transparent objects
+                            }));
+                            line.quaternion.copy(rotation); // Apply inertia tensor rotation
+                            line.userData = { isGizmo: true };
+                            line.raycast = () => {}; // Disable raycasting
+                            line.renderOrder = 1000; // Render after other objects
+                            inertiaBox.add(line);
+
+                            vizGroup.add(inertiaBox);
+                        }
+                    }
+                    
+                    if (inertiaBox) {
+                        inertiaBox.visible = showInertia;
+                    }
+
+                    // Apply Inertial Origin transform to the whole visual group
+                    if (inertialData.origin) {
+                        const origin = inertialData.origin;
                         const xyz = origin.xyz || { x: 0, y: 0, z: 0 };
-                        const rpy = origin.rpy || { x: 0, y: 0, z: 0 };
+                        const rpy = origin.rpy || { r: 0, p: 0, y: 0 };
                         vizGroup.position.set(xyz.x, xyz.y, xyz.z);
-                        vizGroup.rotation.set(rpy.x, rpy.y, rpy.z);
+                        vizGroup.rotation.set(rpy.r, rpy.p, rpy.y);
                     }
+                    
+                    // Show group if either is enabled
+                    vizGroup.visible = showInertia || showCenterOfMass;
                 }
-                
-                // Show group if either is enabled
-                vizGroup.visible = showInertia || showCenterOfMass;
             }
         });
         
-        // if (!foundInertia) {
-        //    console.warn("No links with inertial data found.");
-        // }
+        console.log(`[URDFViewer] Found ${linkCount} links, ${inertialCount} with inertia data.`);
 
         // Request re-render
         invalidate();
 
-    }, [robot, showInertia, showCenterOfMass, robotVersion, invalidate]);
+    }, [robot, showInertia, showCenterOfMass, robotVersion, invalidate, robotLinks]);
+
+    // Effect to handle Transparency, Origins, and Joint Axes
+    useEffect(() => {
+        if (!robot) return;
+
+        const shouldBeTransparent = showCenterOfMass || showInertia;
+        const transparencyOpacity = 0.3;
+
+        robot.traverse((child: any) => {
+            // Check if gizmo (or child of gizmo)
+            let isGizmo = child.userData?.isGizmo;
+            let p = child.parent;
+            while (p && !isGizmo) {
+                if (p.userData?.isGizmo) isGizmo = true;
+                p = p.parent;
+            }
+            if (isGizmo) return; // Skip gizmos and their children from transparency logic
+
+            // 1. Transparency Logic
+            if (child.isMesh && !child.userData.isCollisionMesh) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                
+                materials.forEach((mat: THREE.Material) => {
+                    if (!mat.userData.originalProps) {
+                        mat.userData.originalProps = {
+                            transparent: mat.transparent,
+                            opacity: mat.opacity,
+                            depthWrite: mat.depthWrite
+                        };
+                    }
+                    
+                    if (shouldBeTransparent) {
+                        mat.transparent = true;
+                        mat.opacity = transparencyOpacity;
+                        mat.depthWrite = false; // Disable depth write to prevent occlusion issues
+                        mat.side = THREE.DoubleSide; // Ensure back faces are visible
+                    } else {
+                        // Restore original properties
+                        if (mat.userData.originalProps) {
+                            mat.transparent = mat.userData.originalProps.transparent;
+                            mat.opacity = mat.userData.originalProps.opacity;
+                            mat.depthWrite = mat.userData.originalProps.depthWrite;
+                            // Note: We don't restore 'side' as DoubleSide is generally good for visualizer, 
+                            // but if strictly needed we could store it too.
+                        }
+                    }
+                    mat.needsUpdate = true;
+                });
+            }
+
+            // 2. Origins (Axes) - Styled like robot_viewer with colored cylinder+cone axes
+            if (child.isURDFLink || child.isURDFJoint) {
+                let axes = child.children.find((c: any) => c.name === '__origin_axes__');
+                if (showOrigins) {
+                    if (!axes) {
+                        axes = new THREE.Group();
+                        axes.name = '__origin_axes__';
+                        axes.userData = { isGizmo: true };
+                        axes.raycast = () => {};
+                        
+                        const axisLength = 0.12;
+                        const axisRadius = 0.003;  // Thinner axes
+                        const coneLength = 0.03;
+                        const coneRadius = 0.008;
+                        
+                        // Helper to create one axis (cylinder + cone)
+                        const createAxis = (color: number, rotationAxis: THREE.Vector3, rotationAngle: number) => {
+                            const group = new THREE.Group();
+                            
+                            // Cylinder (shaft)
+                            const cylinderGeom = new THREE.CylinderGeometry(axisRadius, axisRadius, axisLength, 8);
+                            const cylinderMat = new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: true });
+                            const cylinder = new THREE.Mesh(cylinderGeom, cylinderMat);
+                            cylinder.position.y = axisLength / 2;
+                            cylinder.userData = { isGizmo: true };
+                            cylinder.raycast = () => {};
+                            group.add(cylinder);
+                            
+                            // Cone (arrowhead)
+                            const coneGeom = new THREE.ConeGeometry(coneRadius, coneLength, 8);
+                            const coneMat = new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: true });
+                            const cone = new THREE.Mesh(coneGeom, coneMat);
+                            cone.position.y = axisLength + coneLength / 2;
+                            cone.userData = { isGizmo: true };
+                            cone.raycast = () => {};
+                            group.add(cone);
+                            
+                            // Rotate entire axis to point in correct direction
+                            group.quaternion.setFromAxisAngle(rotationAxis, rotationAngle);
+                            group.userData = { isGizmo: true };
+                            
+                            return group;
+                        };
+                        
+                        // X axis (red) - rotate around Z by -90°
+                        const xAxis = createAxis(0xff0000, new THREE.Vector3(0, 0, 1), -Math.PI / 2);
+                        axes.add(xAxis);
+                        
+                        // Y axis (green) - no rotation needed (default is Y-up)
+                        const yAxis = createAxis(0x00ff00, new THREE.Vector3(0, 0, 1), 0);
+                        axes.add(yAxis);
+                        
+                        // Z axis (blue) - rotate around X by 90°
+                        const zAxis = createAxis(0x0000ff, new THREE.Vector3(1, 0, 0), Math.PI / 2);
+                        axes.add(zAxis);
+                        
+                        // Small sphere at origin
+                        const sphereGeom = new THREE.SphereGeometry(axisRadius * 1.5, 8, 8);
+                        const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: true, depthWrite: true });
+                        const sphere = new THREE.Mesh(sphereGeom, sphereMat);
+                        sphere.userData = { isGizmo: true };
+                        sphere.raycast = () => {};
+                        axes.add(sphere);
+                        
+                        child.add(axes);
+                    }
+                    axes.visible = true;
+                } else if (axes) {
+                    axes.visible = false;
+                }
+            }
+
+            // 3. Joint Axes - Styled with cylinder+cone + rotation ring for revolute/continuous joints
+            if (child.isURDFJoint && child.jointType !== 'fixed') {
+                let arrow = child.children.find((c: any) => c.name === '__joint_axis__');
+                if (showJointAxes) {
+                    if (!arrow) {
+                        // child.axis is the joint axis vector in local frame
+                        const axis = child.axis || new THREE.Vector3(1, 0, 0);
+                        const dir = axis.clone().normalize();
+                        
+                        arrow = new THREE.Group();
+                        arrow.name = '__joint_axis__';
+                        arrow.userData = { isGizmo: true };
+                        arrow.raycast = () => {};
+                        
+                        const axisLength = 0.2;
+                        const axisRadius = 0.004;  // Thinner axis
+                        const coneLength = 0.04;
+                        const coneRadius = 0.012;
+                        const color = 0xffff00; // Yellow for joint axis
+                        
+                        // Cylinder (shaft)
+                        const cylinderGeom = new THREE.CylinderGeometry(axisRadius, axisRadius, axisLength, 8);
+                        const cylinderMat = new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: true });
+                        const cylinder = new THREE.Mesh(cylinderGeom, cylinderMat);
+                        cylinder.position.y = axisLength / 2;
+                        cylinder.userData = { isGizmo: true };
+                        cylinder.raycast = () => {};
+                        arrow.add(cylinder);
+                        
+                        // Cone (arrowhead)
+                        const coneGeom = new THREE.ConeGeometry(coneRadius, coneLength, 8);
+                        const coneMat = new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: true });
+                        const cone = new THREE.Mesh(coneGeom, coneMat);
+                        cone.position.y = axisLength + coneLength / 2;
+                        cone.userData = { isGizmo: true };
+                        cone.raycast = () => {};
+                        arrow.add(cone);
+                        
+                        // Add rotation direction ring for revolute/continuous joints
+                        if (child.jointType === 'revolute' || child.jointType === 'continuous') {
+                            const ringRadius = 0.06;  // Ring radius
+                            const tubeRadius = 0.003; // Ring tube thickness
+                            // TorusGeometry lies in XY plane by default, ring around Z axis
+                            const torusGeom = new THREE.TorusGeometry(ringRadius, tubeRadius, 8, 32, Math.PI * 1.5);
+                            const torusMat = new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: true });
+                            const torus = new THREE.Mesh(torusGeom, torusMat);
+                            // Position ring at midpoint of axis
+                            torus.position.y = axisLength * 0.4;
+                            // Rotate to be perpendicular to axis (ring in XZ plane, around Y axis)
+                            torus.rotation.x = Math.PI / 2;
+                            torus.userData = { isGizmo: true };
+                            torus.raycast = () => {};
+                            arrow.add(torus);
+                            
+                            // Add small arrowhead at end of ring to indicate rotation direction
+                            const arrowHeadGeom = new THREE.ConeGeometry(tubeRadius * 2.5, tubeRadius * 6, 6);
+                            const arrowHeadMat = new THREE.MeshBasicMaterial({ color, depthTest: true, depthWrite: true });
+                            const arrowHead = new THREE.Mesh(arrowHeadGeom, arrowHeadMat);
+                            // Position at end of arc (arc ends at 270° = 3π/2 from start)
+                            arrowHead.position.set(ringRadius, axisLength * 0.4, 0);
+                            arrowHead.rotation.z = -Math.PI / 2; // Point tangentially (counterclockwise direction)
+                            arrowHead.userData = { isGizmo: true };
+                            arrowHead.raycast = () => {};
+                            arrow.add(arrowHead);
+                        }
+                        
+                        // Rotate to align with joint axis
+                        // Default cylinder is Y-up, we need to rotate to align with 'dir'
+                        const up = new THREE.Vector3(0, 1, 0);
+                        const quaternion = new THREE.Quaternion().setFromUnitVectors(up, dir);
+                        arrow.quaternion.copy(quaternion);
+                        
+                        child.add(arrow);
+                    }
+                    arrow.visible = true;
+                } else if (arrow) {
+                    arrow.visible = false;
+                }
+            }
+        });
+        
+        invalidate();
+    }, [robot, showCenterOfMass, showInertia, showOrigins, showJointAxes, robotVersion, invalidate]);
 
     // Effect to handle external selection highlighting (Moved here to run AFTER visibility effects)
     useEffect(() => {
@@ -1332,7 +1606,7 @@ function SceneLighting() {
                 receiveShadow
             >
                 <planeGeometry args={[100, 100]} />
-                <shadowMaterial transparent opacity={0.15} side={THREE.DoubleSide} />
+                <shadowMaterial transparent opacity={0.15} side={THREE.DoubleSide} depthWrite={false} />
             </mesh>
         </>
     );
@@ -1489,7 +1763,7 @@ const JointControlItem = ({
 
     };
 
-export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection }: URDFViewerProps) {
+export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection, robotLinks }: URDFViewerProps) {
     const t = translations[lang];
     const [robot, setRobot] = useState<any>(null);
     const [selectedJoint, setSelectedJoint] = useState<string | null>(null);
@@ -1500,6 +1774,8 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
     const [showJointControls, setShowJointControls] = useState(true);
     const [showCenterOfMass, setShowCenterOfMass] = useState(false);
     const [showInertia, setShowInertia] = useState(false);
+    const [showOrigins, setShowOrigins] = useState(false);
+    const [showJointAxes, setShowJointAxes] = useState(false);
     
     // Highlight mode: 'link' (default) or 'collision'
     const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
@@ -1534,6 +1810,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
     
     // Joint control state
     const [jointAngles, setJointAngles] = useState<Record<string, number>>({});
+    const [initialJointAngles, setInitialJointAngles] = useState<Record<string, number>>({});
     const [angleUnit, setAngleUnit] = useState<'rad' | 'deg'>('rad');
     const [activeJoint, setActiveJoint] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -1551,6 +1828,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                 angles[name] = loadedRobot.joints[name].angle || 0;
             });
             setJointAngles(angles);
+            setInitialJointAngles(angles);
         }
     }, []);
     
@@ -1568,6 +1846,16 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
             onJointChange(jointName, angle);
         }
     }, [robot, onJointChange]);
+
+    const handleResetJoints = useCallback(() => {
+        if (!robot || !robot.joints) return;
+        
+        // Iterate over all joints and reset
+        Object.keys(jointAngles).forEach(name => {
+            const initialAngle = initialJointAngles[name] || 0;
+            handleJointAngleChange(name, initialAngle);
+        });
+    }, [robot, jointAngles, initialJointAngles, handleJointAngleChange]);
 
     const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
         if (onSelect) onSelect(type, id, subType || selection?.subType);
@@ -1713,55 +2001,87 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                             </div>
                         </div>
 
-                        <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
-                            <input 
-                                type="checkbox" 
-                                checked={showJointControls} 
-                                onChange={(e) => setShowJointControls(e.target.checked)}
-                                className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                            />
-                            {t.showJointControls}
-                        </label>
+                        <div className="space-y-1">
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showJointControls} 
+                                    onChange={(e) => setShowJointControls(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                {t.showJointControls}
+                            </label>
 
-                        <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
-                            <input 
-                                type="checkbox" 
-                                checked={showVisual} 
-                                onChange={(e) => setShowVisual(e.target.checked)}
-                                className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                            />
-                            {t.showVisual}
-                        </label>
-                        
-                        <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
-                            <input 
-                                type="checkbox" 
-                                checked={showCollision} 
-                                onChange={(e) => setShowCollision(e.target.checked)}
-                                className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                            />
-                            {t.showCollision}
-                        </label>
-                        
-                        <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
-                            <input 
-                                type="checkbox" 
-                                checked={showCenterOfMass} 
-                                onChange={(e) => setShowCenterOfMass(e.target.checked)}
-                                className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                            />
-                            {t.showCenterOfMass}
-                        </label>
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showVisual} 
+                                    onChange={(e) => setShowVisual(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                {t.showVisual}
+                            </label>
+                            
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showCollision} 
+                                    onChange={(e) => setShowCollision(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                {t.showCollision}
+                            </label>
+                        </div>
 
-                        <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1">
-                            <input 
-                                type="checkbox" 
-                                checked={showInertia} 
-                                onChange={(e) => setShowInertia(e.target.checked)}
-                                className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                            />
-                            {t.showInertia || "Show Inertia"}
-                        </label>
+                        <div className="border-t border-slate-200 dark:border-slate-700 pt-2 space-y-1">
+                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 px-1">Gizmos</div>
+                            
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showOrigins} 
+                                    onChange={(e) => setShowOrigins(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                <Move className="w-3 h-3 text-slate-500" />
+                                {t.showOrigin || "Origins"}
+                            </label>
+
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showJointAxes} 
+                                    onChange={(e) => setShowJointAxes(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                <ArrowUpRight className="w-3 h-3 text-slate-500" />
+                                {t.showJointAxes || "Joint Axes"}
+                            </label>
+
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showCenterOfMass} 
+                                    onChange={(e) => setShowCenterOfMass(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                <div className="w-3 h-3 rounded-full border border-slate-500 flex items-center justify-center">
+                                    <div className="w-1 h-1 bg-slate-500 rounded-full"></div>
+                                </div>
+                                {t.showCenterOfMass}
+                            </label>
+
+                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
+                                <input 
+                                    type="checkbox" 
+                                    checked={showInertia} 
+                                    onChange={(e) => setShowInertia(e.target.checked)}
+                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
+                                />
+                                <div className="w-3 h-3 border border-dashed border-slate-500"></div>
+                                {t.showInertia || "Show Inertia"}
+                            </label>
+                        </div>
                     </div>
                     )}
                 </div>
@@ -1788,6 +2108,13 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                             {t.jointControls}
                         </div>
                         <div className="flex items-center gap-2">
+                             <button
+                                onClick={(e) => { e.stopPropagation(); handleResetJoints(); }}
+                                className="p-1 rounded bg-slate-200 dark:bg-google-dark-bg hover:bg-slate-300 dark:hover:bg-google-dark-border text-slate-700 dark:text-white"
+                                title="Reset Joints"
+                            >
+                                <RotateCcw className="w-3 h-3" />
+                            </button>
                             <button
                                 onClick={(e) => { e.stopPropagation(); setAngleUnit(angleUnit === 'rad' ? 'deg' : 'rad'); }}
                                 className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-google-dark-bg hover:bg-slate-300 dark:hover:bg-google-dark-border text-slate-700 dark:text-white font-mono"
@@ -1873,6 +2200,9 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                         highlightMode={highlightMode}
                         showInertia={showInertia}
                         showCenterOfMass={showCenterOfMass}
+                        showOrigins={showOrigins}
+                        showJointAxes={showJointAxes}
+                        robotLinks={robotLinks}
                     />
                 </Suspense>
                 
@@ -1894,7 +2224,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                     cellColor={theme === 'light' ? '#cbd5e1' : '#444444'} 
                     sectionColor={theme === 'light' ? '#94a3b8' : '#555555'}
                     rotation={[Math.PI / 2, 0, 0]}
-                    position={[0, 0, -0.01]} 
+                    position={[0, 0, -0.01]}
                 />
                 
                 <OrbitControls

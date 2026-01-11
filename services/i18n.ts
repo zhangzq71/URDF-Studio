@@ -117,11 +117,6 @@ export const translations = {
     checking: "Checking",
     inspectionCompleted: "Inspection completed",
     generatingReport: "Generating report, estimated time: 30s",
-    processing: "正在处理...",
-    askAboutReport: "询问检测报告中的问题...",
-    checking: "正在检查",
-    inspectionCompleted: "检查完成",
-    generatingReport: "生成报告中，预计时间是30s",
     
     // Additional UI
     collapseSidebar: "Collapse sidebar",
@@ -251,6 +246,11 @@ export const translations = {
     chatTitle: "与 AI 对话",
     chatPlaceholder: "输入问题...",
     chatWithAI: "与 AI 对话",
+    processing: "正在处理...",
+    askAboutReport: "询问检测报告中的问题...",
+    checking: "正在检查",
+    inspectionCompleted: "检查完成",
+    generatingReport: "生成报告中，预计时间是30s",
         // Additional UI
     collapseSidebar: "收起侧栏",
     switchUnit: "切换单位",

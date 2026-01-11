@@ -46,7 +46,15 @@ export default function App() {
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
   // Language State
-  const [lang, setLang] = useState<Language>('en');
+  const [lang, setLang] = useState<Language>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('language');
+      if (saved === 'en' || saved === 'zh') {
+        return saved;
+      }
+    }
+    return 'en';
+  });
   const t = translations[lang];
 
   // Hover state for synchronized highlighting
@@ -108,6 +116,11 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [theme]);
+
+  // Save language preference
+  useEffect(() => {
+    localStorage.setItem('language', lang);
+  }, [lang]);
 
   // --- Actions ---
 
@@ -1386,6 +1399,7 @@ export default function App() {
                 selection={robot.selection}
                 hoveredSelection={hoveredSelection}
                 theme={theme}
+                robotLinks={robot.links}
             />
         ) : (
             <Visualizer 
