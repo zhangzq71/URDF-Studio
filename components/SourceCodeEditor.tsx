@@ -288,8 +288,18 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
       
-      const newX = dragStartRef.current.initialRect.x + dx;
-      const newY = dragStartRef.current.initialRect.y + dy;
+      let newX = dragStartRef.current.initialRect.x + dx;
+      let newY = dragStartRef.current.initialRect.y + dy;
+      
+      // Constrain to viewport bounds - all four sides
+      const { width, height } = dragStartRef.current.initialRect;
+      const minVisible = 100; // Keep at least 100px visible on each side
+      const minX = -width + minVisible;
+      const maxX = window.innerWidth - minVisible;
+      const minY = 0;
+      const maxY = window.innerHeight - 50;
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
 
       if (containerRef.current) {
         containerRef.current.style.transform = `translate(${newX}px, ${newY}px)`;
@@ -300,10 +310,24 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
       if (isDraggingRef.current) {
         const dx = e.clientX - dragStartRef.current.x;
         const dy = e.clientY - dragStartRef.current.y;
+        
+        let newX = dragStartRef.current.initialRect.x + dx;
+        let newY = dragStartRef.current.initialRect.y + dy;
+        
+        // Constrain to viewport bounds - all four sides
+        const { width, height } = dragStartRef.current.initialRect;
+        const minVisible = 100;
+        const minX = -width + minVisible;
+        const maxX = window.innerWidth - minVisible;
+        const minY = 0;
+        const maxY = window.innerHeight - 50;
+        newX = Math.max(minX, Math.min(maxX, newX));
+        newY = Math.max(minY, Math.min(maxY, newY));
+        
         setRect(prev => ({
           ...prev,
-          x: prev.x + dx,
-          y: prev.y + dy
+          x: newX,
+          y: newY
         }));
       }
       isDraggingRef.current = false;

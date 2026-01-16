@@ -649,7 +649,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 
   return (
     <div 
-      className={`bg-slate-50 dark:bg-google-dark-bg border-l border-slate-200 dark:border-google-dark-border flex flex-col h-full z-20 relative ${isDragging ? '' : 'transition-all duration-300 ease-in-out'}`}
+      className={`bg-slate-50 dark:bg-google-dark-bg border-l border-slate-200 dark:border-google-dark-border flex flex-col h-full z-20 relative ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
       style={{ 
         width: `${displayWidth}px`, 
         minWidth: `${displayWidth}px`, 

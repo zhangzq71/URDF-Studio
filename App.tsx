@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useHistory } from './hooks/useHistory';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
 import { URDFViewer } from './components/URDFViewer';
 import { SourceCodeEditor } from './components/SourceCodeEditor';
-import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, Theme, InspectionReport, InspectionIssue } from './types';
+import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, Theme, InspectionReport, InspectionIssue, RobotFile } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
 import { parseURDF } from './services/urdfParser';
@@ -42,6 +42,7 @@ export default function App() {
 
   const [appMode, setAppMode] = useState<AppMode>('skeleton');
   const [assets, setAssets] = useState<Record<string, string>>({});
+  const [availableFiles, setAvailableFiles] = useState<RobotFile[]>([]);
   const [motorLibrary, setMotorLibrary] = useState<Record<string, MotorSpec[]>>(DEFAULT_MOTOR_LIBRARY);
   const [originalUrdfContent, setOriginalUrdfContent] = useState<string>('');
   
@@ -229,6 +230,37 @@ export default function App() {
   }, [rightSidebarCollapsed]);
 
   // --- Actions ---
+
+  const handleLoadRobot = useCallback((file: RobotFile) => {
+    let newState: RobotState | null = null;
+    
+    switch (file.format) {
+        case 'urdf':
+            newState = parseURDF(file.content);
+            if (newState) setOriginalUrdfContent(file.content);
+            break;
+        case 'mjcf':
+            newState = parseMJCF(file.content);
+            if (newState) setOriginalUrdfContent('');
+            break;
+        case 'usd':
+            newState = parseUSDA(file.content);
+            if (newState) setOriginalUrdfContent('');
+            break;
+    }
+
+    if (newState) {
+        const { selection: newSelection, ...newData } = newState;
+        resetRobotData(newData);
+        setSelection({ type: null, id: null });
+        setAppMode('detail');
+    } else {
+        const msg = lang === 'zh' 
+            ? `解析 ${file.format.toUpperCase()} 文件失败。` 
+            : `Failed to parse ${file.format.toUpperCase()} file.`;
+        alert(msg);
+    }
+  }, [lang, resetRobotData]);
 
   const handleSelect = (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
     setSelection({ type, id, subType });
@@ -438,103 +470,6 @@ export default function App() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    // Helper to process a "virtual filesystem" (map of filename -> blob/url)
-    const processVirtualFS = async (
-        robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null, 
-        assetFiles: { name: string, blob: Blob }[],
-        libraryFiles: { path: string, content: string }[]
-    ) => {
-        // 0. Process Motor Library if found
-        if (libraryFiles.length > 0) {
-             const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-             libraryFiles.forEach(f => {
-                 try {
-                     const parts = f.path.split('/');
-                     // Expecting .../Brand/Motor.txt
-                     if (parts.length >= 2) {
-                         const brand = parts[parts.length - 2];
-                         const spec = JSON.parse(f.content) as MotorSpec;
-                         if (!newLibrary[brand]) newLibrary[brand] = [];
-                         if (!newLibrary[brand].some(m => m.name === spec.name)) {
-                             newLibrary[brand].push(spec);
-                         }
-                     }
-                 } catch (err) {
-                     console.warn("Failed to parse motor spec", f.path);
-                 }
-             });
-             setMotorLibrary(newLibrary);
-        }
-
-        // 1. Process Robot File
-        if (!robotFile) {
-            if (libraryFiles.length > 0) {
-                alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
-                return;
-            }
-            alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
-            return;
-        }
-
-        // Parse based on format
-        let newState: RobotState | null = null;
-        
-        switch (robotFile.format) {
-            case 'urdf':
-                newState = parseURDF(robotFile.content);
-                if (newState) {
-                    setOriginalUrdfContent(robotFile.content);
-                }
-                break;
-            case 'mjcf':
-                newState = parseMJCF(robotFile.content);
-                if (newState) {
-                    // Clear URDF content since this is MJCF
-                    setOriginalUrdfContent('');
-                }
-                break;
-            case 'usd':
-                newState = parseUSDA(robotFile.content);
-                if (newState) {
-                    // Clear URDF content since this is USD
-                    setOriginalUrdfContent('');
-                }
-                break;
-        }
-
-        if (newState) {
-            
-            // 2. Load Assets
-            const newAssets: Record<string, string> = {};
-            const assetPromises = assetFiles.map(async f => {
-                 const ext = f.name.split('.').pop()?.toLowerCase();
-                 if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
-                     // Use basename for simple matching
-                     const filename = f.name.split('/').pop()!;
-                     const url = URL.createObjectURL(f.blob);
-                     newAssets[filename] = url;
-                 }
-            });
-            await Promise.all(assetPromises);
-
-            // Cleanup old assets
-            Object.values(assets).forEach(url => URL.revokeObjectURL(url));
-            
-            setAssets(newAssets);
-            
-            const { selection: newSelection, ...newData } = newState;
-            resetRobotData(newData);
-            setSelection({ type: null, id: null });
-            
-            setAppMode('detail'); // Start with detail mode
-        } else {
-            const msg = lang === 'zh' 
-                ? `解析 ${robotFile.format.toUpperCase()} 文件失败。` 
-                : `Failed to parse ${robotFile.format.toUpperCase()} file.`;
-            alert(msg);
-        }
-    };
-
     // Helper to detect file format from content
     const detectFormat = (content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | null => {
         const lowerName = filename.toLowerCase();
@@ -559,28 +494,33 @@ export default function App() {
     };
 
     try {
+        const newRobotFiles: RobotFile[] = [];
+        const assetFiles: { name: string, blob: Blob }[] = [];
+        const libraryFiles: { path: string, content: string }[] = [];
+
         // Mode 1: Single ZIP file
         if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
             const zip = await JSZip.loadAsync(files[0]);
             
-            let robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null = null;
-            const assetFiles: { name: string, blob: Blob }[] = [];
-            const libraryFiles: { path: string, content: string }[] = [];
-
-            // Iterate ZIP
             const promises: Promise<void>[] = [];
             zip.forEach((relativePath, fileEntry) => {
                 if (fileEntry.dir) return;
+                
+                // Skip hidden files/folders (starting with .)
+                const pathParts = relativePath.split('/');
+                if (pathParts.some(part => part.startsWith('.'))) {
+                    return; // Skip .history, .git, etc.
+                }
                 
                 const lowerPath = relativePath.toLowerCase();
                 const p = (async () => {
                     // Check for robot definition files (URDF, MJCF, USD)
                     if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') || 
-                        lowerPath.endsWith('.usda') || lowerPath.endsWith('.usd')) {
+                        lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.usda') || lowerPath.endsWith('.usd')) {
                         const content = await fileEntry.async("string");
                         const format = detectFormat(content, relativePath);
-                        if (format && !robotFile) {
-                            robotFile = { name: relativePath, content, format };
+                        if (format) {
+                            newRobotFiles.push({ name: relativePath, content, format });
                         }
                     } else if (lowerPath.includes('motor library') && lowerPath.endsWith('.txt')) {
                         const content = await fileEntry.async("string");
@@ -595,29 +535,28 @@ export default function App() {
             });
             await Promise.all(promises);
 
-            // Use the generic processor
-            await processVirtualFS(robotFile, assetFiles, libraryFiles);
-
         } else {
             // Mode 2: Multiple Files (Folder upload or Multi-select)
             const fileList = Array.from(files);
             
-            let robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null = null;
-            const assetFiles: { name: string, blob: Blob }[] = [];
-            const libraryFiles: { path: string, content: string }[] = [];
-
             const promises = fileList.map(async f => {
                 const lowerName = f.name.toLowerCase();
                 // Note: file.webkitRelativePath gives path if directory upload, else just empty or filename
                 const path = f.webkitRelativePath || f.name;
+                
+                // Skip hidden files/folders (starting with .)
+                const pathParts = path.split('/');
+                if (pathParts.some(part => part.startsWith('.'))) {
+                    return; // Skip .history, .git, etc.
+                }
 
                 // Check for robot definition files (URDF, MJCF, USD)
                 if (lowerName.endsWith('.urdf') || lowerName.endsWith('.xml') || 
-                    lowerName.endsWith('.usda') || lowerName.endsWith('.usd')) {
+                    lowerName.endsWith('.mjcf') || lowerName.endsWith('.usda') || lowerName.endsWith('.usd')) {
                     const content = await f.text();
                     const format = detectFormat(content, f.name);
-                    if (format && !robotFile) {
-                        robotFile = { name: path, content, format };
+                    if (format) {
+                        newRobotFiles.push({ name: path, content, format });
                     }
                 } else if (path.includes('motor library') && lowerName.endsWith('.txt')) {
                     const content = await f.text();
@@ -627,8 +566,57 @@ export default function App() {
                 }
             });
             await Promise.all(promises);
+        }
 
-            await processVirtualFS(robotFile, assetFiles, libraryFiles);
+        // 1. Process Motor Library
+        if (libraryFiles.length > 0) {
+             const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
+             libraryFiles.forEach(f => {
+                 try {
+                     const parts = f.path.split('/');
+                     // Expecting .../Brand/Motor.txt
+                     if (parts.length >= 2) {
+                         const brand = parts[parts.length - 2];
+                         const spec = JSON.parse(f.content) as MotorSpec;
+                         if (!newLibrary[brand]) newLibrary[brand] = [];
+                         if (!newLibrary[brand].some(m => m.name === spec.name)) {
+                             newLibrary[brand].push(spec);
+                         }
+                     }
+                 } catch (err) {
+                     console.warn("Failed to parse motor spec", f.path);
+                 }
+             });
+             setMotorLibrary(newLibrary);
+        }
+
+        // 2. Load Assets
+        const newAssets: Record<string, string> = {};
+        const assetPromises = assetFiles.map(async f => {
+             const ext = f.name.split('.').pop()?.toLowerCase();
+             if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
+                 // Use basename for simple matching
+                 const filename = f.name.split('/').pop()!;
+                 const url = URL.createObjectURL(f.blob);
+                 newAssets[filename] = url;
+             }
+        });
+        await Promise.all(assetPromises);
+
+        // Cleanup old assets
+        Object.values(assets).forEach(url => URL.revokeObjectURL(url));
+        setAssets(newAssets);
+        
+        // 3. Set Available Files
+        setAvailableFiles(newRobotFiles);
+
+        // 4. Load first robot if available
+        if (newRobotFiles.length > 0) {
+            handleLoadRobot(newRobotFiles[0]);
+        } else if (libraryFiles.length > 0) {
+            alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
+        } else if (assetFiles.length === 0) {
+            alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
         }
 
     } catch (error: any) {
@@ -1644,6 +1632,8 @@ export default function App() {
             theme={theme}
             collapsed={leftSidebarCollapsed}
             onToggle={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
+            availableFiles={availableFiles}
+            onLoadRobot={handleLoadRobot}
         />
         
         {(appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? (

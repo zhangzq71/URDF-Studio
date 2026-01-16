@@ -1326,7 +1326,19 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                         const axisRadius = 0.004;  // Thinner axis
                         const coneLength = 0.04;
                         const coneRadius = 0.012;
-                        const color = 0xffff00; // Yellow for joint axis
+                        
+                        // Determine color based on dominant axis direction (X=red, Y=green, Z=blue)
+                        const absX = Math.abs(dir.x);
+                        const absY = Math.abs(dir.y);
+                        const absZ = Math.abs(dir.z);
+                        let color: number;
+                        if (absX >= absY && absX >= absZ) {
+                            color = 0xef4444; // Red for X axis
+                        } else if (absY >= absX && absY >= absZ) {
+                            color = 0x22c55e; // Green for Y axis
+                        } else {
+                            color = 0x3b82f6; // Blue for Z axis
+                        }
                         
                         // Cylinder (shaft)
                         const cylinderGeom = new THREE.CylinderGeometry(axisRadius, axisRadius, axisLength, 8);
@@ -2697,7 +2709,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
             onMouseLeave={handleMouseUp}
         >
             {/* Info overlay - unified with Visualizer style */}
-            <div className="absolute top-4 left-4 z-10 pointer-events-none select-none">
+            <div className="absolute z-20 pointer-events-none select-none">
                 <div className="text-slate-500 dark:text-slate-400 text-xs bg-white/50 dark:bg-google-dark-surface/50 backdrop-blur px-2 py-1 rounded border border-slate-200 dark:border-google-dark-border">
                     {mode === 'hardware' ? t.hardware : t.detail} {t.modeLabel}
                 </div>
@@ -2706,7 +2718,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
             {/* Settings panel - draggable */}
             <div 
                 ref={optionsPanelRef}
-                className="absolute z-10 pointer-events-auto"
+                className="absolute z-30 pointer-events-auto"
                 style={optionsPanelPos 
                     ? { left: optionsPanelPos.x, top: optionsPanelPos.y, right: 'auto' }
                     : { top: '16px', right: '16px' }
@@ -2886,7 +2898,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
             {showJointControls && robot?.joints && Object.keys(robot.joints).length > 0 && (
                 <div 
                     ref={jointPanelRef}
-                    className="absolute z-10 bg-white/90 dark:bg-google-dark-surface/90 backdrop-blur rounded-lg border border-slate-200 dark:border-google-dark-border max-h-[50vh] overflow-hidden w-64 shadow-xl flex flex-col pointer-events-auto"
+                    className="absolute z-30 bg-white/90 dark:bg-google-dark-surface/90 backdrop-blur rounded-lg border border-slate-200 dark:border-google-dark-border max-h-[50vh] overflow-hidden w-64 shadow-xl flex flex-col pointer-events-auto"
                     style={jointPanelPos 
                         ? { left: jointPanelPos.x, top: jointPanelPos.y, right: 'auto', bottom: 'auto' }
                         : { bottom: '16px', right: '16px' }

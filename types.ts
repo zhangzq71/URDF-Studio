@@ -79,6 +79,12 @@ export interface RobotState {
   selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
 }
 
+export interface RobotFile {
+  name: string;
+  content: string;
+  format: 'urdf' | 'mjcf' | 'usd';
+}
+
 export interface MotorSpec {
     name: string;
     armature: number;
