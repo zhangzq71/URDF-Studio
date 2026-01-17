@@ -27,6 +27,8 @@ interface URDFViewerProps {
     hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
     robotLinks?: Record<string, UrdfLink>; // Link data from the app state, contains inertial info
     focusTarget?: string | null;
+    showVisual?: boolean;
+    setShowVisual?: (show: boolean) => void;
     onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
 }
 
@@ -137,10 +139,30 @@ const createLoadingManager = (assets: Record<string, string>, urdfDir: string = 
         if (found) return found;
         
         console.warn('[URDFViewer] Asset not found:', url);
-        return url;
+        // Return a transparent 1x1 pixel for missing textures instead of invalid URL
+        // This prevents the browser from trying to load package:// URLs
+        if (/\.(jpg|jpeg|png|gif|bmp|tga|tiff|webp)$/i.test(url)) {
+            return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+        }
+        // For mesh files, return empty string to let mesh loader handle it with placeholder
+        return '';
     });
     
     return manager;
+};
+
+// Create a placeholder geometry when mesh is not found or fails to load
+const createPlaceholderMesh = (path: string): THREE.Object3D => {
+    const geometry = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+    const material = new THREE.MeshPhongMaterial({ 
+        color: 0xff6b6b, 
+        transparent: true, 
+        opacity: 0.7 
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData.isPlaceholder = true;
+    mesh.userData.missingMeshPath = path;
+    return mesh;
 };
 
 // Custom mesh loader callback
@@ -155,8 +177,9 @@ const createMeshLoader = (assets: Record<string, string>, manager: THREE.Loading
             const assetUrl = findAssetByPath(path, assets, urdfDir);
             
             if (!assetUrl) {
-                console.warn('[URDFViewer] Mesh not found:', path);
-                done(null, new Error(`Mesh not found: ${path}`));
+                console.warn('[URDFViewer] Mesh not found, using placeholder:', path);
+                // Return a placeholder instead of failing
+                done(createPlaceholderMesh(path));
                 return;
             }
             
@@ -176,6 +199,18 @@ const createMeshLoader = (assets: Record<string, string>, manager: THREE.Loading
                 const material = new THREE.MeshPhongMaterial({ color: 0xaaaaaa });
                 meshObject = new THREE.Mesh(geometry, material);
                 
+                // Check if mesh is abnormally large (likely wrong units)
+                geometry.computeBoundingBox();
+                if (geometry.boundingBox) {
+                    const size = geometry.boundingBox.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    if (maxDim > 10) {
+                        const autoScale = 0.001;
+                        console.warn('[URDFViewer] STL mesh appears to be in mm, auto-scaling:', path, 'size:', maxDim.toFixed(2), 'm');
+                        meshObject.scale.set(autoScale, autoScale, autoScale);
+                    }
+                }
+                
             } else if (ext === 'dae') {
                 const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js');
                 const loader = new ColladaLoader(manager);
@@ -188,9 +223,25 @@ const createMeshLoader = (assets: Record<string, string>, manager: THREE.Loading
                 // which removes any rotation that ColladaLoader applied for Z-UP -> Y-UP conversion.
                 // Since URDF uses Z-UP coordinate system and we're using a Z-UP camera setup,
                 // we don't need the ColladaLoader's automatic conversion.
-                // Reset the rotation that ColladaLoader may have applied.
                 if (meshObject) {
                     meshObject.rotation.set(0, 0, 0);
+                    
+                    // Check if mesh is abnormally large (likely wrong units in DAE file)
+                    // Many DAE files are authored in millimeters but URDF expects meters
+                    const box = new THREE.Box3().setFromObject(meshObject);
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    
+                    // If mesh is larger than 10 meters, it's likely in mm instead of m
+                    // Apply automatic scale correction
+                    if (maxDim > 10) {
+                        const autoScale = 0.001; // mm to m
+                        console.warn('[URDFViewer] DAE mesh appears to be in mm, auto-scaling:', path, 'size:', maxDim.toFixed(2), 'm -> applying scale', autoScale);
+                        meshObject.scale.set(autoScale, autoScale, autoScale);
+                    } else {
+                        console.log('[URDFViewer] DAE loaded:', path, 'size:', maxDim.toFixed(3), 'm');
+                    }
+                    
                     meshObject.updateMatrix();
                     
                     // Remove lights from Collada (they can mess up scene lighting)
@@ -222,12 +273,14 @@ const createMeshLoader = (assets: Record<string, string>, manager: THREE.Loading
             if (meshObject) {
                 done(meshObject);
             } else {
-                done(null, new Error(`Unsupported mesh format: ${ext}`));
+                console.warn('[URDFViewer] Unsupported mesh format, using placeholder:', ext, path);
+                done(createPlaceholderMesh(path));
             }
             
         } catch (error) {
-            console.error('[URDFViewer] Mesh loading error:', error);
-            done(null, error as Error);
+            console.error('[URDFViewer] Mesh loading error, using placeholder:', path, error);
+            // Return placeholder instead of failing completely
+            done(createPlaceholderMesh(path));
         }
     };
 };
@@ -312,7 +365,9 @@ interface RobotModelProps {
     showInertia?: boolean;
     showCenterOfMass?: boolean;
     showOrigins?: boolean;
+    originSize?: number;
     showJointAxes?: boolean;
+    jointAxisSize?: number;
     robotLinks?: Record<string, UrdfLink>; // Link data from the app state, contains inertial info
     focusTarget?: string | null;
     transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
@@ -349,7 +404,7 @@ const collisionBaseMaterial = new THREE.MeshBasicMaterial({
     depthTest: false
 });
 
-function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, showJointAxes = false, robotLinks, focusTarget, transformMode = 'select', onCollisionTransformEnd }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
+function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, originSize = 1.0, showJointAxes = false, jointAxisSize = 1.0, robotLinks, focusTarget, transformMode = 'select', onCollisionTransformEnd }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [robotVersion, setRobotVersion] = useState(0); // Track async loading updates
@@ -1014,26 +1069,29 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         });
     }, [robot, showCollision, robotVersion, highlightMode]);
 
-    // Update visual visibility when showVisual changes
+    // Update visual visibility when link visibility changes
     useEffect(() => {
         if (!robot) return;
         
         robot.traverse((child: any) => {
             // Check for Visual Groups (children of Link that are not Joint/Collider)
-            // This covers the container of visual meshes.
             if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider) {
-                child.visible = showVisual;
+                const linkName = child.parent.name;
+                const isLinkVisible = robotLinks?.[linkName]?.visible !== false; // Default true
+                child.visible = isLinkVisible;
             }
-            // Also keep the mesh check as a fallback if structure is flat (though URDFLoader usually groups)
-            // But if we hide the group, mesh visibility doesn't matter much.
-            // Let's keep mesh check for robustness but prioritize group.
+            // Fallback for flat meshes
             if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh) {
-                 // Only set if parent isn't the controlled group (to avoid double setting or conflicts)
-                 // Actually setting mesh visibility is fine too.
-                 child.visible = showVisual;
+                 // Try to find parent link
+                 let linkName = '';
+                 if (child.parent && child.parent.isURDFLink) linkName = child.parent.name;
+                 else if (child.parent && child.parent.parent && child.parent.parent.isURDFLink) linkName = child.parent.parent.name;
+                 
+                 const isLinkVisible = linkName ? (robotLinks?.[linkName]?.visible !== false) : true;
+                 child.visible = isLinkVisible;
             }
         });
-    }, [robot, showVisual, robotVersion]);
+    }, [robot, robotVersion, robotLinks]);
 
     // Effect to handle inertia and CoM visualization
     useEffect(() => {
@@ -1285,7 +1343,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                         axes.add(xAxis);
                         
                         // Y axis (green) - no rotation needed (default is Y-up)
-                        const yAxis = createAxis(0x00ff00, new THREE.Vector3(0, 0, 1), 0);
+                        const yAxis = createAxis(0x22c55e, new THREE.Vector3(0, 0, 1), 0);
                         axes.add(yAxis);
                         
                         // Z axis (blue) - rotate around X by 90°
@@ -1303,6 +1361,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                         child.add(axes);
                     }
                     axes.visible = true;
+                    axes.scale.set(originSize, originSize, originSize);
                 } else if (axes) {
                     axes.visible = false;
                 }
@@ -1395,6 +1454,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
                         child.add(arrow);
                     }
                     arrow.visible = true;
+                    arrow.scale.set(jointAxisSize, jointAxisSize, jointAxisSize);
                 } else if (arrow) {
                     arrow.visible = false;
                 }
@@ -1402,7 +1462,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         });
         
         invalidate();
-    }, [robot, showCenterOfMass, showInertia, showOrigins, showJointAxes, robotVersion, invalidate]);
+    }, [robot, showCenterOfMass, showInertia, showOrigins, originSize, showJointAxes, jointAxisSize, robotVersion, invalidate]);
 
     // Effect to handle external selection highlighting (Moved here to run AFTER visibility effects)
     useEffect(() => {
@@ -2475,19 +2535,48 @@ const JointControlItem = ({
 
     };
 
-export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection, robotLinks, focusTarget, onCollisionTransform }: URDFViewerProps) {
+export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection, robotLinks, focusTarget, showVisual: propShowVisual, setShowVisual: propSetShowVisual, onCollisionTransform }: URDFViewerProps) {
     const t = translations[lang];
     const [robot, setRobot] = useState<any>(null);
     const [selectedJoint, setSelectedJoint] = useState<string | null>(null);
     
     // View settings - unified with Visualizer style
     const [showCollision, setShowCollision] = useState(false);
-    const [showVisual, setShowVisual] = useState(true);
+    
+    // Handle showVisual (controlled or uncontrolled)
+    const [localShowVisual, setLocalShowVisual] = useState(true);
+    const showVisual = propShowVisual !== undefined ? propShowVisual : localShowVisual;
+    const setShowVisual = propSetShowVisual || setLocalShowVisual;
+
     const [showJointControls, setShowJointControls] = useState(true);
     const [showCenterOfMass, setShowCenterOfMass] = useState(false);
     const [showInertia, setShowInertia] = useState(false);
     const [showOrigins, setShowOrigins] = useState(false);
+    const [originSize, setOriginSize] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('urdf_viewer_origin_size');
+            return saved ? parseFloat(saved) : 1.0;
+        }
+        return 1.0;
+    });
     const [showJointAxes, setShowJointAxes] = useState(false);
+    const [jointAxisSize, setJointAxisSize] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('urdf_viewer_joint_axis_size');
+            return saved ? parseFloat(saved) : 1.0;
+        }
+        return 1.0;
+    });
+
+    // Save originSize to localStorage
+    useEffect(() => {
+        localStorage.setItem('urdf_viewer_origin_size', originSize.toString());
+    }, [originSize]);
+
+    // Save jointAxisSize to localStorage
+    useEffect(() => {
+        localStorage.setItem('urdf_viewer_joint_axis_size', jointAxisSize.toString());
+    }, [jointAxisSize]);
     
     // Highlight mode: 'link' (default) or 'collision'
     const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
@@ -2854,6 +2943,24 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                                 {t.showOrigin || "Origins"}
                             </label>
 
+                            {showOrigins && (
+                                <div className="px-1 pl-6 pb-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[9px] text-slate-400">Size</span>
+                                        <input 
+                                            type="range" 
+                                            min="0.01" 
+                                            max="5.0" 
+                                            step="0.01" 
+                                            value={originSize}
+                                            onChange={(e) => setOriginSize(parseFloat(e.target.value))}
+                                            className="flex-1 h-1 bg-slate-200 dark:bg-google-dark-border rounded-lg appearance-none cursor-pointer accent-google-blue"
+                                        />
+                                        <span className="text-[9px] text-slate-400 w-4 text-right">{originSize.toFixed(2)}</span>
+                                    </div>
+                                </div>
+                            )}
+
                             <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
                                 <input 
                                     type="checkbox" 
@@ -2864,6 +2971,24 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                                 <ArrowUpRight className="w-3 h-3 text-slate-500" />
                                 {t.showJointAxes || "Joint Axes"}
                             </label>
+
+                            {showJointAxes && (
+                                <div className="px-1 pl-6 pb-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[9px] text-slate-400">Size</span>
+                                        <input 
+                                            type="range" 
+                                            min="0.01" 
+                                            max="5.0" 
+                                            step="0.01" 
+                                            value={jointAxisSize}
+                                            onChange={(e) => setJointAxisSize(parseFloat(e.target.value))}
+                                            className="flex-1 h-1 bg-slate-200 dark:bg-google-dark-border rounded-lg appearance-none cursor-pointer accent-google-blue"
+                                        />
+                                        <span className="text-[9px] text-slate-400 w-4 text-right">{jointAxisSize.toFixed(2)}</span>
+                                    </div>
+                                </div>
+                            )}
 
                             <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
                                 <input 
@@ -3008,7 +3133,9 @@ export function URDFViewer({ urdfContent, assets, onJointChange, lang, mode = 'd
                         showInertia={showInertia}
                         showCenterOfMass={showCenterOfMass}
                         showOrigins={showOrigins}
+                        originSize={originSize}
                         showJointAxes={showJointAxes}
+                        jointAxisSize={jointAxisSize}
                         robotLinks={robotLinks}
                         focusTarget={focusTarget}
                         transformMode={transformMode}

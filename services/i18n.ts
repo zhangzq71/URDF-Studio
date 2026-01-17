@@ -243,7 +243,7 @@ export const translations = {
     showGeometry: "显示几何",
     showLabels: "显示标签",
     showJointAxes: "显示关节轴",
-    showOrigin: "显示原点",
+    showOrigin: "显示坐标轴",
     showCollision: "显示碰撞体",
     instruction: "左键: 旋转 | 右键: 平移 | 滚轮: 缩放",
     instructionWin: "左键: 旋转 | 右键: 平移 | 滚轮: 缩放",

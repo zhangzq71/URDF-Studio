@@ -649,7 +649,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 
   return (
     <div 
-      className={`bg-slate-50 dark:bg-google-dark-bg border-l border-slate-200 dark:border-google-dark-border flex flex-col h-full z-20 relative ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
+      className={`bg-slate-50 dark:bg-google-dark-bg border-l border-slate-200 dark:border-google-dark-border flex flex-col h-full z-20 relative will-change-[width,flex] ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
       style={{ 
         width: `${displayWidth}px`, 
         minWidth: `${displayWidth}px`, 
@@ -670,8 +670,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
           </div>
       </button>
 
-      {!collapsed && (
-        <>
+      <div className="h-full w-full overflow-hidden flex flex-col relative bg-slate-50 dark:bg-google-dark-bg">
+        <div style={{ width: `${Math.max(width, 280)}px`, minWidth: `${Math.max(width, 280)}px` }} className="h-full flex flex-col">
           <div className="w-full flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-google-dark-border bg-white dark:bg-google-dark-surface shrink-0 relative z-30">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.properties}</span>
             {data && (
@@ -1135,12 +1135,15 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             </div>
           )}
 
-          {/* Resize Handle - only show when expanded */}
-          <div 
-            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-10"
+        </div>
+      </div>
+
+      {/* Resize Handle - only show when expanded */}
+      {!collapsed && (
+        <div 
+            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-40"
             onMouseDown={handleResizeMouseDown}
-          />
-        </>
+        />
       )}
     </div>
   );

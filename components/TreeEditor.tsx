@@ -1,7 +1,174 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { RobotState, AppMode, Theme, RobotFile } from '../types';
-import { Box, ArrowRightLeft, Plus, Trash2, ChevronDown, ChevronRight, ChevronLeft, PanelLeftOpen, FileCode, Folder } from 'lucide-react';
+import { Box, ArrowRightLeft, Plus, Trash2, ChevronDown, ChevronRight, ChevronLeft, PanelLeftOpen, FileCode, Folder, FolderOpen, FileText, File, Cuboid, Eye, EyeOff } from 'lucide-react';
 import { translations, Language } from '../services/i18n';
+
+// --- File Tree Types and Components ---
+
+interface FileTreeNode {
+    name: string;
+    path: string;
+    isFolder: boolean;
+    children?: FileTreeNode[];
+    file?: RobotFile;
+}
+
+// Build a tree structure from flat file list
+function buildFileTree(files: RobotFile[]): FileTreeNode[] {
+    const root: FileTreeNode[] = [];
+    
+    for (const file of files) {
+        const parts = file.name.split('/').filter(p => p.length > 0);
+        let currentLevel = root;
+        let currentPath = '';
+        
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            currentPath = currentPath ? `${currentPath}/${part}` : part;
+            const isLast = i === parts.length - 1;
+            
+            let existing = currentLevel.find(n => n.name === part);
+            
+            if (!existing) {
+                const newNode: FileTreeNode = {
+                    name: part,
+                    path: currentPath,
+                    isFolder: !isLast,
+                    children: isLast ? undefined : [],
+                    file: isLast ? file : undefined
+                };
+                currentLevel.push(newNode);
+                existing = newNode;
+            }
+            
+            if (!isLast && existing.children) {
+                currentLevel = existing.children;
+            }
+        }
+    }
+    
+    // Sort: folders first, then alphabetically
+    const sortNodes = (nodes: FileTreeNode[]): FileTreeNode[] => {
+        return nodes.sort((a, b) => {
+            if (a.isFolder && !b.isFolder) return -1;
+            if (!a.isFolder && b.isFolder) return 1;
+            return a.name.localeCompare(b.name);
+        }).map(node => ({
+            ...node,
+            children: node.children ? sortNodes(node.children) : undefined
+        }));
+    };
+    
+    return sortNodes(root);
+}
+
+// Get file icon based on extension
+function getFileIcon(filename: string, isFolder: boolean, isOpen: boolean) {
+    if (isFolder) {
+        return isOpen ? <FolderOpen className="w-3.5 h-3.5 text-amber-500" /> : <Folder className="w-3.5 h-3.5 text-amber-500" />;
+    }
+    
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    switch (ext) {
+        case 'urdf':
+            return <FileCode className="w-3.5 h-3.5 text-blue-500" />;
+        case 'xacro':
+            return <FileCode className="w-3.5 h-3.5 text-purple-500" />;
+        case 'xml':
+            return <FileCode className="w-3.5 h-3.5 text-orange-500" />;
+        case 'dae':
+        case 'stl':
+        case 'obj':
+            return <Cuboid className="w-3.5 h-3.5 text-green-500" />;
+        default:
+            return <File className="w-3.5 h-3.5 text-slate-400" />;
+    }
+}
+
+// File Tree Node Component
+const FileTreeNodeComponent: React.FC<{
+    node: FileTreeNode;
+    depth: number;
+    onLoadRobot?: (file: RobotFile) => void;
+    expandedFolders: Set<string>;
+    toggleFolder: (path: string) => void;
+}> = ({ node, depth, onLoadRobot, expandedFolders, toggleFolder }) => {
+    const isExpanded = expandedFolders.has(node.path);
+    const paddingLeft = depth * 12 + 8;
+    
+    const handleClick = () => {
+        if (node.isFolder) {
+            toggleFolder(node.path);
+        } else if (node.file && onLoadRobot) {
+            onLoadRobot(node.file);
+        }
+    };
+    
+    return (
+        <div>
+            <div 
+                className={`flex items-center gap-1.5 py-1 pr-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group rounded-sm ${
+                    !node.isFolder ? 'hover:bg-blue-50 dark:hover:bg-blue-900/20' : ''
+                }`}
+                style={{ paddingLeft: `${paddingLeft}px` }}
+                onClick={handleClick}
+            >
+                {/* Expand/collapse arrow for folders */}
+                {node.isFolder ? (
+                    <span className="w-3 h-3 flex items-center justify-center">
+                        {isExpanded ? (
+                            <ChevronDown className="w-3 h-3 text-slate-400" />
+                        ) : (
+                            <ChevronRight className="w-3 h-3 text-slate-400" />
+                        )}
+                    </span>
+                ) : (
+                    <span className="w-3 h-3" />
+                )}
+                
+                {/* Icon */}
+                {getFileIcon(node.name, node.isFolder, isExpanded)}
+                
+                {/* Name */}
+                <span className={`text-xs truncate flex-1 ${
+                    node.isFolder 
+                        ? 'text-slate-700 dark:text-slate-300 font-medium' 
+                        : 'text-slate-600 dark:text-slate-400'
+                }`}>
+                    {node.name}
+                </span>
+                
+                {/* Format badge for robot files */}
+                {node.file && (
+                    <span className={`text-[9px] px-1 rounded font-medium ${
+                        node.file.format === 'urdf' ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-300' :
+                        node.file.format === 'xacro' ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300' :
+                        node.file.format === 'mjcf' ? 'bg-orange-100 dark:bg-orange-900/50 text-orange-600 dark:text-orange-300' :
+                        'bg-slate-200 dark:bg-slate-700 text-slate-500'
+                    }`}>
+                        {node.file.format.toUpperCase()}
+                    </span>
+                )}
+            </div>
+            
+            {/* Children */}
+            {node.isFolder && isExpanded && node.children && (
+                <div>
+                    {node.children.map((child, idx) => (
+                        <FileTreeNodeComponent
+                            key={child.path}
+                            node={child}
+                            depth={depth + 1}
+                            onLoadRobot={onLoadRobot}
+                            expandedFolders={expandedFolders}
+                            toggleFolder={toggleFolder}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 interface TreeEditorProps {
   robot: RobotState;
@@ -10,6 +177,9 @@ interface TreeEditorProps {
   onAddChild: (parentId: string) => void;
   onDelete: (id: string) => void;
   onNameChange: (name: string) => void;
+  onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
+  showVisual: boolean;
+  setShowVisual: (show: boolean) => void;
   mode: AppMode;
   lang: Language;
   collapsed?: boolean;
@@ -28,6 +198,7 @@ const TreeNode = ({
   onFocus,
   onAddChild, 
   onDelete,
+  onUpdate,
   mode,
   t,
   depth = 0
@@ -38,6 +209,7 @@ const TreeNode = ({
   onFocus?: any;
   onAddChild: any;
   onDelete: any;
+  onUpdate: any;
   mode: AppMode;
   t: any;
   depth?: number;
@@ -52,6 +224,8 @@ const TreeNode = ({
   
   const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const isSkeleton = mode === 'skeleton';
+  
+  const isVisible = link.visible !== false; // Default to true
 
   return (
     <div className="relative">
@@ -90,6 +264,19 @@ const TreeNode = ({
         </div>
         
         <span className="text-xs font-medium truncate flex-1">{link.name}</span>
+        
+        {/* Visibility Toggle */}
+        <div 
+            className={`flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer mr-1
+                ${isLinkSelected ? 'text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
+            onClick={(e) => { 
+                e.stopPropagation(); 
+                onUpdate('link', linkId, { ...link, visible: !isVisible });
+            }}
+            title={isVisible ? "Hide" : "Show"}
+        >
+            {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+        </div>
         
         {/* Actions */}
         {isSkeleton && (
@@ -159,6 +346,7 @@ const TreeNode = ({
                   onFocus={onFocus}
                   onAddChild={onAddChild}
                   onDelete={onDelete}
+                  onUpdate={onUpdate}
                   mode={mode}
                   t={t}
                   depth={depth + 1}
@@ -173,7 +361,7 @@ const TreeNode = ({
 };
 
 export const TreeEditor: React.FC<TreeEditorProps> = ({ 
-    robot, onSelect, onFocus, onAddChild, onDelete, onNameChange, mode, lang, collapsed, onToggle, theme,
+    robot, onSelect, onFocus, onAddChild, onDelete, onNameChange, onUpdate, showVisual, setShowVisual, mode, lang, collapsed, onToggle, theme,
     availableFiles = [], onLoadRobot
 }) => {
   const t = translations[lang];
@@ -184,12 +372,53 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const startWidth = useRef(0);
 
   // Vertical resizing state
-  const [fileBrowserHeight, setFileBrowserHeight] = useState(200);
+  const [fileBrowserHeight, setFileBrowserHeight] = useState(250);
   const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(true);
   const [isStructureOpen, setIsStructureOpen] = useState(true);
   const isVerticalResizing = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
+
+  // File tree state
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  
+  // Build file tree from available files
+  const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
+  
+  // Toggle folder expansion
+  const toggleFolder = useCallback((path: string) => {
+      setExpandedFolders(prev => {
+          const newSet = new Set(prev);
+          if (newSet.has(path)) {
+              newSet.delete(path);
+          } else {
+              newSet.add(path);
+          }
+          return newSet;
+      });
+  }, []);
+  
+  // Expand all folders when files change
+  useEffect(() => {
+      if (availableFiles.length > 0) {
+          const allFolders = new Set<string>();
+          availableFiles.forEach(f => {
+              const parts = f.name.split('/');
+              let path = '';
+              for (let i = 0; i < parts.length - 1; i++) {
+                  path = path ? `${path}/${parts[i]}` : parts[i];
+                  allFolders.add(path);
+              }
+          });
+          // Expand first level folders by default
+          const firstLevel = new Set<string>();
+          availableFiles.forEach(f => {
+              const firstPart = f.name.split('/')[0];
+              if (firstPart) firstLevel.add(firstPart);
+          });
+          setExpandedFolders(firstLevel);
+      }
+  }, [availableFiles]);
 
   // Horizontal resizing
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -265,6 +494,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
+            {/* Robot Name Input - Moved to Top */}
+            <div className="px-4 pt-3 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
+                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">{t.robotName}</label>
+                    <input 
+                    type="text" 
+                    value={robot.name}
+                    onChange={(e) => onNameChange(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-google-dark-surface focus:bg-white dark:focus:bg-google-dark-surface text-sm text-slate-900 dark:text-white px-3 py-2 rounded-lg border border-slate-300 dark:border-google-dark-border focus:border-google-blue outline-none transition-colors"
+                    placeholder={t.enterRobotName}
+                />
+            </div>
+
             {/* Top: File Browser */}
             <div 
                 className={`flex flex-col shrink-0 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border ${isDragging ? '' : 'transition-all duration-200'}`}
@@ -282,22 +523,21 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 </div>
                 
                 {isFileBrowserOpen && (
-                    <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1">
                         {availableFiles.length === 0 ? (
                             <div className="text-xs text-slate-400 text-center py-4 italic">
-                                {lang === 'zh' ? '无文件' : 'No files imported'}
+                                {lang === 'zh' ? '拖放或导入文件夹/ZIP' : 'Drop or import folder/ZIP'}
                             </div>
                         ) : (
-                            availableFiles.map((file, idx) => (
-                                <div 
-                                    key={idx}
-                                    className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700/50 cursor-pointer transition-colors group"
-                                    onClick={() => onLoadRobot && onLoadRobot(file)}
-                                >
-                                    <FileCode className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-500" />
-                                    <span className="text-xs text-slate-600 dark:text-slate-300 truncate flex-1">{file.name}</span>
-                                    <span className="text-[9px] px-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-500">{file.format.toUpperCase()}</span>
-                                </div>
+                            fileTree.map((node) => (
+                                <FileTreeNodeComponent
+                                    key={node.path}
+                                    node={node}
+                                    depth={0}
+                                    onLoadRobot={onLoadRobot}
+                                    expandedFolders={expandedFolders}
+                                    toggleFolder={toggleFolder}
+                                />
                             ))
                         )}
                     </div>
@@ -325,21 +565,23 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                         {isStructureOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
                         <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{t.structure}</span>
                      </div>
+                     
+                     {/* Master Visual Toggle */}
+                     <div 
+                        className={`flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer text-slate-500 dark:text-slate-400`}
+                        onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setShowVisual(!showVisual);
+                        }}
+                        title={showVisual ? "Hide All Visuals" : "Show All Visuals"}
+                     >
+                        {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
+                     </div>
                 </div>
 
                 {isStructureOpen && (
                     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-                        {/* 1. Robot Name Input */}
-                        <div className="px-4 pt-2 pb-2 bg-slate-50 dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
-                             <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">{t.robotName}</label>
-                             <input 
-                                type="text" 
-                                value={robot.name}
-                                onChange={(e) => onNameChange(e.target.value)}
-                                className="w-full bg-white dark:bg-google-dark-surface focus:bg-white dark:focus:bg-google-dark-surface text-sm text-slate-900 dark:text-white px-3 py-2 rounded-lg border border-slate-300 dark:border-google-dark-border focus:border-google-blue outline-none transition-colors"
-                                placeholder={t.enterRobotName}
-                            />
-                        </div>
+
 
                         <div className="flex items-center justify-between px-4 py-2 bg-white dark:bg-google-dark-surface border-b border-slate-200 dark:border-google-dark-border shrink-0">
                              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.structure}</span>
@@ -372,6 +614,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                                 onFocus={onFocus}
                                 onAddChild={onAddChild}
                                 onDelete={onDelete}
+                                onUpdate={onUpdate}
                                 mode={mode}
                                 t={t}
                             />
