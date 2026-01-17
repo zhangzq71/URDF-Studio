@@ -17,6 +17,7 @@
     "jspdf": "^4.0.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.555.0",
+    "monaco-editor": "^0.55.1",
     "openai": "^4.0.0",
     "prismjs": "^1.30.0",
     "react": "^19.2.0",

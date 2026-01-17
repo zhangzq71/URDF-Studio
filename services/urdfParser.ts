@@ -1,6 +1,26 @@
 
 import { RobotState, UrdfLink, UrdfJoint, GeometryType, JointType, DEFAULT_LINK, DEFAULT_JOINT } from '../types';
 
+/**
+ * Preprocess XML content to fix common issues
+ */
+function preprocessXML(content: string): string {
+    // Remove XML declaration if it's not at the start (after comments)
+    const xmlDeclMatch = content.match(/(<\?xml[^?]*\?>)/);
+    if (xmlDeclMatch) {
+        const declIndex = content.indexOf(xmlDeclMatch[1]);
+        // Check if there's non-whitespace content before the declaration
+        const beforeDecl = content.substring(0, declIndex).trim();
+        if (beforeDecl.length > 0) {
+            // Move the declaration to the beginning or remove it
+            content = content.replace(xmlDeclMatch[1], '');
+            content = xmlDeclMatch[1] + '\n' + content;
+        }
+    }
+    
+    return content.trim();
+}
+
 const GAZEBO_COLORS: Record<string, string> = {
     'Gazebo/Black': '#000000',
     'Gazebo/Blue': '#0000FF',
@@ -22,8 +42,19 @@ const GAZEBO_COLORS: Record<string, string> = {
 };
 
 export const parseURDF = (xmlString: string): RobotState | null => {
+  // Preprocess XML to fix common issues
+  xmlString = preprocessXML(xmlString);
+  
   const parser = new DOMParser();
   const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+  
+  // Check for XML parsing errors
+  const parseError = xmlDoc.querySelector("parsererror");
+  if (parseError) {
+      console.error("XML parsing error:", parseError.textContent);
+      return null;
+  }
+  
   const robotEl = xmlDoc.querySelector("robot");
   if (!robotEl) {
       console.error("Invalid URDF: No <robot> tag found.");

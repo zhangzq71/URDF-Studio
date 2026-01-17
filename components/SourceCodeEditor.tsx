@@ -1,8 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import Editor, { loader } from '@monaco-editor/react';
 import { X, Save, Code, Loader2, Maximize, Minimize, AlertCircle, CheckCircle } from 'lucide-react';
 import { Theme } from '../types';
 import { Language } from '../services/i18n';
+
+// Configure Monaco to use local resources instead of CDN
+loader.config({
+  paths: {
+    vs: '/monaco-editor/min/vs'
+  }
+});
 
 interface SourceCodeEditorProps {
   code: string;
@@ -197,17 +204,38 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
 
   const editorRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const monaco = useMonaco();
+  const [monacoInstance, setMonacoInstance] = useState<any>(null);
   
   // Interaction Refs
   const dragStartRef = useRef({ x: 0, y: 0, initialRect: { ...rect } });
   const isDraggingRef = useRef(false);
   const resizeDirectionRef = useRef('');
 
+  // Initialize Monaco (avoid unhandled cancellation errors)
+  useEffect(() => {
+    let isMounted = true;
+    loader
+      .init()
+      .then((monaco) => {
+        if (isMounted) {
+          setMonacoInstance(monaco);
+        }
+      })
+      .catch((error) => {
+        if (error?.type !== 'cancelation') {
+          console.error('Monaco init failed:', error);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Setup URDF completion
   useEffect(() => {
-    if (monaco) {
-      const disposable = monaco.languages.registerCompletionItemProvider('xml', {
+    if (monacoInstance) {
+      const disposable = monacoInstance.languages.registerCompletionItemProvider('xml', {
         triggerCharacters: ['<'],
         provideCompletionItems: (model, position) => {
           const word = model.getWordUntilPosition(position);
@@ -221,23 +249,23 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
           const suggestions = [
             ...URDF_TAGS.map(tag => ({
               label: tag,
-              kind: monaco.languages.CompletionItemKind.Keyword,
+              kind: monacoInstance.languages.CompletionItemKind.Keyword,
               insertText: tag,
               range,
             })),
             {
               label: 'link-snippet',
-              kind: monaco.languages.CompletionItemKind.Snippet,
+              kind: monacoInstance.languages.CompletionItemKind.Snippet,
               insertText: URDF_SNIPPETS.link,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+              insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
               documentation: 'Basic URDF Link structure',
               range,
             },
             {
               label: 'joint-snippet',
-              kind: monaco.languages.CompletionItemKind.Snippet,
+              kind: monacoInstance.languages.CompletionItemKind.Snippet,
               insertText: URDF_SNIPPETS.joint,
-              insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+              insertTextRules: monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
               documentation: 'Basic URDF Joint structure',
               range,
             }
@@ -249,26 +277,26 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
 
       return () => disposable.dispose();
     }
-  }, [monaco]);
+  }, [monacoInstance]);
 
   // Update Monaco markers when validation errors change
   useEffect(() => {
-    if (monaco && editorRef.current) {
+    if (monacoInstance && editorRef.current) {
       const model = editorRef.current.getModel();
       if (model) {
         const markers = validationErrors.map(err => ({
-          severity: monaco.MarkerSeverity.Error,
+          severity: monacoInstance.MarkerSeverity.Error,
           startLineNumber: err.line,
           startColumn: err.column || 1,
           endLineNumber: err.endLine || err.line,
-          endColumn: err.endColumn || 1000, // Highlight to end of line
+          endColumn: err.endColumn || err.column || 1,
           message: err.message,
           source: 'URDF Validator'
         }));
-        monaco.editor.setModelMarkers(model, 'urdf-validator', markers);
+        monacoInstance.editor.setModelMarkers(model, 'urdf-validator', markers);
       }
     }
-  }, [monaco, validationErrors]);
+  }, [monacoInstance, validationErrors]);
 
   // Handle Dragging
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -288,8 +316,18 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
       const dx = e.clientX - dragStartRef.current.x;
       const dy = e.clientY - dragStartRef.current.y;
       
-      const newX = dragStartRef.current.initialRect.x + dx;
-      const newY = dragStartRef.current.initialRect.y + dy;
+      let newX = dragStartRef.current.initialRect.x + dx;
+      let newY = dragStartRef.current.initialRect.y + dy;
+      
+      // Constrain to viewport bounds - all four sides
+      const { width, height } = dragStartRef.current.initialRect;
+      const minVisible = 100; // Keep at least 100px visible on each side
+      const minX = -width + minVisible;
+      const maxX = window.innerWidth - minVisible;
+      const minY = 0;
+      const maxY = window.innerHeight - 50;
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
 
       if (containerRef.current) {
         containerRef.current.style.transform = `translate(${newX}px, ${newY}px)`;
@@ -300,10 +338,24 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({ code, onCode
       if (isDraggingRef.current) {
         const dx = e.clientX - dragStartRef.current.x;
         const dy = e.clientY - dragStartRef.current.y;
+        
+        let newX = dragStartRef.current.initialRect.x + dx;
+        let newY = dragStartRef.current.initialRect.y + dy;
+        
+        // Constrain to viewport bounds - all four sides
+        const { width, height } = dragStartRef.current.initialRect;
+        const minVisible = 100;
+        const minX = -width + minVisible;
+        const maxX = window.innerWidth - minVisible;
+        const minY = 0;
+        const maxY = window.innerHeight - 50;
+        newX = Math.max(minX, Math.min(maxX, newX));
+        newY = Math.max(minY, Math.min(maxY, newY));
+        
         setRect(prev => ({
           ...prev,
-          x: prev.x + dx,
-          y: prev.y + dy
+          x: newX,
+          y: newY
         }));
       }
       isDraggingRef.current = false;

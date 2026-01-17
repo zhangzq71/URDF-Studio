@@ -546,7 +546,7 @@ function RobotNode({
     
     if (mode === 'detail') {
         if (isCollision && !showCollision) return null;
-        if (!isCollision && !showVisual) return null;
+        if (!isCollision && (link.visible === false)) return null;
     } else {
         if (isCollision && !showCollision) return null;
         if (isCollision) return null;
@@ -847,7 +847,7 @@ function RobotNode({
   );
 }
 
-export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, theme, os }: { robot: RobotState; onSelect: any; onUpdate: any; mode: 'skeleton' | 'detail' | 'hardware', assets: Record<string, string>, lang: Language, theme: Theme, os?: 'mac' | 'win' }) => {
+export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, theme, os, showVisual: propShowVisual, setShowVisual: propSetShowVisual }: { robot: RobotState; onSelect: any; onUpdate: any; mode: 'skeleton' | 'detail' | 'hardware', assets: Record<string, string>, lang: Language, theme: Theme, os?: 'mac' | 'win', showVisual?: boolean, setShowVisual?: (show: boolean) => void }) => {
   const t = translations[lang];
 
   // Skeleton Settings
@@ -860,7 +860,11 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
   const [showDetailOrigin, setShowDetailOrigin] = useState(false);
   const [showDetailLabels, setShowDetailLabels] = useState(false);
   const [showCollision, setShowCollision] = useState(false);
-  const [showVisual, setShowVisual] = useState(true);
+  
+  // Handle showVisual (controlled or uncontrolled)
+  const [localShowVisual, setLocalShowVisual] = useState(true);
+  const showVisual = propShowVisual !== undefined ? propShowVisual : localShowVisual;
+  const setShowVisual = propSetShowVisual || setLocalShowVisual;
 
   // Hardware Settings
   const [showHardwareOrigin, setShowHardwareOrigin] = useState(false);

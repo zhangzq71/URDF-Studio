@@ -1,21 +1,22 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useHistory } from './hooks/useHistory';
 import { TreeEditor } from './components/TreeEditor';
 import { PropertyEditor } from './components/PropertyEditor';
 import { Visualizer } from './components/Visualizer';
 import { URDFViewer } from './components/URDFViewer';
 import { SourceCodeEditor } from './components/SourceCodeEditor';
-import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, Theme, InspectionReport, InspectionIssue } from './types';
+import { RobotState, DEFAULT_LINK, DEFAULT_JOINT, UrdfLink, UrdfJoint, GeometryType, MotorSpec, Theme, InspectionReport, InspectionIssue, RobotFile } from './types';
 import { generateURDF } from './services/urdfGenerator';
 import { generateMujocoXML } from './services/mujocoGenerator';
 import { parseURDF } from './services/urdfParser';
 import { parseMJCF, isMJCF } from './services/mjcfParser';
 import { parseUSDA, isUSDA } from './services/usdParser';
+import { parseXacro, isXacro } from './services/xacroParser';
 import { generateRobotFromPrompt, runRobotInspection } from './services/geminiService';
 import { DEFAULT_MOTOR_LIBRARY } from './services/motorLibrary';
 import { translations, Language } from './services/i18n';
 import { INSPECTION_CRITERIA, getInspectionCategory } from './services/inspectionCriteria';
-import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon, Briefcase, Undo, Redo, RotateCcw, RotateCw, History, Code } from 'lucide-react';
+import { Download, Activity, Box, Cpu, Upload, Sparkles, X, Loader2, Check, ArrowRight, Github, Globe, ScanSearch, AlertTriangle, Info, AlertCircle, Move, ChevronDown, ChevronRight, FileText, RefreshCw, MessageCircle, Send, FileJson, Folder, Heart, Sun, Moon, Briefcase, Undo, Redo, RotateCcw, RotateCw, History, Code, Settings } from 'lucide-react';
 import JSZip from 'jszip';
 import jsPDF from 'jspdf';
 
@@ -42,6 +43,8 @@ export default function App() {
 
   const [appMode, setAppMode] = useState<AppMode>('skeleton');
   const [assets, setAssets] = useState<Record<string, string>>({});
+  const [availableFiles, setAvailableFiles] = useState<RobotFile[]>([]);
+  const [allFileContents, setAllFileContents] = useState<Record<string, string>>({});  // All text file contents for xacro includes
   const [motorLibrary, setMotorLibrary] = useState<Record<string, MotorSpec[]>>(DEFAULT_MOTOR_LIBRARY);
   const [originalUrdfContent, setOriginalUrdfContent] = useState<string>('');
   
@@ -112,6 +115,50 @@ export default function App() {
     }
     return 'light';
   });
+
+  // Visual state (derived from links data to support "Layer" like visibility)
+  const showVisual = useMemo(() => {
+      // If any link is visible, we consider the "Master Switch" as ON (or partially ON)
+      // But to match the behavior "Uncheck -> Hide All", we treat it as:
+      // Checked if at least one is visible. Unchecking it hides all.
+      // Checking it (from empty) shows all.
+      return Object.values(robot.links).some(l => l.visible !== false);
+  }, [robot.links]);
+
+  const handleSetShowVisual = useCallback((target: boolean) => {
+      setRobotData(prev => {
+          const newLinks = { ...prev.links };
+          let changed = false;
+          Object.keys(newLinks).forEach(key => {
+              if (newLinks[key].visible !== target) {
+                  newLinks[key] = { ...newLinks[key], visible: target };
+                  changed = true;
+              }
+          });
+          return changed ? { ...prev, links: newLinks } : prev;
+      });
+  }, [setRobotData]);
+
+  // UI Scale State
+  const [uiScale, setUiScale] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('uiScale');
+      return saved ? parseFloat(saved) : 1.0;
+    }
+    return 1.0;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('uiScale', uiScale.toString());
+    // Apply scale to root element font-size percentage
+    // Default browser font size is usually 16px (100%)
+    // Setting percentage scales all rem units
+    document.documentElement.style.fontSize = `${uiScale * 100}%`;
+  }, [uiScale]);
+
+  // Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsPos, setSettingsPos] = useState({ x: 100, y: 100 });
 
   // OS Detection
   const [os, setOs] = useState<'mac' | 'win'>('win');
@@ -229,6 +276,57 @@ export default function App() {
   }, [rightSidebarCollapsed]);
 
   // --- Actions ---
+
+  const handleLoadRobot = useCallback((file: RobotFile) => {
+    let newState: RobotState | null = null;
+    
+    switch (file.format) {
+        case 'urdf':
+            newState = parseURDF(file.content);
+            if (newState) setOriginalUrdfContent(file.content);
+            break;
+        case 'mjcf':
+            newState = parseMJCF(file.content);
+            if (newState) setOriginalUrdfContent('');
+            break;
+        case 'usd':
+            newState = parseUSDA(file.content);
+            if (newState) setOriginalUrdfContent('');
+            break;
+        case 'xacro':
+            // Build file map from all available files for xacro includes
+            const fileMap: { [path: string]: string } = {};
+            availableFiles.forEach(f => {
+                fileMap[f.name] = f.content;
+            });
+            // Also add assets as potential includes
+            Object.entries(assets).forEach(([path, content]) => {
+                if (typeof content === 'string') {
+                    fileMap[path] = content;
+                }
+            });
+            // Get base path from file name
+            const pathParts = file.name.split('/');
+            pathParts.pop();
+            const basePath = pathParts.join('/');
+            
+            newState = parseXacro(file.content, {}, fileMap, basePath);
+            if (newState) setOriginalUrdfContent('');
+            break;
+    }
+
+    if (newState) {
+        const { selection: newSelection, ...newData } = newState;
+        resetRobotData(newData);
+        setSelection({ type: null, id: null });
+        setAppMode('detail');
+    } else {
+        const msg = lang === 'zh' 
+            ? `解析 ${file.format.toUpperCase()} 文件失败。` 
+            : `Failed to parse ${file.format.toUpperCase()} file.`;
+        alert(msg);
+    }
+  }, [lang, resetRobotData, availableFiles, assets]);
 
   const handleSelect = (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
     setSelection({ type, id, subType });
@@ -438,13 +536,111 @@ export default function App() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    // Helper to process a "virtual filesystem" (map of filename -> blob/url)
-    const processVirtualFS = async (
-        robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null, 
-        assetFiles: { name: string, blob: Blob }[],
-        libraryFiles: { path: string, content: string }[]
-    ) => {
-        // 0. Process Motor Library if found
+    // Helper to detect file format from content
+    const detectFormat = (content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | 'xacro' | null => {
+        const lowerName = filename.toLowerCase();
+        
+        // Check by extension first
+        if (lowerName.endsWith('.xacro') || lowerName.endsWith('.urdf.xacro')) return 'xacro';
+        if (lowerName.endsWith('.urdf')) return 'urdf';
+        if (lowerName.endsWith('.usda') || lowerName.endsWith('.usdc') || lowerName.endsWith('.usd')) return 'usd';
+        
+        // For XML files, check content
+        if (lowerName.endsWith('.xml')) {
+            if (isMJCF(content)) return 'mjcf';
+            // Check for xacro content
+            if (isXacro(content)) return 'xacro';
+            // Could also be URDF (though rare with .xml extension)
+            if (content.includes('<robot')) return 'urdf';
+        }
+        
+        // Try content-based detection
+        if (isUSDA(content)) return 'usd';
+        if (isMJCF(content)) return 'mjcf';
+        if (isXacro(content)) return 'xacro';
+        if (content.includes('<robot')) return 'urdf';
+        
+        return null;
+    };
+
+    try {
+        const newRobotFiles: RobotFile[] = [];
+        const assetFiles: { name: string, blob: Blob }[] = [];
+        const libraryFiles: { path: string, content: string }[] = [];
+
+        // Mode 1: Single ZIP file
+        if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
+            const zip = await JSZip.loadAsync(files[0]);
+            
+            const promises: Promise<void>[] = [];
+            zip.forEach((relativePath, fileEntry) => {
+                if (fileEntry.dir) return;
+                
+                // Skip hidden files/folders (starting with .)
+                const pathParts = relativePath.split('/');
+                if (pathParts.some(part => part.startsWith('.'))) {
+                    return; // Skip .history, .git, etc.
+                }
+                
+                const lowerPath = relativePath.toLowerCase();
+                const p = (async () => {
+                    // Check for robot definition files (URDF, MJCF, USD, Xacro)
+                    if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') || 
+                        lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.usda') || lowerPath.endsWith('.usd') ||
+                        lowerPath.endsWith('.xacro')) {
+                        const content = await fileEntry.async("string");
+                        const format = detectFormat(content, relativePath);
+                        if (format) {
+                            newRobotFiles.push({ name: relativePath, content, format });
+                        }
+                    } else if (lowerPath.includes('motor library') && lowerPath.endsWith('.txt')) {
+                        const content = await fileEntry.async("string");
+                        libraryFiles.push({ path: relativePath, content });
+                    } else {
+                        // Assume asset
+                        const blob = await fileEntry.async("blob");
+                        assetFiles.push({ name: relativePath, blob });
+                    }
+                })();
+                promises.push(p);
+            });
+            await Promise.all(promises);
+
+        } else {
+            // Mode 2: Multiple Files (Folder upload or Multi-select)
+            const fileList = Array.from(files);
+            
+            const promises = fileList.map(async f => {
+                const lowerName = f.name.toLowerCase();
+                // Note: file.webkitRelativePath gives path if directory upload, else just empty or filename
+                const path = f.webkitRelativePath || f.name;
+                
+                // Skip hidden files/folders (starting with .)
+                const pathParts = path.split('/');
+                if (pathParts.some(part => part.startsWith('.'))) {
+                    return; // Skip .history, .git, etc.
+                }
+
+                // Check for robot definition files (URDF, MJCF, USD, Xacro)
+                if (lowerName.endsWith('.urdf') || lowerName.endsWith('.xml') || 
+                    lowerName.endsWith('.mjcf') || lowerName.endsWith('.usda') || lowerName.endsWith('.usd') ||
+                    lowerName.endsWith('.xacro')) {
+                    const content = await f.text();
+                    const format = detectFormat(content, f.name);
+                    if (format) {
+                        newRobotFiles.push({ name: path, content, format });
+                    }
+                } else if (path.includes('motor library') && lowerName.endsWith('.txt')) {
+                    const content = await f.text();
+                    libraryFiles.push({ path: path, content });
+                } else {
+                    assetFiles.push({ name: path, blob: f });
+                }
+            });
+            await Promise.all(promises);
+        }
+
+        // 1. Process Motor Library
         if (libraryFiles.length > 0) {
              const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
              libraryFiles.forEach(f => {
@@ -466,169 +662,52 @@ export default function App() {
              setMotorLibrary(newLibrary);
         }
 
-        // 1. Process Robot File
-        if (!robotFile) {
-            if (libraryFiles.length > 0) {
-                alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
-                return;
-            }
-            alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
-            return;
-        }
-
-        // Parse based on format
-        let newState: RobotState | null = null;
-        
-        switch (robotFile.format) {
-            case 'urdf':
-                newState = parseURDF(robotFile.content);
-                if (newState) {
-                    setOriginalUrdfContent(robotFile.content);
-                }
-                break;
-            case 'mjcf':
-                newState = parseMJCF(robotFile.content);
-                if (newState) {
-                    // Clear URDF content since this is MJCF
-                    setOriginalUrdfContent('');
-                }
-                break;
-            case 'usd':
-                newState = parseUSDA(robotFile.content);
-                if (newState) {
-                    // Clear URDF content since this is USD
-                    setOriginalUrdfContent('');
-                }
-                break;
-        }
-
-        if (newState) {
-            
-            // 2. Load Assets
-            const newAssets: Record<string, string> = {};
-            const assetPromises = assetFiles.map(async f => {
-                 const ext = f.name.split('.').pop()?.toLowerCase();
-                 if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
-                     // Use basename for simple matching
-                     const filename = f.name.split('/').pop()!;
-                     const url = URL.createObjectURL(f.blob);
-                     newAssets[filename] = url;
+        // 2. Load Assets
+        const newAssets: Record<string, string> = {};
+        const assetPromises = assetFiles.map(async f => {
+             const ext = f.name.split('.').pop()?.toLowerCase();
+             if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
+                 const url = URL.createObjectURL(f.blob);
+                 // Store with full path for path-based lookup
+                 newAssets[f.name] = url;
+                 // Also store with just filename for simple matching
+                 const filename = f.name.split('/').pop()!;
+                 newAssets[filename] = url;
+                 // Store with /meshes/filename pattern (common in URDF)
+                 if (f.name.includes('/meshes/')) {
+                     const meshPath = '/meshes/' + filename;
+                     newAssets[meshPath] = url;
                  }
-            });
-            await Promise.all(assetPromises);
+                 // Store various path patterns for flexible matching
+                 const parts = f.name.split('/');
+                 for (let i = 0; i < parts.length; i++) {
+                     const subPath = parts.slice(i).join('/');
+                     if (!newAssets[subPath]) {
+                         newAssets[subPath] = url;
+                     }
+                     // Also with leading slash
+                     if (!newAssets['/' + subPath]) {
+                         newAssets['/' + subPath] = url;
+                     }
+                 }
+             }
+        });
+        await Promise.all(assetPromises);
 
-            // Cleanup old assets
-            Object.values(assets).forEach(url => URL.revokeObjectURL(url));
-            
-            setAssets(newAssets);
-            
-            const { selection: newSelection, ...newData } = newState;
-            resetRobotData(newData);
-            setSelection({ type: null, id: null });
-            
-            setAppMode('detail'); // Start with detail mode
-        } else {
-            const msg = lang === 'zh' 
-                ? `解析 ${robotFile.format.toUpperCase()} 文件失败。` 
-                : `Failed to parse ${robotFile.format.toUpperCase()} file.`;
-            alert(msg);
-        }
-    };
-
-    // Helper to detect file format from content
-    const detectFormat = (content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | null => {
-        const lowerName = filename.toLowerCase();
+        // Cleanup old assets
+        Object.values(assets).forEach(url => URL.revokeObjectURL(url));
+        setAssets(newAssets);
         
-        // Check by extension first
-        if (lowerName.endsWith('.urdf')) return 'urdf';
-        if (lowerName.endsWith('.usda') || lowerName.endsWith('.usdc') || lowerName.endsWith('.usd')) return 'usd';
-        
-        // For XML files, check content
-        if (lowerName.endsWith('.xml')) {
-            if (isMJCF(content)) return 'mjcf';
-            // Could also be URDF (though rare with .xml extension)
-            if (content.includes('<robot')) return 'urdf';
-        }
-        
-        // Try content-based detection
-        if (isUSDA(content)) return 'usd';
-        if (isMJCF(content)) return 'mjcf';
-        if (content.includes('<robot')) return 'urdf';
-        
-        return null;
-    };
+        // 3. Set Available Files
+        setAvailableFiles(newRobotFiles);
 
-    try {
-        // Mode 1: Single ZIP file
-        if (files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')) {
-            const zip = await JSZip.loadAsync(files[0]);
-            
-            let robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null = null;
-            const assetFiles: { name: string, blob: Blob }[] = [];
-            const libraryFiles: { path: string, content: string }[] = [];
-
-            // Iterate ZIP
-            const promises: Promise<void>[] = [];
-            zip.forEach((relativePath, fileEntry) => {
-                if (fileEntry.dir) return;
-                
-                const lowerPath = relativePath.toLowerCase();
-                const p = (async () => {
-                    // Check for robot definition files (URDF, MJCF, USD)
-                    if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') || 
-                        lowerPath.endsWith('.usda') || lowerPath.endsWith('.usd')) {
-                        const content = await fileEntry.async("string");
-                        const format = detectFormat(content, relativePath);
-                        if (format && !robotFile) {
-                            robotFile = { name: relativePath, content, format };
-                        }
-                    } else if (lowerPath.includes('motor library') && lowerPath.endsWith('.txt')) {
-                        const content = await fileEntry.async("string");
-                        libraryFiles.push({ path: relativePath, content });
-                    } else {
-                        // Assume asset
-                        const blob = await fileEntry.async("blob");
-                        assetFiles.push({ name: relativePath, blob });
-                    }
-                })();
-                promises.push(p);
-            });
-            await Promise.all(promises);
-
-            // Use the generic processor
-            await processVirtualFS(robotFile, assetFiles, libraryFiles);
-
-        } else {
-            // Mode 2: Multiple Files (Folder upload or Multi-select)
-            const fileList = Array.from(files);
-            
-            let robotFile: { name: string, content: string, format: 'urdf' | 'mjcf' | 'usd' } | null = null;
-            const assetFiles: { name: string, blob: Blob }[] = [];
-            const libraryFiles: { path: string, content: string }[] = [];
-
-            const promises = fileList.map(async f => {
-                const lowerName = f.name.toLowerCase();
-                // Note: file.webkitRelativePath gives path if directory upload, else just empty or filename
-                const path = f.webkitRelativePath || f.name;
-
-                // Check for robot definition files (URDF, MJCF, USD)
-                if (lowerName.endsWith('.urdf') || lowerName.endsWith('.xml') || 
-                    lowerName.endsWith('.usda') || lowerName.endsWith('.usd')) {
-                    const content = await f.text();
-                    const format = detectFormat(content, f.name);
-                    if (format && !robotFile) {
-                        robotFile = { name: path, content, format };
-                    }
-                } else if (path.includes('motor library') && lowerName.endsWith('.txt')) {
-                    const content = await f.text();
-                    libraryFiles.push({ path: path, content });
-                } else {
-                    assetFiles.push({ name: path, blob: f });
-                }
-            });
-            await Promise.all(promises);
-
-            await processVirtualFS(robotFile, assetFiles, libraryFiles);
+        // 4. Load first robot if available
+        if (newRobotFiles.length > 0) {
+            handleLoadRobot(newRobotFiles[0]);
+        } else if (libraryFiles.length > 0) {
+            alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
+        } else if (assetFiles.length === 0) {
+            alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
         }
 
     } catch (error: any) {
@@ -1001,6 +1080,28 @@ export default function App() {
         const dx = moveEvent.clientX - startX;
         const dy = moveEvent.clientY - startY;
         setAiPanelPos({ x: initialX + dx, y: initialY + dy });
+    };
+
+    const handleMouseUp = () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleSettingsDragStart = (e: React.MouseEvent) => {
+    e.preventDefault(); 
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialX = settingsPos.x;
+    const initialY = settingsPos.y;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        setSettingsPos({ x: initialX + dx, y: initialY + dy });
     };
 
     const handleMouseUp = () => {
@@ -1391,7 +1492,7 @@ export default function App() {
     <div className="flex flex-col h-screen font-sans bg-google-light-bg dark:bg-google-dark-bg text-slate-800 dark:text-slate-200">
       <input 
         type="file" 
-        accept=".zip,.urdf,.xml,.usda,.usd" 
+        accept=".zip,.urdf,.xml,.usda,.usd,.xacro" 
         ref={importInputRef} 
         onChange={handleImport} 
         className="hidden" 
@@ -1533,6 +1634,8 @@ export default function App() {
                                             <div className="text-[10px] text-slate-400 dark:text-slate-500">{t.bridgedpEngineDesc}</div>
                                         </div>
                                     </button>
+
+
                                 </div>
                             </div>
                         </>
@@ -1602,6 +1705,14 @@ export default function App() {
         {/* Right Section - Actions */}
         <div className="flex items-center gap-0.5">
             <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
+                title={lang === 'zh' ? "设置" : "Settings"}
+            >
+                <Settings className="w-4 h-4" />
+            </button>
+
+            <button 
                 onClick={() => setLang(prev => prev === 'en' ? 'zh' : 'en')}
                 className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
                 title={lang === 'zh' ? "切换语言" : "Switch Language"}
@@ -1639,11 +1750,16 @@ export default function App() {
             onAddChild={handleAddChild}
             onDelete={handleDelete}
             onNameChange={handleNameChange}
+            onUpdate={handleUpdate}
+            showVisual={showVisual}
+            setShowVisual={handleSetShowVisual}
             mode={appMode}
             lang={lang}
             theme={theme}
             collapsed={leftSidebarCollapsed}
             onToggle={() => setLeftSidebarCollapsed(!leftSidebarCollapsed)}
+            availableFiles={availableFiles}
+            onLoadRobot={handleLoadRobot}
         />
         
         {(appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? (
@@ -1658,6 +1774,8 @@ export default function App() {
                 focusTarget={focusTarget}
                 theme={theme}
                 robotLinks={robot.links}
+                showVisual={showVisual}
+                setShowVisual={handleSetShowVisual}
                 onCollisionTransform={(linkId, position, rotation) => {
                     // linkId is the selection.id which is the link's ID (not name)
                     console.log('App.tsx onCollisionTransform called:', { linkId, position, rotation });
@@ -1694,6 +1812,8 @@ export default function App() {
                 lang={lang}
                 theme={theme}
                 os={os}
+                showVisual={showVisual}
+                setShowVisual={handleSetShowVisual}
             />
         )}
         
@@ -2145,6 +2265,62 @@ export default function App() {
           </div>
       )}
 
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+          <div 
+              style={{ left: settingsPos.x, top: settingsPos.y }}
+              className="fixed z-[100] w-[320px] bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden"
+          >
+              {/* Header */}
+              <div 
+                  onMouseDown={handleSettingsDragStart}
+                  className="bg-slate-100 dark:bg-slate-900 px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between cursor-move select-none"
+              >
+                  <div className="flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                      <h2 className="text-sm font-bold text-slate-800 dark:text-white">{lang === 'zh' ? '设置' : 'Settings'}</h2>
+                  </div>
+                  <button 
+                      onClick={() => setIsSettingsOpen(false)}
+                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                      <X className="w-4 h-4" />
+                  </button>
+              </div>
+              
+              {/* Content */}
+              <div className="p-4 space-y-4">
+                  <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-600 dark:text-slate-300">{lang === 'zh' ? '界面缩放' : 'Interface Scale'}</label>
+                          <span className="text-xs text-slate-500 font-mono">{(uiScale * 100).toFixed(0)}%</span>
+                      </div>
+                      <input 
+                          type="range" 
+                          min="0.8" 
+                          max="1.5" 
+                          step="0.05" 
+                          value={uiScale}
+                          onChange={(e) => setUiScale(parseFloat(e.target.value))}
+                          className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                      />
+                      <div className="flex justify-between text-[10px] text-slate-400">
+                          <span>80%</span>
+                          <span>100%</span>
+                          <span>150%</span>
+                      </div>
+                  </div>
+                  
+                  <button 
+                      onClick={() => setUiScale(1.0)}
+                      className="w-full py-1.5 text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors"
+                  >
+                      {lang === 'zh' ? '重置默认' : 'Reset to Default'}
+                  </button>
+              </div>
+          </div>
+      )}
+
       {/* About Modal */}
       {isAboutMenuOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center">
@@ -2218,25 +2394,7 @@ export default function App() {
                               <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
                           </a>
 
-                          <a 
-                              href="https://engine.bridgedp.com/"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group"
-                          >
-                              <div className="w-9 h-9 bg-white dark:bg-slate-700 rounded-lg flex items-center justify-center overflow-hidden border border-slate-100 dark:border-slate-600">
-                                  <img src="/bridgedp-logo.png" alt="BridgeDP" className="w-full h-full object-contain p-1" />
-                              </div>
-                              <div className="flex-1">
-                                  <div className="text-sm font-medium text-slate-800 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                      {lang === 'zh' ? '桥介引擎' : 'Bridgedp Engine'}
-                                  </div>
-                                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                                      {lang === 'zh' ? '感谢支持' : 'Thanks for support'}
-                                  </div>
-                              </div>
-                              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
-                          </a>
+
                       </div>
                   </div>
                   

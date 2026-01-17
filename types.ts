@@ -44,6 +44,7 @@ export interface UrdfLink {
   visual: UrdfVisual;
   collision: UrdfVisual;
   inertial: UrdfInertial;
+  visible?: boolean; // Controls visibility in the 3D scene
 }
 
 export interface UrdfJointDynamics {
@@ -79,6 +80,12 @@ export interface RobotState {
   selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
 }
 
+export interface RobotFile {
+  name: string;
+  content: string;
+  format: 'urdf' | 'mjcf' | 'usd' | 'xacro';
+}
+
 export interface MotorSpec {
     name: string;
     armature: number;
@@ -109,6 +116,7 @@ export interface InspectionReport {
 export const DEFAULT_LINK: UrdfLink = {
   id: '',
   name: 'link',
+  visible: true,
   visual: { 
     type: GeometryType.CYLINDER, 
     dimensions: { x: 0.05, y: 0.5, z: 0.05 }, 
