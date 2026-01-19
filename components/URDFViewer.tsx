@@ -667,13 +667,14 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         const positionAttribute = geometry.getAttribute('position');
         const indexAttribute = geometry.getIndex();
 
-        // Find all coplanar faces
-        const coplanarFaces = findCoplanarFaces(geometry, faceIndex);
+        // Only highlight the single clicked triangle (not coplanar faces)
+        // This gives user precise control over individual mesh triangles
+        const facesToHighlight = [faceIndex];
         
-        // Build positions array for all coplanar faces
+        // Build positions array for the highlighted face(s)
         const positions: number[] = [];
         
-        for (const fi of coplanarFaces) {
+        for (const fi of facesToHighlight) {
             let a: number, b: number, c: number;
             if (indexAttribute) {
                 a = indexAttribute.getX(fi * 3);
@@ -696,7 +697,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         highlightGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         highlightGeo.computeVertexNormals();
 
-    }, [highlightedFace, scene, findCoplanarFaces]);
+    }, [highlightedFace, scene]);
 
     // Sync face highlight transform
     useFrame(() => {
@@ -2837,17 +2838,22 @@ const JointControlItem = ({
 
 type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
 
-// Measure Tool Component
+// Measure Tool Component - measurements persist until right-click clear
 const MeasureTool = ({ active, robot }: { active: boolean, robot: THREE.Object3D | null }) => {
     const { camera, gl } = useThree();
-    const [points, setPoints] = useState<THREE.Vector3[]>([]);
+    // Store completed measurements as pairs of points
+    const [measurements, setMeasurements] = useState<[THREE.Vector3, THREE.Vector3][]>([]);
+    // Current measurement in progress (0, 1, or 2 points)
+    const [currentPoints, setCurrentPoints] = useState<THREE.Vector3[]>([]);
     const [tempPoint, setTempPoint] = useState<THREE.Vector3 | null>(null);
+    const [showContextMenu, setShowContextMenu] = useState<{ x: number; y: number } | null>(null);
     const raycaster = useMemo(() => new THREE.Raycaster(), []);
     const mouse = useRef(new THREE.Vector2());
 
+    // Only clear temp state when deactivating, keep measurements
     useEffect(() => {
         if (!active) {
-            setPoints([]);
+            setCurrentPoints([]);
             setTempPoint(null);
         }
     }, [active]);
@@ -2860,11 +2866,11 @@ const MeasureTool = ({ active, robot }: { active: boolean, robot: THREE.Object3D
             mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-            if (points.length === 1) {
+            if (currentPoints.length === 1) {
                  raycaster.setFromCamera(mouse.current, camera);
                  const intersects = raycaster.intersectObject(robot, true);
                  if (intersects.length > 0) {
-                     setTempPoint(intersects[0].point);
+                     setTempPoint(intersects[0].point.clone());
                  } else {
                      setTempPoint(null);
                  }
@@ -2872,64 +2878,129 @@ const MeasureTool = ({ active, robot }: { active: boolean, robot: THREE.Object3D
         };
 
         const handleClick = (event: MouseEvent) => {
-             // Ignore clicks on UI elements
+             // Ignore clicks on UI elements or context menu
              if ((event.target as HTMLElement).closest('.urdf-toolbar') || 
                  (event.target as HTMLElement).closest('.urdf-options-panel') ||
-                 (event.target as HTMLElement).closest('.urdf-joint-panel')) return;
+                 (event.target as HTMLElement).closest('.urdf-joint-panel') ||
+                 (event.target as HTMLElement).closest('.measure-context-menu')) return;
+             
+             // Close context menu if open
+             if (showContextMenu) {
+                 setShowContextMenu(null);
+                 return;
+             }
              
              raycaster.setFromCamera(mouse.current, camera);
              const intersects = raycaster.intersectObject(robot, true);
              
              if (intersects.length > 0) {
-                 const point = intersects[0].point;
-                 setPoints(prev => {
-                     if (prev.length >= 2) return [point]; 
-                     return [...prev, point];
-                 });
-                 setTempPoint(null);
+                 const point = intersects[0].point.clone();
+                 
+                 if (currentPoints.length === 0) {
+                     // First point of new measurement
+                     setCurrentPoints([point]);
+                 } else if (currentPoints.length === 1) {
+                     // Second point - complete measurement
+                     setMeasurements(prev => [...prev, [currentPoints[0], point]]);
+                     setCurrentPoints([]);
+                     setTempPoint(null);
+                 }
              }
+        };
+
+        const handleContextMenu = (event: MouseEvent) => {
+            event.preventDefault();
+            // Show context menu at mouse position
+            setShowContextMenu({ x: event.clientX, y: event.clientY });
         };
 
         gl.domElement.addEventListener('mousemove', handleMouseMove);
         gl.domElement.addEventListener('click', handleClick);
+        gl.domElement.addEventListener('contextmenu', handleContextMenu);
 
         return () => {
             gl.domElement.removeEventListener('mousemove', handleMouseMove);
             gl.domElement.removeEventListener('click', handleClick);
+            gl.domElement.removeEventListener('contextmenu', handleContextMenu);
         };
-    }, [active, robot, points, camera, gl, raycaster]);
+    }, [active, robot, currentPoints, camera, gl, raycaster, showContextMenu]);
 
-    if (!active) return null;
+    const handleClearAll = () => {
+        setMeasurements([]);
+        setCurrentPoints([]);
+        setTempPoint(null);
+        setShowContextMenu(null);
+    };
 
-    const renderPoints = [...points];
-    if (points.length === 1 && tempPoint) {
-        renderPoints.push(tempPoint);
+    // Render current measurement in progress
+    const renderCurrentPoints = [...currentPoints];
+    if (currentPoints.length === 1 && tempPoint) {
+        renderCurrentPoints.push(tempPoint);
     }
 
     return (
         <group>
-            {renderPoints.map((p, i) => (
-                <mesh key={i} position={p}>
+            {/* Render all completed measurements */}
+            {measurements.map((pair, idx) => (
+                <group key={`measurement-${idx}`}>
+                    <mesh position={pair[0]}>
+                        <sphereGeometry args={[0.0025, 16, 16]} />
+                        <meshBasicMaterial color="#22c55e" depthTest={false} transparent opacity={0.8} />
+                    </mesh>
+                    <mesh position={pair[1]}>
+                        <sphereGeometry args={[0.0025, 16, 16]} />
+                        <meshBasicMaterial color="#22c55e" depthTest={false} transparent opacity={0.8} />
+                    </mesh>
+                    <Line points={[pair[0], pair[1]]} color="#22c55e" lineWidth={2} depthTest={false} />
+                    <Html position={new THREE.Vector3().addVectors(pair[0], pair[1]).multiplyScalar(0.5)}>
+                        <div className="bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap pointer-events-none font-mono">
+                            {pair[0].distanceTo(pair[1]).toFixed(4)}m
+                        </div>
+                    </Html>
+                </group>
+            ))}
+
+            {/* Render current measurement in progress (only when active) */}
+            {active && renderCurrentPoints.map((p, i) => (
+                <mesh key={`current-${i}`} position={p}>
                     <sphereGeometry args={[0.0025, 16, 16]} />
                     <meshBasicMaterial color="#ef4444" depthTest={false} transparent opacity={0.8} />
                 </mesh>
             ))}
-            {renderPoints.length === 2 && (
+            {active && renderCurrentPoints.length === 2 && (
                 <>
-                    <Line points={[renderPoints[0], renderPoints[1]]} color="#ef4444" lineWidth={2} depthTest={false} />
-                    <Html position={new THREE.Vector3().addVectors(renderPoints[0], renderPoints[1]).multiplyScalar(0.5)}>
+                    <Line points={[renderCurrentPoints[0], renderCurrentPoints[1]]} color="#ef4444" lineWidth={2} depthTest={false} />
+                    <Html position={new THREE.Vector3().addVectors(renderCurrentPoints[0], renderCurrentPoints[1]).multiplyScalar(0.5)}>
                         <div className="bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap pointer-events-none font-mono">
-                            {renderPoints[0].distanceTo(renderPoints[1]).toFixed(4)}m
+                            {renderCurrentPoints[0].distanceTo(renderCurrentPoints[1]).toFixed(4)}m
                         </div>
                     </Html>
                 </>
+            )}
+
+            {/* Context menu for clearing measurements */}
+            {showContextMenu && (
+                <Html position={[0, 0, 0]} style={{ position: 'fixed', left: showContextMenu.x, top: showContextMenu.y, transform: 'none' }}>
+                    <div className="measure-context-menu bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 py-1 min-w-[160px] z-50">
+                        <button
+                            onClick={handleClearAll}
+                            className="w-full px-3 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            清除所有测量
+                        </button>
+                    </div>
+                </Html>
             )}
         </group>
     );
 };
 
 const ViewerToolbar = ({ activeMode, setMode, onClose, lang = 'en' }: { activeMode: ToolMode, setMode: (mode: ToolMode) => void, onClose?: () => void, lang?: Language }) => {
-    const nodeRef = useRef(null);
+    const nodeRef = useRef<HTMLDivElement>(null);
+    const [initialPosition, setInitialPosition] = useState<{ x: number; y: number } | null>(null);
     const t = translations[lang];
     const tools = [
         { id: 'view', icon: ViewIcon, label: t.viewMode },
@@ -2941,9 +3012,67 @@ const ViewerToolbar = ({ activeMode, setMode, onClose, lang = 'en' }: { activeMo
         { id: 'measure', icon: Ruler, label: t.measureMode },
     ];
 
+    // 初始加载时计算水平居中位置（顶部）- 只设置一次
+    useEffect(() => {
+        if (nodeRef.current && initialPosition === null) {
+            const parent = nodeRef.current.parentElement;
+            if (parent) {
+                const parentRect = parent.getBoundingClientRect();
+                const toolbarRect = nodeRef.current.getBoundingClientRect();
+                const centerX = (parentRect.width - toolbarRect.width) / 2;
+                setInitialPosition({ x: centerX, y: 4 });
+            }
+        }
+    }, [initialPosition]);
+
+    // 初始位置计算完成前，使用 CSS 居中；计算完成后使用 Draggable 的 defaultPosition
+    if (initialPosition === null) {
+        return (
+            <div ref={nodeRef} className="urdf-toolbar absolute z-40 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl flex items-center p-1 gap-1 cursor-auto" style={{ left: '50%', top: '4px', transform: 'translateX(-50%)' }}>
+                <div className="drag-handle cursor-move px-1 text-slate-300 dark:text-slate-600 flex items-center h-full mr-1 hover:text-slate-500 dark:hover:text-slate-400">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                </div>
+                {tools.map((tool) => {
+                    const isActive = activeMode === tool.id;
+                    const Icon = tool.icon;
+                    return (
+                        <button
+                            key={tool.id}
+                            onClick={() => setMode(tool.id as ToolMode)}
+                            className={`group relative p-1.5 rounded-md transition-all ${
+                                isActive 
+                                ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400 shadow-sm' 
+                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200'
+                            }`}
+                        >
+                            <Icon className="w-4 h-4" />
+                            <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-75 pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                                {tool.label}
+                            </span>
+                        </button>
+                    );
+                })}
+                {onClose && (
+                    <>
+                        <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1"></div>
+                        <button
+                            onClick={onClose}
+                            className="group relative p-1.5 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 transition-all"
+                        >
+                            <X className="w-4 h-4" />
+                            <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-75 pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                                {t.closeToolbar}
+                            </span>
+                        </button>
+                    </>
+                )}
+            </div>
+        );
+    }
+
     return (
-        <Draggable bounds="parent" handle=".drag-handle" nodeRef={nodeRef}>
-            <div ref={nodeRef} className="urdf-toolbar absolute top-1 left-0 right-0 mx-auto w-fit z-40 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl flex items-center p-1 gap-1 cursor-auto">
+        <Draggable bounds="parent" handle=".drag-handle" nodeRef={nodeRef} defaultPosition={initialPosition}>
+            <div ref={nodeRef} className="urdf-toolbar absolute z-40 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl flex items-center p-1 gap-1 cursor-auto" style={{ left: 0, top: 0 }}>
                 <div className="drag-handle cursor-move px-1 text-slate-300 dark:text-slate-600 flex items-center h-full mr-1 hover:text-slate-500 dark:hover:text-slate-400">
                     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
                 </div>
