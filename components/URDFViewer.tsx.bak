@@ -9,6 +9,8 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, GizmoHelper, GizmoViewport, Html, TransformControls, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { RotateCcw, Move, ArrowUpRight, MousePointer2, Hand, Ruler, BoxSelect, View as ViewIcon, CheckSquare, Scan, MousePointerClick, X, Eye } from 'lucide-react';
+import { CheckboxOption, SliderOption, ToggleButtonGroup } from './ui/OptionsPanel';
+import { HoverInvalidator, SnapshotManager, SceneLighting, ThickerAxes, InertiaBox, LinkCenterOfMass } from './shared';
 import Draggable from 'react-draggable';
 // @ts-ignore
 import URDFLoader from 'urdf-loader';
@@ -40,103 +42,6 @@ interface URDFViewerProps {
     onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
     snapshotAction?: React.MutableRefObject<(() => void) | null>;
 }
-
-// Snapshot Manager to handle high-res capture without gizmos
-const SnapshotManager = ({ actionRef, robotName }: { actionRef?: React.MutableRefObject<(() => void) | null>, robotName: string }) => {
-    const { gl, scene, camera } = useThree();
-
-    useEffect(() => {
-        if (!actionRef) return;
-
-        actionRef.current = () => {
-            // 1. Hide Gizmos, Grid, and other helpers
-            const hiddenObjects: THREE.Object3D[] = [];
-            
-            // Helper to check if object is a helper/gizmo
-            const isHelper = (obj: THREE.Object3D) => {
-                if (obj.userData.isGizmo) return true;
-                if (obj.name === 'ReferenceGrid') return true;
-                // Check Types
-                if (obj.type.includes('Grid')) return true;
-                if (obj.type.includes('AxesHelper')) return true;
-                if (obj.type.includes('CameraHelper')) return true;
-                if (obj.type.includes('ArrowHelper')) return true;
-                // Check Drei Gizmos (often unnamed groups or specific structures)
-                // GizmoViewport usually resides in a group attached to camera or scene with specific userData in newer versions, 
-                // but checking for 'Gizmo' in name or type or parents might help.
-                // TransformControls
-                if ((obj as any).isTransformControls) return true;
-                
-                // Hide ALL lines that are NOT part of the robot model?
-                // Robot model meshes are usually Mesh. Lines are usually helpers.
-                // Exception: If the robot ITSELF uses Lines (rare in URDF, but possible in glTF).
-                // Safest is to assume Lines at root level or in helper groups are bad.
-                if (obj.type === 'Line' || obj.type === 'LineSegments') {
-                    // Check if parent is the scene or a known helper group
-                    if (obj.parent === scene) return true;
-                    // If it belongs to a Grid
-                    if (obj.parent && obj.parent.type.includes('Grid')) return true;
-                }
-                
-                return false;
-            };
-
-            scene.traverse((obj) => {
-                if (obj.visible && isHelper(obj)) {
-                    obj.visible = false;
-                    hiddenObjects.push(obj);
-                }
-            });
-            
-            // Also explicitly hide GizmoHelper container if found (it often attaches to a separate scene or camera, but in drei it's in the scene)
-            // It might be hard to find generic Drei gizmos.
-            // Let's try to find objects with specific names often used by Drei
-            const gizmoLayer = scene.children.find(c => c.name === 'GizmoViewport'); 
-            if(gizmoLayer && gizmoLayer.visible) {
-                 gizmoLayer.visible = false;
-                 hiddenObjects.push(gizmoLayer);
-            }
-
-            // 2. Store and clear background for transparency
-            const originalBackground = scene.background;
-            scene.background = null;
-            
-            // Clear color to transparent
-            const originalClearColor = new THREE.Color();
-            gl.getClearColor(originalClearColor);
-            const originalClearAlpha = gl.getClearAlpha();
-            gl.setClearColor(0x000000, 0);
-
-            // 3. High Res Render
-            const originalPixelRatio = gl.getPixelRatio();
-            gl.setPixelRatio(4); // 4x Super Sampling for crisp edges
-            
-            // Force update matrices
-            scene.updateMatrixWorld(true);
-            
-            gl.render(scene, camera);
-            const dataUrl = gl.domElement.toDataURL('image/png', 1.0);
-
-            // 4. Restore
-            gl.setPixelRatio(originalPixelRatio);
-            scene.background = originalBackground;
-            gl.setClearColor(originalClearColor, originalClearAlpha);
-            
-            hiddenObjects.forEach(obj => obj.visible = true);
-
-            // 5. Download
-            const link = document.createElement('a');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            link.setAttribute('download', `${robotName}_HD_${timestamp}.png`);
-            link.setAttribute('href', dataUrl);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        };
-    }, [gl, scene, camera, actionRef, robotName]);
-
-    return null;
-};
 
 // Empty raycast function to disable raycast on collision meshes
 
@@ -347,7 +252,6 @@ const createMeshLoader = (assets: Record<string, string>, manager: THREE.Loading
                         console.warn('[URDFViewer] DAE mesh appears to be in mm, auto-scaling:', path, 'size:', maxDim.toFixed(2), 'm -> applying scale', autoScale);
                         meshObject.scale.set(autoScale, autoScale, autoScale);
                     } else {
-                        console.log('[URDFViewer] DAE loaded:', path, 'size:', maxDim.toFixed(3), 'm');
                     }
                     
                     meshObject.updateMatrix();
@@ -482,6 +386,7 @@ interface RobotModelProps {
     transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
     toolMode?: ToolMode;
     onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
+    isOrbitDragging?: React.MutableRefObject<boolean>;
 }
 
 // Empty raycast function to disable raycast on collision meshes
@@ -523,7 +428,7 @@ const collisionBaseMaterial = new THREE.MeshBasicMaterial({
     depthTest: false
 });
 
-function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, onJointChangeCommit, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, originSize = 1.0, showJointAxes = false, jointAxisSize = 1.0, robotLinks, focusTarget, transformMode = 'select', toolMode = 'select', onCollisionTransformEnd }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
+function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false, showVisual = true, onSelect, onJointChange, onJointChangeCommit, jointAngles, setIsDragging, setActiveJoint, justSelectedRef, t, mode, selection, hoveredSelection, highlightMode = 'link', showInertia = false, showCenterOfMass = false, showOrigins = false, originSize = 1.0, showJointAxes = false, jointAxisSize = 1.0, robotLinks, focusTarget, transformMode = 'select', toolMode = 'select', onCollisionTransformEnd, isOrbitDragging }: RobotModelProps & { selection?: URDFViewerProps['selection'], hoveredSelection?: URDFViewerProps['selection'] }) {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [robotVersion, setRobotVersion] = useState(0); // Track async loading updates
@@ -555,6 +460,7 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
     const focusTargetRef = useRef<THREE.Vector3 | null>(null);
     const cameraTargetPosRef = useRef<THREE.Vector3 | null>(null);
     const isFocusingRef = useRef(false);
+    
 
     // Face selection state
     const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh, faceIndex: number } | null>(null);
@@ -1057,6 +963,12 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             if (isDraggingJoint.current && dragJoint.current) {
                 moveRay(raycasterRef.current.ray);
             }
+            
+            // Trigger render for hover detection (needed with frameloop="demand")
+            // Skip if orbit controls are dragging to maintain performance
+            if (!isOrbitDragging?.current) {
+                invalidateRef.current();
+            }
         };
         
         const handleMouseDown = (e: MouseEvent) => {
@@ -1243,6 +1155,9 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
         
         // If dragging joint, do not update hover highlight
         if (isDraggingJoint.current) return;
+        
+        // Skip expensive raycasting if orbit controls are being dragged (camera movement)
+        if (isOrbitDragging?.current) return;
 
         // Standard link highlighting - ONLY for first 5 modes
         // Modes: view, select, translate, rotate, universal
@@ -1454,7 +1369,6 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
     useEffect(() => {
         if (!robot) return;
 
-        console.log('[URDFViewer] Updating CoM/Inertia visibility:', { showInertia, showCenterOfMass, hasRobotLinks: !!robotLinks });
         let linkCount = 0;
         let inertialCount = 0;
 
@@ -1595,7 +1509,6 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             }
         });
         
-        console.log(`[URDFViewer] Found ${linkCount} links, ${inertialCount} with inertia data.`);
 
         // Request re-render
         invalidate();
@@ -2028,7 +1941,6 @@ function RobotModel({ urdfContent, assets, onRobotLoaded, showCollision = false,
             {/* Collision Transform Controls - shown when in collision mode with transform enabled */}
             {(() => {
                 const shouldShow = mode === 'detail' && highlightMode === 'collision' && transformMode !== 'select' && selection?.subType === 'collision';
-                console.log('[RobotModel] Transform controls check:', { mode, highlightMode, transformMode, selectionId: selection?.id, selectionSubType: selection?.subType, shouldShow });
                 return shouldShow ? (
                     <CollisionTransformControls
                         robot={robot}
@@ -2194,57 +2106,6 @@ const JointInteraction = ({ joint, value, onChange, onCommit }: { joint: any, va
     );
 };
 
-// Scene lighting setup - clean and simple for Z-up coordinate system
-function SceneLighting() {
-    const { scene, gl } = useThree();
-    
-    useEffect(() => {
-        // Setup environment map for material reflections
-        const pmremGenerator = new THREE.PMREMGenerator(gl);
-        pmremGenerator.compileEquirectangularShader();
-        
-        const envScene = new THREE.Scene();
-        const envLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-        envScene.add(envLight);
-        
-        const envMap = pmremGenerator.fromScene(envScene, 0.04).texture;
-        envMap.mapping = THREE.EquirectangularReflectionMapping;
-        scene.environment = envMap;
-        
-        return () => {
-            pmremGenerator.dispose();
-        };
-    }, [scene, gl]);
-    
-    return (
-        <>
-            {/* Hemisphere light for ambient fill */}
-            <hemisphereLight args={[0xffffff, 0x666666, 0.8]} position={[0, 0, 1]} />
-            
-            {/* Ambient light for base illumination */}
-            <ambientLight intensity={0.4} />
-            
-            {/* Main directional light with shadows */}
-            <directionalLight
-                position={[4, 4, 8]}
-                intensity={Math.PI * 0.8}
-                castShadow
-                shadow-mapSize-width={2048}
-                shadow-mapSize-height={2048}
-            />
-            
-            {/* Fill lights from different angles */}
-            <directionalLight position={[-4, -4, 6]} intensity={Math.PI * 0.4} />
-            <directionalLight position={[-4, 4, 4]} intensity={Math.PI * 0.3} />
-            <directionalLight position={[4, -4, 4]} intensity={Math.PI * 0.3} />
-            <directionalLight position={[0, 0, 10]} intensity={Math.PI * 0.2} />
-            <directionalLight position={[0, 0, -5]} intensity={Math.PI * 0.15} />
-            
-{/* Shadow plane removed - causes z-fighting with grid */}
-        </>
-    );
-}
-
 // Fusion360-style Transform Controls with visual gizmo + confirm/cancel UI
 interface CollisionTransformControlsProps {
     robot: THREE.Object3D | null;
@@ -2261,13 +2122,6 @@ function CollisionTransformControls({ robot, selection, transformMode, setIsDrag
     const { invalidate } = useThree();
     const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
     
-    // Debug log
-    console.log('[CollisionTransformControls] Rendered with:', { 
-        hasRobot: !!robot, 
-        selectionId: selection?.id, 
-        selectionSubType: selection?.subType,
-        transformMode 
-    });
     
     // Pending edit state - shown after drag ends, waiting for confirm/cancel
     const [pendingEdit, setPendingEdit] = useState<{
@@ -2294,11 +2148,9 @@ function CollisionTransformControls({ robot, selection, transformMode, setIsDrag
         const controls = transformRef.current;
         if (!controls || !targetObject) return;
         
-        console.log('[CollisionTransformControls] Setting up event listeners');
         
         const handleDraggingChange = (event: any) => {
             const dragging = event.value;
-            console.log('[CollisionTransformControls] dragging-changed event:', { dragging, isDragging: isDraggingRef.current });
             
             if (dragging) {
                 // Start dragging
@@ -2312,7 +2164,6 @@ function CollisionTransformControls({ robot, selection, transformMode, setIsDrag
                 // Get current axis from controls
                 const axis = controls.axis;
                 currentAxisRef.current = axis;
-                console.log('[CollisionTransformControls] Drag started on axis:', axis);
                 
                 // Get start value
                 const isRotate = transformMode === 'rotate';
@@ -2348,18 +2199,9 @@ function CollisionTransformControls({ robot, selection, transformMode, setIsDrag
                 }
                 
                 const delta = currentVal - startValueRef.current;
-                console.log('[CollisionTransformControls] Drag ended:', { 
-                    axis, 
-                    currentVal, 
-                    startVal: startValueRef.current,
-                    delta,
-                    absDetla: Math.abs(delta),
-                    shouldShowUI: Math.abs(delta) > 0.0001 && !!axis
-                });
                 
                 // Show confirm UI if value changed (check for any change, positive or negative)
                 if (Math.abs(delta) > 0.0001 && axis) {
-                    console.log('[CollisionTransformControls] Setting pendingEdit for axis:', axis);
                     setPendingEdit({
                         axis,
                         value: currentVal,
@@ -2367,8 +2209,6 @@ function CollisionTransformControls({ robot, selection, transformMode, setIsDrag
                         isRotate
                     });
                     forceUpdate(n => n + 1);
-                } else {
-                    console.log('[CollisionTransformControls] NOT setting pendingEdit:', { delta, axis });
                 }
             }
             invalidate();
@@ -2518,11 +2358,6 @@ function CollisionTransformControls({ robot, selection, transformMode, setIsDrag
         const pos = targetObject.position;
         const euler = new THREE.Euler().setFromQuaternion(targetObject.quaternion, 'XYZ');
         
-        console.log('CollisionTransformControls: Confirming transform', {
-            linkId: selection.id,
-            position: { x: pos.x, y: pos.y, z: pos.z },
-            rotation: { r: euler.x, p: euler.y, y: euler.z }
-        });
         
         onTransformEnd(
             selection.id,
@@ -3151,6 +2986,9 @@ const ViewerToolbar = ({ activeMode, setMode, onClose, lang = 'en' }: { activeMo
 
 export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState, lang, mode = 'detail', onSelect, theme, selection, hoveredSelection, robotLinks, focusTarget, showVisual: propShowVisual, setShowVisual: propSetShowVisual, snapshotAction, onCollisionTransform, showToolbar = true, setShowToolbar, showOptionsPanel = true, setShowOptionsPanel, showJointPanel = true, setShowJointPanel }: URDFViewerProps) {
     const t = translations[lang];
+    
+    // Track if orbit controls are being dragged (to skip expensive raycasting in RobotModel)
+    const isOrbitDragging = useRef(false);
     const [robot, setRobot] = useState<any>(null);
     const [selectedJoint, setSelectedJoint] = useState<string | null>(null);
     
@@ -3292,7 +3130,6 @@ export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState
 
     // Sync joint angles from history state (undo/redo)
     useEffect(() => {
-        console.log('[URDFViewer] Sync useEffect triggered, robot:', !!robot, 'jointAngleState:', jointAngleState);
         if (!robot || !jointAngleState) return;
 
         setJointAngles(prev => {
@@ -3302,7 +3139,6 @@ export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState
 
         Object.entries(jointAngleState).forEach(([name, angle]) => {
             const joint = robot.joints?.[name];
-            console.log('[URDFViewer] Setting joint:', name, 'to angle:', angle, 'joint found:', !!joint);
             if (joint?.setJointValue) {
                 joint.setJointValue(angle);
             }
@@ -3542,121 +3378,53 @@ export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState
 
 
                         <div className="space-y-1">
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showJointControls} 
-                                    onChange={(e) => setShowJointControls(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                {t.showJointControls}
-                            </label>
-
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showVisual} 
-                                    onChange={(e) => setShowVisual(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                {t.showVisual}
-                            </label>
-                            
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showCollision} 
-                                    onChange={(e) => setShowCollision(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                {t.showCollision}
-                            </label>
+                            <CheckboxOption checked={showJointControls} onChange={setShowJointControls} label={t.showJointControls} compact />
+                            <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} compact />
+                            <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} compact />
                         </div>
 
                         <div className="border-t border-slate-200 dark:border-slate-700 pt-2 space-y-1">
                             <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 px-1">Gizmos</div>
                             
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showOrigins} 
-                                    onChange={(e) => setShowOrigins(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                <Move className="w-3 h-3 text-slate-500" />
-                                {t.showOrigin || "Origins"}
-                            </label>
+                            <CheckboxOption 
+                                checked={showOrigins} 
+                                onChange={setShowOrigins} 
+                                label={t.showOrigin || "Origins"} 
+                                icon={<Move className="w-3 h-3 text-slate-500" />}
+                                compact 
+                            />
 
                             {showOrigins && (
-                                <div className="px-1 pl-6 pb-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[9px] text-slate-400">Size</span>
-                                        <input 
-                                            type="range" 
-                                            min="0.01" 
-                                            max="0.5" 
-                                            step="0.01" 
-                                            value={originSize}
-                                            onChange={(e) => setOriginSize(parseFloat(e.target.value))}
-                                            className="flex-1 h-1 bg-slate-200 dark:bg-google-dark-border rounded-lg appearance-none cursor-pointer accent-google-blue"
-                                        />
-                                        <span className="text-[9px] text-slate-400 w-4 text-right">{originSize.toFixed(2)}</span>
-                                    </div>
-                                </div>
+                                <SliderOption label="Size" value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact />
                             )}
 
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showJointAxes} 
-                                    onChange={(e) => setShowJointAxes(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                <ArrowUpRight className="w-3 h-3 text-slate-500" />
-                                {t.showJointAxes || "Joint Axes"}
-                            </label>
+                            <CheckboxOption 
+                                checked={showJointAxes} 
+                                onChange={setShowJointAxes} 
+                                label={t.showJointAxes || "Joint Axes"} 
+                                icon={<ArrowUpRight className="w-3 h-3 text-slate-500" />}
+                                compact 
+                            />
 
                             {showJointAxes && (
-                                <div className="px-1 pl-6 pb-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[9px] text-slate-400">Size</span>
-                                        <input 
-                                            type="range" 
-                                            min="0.01" 
-                                            max="5.0" 
-                                            step="0.01" 
-                                            value={jointAxisSize}
-                                            onChange={(e) => setJointAxisSize(parseFloat(e.target.value))}
-                                            className="flex-1 h-1 bg-slate-200 dark:bg-google-dark-border rounded-lg appearance-none cursor-pointer accent-google-blue"
-                                        />
-                                        <span className="text-[9px] text-slate-400 w-4 text-right">{jointAxisSize.toFixed(2)}</span>
-                                    </div>
-                                </div>
+                                <SliderOption label="Size" value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={5.0} step={0.01} compact />
                             )}
 
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showCenterOfMass} 
-                                    onChange={(e) => setShowCenterOfMass(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                <div className="w-3 h-3 rounded-full border border-slate-500 flex items-center justify-center">
-                                    <div className="w-1 h-1 bg-slate-500 rounded-full"></div>
-                                </div>
-                                {t.showCenterOfMass}
-                            </label>
+                            <CheckboxOption 
+                                checked={showCenterOfMass} 
+                                onChange={setShowCenterOfMass} 
+                                label={t.showCenterOfMass}
+                                icon={<div className="w-3 h-3 rounded-full border border-slate-500 flex items-center justify-center"><div className="w-1 h-1 bg-slate-500 rounded-full"></div></div>}
+                                compact 
+                            />
 
-                            <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg/50">
-                                <input 
-                                    type="checkbox" 
-                                    checked={showInertia} 
-                                    onChange={(e) => setShowInertia(e.target.checked)}
-                                    className="rounded bg-white dark:bg-google-dark-bg border-slate-300 dark:border-google-dark-border text-google-blue focus:ring-google-blue focus:ring-offset-0"
-                                />
-                                <div className="w-3 h-3 border border-dashed border-slate-500"></div>
-                                {t.showInertia || "Show Inertia"}
-                            </label>
+                            <CheckboxOption 
+                                checked={showInertia} 
+                                onChange={setShowInertia} 
+                                label={t.showInertia || "Show Inertia"}
+                                icon={<div className="w-3 h-3 border border-dashed border-slate-500"></div>}
+                                compact 
+                            />
                         </div>
                     </div>
                     )}
@@ -3829,6 +3597,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState
             <Canvas
                 camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
                 shadows
+                frameloop="demand"
                 gl={{
                     antialias: true,
                     toneMapping: THREE.ACESFilmicToneMapping,
@@ -3888,6 +3657,7 @@ export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState
                         transformMode={transformMode}
                         toolMode={toolMode}
                         onCollisionTransformEnd={onCollisionTransform}
+                        isOrbitDragging={isOrbitDragging}
                     />
                 </Suspense>
                 
@@ -3920,6 +3690,8 @@ export function URDFViewer({ urdfContent, assets, onJointChange, jointAngleState
                     minDistance={0.5}
                     maxDistance={20}
                     enabled={!isDragging}
+                    onStart={() => { isOrbitDragging.current = true; }}
+                    onEnd={() => { isOrbitDragging.current = false; }}
                 />
                 
                 <GizmoHelper alignment="bottom-right" margin={[80, 80]}>

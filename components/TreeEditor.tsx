@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { RobotState, AppMode, Theme, RobotFile } from '../types';
-import { Box, ArrowRightLeft, Plus, Trash2, ChevronDown, ChevronRight, ChevronLeft, PanelLeftOpen, FileCode, Folder, FolderOpen, FileText, File, Cuboid, Eye, EyeOff } from 'lucide-react';
+import { Box, ArrowRightLeft, Plus, Trash2, ChevronDown, ChevronRight, ChevronLeft, PanelLeftOpen, FileCode, Folder, FolderOpen, FileText, File, Cuboid, Eye, EyeOff, Shapes, Shield } from 'lucide-react';
+import { GeometryType } from '../types';
 import { translations, Language } from '../services/i18n';
 
 // --- File Tree Types and Components ---
@@ -151,7 +152,7 @@ const FileTreeNodeComponent: React.FC<{
                 )}
             </div>
             
-            {/* Children */}
+      {/* Children */}
             {node.isFolder && isExpanded && node.children && (
                 <div>
                     {node.children.map((child, idx) => (
@@ -191,7 +192,8 @@ interface TreeEditorProps {
 
 // --- Structure View Components ---
 
-const TreeNode = ({ 
+// Memoized TreeNode to prevent unnecessary re-renders in recursive tree
+const TreeNode = memo(({ 
   linkId, 
   robot, 
   onSelect, 
@@ -215,6 +217,7 @@ const TreeNode = ({
   depth?: number;
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isGeomExpanded, setIsGeomExpanded] = useState(false);
   
   const link = robot.links[linkId];
   if (!link) return null;
@@ -226,6 +229,8 @@ const TreeNode = ({
   const isSkeleton = mode === 'skeleton';
   
   const isVisible = link.visible !== false; // Default to true
+  const hasVisual = link.visual?.type && link.visual.type !== GeometryType.NONE;
+  const hasCollision = link.collision?.type && link.collision.type !== GeometryType.NONE;
 
   return (
     <div className="relative">
@@ -265,42 +270,103 @@ const TreeNode = ({
         
         <span className="text-xs font-medium truncate flex-1">{link.name}</span>
         
-        {/* Visibility Toggle */}
-        <div 
-            className={`flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer mr-1
-                ${isLinkSelected ? 'text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
-            onClick={(e) => { 
-                e.stopPropagation(); 
-                onUpdate('link', linkId, { ...link, visible: !isVisible });
-            }}
-            title={isVisible ? "Hide" : "Show"}
-        >
-            {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-        </div>
-        
-        {/* Actions */}
-        {isSkeleton && (
-          <div className={`flex items-center gap-0.5 ml-1 ${isLinkSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        {/* Right side actions - always visible */}
+        <div className="flex items-center gap-0.5 ml-auto">
+          {/* Visual/Collision Toggle - always visible if link has geometry */}
+          {(hasVisual || hasCollision) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setIsGeomExpanded(!isGeomExpanded); }}
+              className={`p-1 rounded transition-colors ${
+                isGeomExpanded
+                  ? (isLinkSelected ? 'bg-blue-400 text-white' : 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400')
+                  : (isLinkSelected ? 'text-blue-200 hover:bg-blue-400' : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-blue-500')
+              }`}
+              title={isGeomExpanded ? t.hideVisualCollision : t.showVisualCollision}
+            >
+              <Shapes size={12} />
+            </button>
+          )}
+
+          {/* Visibility Toggle */}
+          <button
+              className={`p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer
+                  ${isLinkSelected ? 'text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
+              onClick={(e) => {
+                  e.stopPropagation();
+                  onUpdate('link', linkId, { ...link, visible: !isVisible });
+              }}
+              title={isVisible ? t.hide : t.show}
+          >
+              {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+          </button>
+          
+          {/* Add child button - skeleton mode only, show on hover */}
+          {isSkeleton && (
             <button 
               onClick={(e) => { e.stopPropagation(); onAddChild(linkId); setIsExpanded(true); }}
-              className={`p-0.5 rounded ${isLinkSelected ? 'hover:bg-blue-400' : 'hover:bg-slate-200 dark:hover:bg-slate-700'}`}
+              className={`p-1 rounded transition-opacity ${
+                isLinkSelected 
+                  ? 'opacity-100 hover:bg-blue-400' 
+                  : 'opacity-0 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
               title={t.addChildJoint}
             >
               <Plus size={12} />
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Children */}
-      {hasChildren && isExpanded && (
+      {/* Children & Geometry */}
+      {(hasChildren || ((hasVisual || hasCollision) && isGeomExpanded)) && isExpanded && (
         <div className="relative ml-3">
           {/* Vertical connector line */}
           <div className="absolute left-0 top-0 bottom-2 w-px bg-slate-200 dark:bg-slate-700" />
           
+          {/* Visual/Collision entries FIRST - directly under the link */}
+          {(hasVisual || hasCollision) && isGeomExpanded && (
+            <div className="space-y-0.5 pb-0.5">
+              {hasVisual && (
+                <div
+                  className={`relative flex items-center gap-2 text-[11px] px-2 py-1 ml-5 rounded-md cursor-pointer transition-colors
+                    ${robot.selection.type === 'link' && robot.selection.id === linkId && robot.selection.subType === 'visual'
+                      ? 'bg-blue-500 text-white shadow-sm'
+                      : 'text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30'}
+                  `}
+                  title={`Visual: ${link.visual.type}`}
+                  onClick={(e) => { e.stopPropagation(); onSelect('link', linkId, 'visual'); }}
+                >
+                  {/* Connector */}
+                  <div className="absolute -left-3 top-1/2 w-3 h-px bg-slate-200 dark:bg-slate-700" />
+                  <Shapes size={12} />
+                  <span className="font-medium">{t.visual}</span>
+                  <span className="text-[10px] opacity-70 ml-auto">{link.visual.type}</span>
+                </div>
+              )}
+
+              {hasCollision && (
+                <div
+                  className={`relative flex items-center gap-2 text-[11px] px-2 py-1 ml-5 rounded-md cursor-pointer transition-colors
+                    ${robot.selection.type === 'link' && robot.selection.id === linkId && robot.selection.subType === 'collision'
+                      ? 'bg-purple-500 text-white shadow-sm'
+                      : 'text-purple-600 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/30'}
+                  `}
+                  title={`Collision: ${link.collision.type}`}
+                  onClick={(e) => { e.stopPropagation(); onSelect('link', linkId, 'collision'); }}
+                >
+                  {/* Connector */}
+                  <div className="absolute -left-3 top-1/2 w-3 h-px bg-slate-200 dark:bg-slate-700" />
+                  <Shield size={12} />
+                  <span className="font-medium">{t.collision}</span>
+                  <span className="text-[10px] opacity-70 ml-auto">{link.collision.type}</span>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Child Joints after Visual/Collision */}
           {childJoints.map((joint, idx) => {
             const isJointSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
-            const isLast = idx === childJoints.length - 1;
             
             return (
               <div key={joint.id} className="relative">
@@ -322,7 +388,7 @@ const TreeNode = ({
                     <ArrowRightLeft size={10} className={isJointSelected ? 'text-white' : 'text-orange-500 dark:text-orange-400'} />
                   </div>
                   
-                  <span className="text-xs truncate flex-1">{joint.name}</span>
+                  <span className="text-[11px] font-medium truncate flex-1">{joint.name}</span>
                   
                   {/* Actions */}
                   {isSkeleton && (
@@ -358,7 +424,7 @@ const TreeNode = ({
       )}
     </div>
   );
-};
+});
 
 export const TreeEditor: React.FC<TreeEditorProps> = ({ 
     robot, onSelect, onFocus, onAddChild, onDelete, onNameChange, onUpdate, showVisual, setShowVisual, mode, lang, collapsed, onToggle, theme,
@@ -517,16 +583,16 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 >
                      <div className="flex items-center gap-2">
                         {isFileBrowserOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{lang === 'zh' ? '文件浏览' : 'File Browser'}</span>
+                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{t.fileBrowser}</span>
                      </div>
                      <span className="text-[10px] text-slate-400">{availableFiles.length}</span>
                 </div>
-                
+
                 {isFileBrowserOpen && (
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1">
                         {availableFiles.length === 0 ? (
                             <div className="text-xs text-slate-400 text-center py-4 italic">
-                                {lang === 'zh' ? '拖放或导入文件夹/ZIP' : 'Drop or import folder/ZIP'}
+                                {t.dropOrImport}
                             </div>
                         ) : (
                             fileTree.map((node) => (
@@ -567,13 +633,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                      </div>
                      
                      {/* Master Visual Toggle */}
-                     <div 
+                     <div
                         className={`flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer text-slate-500 dark:text-slate-400`}
-                        onClick={(e) => { 
-                            e.stopPropagation(); 
+                        onClick={(e) => {
+                            e.stopPropagation();
                             setShowVisual(!showVisual);
                         }}
-                        title={showVisual ? "Hide All Visuals" : "Show All Visuals"}
+                        title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
                      >
                         {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
                      </div>

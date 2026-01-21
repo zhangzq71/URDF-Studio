@@ -3,16 +3,19 @@ import { X, Copy, Check, FileCode, Download } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Theme } from '../types';
+import { Language, translations } from '../services/i18n';
 
 interface SourceCodeViewerProps {
   code: string;
   onClose: () => void;
   theme: Theme;
   fileName?: string;
+  lang?: Language;
 }
 
-export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({ code, onClose, theme, fileName = 'robot.urdf' }) => {
+export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({ code, onClose, theme, fileName = 'robot.urdf', lang = 'en' }) => {
   const [copied, setCopied] = useState(false);
+  const t = translations[lang];
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
@@ -57,14 +60,14 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({ code, onClos
             <button
               onClick={handleCopy}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                copied 
-                  ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400' 
+                copied
+                  ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#333333]'
               }`}
-              title="Copy to Clipboard"
+              title={t.copyToClipboard}
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span className="hidden sm:inline">{copied ? 'Copied!' : 'Copy'}</span>
+              <span className="hidden sm:inline">{copied ? t.copied : t.copy}</span>
             </button>
 
             <div className="w-px h-4 bg-slate-300 dark:bg-[#444444] mx-1" />

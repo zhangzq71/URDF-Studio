@@ -98,6 +98,8 @@ export const translations = {
     clickToSelect: "Click objects to select.",
     enableLabels: "Enable labels to select.",
     clickLabels: "Click labels to select.",
+    confirmTransformation: "Confirm Transformation?",
+    apply: "Apply",
     
     // AI Inspector
     aiTitle: "AI Inspector",
@@ -164,6 +166,30 @@ export const translations = {
     trajectoryEditingDesc: "Visual motion sequence editor",
     bridgedpEngine: "BridgeDP Engine",
     bridgedpEngineDesc: "Online robot training platform",
+
+    // Additional UI Elements
+    gizmos: "Gizmos",
+    size: "Size",
+    resetJoints: "Reset Joints",
+    expand: "Expand",
+    collapse: "Collapse",
+    close: "Close",
+    confirm: "Confirm",
+    confirmEnter: "Confirm (Enter)",
+    cancelEsc: "Cancel (Esc)",
+    visual: "Visual",
+    collision: "Collision",
+    hide: "Hide",
+    show: "Show",
+    hideVisualCollision: "Hide Visual/Collision",
+    showVisualCollision: "Show Visual/Collision",
+    hideAllVisuals: "Hide All Visuals",
+    showAllVisuals: "Show All Visuals",
+    copyToClipboard: "Copy to Clipboard",
+    copy: "Copy",
+    copied: "Copied!",
+    fileBrowser: "File Browser",
+    dropOrImport: "Drop or import folder/ZIP",
   },
   zh: {
     // Header
@@ -261,6 +287,8 @@ export const translations = {
     clickToSelect: "点击物体进行选择。",
     enableLabels: "启用标签以进行选择。",
     clickLabels: "点击标签进行选择。",
+    confirmTransformation: "确认变换?",
+    apply: "应用",
     
     // AI Modal
     aiTitle: "AI审阅",
@@ -327,5 +355,29 @@ export const translations = {
     trajectoryEditingDesc: "可视化运动序列编辑器",
     bridgedpEngine: "桥介引擎",
     bridgedpEngineDesc: "在线训练机器人",
+
+    // 额外的 UI 元素
+    gizmos: "辅助工具",
+    size: "尺寸",
+    resetJoints: "重置关节",
+    expand: "展开",
+    collapse: "收起",
+    close: "关闭",
+    confirm: "确认",
+    confirmEnter: "确认 (回车)",
+    cancelEsc: "取消 (Esc)",
+    visual: "可视化",
+    collision: "碰撞体",
+    hide: "隐藏",
+    show: "显示",
+    hideVisualCollision: "隐藏可视化/碰撞体",
+    showVisualCollision: "显示可视化/碰撞体",
+    hideAllVisuals: "隐藏所有可视化",
+    showAllVisuals: "显示所有可视化",
+    copyToClipboard: "复制到剪贴板",
+    copy: "复制",
+    copied: "已复制!",
+    fileBrowser: "文件浏览",
+    dropOrImport: "拖放或导入文件夹/ZIP",
   }
 };
