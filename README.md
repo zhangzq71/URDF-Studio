@@ -5,7 +5,7 @@
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-purple?logo=vite)](https://vitejs.dev/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 **Next-Generation Visual Robot Design Platform**
 
@@ -95,7 +95,7 @@ Includes a built-in library of popular robot actuators:
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 19, TypeScript, Tailwind CSS
+- **Frontend**: React, TypeScript, Tailwind CSS
 - **3D Engine**: Three.js, React Three Fiber, @react-three/drei
 - **Build Tool**: Vite
 - **AI Integration**: OpenAI SDK (supports OpenAI-compatible APIs)
@@ -124,21 +124,21 @@ Includes a built-in library of popular robot actuators:
 3. **Configure API Key (Optional)**
    To use AI features, create a `.env.local` file in the root directory:
    ```env
-   OPENAI_API_KEY=your_openai_api_key
-   OPENAI_BASE_URL=https://your-proxy-url/v1
-   OPENAI_MODEL=bce/deepseek-v3.2
+   VITE_OPENAI_API_KEY=your_openai_api_key
+   VITE_OPENAI_BASE_URL=https://your-proxy-url/v1
+   VITE_OPENAI_MODEL=bce/deepseek-v3.2
    ```
    
    **Configuration Details:**
-   - `OPENAI_API_KEY`: Your OpenAI API key or proxy API key
-   - `OPENAI_BASE_URL`: (Optional) Custom API endpoint URL. Defaults to `https://api.openai.com/v1` if not set
-   - `OPENAI_MODEL`: (Optional) Model name to use. Defaults to `bce/deepseek-v3.2` if not set
+   - `VITE_OPENAI_API_KEY`: Your OpenAI API key or proxy API key
+   - `VITE_OPENAI_BASE_URL`: (Optional) Custom API endpoint URL. Defaults to `https://api.openai.com/v1` if not set
+   - `VITE_OPENAI_MODEL`: (Optional) Model name to use. Defaults to `bce/deepseek-v3.2` if not set
    
    **Example for using a proxy server:**
    ```env
-   OPENAI_API_KEY=sk-your-proxy-api-key
-   OPENAI_BASE_URL=https://aiproxy.d-robotics.cc/v1
-   OPENAI_MODEL=bce/deepseek-v3.2
+   VITE_OPENAI_API_KEY=sk-your-proxy-api-key
+   VITE_OPENAI_BASE_URL=https://aiproxy.d-robotics.cc/v1
+   VITE_OPENAI_MODEL=bce/deepseek-v3.2
    ```
    
    **Note:** The `.env.local` file is ignored by git and will not be committed to the repository.
@@ -160,7 +160,7 @@ Includes a built-in library of popular robot actuators:
 
 ## 📄 License
 
-MIT License
+Apache License 2.0
 
 ## Acknowledgments
 D-Robotics https://developer.d-robotics.cc/
