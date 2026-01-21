@@ -229,7 +229,8 @@ export default function App() {
   // View Configuration State
   const [viewConfig, setViewConfig] = useState({
       showToolbar: true,
-      showOptionsPanel: true,
+      showOptionsPanel: true,  // For detail mode (URDFViewer)
+      showSkeletonOptionsPanel: true,  // For skeleton/hardware mode (Visualizer)
       showJointPanel: true,
   });
 
@@ -1567,9 +1568,9 @@ export default function App() {
       />
 
       {/* Header */}
-      <header className="h-12 border-b flex items-center justify-between px-3 shrink-0 relative bg-white dark:bg-[#1a1d21] border-slate-200/80 dark:border-slate-700/50">
+      <header className="h-12 border-b flex items-center px-3 shrink-0 relative bg-white dark:bg-[#1a1d21] border-slate-200/80 dark:border-slate-700/50">
         {/* Left Section - Logo & Menus */}
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 flex-1 min-w-0">
             {/* Logo */}
             <div className="flex items-center gap-2 pr-3 mr-1 border-r border-slate-200 dark:border-slate-700/50">
                 <img src="/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
@@ -1583,8 +1584,8 @@ export default function App() {
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'file' ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <FileText className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">{t.file}</span>
-                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
+                        <span className="hidden md:inline">{t.file}</span>
+                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
                     </button>
                     
                     {activeMenu === 'file' && (
@@ -1624,8 +1625,8 @@ export default function App() {
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'toolbox' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <Briefcase className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">{t.toolbox}</span>
-                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
+                        <span className="hidden md:inline">{t.toolbox}</span>
+                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
                     </button>
                     
                     {activeMenu === 'toolbox' && (
@@ -1709,8 +1710,8 @@ export default function App() {
                         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${activeMenu === 'view' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'}`}
                     >
                         <Eye className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">{lang === 'zh' ? '视图' : 'View'}</span>
-                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'view' ? 'rotate-180' : ''}`} />
+                        <span className="hidden md:inline">{lang === 'zh' ? '视图' : 'View'}</span>
+                        <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'view' ? 'rotate-180' : ''}`} />
                     </button>
                     
                     {activeMenu === 'view' && (
@@ -1736,7 +1737,18 @@ export default function App() {
                                         <div className={`w-4 h-4 flex items-center justify-center rounded border ${viewConfig.showOptionsPanel ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}>
                                             {viewConfig.showOptionsPanel && <Check className="w-3 h-3" />}
                                         </div>
-                                        <span>{lang === 'zh' ? '细节选项' : 'Options Panel'}</span>
+                                        <span>{lang === 'zh' ? '细节选项' : 'Detail Options'}</span>
+                                    </div>
+                                </button>
+                                <button
+                                    onClick={() => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: !prev.showSkeletonOptionsPanel }))}
+                                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-200 flex items-center justify-between group"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <div className={`w-4 h-4 flex items-center justify-center rounded border ${viewConfig.showSkeletonOptionsPanel ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}>
+                                            {viewConfig.showSkeletonOptionsPanel && <Check className="w-3 h-3" />}
+                                        </div>
+                                        <span>{lang === 'zh' ? '骨架/硬件选项' : 'Skeleton/Hardware Options'}</span>
                                     </div>
                                 </button>
                                 <button
@@ -1787,38 +1799,65 @@ export default function App() {
                         <Redo className="w-4 h-4" />
                     </button>
                 </div>
+
+                {/* Mode Switcher - Inline on small screens */}
+                <div className="flex items-center ml-2 lg:hidden">
+                    <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
+                        <button 
+                            onClick={() => setAppMode('skeleton')}
+                            className={`flex items-center justify-center p-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'skeleton' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                            title={t.skeleton}
+                        >
+                            <Activity className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                            onClick={() => setAppMode('detail')}
+                            className={`flex items-center justify-center p-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'detail' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                            title={t.detail}
+                        >
+                            <Box className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                            onClick={() => setAppMode('hardware')}
+                            className={`flex items-center justify-center p-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'hardware' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                            title={t.hardware}
+                        >
+                            <Cpu className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
-        {/* Center - Mode Switcher - Hidden on smaller screens (< xl) */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden xl:flex">
-            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 shrink-0">
+        {/* Center - Mode Switcher - Large screens only */}
+        <div className="hidden lg:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 pointer-events-auto">
                 <button 
                     onClick={() => setAppMode('skeleton')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'skeleton' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                 >
                     <Activity className="w-3.5 h-3.5" />
-                    <span className="hidden lg:inline">{t.skeleton}</span>
+                    <span>{t.skeleton}</span>
                 </button>
                 <button 
                     onClick={() => setAppMode('detail')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'detail' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                 >
                     <Box className="w-3.5 h-3.5" />
-                    <span className="hidden lg:inline">{t.detail}</span>
+                    <span>{t.detail}</span>
                 </button>
                 <button 
                     onClick={() => setAppMode('hardware')}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${appMode === 'hardware' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                 >
                     <Cpu className="w-3.5 h-3.5" />
-                    <span className="hidden lg:inline">{t.hardware}</span>
+                    <span>{t.hardware}</span>
                 </button>
             </div>
         </div>
 
         {/* Right Section - Actions */}
-        <div className="flex items-center gap-0.5 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0 ml-auto">
             <button 
                 onClick={handleSnapshot}
                 className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
@@ -1938,72 +1977,97 @@ export default function App() {
             availableFiles={availableFiles}
             onLoadRobot={handleLoadRobot}
         />
-        
-        {(appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? (
-            <URDFViewer
-                urdfContent={urdfContentForViewer}
-                assets={assets}
-                lang={lang}
-                mode={appMode}
-                onSelect={handleSelect}
-                selection={robot.selection}
-                hoveredSelection={hoveredSelection}
-                focusTarget={focusTarget}
-                theme={theme}
-                robotLinks={robot.links}
-                showVisual={showVisual}
-                setShowVisual={handleSetShowVisual}
-                jointAngleState={jointAngleState}
-                snapshotAction={snapshotActionRef}
-                showToolbar={viewConfig.showToolbar}
-                setShowToolbar={(show) => setViewConfig(prev => ({ ...prev, showToolbar: show }))}
-                showOptionsPanel={viewConfig.showOptionsPanel}
-                setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
-                showJointPanel={viewConfig.showJointPanel}
-                setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
-                onJointChange={handleJointChange}
-                onCollisionTransform={(linkId, position, rotation) => {
-                    // linkId is the selection.id which is the link's ID (not name)
-                    console.log('App.tsx onCollisionTransform called:', { linkId, position, rotation });
-                    console.log('Available links:', Object.keys(robot.links));
-                    
-                    if (linkId && robot.links[linkId]) {
-                        const link = robot.links[linkId];
-                        console.log('Found link, updating collision origin:', link.name);
-                        
-                        const updatedLink = {
-                            ...link,
-                            collision: {
-                                ...link.collision,
-                                origin: {
-                                    xyz: position,
-                                    rpy: rotation
+
+        {/* Viewer Container - Always mount both viewers but hide inactive one to prevent Canvas recreation */}
+        <div className="flex-1 relative">
+            <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                visibility: (appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? 'visible' : 'hidden',
+                pointerEvents: (appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? 'auto' : 'none'
+            }}>
+                <URDFViewer
+                    key="urdf-viewer" // Stable key to prevent remounting
+                    urdfContent={urdfContentForViewer}
+                    assets={assets}
+                    lang={lang}
+                    mode={appMode}
+                    onSelect={handleSelect}
+                    selection={robot.selection}
+                    hoveredSelection={hoveredSelection}
+                    focusTarget={focusTarget}
+                    theme={theme}
+                    robotLinks={robot.links}
+                    showVisual={showVisual}
+                    setShowVisual={handleSetShowVisual}
+                    jointAngleState={jointAngleState}
+                    snapshotAction={snapshotActionRef}
+                    showToolbar={viewConfig.showToolbar}
+                    setShowToolbar={(show) => setViewConfig(prev => ({ ...prev, showToolbar: show }))}
+                    showOptionsPanel={viewConfig.showOptionsPanel}
+                    setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
+                    showJointPanel={viewConfig.showJointPanel}
+                    setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
+                    onJointChange={handleJointChange}
+                    onCollisionTransform={(linkId, position, rotation) => {
+                        // linkId is the selection.id which is the link's ID (not name)
+                        console.log('App.tsx onCollisionTransform called:', { linkId, position, rotation });
+                        console.log('Available links:', Object.keys(robot.links));
+
+                        if (linkId && robot.links[linkId]) {
+                            const link = robot.links[linkId];
+                            console.log('Found link, updating collision origin:', link.name);
+
+                            const updatedLink = {
+                                ...link,
+                                collision: {
+                                    ...link.collision,
+                                    origin: {
+                                        xyz: position,
+                                        rpy: rotation
+                                    }
                                 }
-                            }
-                        };
-                        console.log('Updated link data:', updatedLink);
-                        handleUpdate('link', linkId, updatedLink);
-                    } else {
-                        console.warn('Link not found for ID:', linkId);
-                    }
-                }}
-            />
-        ) : (
-            <Visualizer 
-                robot={robot} 
-                onSelect={handleSelect}
-                onUpdate={handleUpdate}
-                mode={appMode}
-                assets={assets}
-                lang={lang}
-                theme={theme}
-                os={os}
-                showVisual={showVisual}
-                setShowVisual={handleSetShowVisual}
-                snapshotAction={snapshotActionRef}
-            />
-        )}
-        
+                            };
+                            console.log('Updated link data:', updatedLink);
+                            handleUpdate('link', linkId, updatedLink);
+                        } else {
+                            console.warn('Link not found for ID:', linkId);
+                        }
+                    }}
+                />
+            </div>
+
+            <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                visibility: appMode === 'skeleton' ? 'visible' : 'hidden',
+                pointerEvents: appMode === 'skeleton' ? 'auto' : 'none'
+            }}>
+                <Visualizer
+                    key="visualizer" // Stable key to prevent remounting
+                    robot={robot}
+                    onSelect={handleSelect}
+                    onUpdate={handleUpdate}
+                    mode={appMode}
+                    assets={assets}
+                    lang={lang}
+                    theme={theme}
+                    os={os}
+                    showVisual={showVisual}
+                    setShowVisual={handleSetShowVisual}
+                    snapshotAction={snapshotActionRef}
+                    showOptionsPanel={viewConfig.showSkeletonOptionsPanel}
+                    setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: show }))}
+                />
+            </div>
+        </div>
+
         <PropertyEditor 
             robot={robot} 
             onUpdate={handleUpdate}
@@ -2491,10 +2555,10 @@ export default function App() {
                           onChange={(e) => setUiScale(parseFloat(e.target.value))}
                           className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
                       />
-                      <div className="flex justify-between text-[10px] text-slate-400">
-                          <span>80%</span>
-                          <span>100%</span>
-                          <span>150%</span>
+                      <div className="relative h-4 text-[10px] text-slate-400">
+                          <span className="absolute left-0">80%</span>
+                          <span className="absolute left-[28.57%] -translate-x-1/2">100%</span>
+                          <span className="absolute right-0">150%</span>
                       </div>
                   </div>
                   

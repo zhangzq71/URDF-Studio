@@ -1,72 +1,32 @@
-import React, { Suspense, useState, useMemo, useRef, useEffect } from 'react';
-import { Canvas, useLoader, useThree } from '@react-three/fiber';
+import React, { Suspense, useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, GizmoHelper, GizmoViewport, Html, Line, TransformControls } from '@react-three/drei';
 import { RobotState, GeometryType, UrdfJoint, JointType, Theme } from '../types';
 import * as THREE from 'three';
-// @ts-ignore - three.js loaders are JS files without type definitions
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-// @ts-ignore
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-// @ts-ignore
-import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { translations, Language } from '../services/i18n';
-import { MathUtils as DataUtils } from '../services/mathUtils';
 
 import { RotateCcw, Move, ArrowUpRight } from 'lucide-react';
+import { 
+  CheckboxOption, 
+  SliderOption, 
+  ToggleButtonGroup,
+  OptionsPanelHeader,
+  OptionsPanelContent,
+  OptionsPanelContainer 
+} from './ui/OptionsPanel';
+import {
+  STLRenderer,
+  OBJRenderer,
+  DAERenderer,
+  useLoadingManager,
+  SnapshotManager,
+  SceneLighting,
+  ThickerAxes,
+  JointAxesVisual,
+  InertiaBox,
+  LinkCenterOfMass
+} from './shared';
 
-// Snapshot Manager (Duplicated for independence)
-const SnapshotManager = ({ actionRef, robotName }: { actionRef?: React.MutableRefObject<(() => void) | null>, robotName: string }) => {
-    const { gl, scene, camera } = useThree();
-
-    useEffect(() => {
-        if (!actionRef) return;
-
-        actionRef.current = () => {
-            // 1. Hide Gizmos, Grid and Helpers
-            const hiddenObjects: THREE.Object3D[] = [];
-            scene.traverse((obj) => {
-                if (obj.userData.isGizmo || 
-                    obj.name === 'ReferenceGrid' ||
-                    obj.type.includes('Grid') || 
-                    obj.type.includes('Helper') ||
-                    obj.type === 'AxesHelper' ||
-                    (obj as any).isTransformControls) {
-                    if (obj.visible) {
-                        obj.visible = false;
-                        hiddenObjects.push(obj);
-                    }
-                }
-            });
-
-            // 2. Clear background for transparency
-            const originalBackground = scene.background;
-            scene.background = null;
-
-            // 3. High Res Render
-            const originalPixelRatio = gl.getPixelRatio();
-            gl.setPixelRatio(4); // 4x Super Sampling
-            
-            gl.render(scene, camera);
-            const dataUrl = gl.domElement.toDataURL('image/png', 1.0);
-
-            // 4. Restore
-            gl.setPixelRatio(originalPixelRatio);
-            scene.background = originalBackground;
-            hiddenObjects.forEach(obj => obj.visible = true);
-
-            // 5. Download
-            const link = document.createElement('a');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            link.setAttribute('download', `${robotName}_Skeleton_HD_${timestamp}.png`);
-            link.setAttribute('href', dataUrl);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        };
-    }, [gl, scene, camera, actionRef, robotName]);
-
-    return null;
-};
 
 // Fix for missing JSX types in strict environments or when global types are not picked up
 // Augmenting both global and React module JSX namespaces to ensure compatibility
@@ -87,6 +47,61 @@ declare global {
       meshStandardMaterial: any;
     }
   }
+}
+
+// ============================================================
+// MATERIAL CACHE - Prevents shader recompilation on every render
+// ============================================================
+const materialCache = new Map<string, THREE.Material>();
+
+function getCachedMaterial(
+  key: string,
+  isSkeleton: boolean,
+  finalColor: string,
+  matOpacity: number,
+  matWireframe: boolean,
+  isCollision: boolean,
+  emissiveColor: string,
+  emissiveIntensity: number
+): THREE.Material {
+  // Generate a unique cache key based on all material properties
+  const cacheKey = `${key}-${isSkeleton}-${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
+  
+  let material = materialCache.get(cacheKey);
+  if (!material) {
+    if (isSkeleton) {
+      material = new THREE.MeshBasicMaterial({
+        color: finalColor,
+        transparent: true,
+        opacity: matOpacity,
+        wireframe: matWireframe,
+        side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
+        polygonOffset: isCollision,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+      });
+    } else {
+      material = new THREE.MeshPhysicalMaterial({
+        color: finalColor,
+        roughness: 0.15,
+        metalness: 0.3,
+        clearcoat: 0.3,
+        clearcoatRoughness: 0.1,
+        reflectivity: 0.8,
+        emissive: emissiveColor,
+        emissiveIntensity: emissiveIntensity,
+        transparent: isCollision,
+        opacity: matOpacity,
+        wireframe: matWireframe,
+        side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
+        polygonOffset: isCollision,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+      });
+    }
+    materialCache.set(cacheKey, material);
+  }
+  return material;
 }
 
 declare module 'react' {
@@ -150,243 +165,7 @@ interface RobotNodeProps extends CommonVisualizerProps {
   onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void;
 }
 
-const useLoadingManager = (assets: Record<string, string>) => {
-  const manager = useMemo(() => {
-    const m = new THREE.LoadingManager();
-    m.setURLModifier((url) => {
-      if (url.startsWith('blob:') || url.startsWith('data:')) return url;
-      
-      // Normalize path separators
-      const normalizedUrl = url.replace(/\\/g, '/');
-      const filename = normalizedUrl.split('/').pop();
-      
-      if (filename) {
-          // Try exact match in assets
-          if (assets[filename]) return assets[filename];
-          
-          // Try case-insensitive match
-          const lowerFilename = filename.toLowerCase();
-          const foundKey = Object.keys(assets).find(k => k.toLowerCase().endsWith(lowerFilename));
-          if (foundKey) return assets[foundKey];
-      }
-      
-      return url;
-    });
-    return m;
-  }, [assets]);
-  return manager;
-};
-
-const STLRenderer = ({ url, material, scale }: { url: string, material: THREE.Material, scale?: { x: number, y: number, z: number } }) => {
-    const geometry = useLoader(STLLoader, url);
-    const clone = useMemo(() => geometry.clone(), [geometry]);
-    const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
-    // URDF uses Z-up, Three.js uses Y-up. Rotate -90 degrees around X-axis to convert
-    return <mesh geometry={clone} material={material} rotation={[0, 0, 0]} scale={scaleArr} />;
-};
-
-const OBJRenderer = ({ url, material, color, assets, scale }: { url: string, material: THREE.Material, color: string, assets: Record<string, string>, scale?: { x: number, y: number, z: number } }) => {
-    const manager = useLoadingManager(assets);
-    const obj = useLoader(OBJLoader, url, (loader) => {
-        loader.manager = manager;
-    });
-    const clone = useMemo(() => {
-        const c = obj.clone();
-        c.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-                // Only override if the mesh doesn't have a texture map
-                const mesh = child as THREE.Mesh;
-                const mat = mesh.material as THREE.MeshStandardMaterial;
-                if (!mat || !mat.map) {
-                    mesh.material = material;
-                }
-            }
-        });
-        return c;
-    }, [obj, material]);
-    const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
-    // URDF uses Z-up, Three.js uses Y-up. Rotate -90 degrees around X-axis to convert
-    return <group rotation={[0, 0, 0]} scale={scaleArr}><primitive object={clone} /></group>;
-};
-
-const DAERenderer = ({ url, material, assets, scale }: { url: string, material: THREE.Material, assets: Record<string, string>, scale?: { x: number, y: number, z: number } }) => {
-    const manager = useLoadingManager(assets);
-    // Load DAE file
-    const dae = useLoader(ColladaLoader, url, (loader) => {
-        loader.manager = manager;
-    });
-    const clone = useMemo(() => {
-        const c = dae.scene.clone();
-        // Reset any rotation that ColladaLoader may have applied for Z-UP conversion
-        // Since we're working in URDF's native Z-UP coordinate system, we don't need the conversion
-        c.rotation.set(0, 0, 0);
-        c.updateMatrix();
-        
-        c.traverse((child: any) => {
-            if (child.isMesh) {
-                const mesh = child as THREE.Mesh;
-                const originalMat = mesh.material;
-                
-                // Check if original material has texture
-                let hasTexture = false;
-                if (Array.isArray(originalMat)) {
-                    hasTexture = originalMat.some((m: any) => m.map || m.emissiveMap);
-                } else {
-                    const mat = originalMat as any;
-                    hasTexture = !!mat.map || !!mat.emissiveMap;
-                }
-
-                // If no texture, apply URDF material
-                if (!hasTexture) {
-                    mesh.material = material;
-                }
-            }
-        });
-        return c;
-    }, [dae, material]);
-    const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
-    // No rotation needed - we're using Z-UP coordinate system throughout
-    return <group scale={scaleArr}><primitive object={clone} /></group>;
-};
-
-
-const JointAxesVisual = ({ joint, scale = 1.0 }: { joint: UrdfJoint, scale?: number }) => {
-  const { type, axis } = joint;
-  
-  const quaternion = useMemo(() => {
-    const axisVec = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
-    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axisVec);
-  }, [axis.x, axis.y, axis.z]);
-
-  if (type === JointType.FIXED) return null;
-
-  const color = "#d946ef";
-
-  return (
-    <group quaternion={quaternion} scale={[scale, scale, scale]}>
-      <arrowHelper args={[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 0.35, color, 0.08, 0.05]} />
-      {(type === JointType.REVOLUTE || type === JointType.CONTINUOUS) && (
-        <group>
-            <mesh>
-                <torusGeometry args={[0.15, 0.005, 8, 32, type === JointType.REVOLUTE ? Math.PI * 1.5 : Math.PI * 2]} />
-                <meshBasicMaterial color={color} />
-            </mesh>
-            <mesh position={[0.15, 0, 0]} rotation={[Math.PI / 2, 0, -Math.PI / 2]}>
-                <coneGeometry args={[0.015, 0.04, 8]} />
-                <meshBasicMaterial color={color} />
-            </mesh>
-        </group>
-      )}
-      {type === JointType.PRISMATIC && (
-         <group>
-             <arrowHelper args={[new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, 0), 0.35, color, 0.08, 0.05]} />
-         </group>
-      )}
-    </group>
-  );
-};
-
-// Inertia Box Visualization Component
-// Displays the inertia tensor as a transparent box
-const InertiaBox = ({ link }: { link: any }) => {
-  const inertial = link.inertial;
-  if (!inertial) return null;
-
-  // Compute box dimensions using MathUtils
-  const boxData = DataUtils.computeInertiaBox(inertial);
-  if (!boxData) return null;
-
-  const { width, height, depth, rotation } = boxData;
-  
-  // Get inertial origin position
-  const origin = inertial.origin || { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
-  const pos = origin.xyz || { x: 0, y: 0, z: 0 };
-  
-  // Combine rotations: origin rotation (RPY) * inertia tensor rotation
-  const originRot = new THREE.Euler(
-    origin.rpy?.r || 0,
-    origin.rpy?.p || 0,
-    origin.rpy?.y || 0,
-    'XYZ'
-  );
-  const originQuat = new THREE.Quaternion().setFromEuler(originRot);
-  const finalQuat = originQuat.multiply(rotation);
-  const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat);
-
-  return (
-    <group position={[pos.x, pos.y, pos.z]} rotation={finalEuler}>
-      <mesh>
-        <boxGeometry args={[width, height, depth]} />
-        <meshPhongMaterial 
-          color={0x4a9eff} 
-          transparent 
-          opacity={0.35}
-          depthWrite={false}
-          shininess={50}
-        />
-      </mesh>
-    </group>
-  );
-};
-
-// Center of Mass Indicator for individual links
-const LinkCenterOfMass = ({ link }: { link: any }) => {
-  const inertial = link.inertial;
-  if (!inertial || inertial.mass <= 0) return null;
-  
-  const origin = inertial.origin || { xyz: { x: 0, y: 0, z: 0 } };
-  const pos = origin.xyz || { x: 0, y: 0, z: 0 };
-  const radius = 0.015;
-
-  return (
-    <group position={[pos.x, pos.y, pos.z]}>
-      {/* 8 octants forming a sphere */}
-      {/* Top (+Y) */}
-      <mesh rotation={[0, 0, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#000000" />
-      </mesh>
-      <mesh rotation={[0, Math.PI/2, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#ffffff" />
-      </mesh>
-      <mesh rotation={[0, Math.PI, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#000000" />
-      </mesh>
-      <mesh rotation={[0, -Math.PI/2, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#ffffff" />
-      </mesh>
-
-      {/* Bottom (-Y) - rotate by X PI */}
-      <mesh rotation={[Math.PI, 0, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#000000" />
-      </mesh>
-      <mesh rotation={[Math.PI, Math.PI/2, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#ffffff" />
-      </mesh>
-      <mesh rotation={[Math.PI, Math.PI, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#000000" />
-      </mesh>
-       <mesh rotation={[Math.PI, -Math.PI/2, 0]}>
-         <sphereGeometry args={[radius, 16, 16, 0, Math.PI/2, 0, Math.PI/2]} />
-         <meshBasicMaterial color="#ffffff" />
-      </mesh>
-      {/* Label */}
-      <Html position={[0.03, 0.03, 0]} style={{ pointerEvents: 'none' }}>
-        <div className="text-[8px] text-red-400 bg-black/60 px-1 rounded whitespace-nowrap">
-          CoM
-        </div>
-      </Html>
-    </group>
-  );
-};
-
-function JointNode({
+const JointNode = memo(function JointNode({
   joint,
   robot,
   onSelect,
@@ -415,10 +194,11 @@ function JointNode({
   onRegisterJointPivot,
   onRegisterCollisionRef
 }: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void }) {
-  
+
   if (depth > 50) return null;
 
   const isSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
+
   const { x, y, z } = joint.origin.xyz;
   const { r, p, y: yaw } = joint.origin.rpy;
   
@@ -445,21 +225,27 @@ function JointNode({
 
   return (
     <group>
-        {mode === 'skeleton' && (
-            <Line
-                points={[[0, 0, 0], [x, y, z]]}
-                color={isSelected ? "#fbbf24" : "#94a3b8"} 
-                lineWidth={2}
-                dashed
-                dashScale={10}
-            />
+        {mode === 'skeleton' && showGeometry && (
+            <>
+                {/* Only render line if distance is significant (> 0.001m) to avoid rendering glitches */}
+                {(Math.abs(x) > 0.001 || Math.abs(y) > 0.001 || Math.abs(z) > 0.001) && (
+                    <Line
+                        points={[[0, 0, 0], [x, y, z]]}
+                        color={isSelected ? "#fbbf24" : "#94a3b8"}
+                        lineWidth={1}
+                        dashed
+                        dashSize={0.02}
+                        gapSize={0.01}
+                    />
+                )}
+            </>
         )}
 
         {/* Joint pivot: represents joint origin in parent-local space */}
         {/* TransformControls attaches here, modifies position in parent-local frame */}
-        <group 
+        <group
             ref={setJointPivot}
-            position={[x, y, z]} 
+            position={[x, y, z]}
             rotation={[r, p, yaw]}
         >
             {/* Joint group: at origin relative to pivot, contains visualization and child link */}
@@ -468,7 +254,15 @@ function JointNode({
                 position={[0, 0, 0]} 
                 rotation={[0, 0, 0]}
             >
-                {showAxes && <ThickerAxes size={frameSize * 0.12} />}
+                {showAxes && (
+                    <ThickerAxes
+                        size={frameSize * 0.12}
+                        onClick={(mode === 'skeleton' || mode === 'hardware') ? (e) => {
+                            e.stopPropagation();
+                            onSelect('joint', joint.id);
+                        } : undefined}
+                    />
+                )}
 
                 {(mode === 'skeleton' || mode === 'hardware') && (
                     <group>
@@ -493,7 +287,7 @@ function JointNode({
                                 </div>
                             </Html>
                         )}
-                        {mode === 'skeleton' && showJointAxes && <JointAxesVisual joint={joint} scale={jointAxisSize / 0.35} />}
+                        {mode === 'skeleton' && showJointAxes && joint.type !== 'fixed' && <JointAxesVisual joint={joint} scale={jointAxisSize / 0.35} />}
                     </group>
                 )}
 
@@ -536,11 +330,11 @@ function JointNode({
         </group>
     </group>
   );
-}
+});
 
-function RobotNode({
-  linkId, 
-  robot, 
+const RobotNode = memo(function RobotNode({
+  linkId,
+  robot,
   onSelect,
   onUpdate,
   mode,
@@ -567,7 +361,7 @@ function RobotNode({
   onRegisterJointPivot,
   onRegisterCollisionRef
 }: RobotNodeProps) {
-  
+
   if (depth > 50) return null;
 
   const link = robot.links[linkId];
@@ -675,35 +469,19 @@ function RobotNode({
         emissiveIntensity = 0.3; // Mild glow on hover
     }
 
-    const material = isSkeleton
-        ? new THREE.MeshBasicMaterial({
-            color: finalColor,
-            transparent: true,
-            opacity: matOpacity,
-            wireframe: matWireframe,
-            side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
-            polygonOffset: isCollision,
-            polygonOffsetFactor: -1,
-            polygonOffsetUnits: -1
-        })
-        : new THREE.MeshPhysicalMaterial({
-            color: finalColor,
-            roughness: 0.15,
-            metalness: 0.3,
-            clearcoat: 0.3,
-            clearcoatRoughness: 0.1,
-            reflectivity: 0.8,
-            emissive: emissiveColor,
-            emissiveIntensity: emissiveIntensity,
-            transparent: isCollision,
-            opacity: matOpacity,
-            wireframe: matWireframe,
-            side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
-            polygonOffset: isCollision,
-            polygonOffsetFactor: -1,
-            polygonOffsetUnits: -1
-        });
+    // Use cached material to avoid shader recompilation
+    const material = getCachedMaterial(
+        geometryKey,
+        isSkeleton,
+        finalColor,
+        matOpacity,
+        matWireframe,
+        isCollision,
+        emissiveColor,
+        emissiveIntensity
+    );
 
+    // Use array format for position/rotation to avoid creating new objects
     const wrapperProps = {
         onClick: (e: any) => { handleLinkClick(e, isCollision ? 'collision' : 'visual'); },
         onPointerOver: (e: any) => {
@@ -714,10 +492,10 @@ function RobotNode({
              e.stopPropagation();
              setHoveredType(null);
         },
-        position: origin ? new THREE.Vector3(origin.xyz.x, origin.xyz.y, origin.xyz.z) : undefined,
-        // URDF uses rpy (roll-pitch-yaw) which is rotation around X, Y, Z in that order
-        rotation: origin ? new THREE.Euler(origin.rpy.r, origin.rpy.p, origin.rpy.y, 'XYZ') : undefined,
-        ref: isCollision ? setCollisionRef : setVisualRef // Capture ref for TransformControls
+        // Use array format instead of new THREE.Vector3/Euler to avoid object creation
+        position: origin ? [origin.xyz.x, origin.xyz.y, origin.xyz.z] as [number, number, number] : undefined,
+        rotation: origin ? [origin.rpy.r, origin.rpy.p, origin.rpy.y] as [number, number, number] : undefined,
+        ref: isCollision ? setCollisionRef : setVisualRef
     };
 
     let geometryNode;
@@ -856,15 +634,10 @@ function RobotNode({
 
       {shouldRenderGeometry && (
         <>
-          {/* Visual Geometry - key forces re-render on data change (includes origin for undo support) */}
-          <React.Fragment key={`visual-${link.visual?.type}-${link.visual?.dimensions?.x}-${link.visual?.dimensions?.y}-${link.visual?.dimensions?.z}-${link.visual?.origin?.xyz?.x}-${link.visual?.origin?.xyz?.y}-${link.visual?.origin?.xyz?.z}-${link.visual?.origin?.rpy?.r}-${link.visual?.origin?.rpy?.p}-${link.visual?.origin?.rpy?.y}-${link.visual?.meshPath || ''}`}>
-            {renderGeometry(false)}
-          </React.Fragment>
-          
-          {/* Collision Geometry - key forces re-render on data change (includes origin for undo support) */}
-          <React.Fragment key={`collision-${link.collision?.type}-${link.collision?.dimensions?.x}-${link.collision?.dimensions?.y}-${link.collision?.dimensions?.z}-${link.collision?.origin?.xyz?.x}-${link.collision?.origin?.xyz?.y}-${link.collision?.origin?.xyz?.z}-${link.collision?.origin?.rpy?.r}-${link.collision?.origin?.rpy?.p}-${link.collision?.origin?.rpy?.y}-${link.collision?.meshPath || ''}`}>
-            {renderGeometry(true)}
-          </React.Fragment>
+          {/* Visual Geometry */}
+          {renderGeometry(false)}
+          {/* Collision Geometry */}
+          {renderGeometry(true)}
         </>
       )}
 
@@ -940,96 +713,9 @@ function RobotNode({
       ))}
     </group>
   );
-}
+});
 
-// Coordinate Axis Component with adjustable thickness and size
-const ThickerAxes = ({ size = 0.1 }: { size?: number }) => {
-  const thickness = size * 0.08; // Reduced thickness (8% of size)
-  const headSize = size * 0.25;
-  
-  return (
-    <group>
-      {/* X Axis - Red */}
-      <mesh rotation={[0, 0, -Math.PI / 2]} position={[size / 2, 0, 0]}>
-        <cylinderGeometry args={[thickness, thickness, size, 8]} />
-        <meshBasicMaterial color="#ff4444" depthTest={false} transparent opacity={0.8} />
-      </mesh>
-      <mesh rotation={[0, 0, -Math.PI / 2]} position={[size, 0, 0]}>
-        <coneGeometry args={[thickness * 2, headSize, 8]} />
-        <meshBasicMaterial color="#ff4444" depthTest={false} transparent opacity={0.8} />
-      </mesh>
-
-      {/* Y Axis - Green */}
-      <mesh position={[0, size / 2, 0]}>
-        <cylinderGeometry args={[thickness, thickness, size, 8]} />
-        <meshBasicMaterial color="#44ff44" depthTest={false} transparent opacity={0.8} />
-      </mesh>
-      <mesh position={[0, size, 0]}>
-        <coneGeometry args={[thickness * 2, headSize, 8]} />
-        <meshBasicMaterial color="#44ff44" depthTest={false} transparent opacity={0.8} />
-      </mesh>
-
-      {/* Z Axis - Blue */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, size / 2]}>
-        <cylinderGeometry args={[thickness, thickness, size, 8]} />
-        <meshBasicMaterial color="#4444ff" depthTest={false} transparent opacity={0.8} />
-      </mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, size]}>
-        <coneGeometry args={[thickness * 2, headSize, 8]} />
-        <meshBasicMaterial color="#4444ff" depthTest={false} transparent opacity={0.8} />
-      </mesh>
-    </group>
-  );
-};
-
-// Scene lighting setup
-function SceneLighting() {
-    const { scene, gl } = useThree();
-    
-    useEffect(() => {
-        // Setup environment map for material reflections
-        const pmremGenerator = new THREE.PMREMGenerator(gl);
-        pmremGenerator.compileEquirectangularShader();
-        
-        // Create a simple environment scene
-        const envScene = new THREE.Scene();
-        const envLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-        envScene.add(envLight);
-        
-        // Generate environment map
-        const envMap = pmremGenerator.fromScene(envScene, 0.04).texture;
-        envMap.mapping = THREE.EquirectangularReflectionMapping;
-        scene.environment = envMap;
-        
-        return () => {
-            pmremGenerator.dispose();
-        };
-    }, [scene, gl]);
-    
-    return (
-        <>
-            <hemisphereLight args={[0xffffff, 0x666666, 0.8]} position={[0, 0, 1]} />
-            <ambientLight intensity={0.4} />
-            
-            <directionalLight
-                position={[4, 4, 8]}
-                intensity={Math.PI * 0.8}
-                castShadow
-                shadow-mapSize-width={2048}
-                shadow-mapSize-height={2048}
-            />
-            <directionalLight position={[-4, -4, 6]} intensity={Math.PI * 0.4} />
-            <directionalLight position={[-4, 4, 4]} intensity={Math.PI * 0.3} />
-            <directionalLight position={[4, -4, 4]} intensity={Math.PI * 0.3} />
-            <directionalLight position={[0, 0, 10]} intensity={Math.PI * 0.2} />
-            <directionalLight position={[0, 0, -5]} intensity={Math.PI * 0.15} />
-            
-{/* Shadow plane removed - causes z-fighting */}
-        </>
-    );
-}
-
-export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, theme, os, showVisual: propShowVisual, setShowVisual: propSetShowVisual, snapshotAction }: { robot: RobotState; onSelect: any; onUpdate: any; mode: 'skeleton' | 'detail' | 'hardware', assets: Record<string, string>, lang: Language, theme: Theme, os?: 'mac' | 'win', showVisual?: boolean, setShowVisual?: (show: boolean) => void, snapshotAction?: React.MutableRefObject<(() => void) | null> }) => {
+export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, theme, os, showVisual: propShowVisual, setShowVisual: propSetShowVisual, snapshotAction, showOptionsPanel = true, setShowOptionsPanel }: { robot: RobotState; onSelect: any; onUpdate: any; mode: 'skeleton' | 'detail' | 'hardware', assets: Record<string, string>, lang: Language, theme: Theme, os?: 'mac' | 'win', showVisual?: boolean, setShowVisual?: (show: boolean) => void, snapshotAction?: React.MutableRefObject<(() => void) | null>, showOptionsPanel?: boolean, setShowOptionsPanel?: (show: boolean) => void }) => {
   const t = translations[lang];
 
   // Skeleton Settings
@@ -1075,25 +761,347 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
 
   // Joint pivot refs for TransformControls at root level
   const [jointPivots, setJointPivots] = useState<Record<string, THREE.Group | null>>({});
-  
-  const handleRegisterJointPivot = (jointId: string, pivot: THREE.Group | null) => {
-    setJointPivots(prev => ({ ...prev, [jointId]: pivot }));
-  };
-  
+
+  // Memoized callback to avoid triggering re-renders when value hasn't changed
+  const handleRegisterJointPivot = useCallback((jointId: string, pivot: THREE.Group | null) => {
+    setJointPivots(prev => {
+      if (prev[jointId] === pivot) return prev; // No change, return same object
+      return { ...prev, [jointId]: pivot };
+    });
+  }, []);
+
   const selectedJointPivot = robot.selection.type === 'joint' && robot.selection.id
-    ? jointPivots[robot.selection.id] 
+    ? jointPivots[robot.selection.id]
     : null;
 
   // Collision geometry refs for TransformControls at root level
   const [collisionRefs, setCollisionRefs] = useState<Record<string, THREE.Group | null>>({});
-  
+
   const handleRegisterCollisionRef = (linkId: string, ref: THREE.Group | null) => {
     setCollisionRefs(prev => ({ ...prev, [linkId]: ref }));
   };
-  
+
   const selectedCollisionRef = robot.selection.type === 'link' && robot.selection.id && robot.selection.subType === 'collision'
-    ? collisionRefs[robot.selection.id] 
+    ? collisionRefs[robot.selection.id]
     : null;
+
+  // Transform Controls state - using same pattern as CollisionTransformControls
+  const transformControlRef = useRef<any>(null);
+  const [pendingEdit, setPendingEdit] = useState<{
+    axis: string;
+    value: number;
+    startValue: number;
+    isRotate: boolean;
+  } | null>(null);
+
+  const originalPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const originalRotationRef = useRef<THREE.Euler>(new THREE.Euler());
+  const isDraggingControlRef = useRef(false);
+  const currentAxisRef = useRef<string | null>(null);
+  const startValueRef = useRef<number>(0);
+  const [currentAxis, setCurrentAxis] = useState<string | null>(null);
+  const [isDraggingAxis, setIsDraggingAxis] = useState(false);
+
+  // Clear pending edit when selection changes
+  useEffect(() => {
+    // When selection changes, cancel any pending edit by restoring original transform
+    if (pendingEdit && selectedJointPivot) {
+      selectedJointPivot.position.copy(originalPositionRef.current);
+      selectedJointPivot.rotation.copy(originalRotationRef.current);
+    }
+    setPendingEdit(null);
+  }, [robot.selection.id, robot.selection.type]);
+
+  // Clear pending edit and restore when component unmounts or selection changes
+  useEffect(() => {
+    return () => {
+      // Cleanup: if component unmounts with pending edit, restore original transform
+      if (pendingEdit && selectedJointPivot) {
+        selectedJointPivot.position.copy(originalPositionRef.current);
+        selectedJointPivot.rotation.copy(originalRotationRef.current);
+      }
+    };
+  }, [pendingEdit, selectedJointPivot]);
+
+  // Update original refs when target object changes
+  useEffect(() => {
+    if (selectedJointPivot) {
+      originalPositionRef.current.copy(selectedJointPivot.position);
+      originalRotationRef.current.copy(selectedJointPivot.rotation);
+    }
+  }, [selectedJointPivot]);
+
+  // Helper functions for transform controls - matching CollisionTransformControls pattern
+  const radToDeg = (rad: number) => rad * (180 / Math.PI);
+  const degToRad = (deg: number) => deg * (Math.PI / 180);
+
+  const getDisplayValue = useCallback(() => {
+    if (!pendingEdit) return '0';
+    if (pendingEdit.isRotate) {
+      return radToDeg(pendingEdit.value).toFixed(2);
+    }
+    return pendingEdit.value.toFixed(4);
+  }, [pendingEdit]);
+
+  const getDeltaDisplay = useCallback(() => {
+    if (!pendingEdit) return '0';
+    const delta = pendingEdit.value - pendingEdit.startValue;
+    if (pendingEdit.isRotate) {
+      const degDelta = radToDeg(delta);
+      return (degDelta >= 0 ? '+' : '') + degDelta.toFixed(2);
+    }
+    return (delta >= 0 ? '+' : '') + delta.toFixed(4);
+  }, [pendingEdit]);
+
+  const handleValueChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputVal = parseFloat(e.target.value);
+    if (!isNaN(inputVal) && pendingEdit && selectedJointPivot) {
+      const val = pendingEdit.isRotate ? degToRad(inputVal) : inputVal;
+      setPendingEdit({ ...pendingEdit, value: val });
+
+      // Live preview
+      const axis = pendingEdit.axis;
+      if (pendingEdit.isRotate) {
+        if (axis === 'X') selectedJointPivot.rotation.x = val;
+        else if (axis === 'Y') selectedJointPivot.rotation.y = val;
+        else if (axis === 'Z') selectedJointPivot.rotation.z = val;
+      } else {
+        if (axis === 'X') selectedJointPivot.position.x = val;
+        else if (axis === 'Y') selectedJointPivot.position.y = val;
+        else if (axis === 'Z') selectedJointPivot.position.z = val;
+      }
+    }
+  }, [pendingEdit, selectedJointPivot]);
+
+  const handleConfirm = useCallback(() => {
+    if (!selectedJointPivot || !robot.selection.id || !pendingEdit) return;
+
+    const jointId = robot.selection.id;
+    const joint = robot.joints[jointId];
+    if (!joint) return;
+
+    // Apply the edited value
+    const axis = pendingEdit.axis;
+    if (pendingEdit.isRotate) {
+      if (axis === 'X') selectedJointPivot.rotation.x = pendingEdit.value;
+      else if (axis === 'Y') selectedJointPivot.rotation.y = pendingEdit.value;
+      else if (axis === 'Z') selectedJointPivot.rotation.z = pendingEdit.value;
+    } else {
+      if (axis === 'X') selectedJointPivot.position.x = pendingEdit.value;
+      else if (axis === 'Y') selectedJointPivot.position.y = pendingEdit.value;
+      else if (axis === 'Z') selectedJointPivot.position.z = pendingEdit.value;
+    }
+
+    // Save to state
+    const pos = selectedJointPivot.position;
+    const rot = selectedJointPivot.rotation;
+    onUpdate('joint', jointId, {
+      ...joint,
+      origin: {
+        xyz: { x: pos.x, y: pos.y, z: pos.z },
+        rpy: { r: rot.x, p: rot.y, y: rot.z }
+      }
+    });
+
+    // Update original refs
+    originalPositionRef.current.copy(selectedJointPivot.position);
+    originalRotationRef.current.copy(selectedJointPivot.rotation);
+
+    setPendingEdit(null);
+  }, [selectedJointPivot, robot.selection.id, robot.joints, pendingEdit, onUpdate]);
+
+  const handleCancel = useCallback(() => {
+    if (selectedJointPivot) {
+      selectedJointPivot.position.copy(originalPositionRef.current);
+      selectedJointPivot.rotation.copy(originalRotationRef.current);
+    }
+    setPendingEdit(null);
+  }, [selectedJointPivot]);
+
+  // Handle object change during drag for live preview
+  const handleObjectChange = useCallback(() => {
+    // Trigger re-render during drag for visual feedback
+  }, []);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleConfirm();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancel();
+    }
+  }, [handleConfirm, handleCancel]);
+
+  const getAxisColor = (axis: string | null) => {
+    if (axis === 'X') return '#ef4444';
+    if (axis === 'Y') return '#22c55e';
+    if (axis === 'Z') return '#3b82f6';
+    return '#94a3b8';
+  };
+
+  // Update axis opacity based on active axis and dragging state
+  const updateAxisOpacity = useCallback((gizmo: any, axis: string | null, isDragging: boolean) => {
+    gizmo.traverse((child: any) => {
+      if (child.material && child.material.color) {
+        // Check axis by material color (R=X, G=Y, B=Z)
+        const color = child.material.color;
+        const isXAxis = color.r > 0.5 && color.g < 0.4 && color.b < 0.4;
+        const isYAxis = color.g > 0.5 && color.r < 0.4 && color.b < 0.4;
+        const isZAxis = color.b > 0.5 && color.r < 0.4 && color.g < 0.4;
+
+        const isActiveAxis = !axis ||
+          (axis === 'X' && isXAxis) ||
+          (axis === 'Y' && isYAxis) ||
+          (axis === 'Z' && isZAxis);
+
+        // When dragging: active axis stays full opacity, others become very transparent
+        // When hovering: active axis stays full opacity, others become slightly transparent
+        if (axis && !isActiveAxis) {
+          child.material.opacity = isDragging ? 0.15 : 0.3;
+          child.material.transparent = true;
+        } else {
+          child.material.opacity = 1.0;
+          child.material.transparent = false;
+        }
+        child.material.needsUpdate = true;
+      }
+    });
+  }, []);
+
+  // Setup event listeners for TransformControls - matching CollisionTransformControls
+  useEffect(() => {
+    const controls = transformControlRef.current;
+    if (!controls || !selectedJointPivot || mode !== 'skeleton') return;
+
+    const handleDraggingChange = (event: any) => {
+      const dragging = event.value;
+
+      if (dragging) {
+        // Start dragging
+        isDraggingControlRef.current = true;
+        setIsDraggingAxis(true);
+        originalPositionRef.current.copy(selectedJointPivot.position);
+        originalRotationRef.current.copy(selectedJointPivot.rotation);
+
+        // Get current axis
+        const axis = controls.axis;
+        currentAxisRef.current = axis;
+
+        // Update axis opacity for dragging state
+        const gizmo = (controls as any).children?.[0];
+        if (gizmo && axis) {
+          updateAxisOpacity(gizmo, axis, true);
+        }
+
+        const isRotate = transformMode === 'rotate';
+        let startValue = 0;
+
+        if (isRotate) {
+          startValue = axis === 'X' ? selectedJointPivot.rotation.x :
+                      axis === 'Y' ? selectedJointPivot.rotation.y :
+                      axis === 'Z' ? selectedJointPivot.rotation.z : 0;
+        } else {
+          startValue = axis === 'X' ? selectedJointPivot.position.x :
+                      axis === 'Y' ? selectedJointPivot.position.y :
+                      axis === 'Z' ? selectedJointPivot.position.z : 0;
+        }
+
+        // Store start value for later comparison
+        startValueRef.current = startValue;
+      } else if (isDraggingControlRef.current) {
+        // End dragging
+        isDraggingControlRef.current = false;
+        setIsDraggingAxis(false);
+
+        const axis = currentAxisRef.current;
+
+        // Reset axis opacity to hover state
+        const gizmo = (controls as any).children?.[0];
+        if (gizmo && axis) {
+          updateAxisOpacity(gizmo, axis, false);
+        }
+
+        const isRotate = transformMode === 'rotate';
+        let currentVal = 0;
+
+        if (isRotate) {
+          currentVal = axis === 'X' ? selectedJointPivot.rotation.x :
+                      axis === 'Y' ? selectedJointPivot.rotation.y :
+                      axis === 'Z' ? selectedJointPivot.rotation.z : 0;
+        } else {
+          currentVal = axis === 'X' ? selectedJointPivot.position.x :
+                      axis === 'Y' ? selectedJointPivot.position.y :
+                      axis === 'Z' ? selectedJointPivot.position.z : 0;
+        }
+
+        const delta = currentVal - startValueRef.current;
+
+        // Show confirm UI if value changed
+        if (Math.abs(delta) > 0.0001 && axis) {
+          setPendingEdit({
+            axis,
+            value: currentVal,
+            startValue: startValueRef.current,
+            isRotate
+          });
+        }
+      }
+    };
+
+    controls.addEventListener('dragging-changed', handleDraggingChange);
+
+    return () => {
+      controls.removeEventListener('dragging-changed', handleDraggingChange);
+    };
+  }, [selectedJointPivot, transformMode, mode, updateAxisOpacity]);
+
+  // Customize TransformControls appearance
+  useEffect(() => {
+    const controls = transformControlRef.current;
+    if (!controls || mode !== 'skeleton') return;
+
+    const gizmo = (controls as any).children?.[0];
+    if (!gizmo) return;
+
+    // Make axes thicker
+    const updateAxisAppearance = () => {
+      gizmo.traverse((child: any) => {
+        if (child.isMesh || child.isLine) {
+          if (child.material) {
+            if (child.material.linewidth !== undefined) {
+              child.material.linewidth = 3;
+            }
+            if (!child.userData.scaled) {
+              if (child.isLine) {
+                child.scale.multiplyScalar(1.5);
+              }
+              child.userData.scaled = true;
+            }
+          }
+        }
+      });
+    };
+
+    updateAxisAppearance();
+
+    // Listen for axis changes
+    const handleAxisChanged = (event: any) => {
+      if (pendingEdit) return;
+
+      const axis = event.value;
+      setCurrentAxis(axis);
+
+      // Update opacity based on current axis and dragging state
+      updateAxisOpacity(gizmo, axis, isDraggingAxis);
+    };
+
+    controls.addEventListener('axis-changed', handleAxisChanged);
+
+    return () => {
+      controls.removeEventListener('axis-changed', handleAxisChanged);
+    };
+  }, [selectedJointPivot, transformMode, mode, pendingEdit, isDraggingAxis, updateAxisOpacity]);
 
   // Draggable panel state
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -1181,6 +1189,7 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
            </div>
         </div>
 
+        {showOptionsPanel && (
         <div 
            ref={optionsPanelRef}
            className="absolute z-10 pointer-events-auto"
@@ -1201,17 +1210,30 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                      </svg>
                      {t.skeletonOptions}
                    </div>
-                   <button 
-                     onMouseDown={(e) => e.stopPropagation()}
-                     onClick={(e) => { e.stopPropagation(); setOptionsPanelPos(null); toggleOptionsCollapsed(); }}
-                     className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
-                   >
-                     {isOptionsCollapsed ? (
-                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                     ) : (
-                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                   <div className="flex items-center gap-1">
+                     <button
+                       onMouseDown={(e) => e.stopPropagation()}
+                       onClick={(e) => { e.stopPropagation(); setOptionsPanelPos(null); toggleOptionsCollapsed(); }}
+                       className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+                       title={isOptionsCollapsed ? t.expand : t.collapse}
+                     >
+                       {isOptionsCollapsed ? (
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                       ) : (
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                       )}
+                     </button>
+                     {setShowOptionsPanel && (
+                       <button
+                         onMouseDown={(e) => e.stopPropagation()}
+                         onClick={(e) => { e.stopPropagation(); setShowOptionsPanel(false); }}
+                         className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+                         title={t.close}
+                       >
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                       </button>
                      )}
-                   </button>
+                   </div>
                  </div>
                  
                  <div className={`transition-all duration-200 ease-in-out overflow-hidden ${isOptionsCollapsed ? 'max-h-0 opacity-0' : 'max-h-96 opacity-100'}`}>
@@ -1231,75 +1253,21 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                         </button>
                      </div>
 
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showGeometry} onChange={(e) => setShowGeometry(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showGeometry}
-                     </label>
+                     <CheckboxOption checked={showGeometry} onChange={setShowGeometry} label={t.showGeometry} />
 
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showSkeletonOrigin} onChange={(e) => setShowSkeletonOrigin(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showOrigin}
-                     </label>
+                     <CheckboxOption checked={showSkeletonOrigin} onChange={setShowSkeletonOrigin} label={t.showOrigin} />
                      {showSkeletonOrigin && (
-                        <div className="pl-6 pr-2 pb-2">
-                            <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1">
-                                <span>{t.frameSize}</span>
-                                <span>{frameSize.toFixed(2)}</span>
-                            </div>
-                            <input 
-                                type="range" 
-                                min="0.01" 
-                                max="0.5" 
-                                step="0.01" 
-                                value={frameSize}
-                                onChange={(e) => setFrameSize(parseFloat(e.target.value))}
-                                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                            />
-                        </div>
+                        <SliderOption label={t.frameSize} value={frameSize} onChange={setFrameSize} min={0.01} max={0.5} step={0.01} />
                      )}
 
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showLabels}
-                     </label>
+                     <CheckboxOption checked={showLabels} onChange={setShowLabels} label={t.showLabels} />
                      {showLabels && (
-                        <div className="pl-6 pr-2 pb-2">
-                            <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1">
-                                <span>{t.labelScale}</span>
-                                <span>{labelScale.toFixed(1)}</span>
-                            </div>
-                            <input 
-                                type="range" 
-                                min="0.1" 
-                                max="2.0" 
-                                step="0.1" 
-                                value={labelScale}
-                                onChange={(e) => setLabelScale(parseFloat(e.target.value))}
-                                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                            />
-                        </div>
+                        <SliderOption label={t.labelScale} value={labelScale} onChange={setLabelScale} min={0.1} max={2.0} step={0.1} decimals={1} />
                      )}
 
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showJointAxes} onChange={(e) => setShowJointAxes(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showJointAxes}
-                     </label>
+                     <CheckboxOption checked={showJointAxes} onChange={setShowJointAxes} label={t.showJointAxes} />
                      {showJointAxes && (
-                        <div className="pl-6 pr-2 pb-2">
-                            <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 mb-1">
-                                <span>{t.jointAxisSize}</span>
-                                <span>{jointAxisSize.toFixed(2)}</span>
-                            </div>
-                            <input 
-                                type="range" 
-                                min="0.01" 
-                                max="1.0" 
-                                step="0.01" 
-                                value={jointAxisSize}
-                                onChange={(e) => setJointAxisSize(parseFloat(e.target.value))}
-                                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                            />
-                        </div>
+                        <SliderOption label={t.jointAxisSize} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={1.0} step={0.01} />
                      )}
                    </div>
                  </div>
@@ -1348,30 +1316,12 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                         </button>
                      </div>
 
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showDetailOrigin} onChange={(e) => setShowDetailOrigin(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showOrigin}
-                     </label>
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showDetailLabels} onChange={(e) => setShowDetailLabels(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showLabels}
-                     </label>
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showVisual} onChange={(e) => setShowVisual(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showVisual}
-                     </label>
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showCollision} onChange={(e) => setShowCollision(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showCollision}
-                     </label>
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showInertia} onChange={(e) => setShowInertia(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showInertia}
-                     </label>
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showCenterOfMass} onChange={(e) => setShowCenterOfMass(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showCenterOfMass}
-                     </label>
+                     <CheckboxOption checked={showDetailOrigin} onChange={setShowDetailOrigin} label={t.showOrigin} />
+                     <CheckboxOption checked={showDetailLabels} onChange={setShowDetailLabels} label={t.showLabels} />
+                     <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
+                     <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} />
+                     <CheckboxOption checked={showInertia} onChange={setShowInertia} label={t.showInertia} />
+                     <CheckboxOption checked={showCenterOfMass} onChange={setShowCenterOfMass} label={t.showCenterOfMass} />
                    </div>
                  </div>
               </div>
@@ -1389,38 +1339,46 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
                      </svg>
                      {t.hardwareOptions}
                    </div>
-                   <button 
-                     onMouseDown={(e) => e.stopPropagation()}
-                     onClick={(e) => { e.stopPropagation(); setOptionsPanelPos(null); toggleOptionsCollapsed(); }}
-                     className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
-                   >
-                     {isOptionsCollapsed ? (
-                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                     ) : (
-                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                   <div className="flex items-center gap-1">
+                     <button
+                       onMouseDown={(e) => e.stopPropagation()}
+                       onClick={(e) => { e.stopPropagation(); setOptionsPanelPos(null); toggleOptionsCollapsed(); }}
+                       className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+                       title={isOptionsCollapsed ? t.expand : t.collapse}
+                     >
+                       {isOptionsCollapsed ? (
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                       ) : (
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                       )}
+                     </button>
+                     {setShowOptionsPanel && (
+                       <button
+                         onMouseDown={(e) => e.stopPropagation()}
+                         onClick={(e) => { e.stopPropagation(); setShowOptionsPanel(false); }}
+                         className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+                         title={t.close}
+                       >
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                       </button>
                      )}
-                   </button>
+                   </div>
                  </div>
                  <div className={`transition-all duration-200 ease-in-out overflow-hidden ${isOptionsCollapsed ? 'max-h-0 opacity-0' : 'max-h-96 opacity-100'}`}>
                    <div className="p-2 flex flex-col gap-2">
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showHardwareOrigin} onChange={(e) => setShowHardwareOrigin(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showOrigin}
-                     </label>
-                     <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-700 dark:text-slate-200 select-none hover:text-slate-900 dark:hover:text-white">
-                        <input type="checkbox" checked={showHardwareLabels} onChange={(e) => setShowHardwareLabels(e.target.checked)} className="rounded border-slate-300 dark:border-google-dark-border bg-white dark:bg-google-dark-bg text-google-blue" />
-                        {t.showLabels}
-                     </label>
+                     <CheckboxOption checked={showHardwareOrigin} onChange={setShowHardwareOrigin} label={t.showOrigin} />
+                     <CheckboxOption checked={showHardwareLabels} onChange={setShowHardwareLabels} label={t.showLabels} />
                    </div>
                  </div>
               </div>
            )}
         </div>
+        )}
         
-      <Canvas 
-        shadows 
-        camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }} 
-        onCreated={(state) => console.log('Canvas created', state)}
+      <Canvas
+        shadows
+        frameloop="demand"
+        camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
         gl={{
             antialias: true,
             toneMapping: THREE.ACESFilmicToneMapping,
@@ -1430,9 +1388,9 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
       >
         <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
         <Suspense fallback={null}>
-            <OrbitControls makeDefault />
+            <OrbitControls makeDefault enableDamping={false} />
             <SceneLighting />
-            <Environment files="/potsdamer_platz_1k.hdr" />
+            <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
             <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />
             
             <group position={[0, 0, 0]}>
@@ -1467,37 +1425,93 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
             </group>
             
             {/* TransformControls at root Canvas level - not nested in hierarchy */}
+            {/* Skip fixed joints - they cannot be transformed */}
             {mode === 'skeleton' && selectedJointPivot && robot.selection.type === 'joint' && robot.selection.id && (() => {
               const jointId = robot.selection.id!;
               const joint = robot.joints[jointId];
-              
+
               if (!joint) return null;
-              
-              const handleTransformEnd = () => {
-                if (selectedJointPivot) {
-                  // selectedJointPivot.position is the joint origin in parent-local space
-                  const pos = selectedJointPivot.position;
-                  const rot = selectedJointPivot.rotation;
-                  
-                  // Update joint origin directly from pivot's local position
-                  onUpdate('joint', jointId, {
-                    ...joint,
-                    origin: {
-                      xyz: { x: pos.x, y: pos.y, z: pos.z },
-                      rpy: { r: rot.x, p: rot.y, y: rot.z }
-                    }
-                  });
-                }
-              };
-              
+
+              // Don't show TransformControls for fixed joints
+              const jointTypeStr = String(joint.type).toLowerCase();
+              if (jointTypeStr === 'fixed' || joint.type === JointType.FIXED) return null;
+
               return (
-                <TransformControls 
+                <TransformControls
+                    ref={transformControlRef}
                     object={selectedJointPivot}
                     mode={transformMode}
                     size={0.7}
                     space="local"
-                    onMouseUp={handleTransformEnd}
+                    enabled={!pendingEdit}
+                    onChange={handleObjectChange}
                 />
+              );
+            })()}
+
+            {/* Confirm/Cancel UI matching CollisionTransformControls style */}
+            {mode === 'skeleton' && pendingEdit && selectedJointPivot && (() => {
+              // Get world position for correct placement
+              const worldPos = new THREE.Vector3();
+              selectedJointPivot.getWorldPosition(worldPos);
+
+              return (
+              <Html
+                position={worldPos.toArray()}
+                style={{ pointerEvents: 'auto' }}
+                center
+                zIndexRange={[100, 0]}
+              >
+                <div
+                  className="flex flex-col items-center gap-1 transform -translate-y-16"
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  {/* Compact input with axis indicator */}
+                  <div className="flex items-center gap-1">
+                    <span
+                      className="w-5 h-5 rounded text-white text-xs font-bold flex items-center justify-center shadow"
+                      style={{ backgroundColor: getAxisColor(pendingEdit.axis) }}
+                    >
+                      {pendingEdit.axis}
+                    </span>
+                    <input
+                      type="number"
+                      step={pendingEdit.isRotate ? "1" : "0.001"}
+                      value={getDisplayValue()}
+                      onChange={handleValueChange}
+                      onKeyDown={handleKeyDown}
+                      autoFocus
+                      className="w-20 px-1.5 py-0.5 text-xs font-mono bg-white/90 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-600 rounded text-slate-800 dark:text-white focus:outline-none focus:border-blue-500 shadow"
+                    />
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                      {pendingEdit.isRotate ? '°' : 'm'} ({getDeltaDisplay()})
+                    </span>
+                  </div>
+
+                  {/* Compact confirm/cancel buttons */}
+                  <div className="flex gap-1">
+                    <button
+                      onClick={handleConfirm}
+                      className="w-6 h-6 bg-green-500 hover:bg-green-600 text-white rounded shadow flex items-center justify-center transition-colors"
+                      title={t.confirmEnter}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={handleCancel}
+                      className="w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded shadow flex items-center justify-center transition-colors"
+                      title="Cancel (Esc)"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </Html>
               );
             })()}
 

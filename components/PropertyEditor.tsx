@@ -1,8 +1,18 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { RobotState, JointType, GeometryType, AppMode, UrdfLink, MotorSpec, Theme } from '../types';
 import { Upload, File, Wand, ExternalLink, ChevronRight, PanelRightOpen, Eye, Box, ChevronDown, ChevronLeft } from 'lucide-react';
 import * as THREE from 'three';
 import { translations, Language } from '../services/i18n';
+
+// ============================================================
+// REUSABLE THREE OBJECTS - Avoid allocation in render functions
+// ============================================================
+const _tempVec3A = new THREE.Vector3();
+const _tempVec3B = new THREE.Vector3();
+const _tempVec3C = new THREE.Vector3();
+const _tempQuat = new THREE.Quaternion();
+const _tempEuler = new THREE.Euler();
+const _zAxis = new THREE.Vector3(0, 0, 1);
 
 interface PropertyEditorProps {
   robot: RobotState;
@@ -157,52 +167,44 @@ const GeometryEditor = ({
         }
     };
 
-    const calculateAutoAlign = () => {
-       // Find the child joint connected to this link
+    // Memoized auto-align calculation to avoid repeated THREE object allocation
+    const autoAlignResult = useMemo(() => {
        const childJoint = Object.values(robot.joints).find(j => j.parentLinkId === data.id);
-       
        if (!childJoint) return null;
 
-       // Vector from Parent (Link Origin 0,0,0) to Child Joint
-       const start = new THREE.Vector3(0, 0, 0);
-       const end = new THREE.Vector3(childJoint.origin.xyz.x, childJoint.origin.xyz.y, childJoint.origin.xyz.z);
-       const vector = new THREE.Vector3().subVectors(end, start);
-       const length = vector.length();
-       const midpoint = vector.clone().multiplyScalar(0.5);
+       // Use reusable vectors to avoid allocation
+       _tempVec3A.set(childJoint.origin.xyz.x, childJoint.origin.xyz.y, childJoint.origin.xyz.z);
+       const length = _tempVec3A.length();
+       _tempVec3B.copy(_tempVec3A).multiplyScalar(0.5); // midpoint
+       _tempVec3C.copy(_tempVec3A).normalize(); // direction
 
-       // Calculate Rotation to align Z-axis with the vector
-       const zAxis = new THREE.Vector3(0, 0, 1);
-       const direction = vector.clone().normalize();
-       
-       const quaternion = new THREE.Quaternion();
-       if (direction.y === 0 && direction.x === 0 && direction.z === -1) {
-            quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+       // Calculate rotation to align Z-axis with the vector
+       if (_tempVec3C.y === 0 && _tempVec3C.x === 0 && _tempVec3C.z === -1) {
+            _tempQuat.setFromAxisAngle(_tempVec3A.set(1, 0, 0), Math.PI);
        } else {
-            quaternion.setFromUnitVectors(zAxis, direction);
+            _tempQuat.setFromUnitVectors(_zAxis, _tempVec3C);
        }
        
-       const euler = new THREE.Euler().setFromQuaternion(quaternion);
+       _tempEuler.setFromQuaternion(_tempQuat);
 
        return {
-           dimensions: { y: length }, // Only length is determined by joint distance
+           dimensions: { y: length },
            origin: {
-               xyz: { x: midpoint.x, y: midpoint.y, z: midpoint.z },
-               rpy: { r: euler.x, p: euler.y, y: euler.z }
+               xyz: { x: _tempVec3B.x, y: _tempVec3B.y, z: _tempVec3B.z },
+               rpy: { r: _tempEuler.x, p: _tempEuler.y, y: _tempEuler.z }
            }
        };
-    };
+    }, [robot.joints, data.id]);
 
     const handleAutoAlign = () => {
-       const result = calculateAutoAlign();
-       if (!result) return;
+       if (!autoAlignResult) return;
 
        const currentDims = geomData.dimensions || { x: 0.05, y: 0.5, z: 0.05 };
-       // Keep existing radius (x, z) but update length (y)
-       const newDims = { ...currentDims, y: result.dimensions.y };
+       const newDims = { ...currentDims, y: autoAlignResult.dimensions.y };
 
        update({
           dimensions: newDims,
-          origin: result.origin
+          origin: autoAlignResult.origin
        });
     };
 
