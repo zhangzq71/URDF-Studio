@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "license": "Apache-2.0",
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@monaco-editor/react": "^4.7.0",

@@ -6,7 +6,7 @@
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-6.2-purple?logo=vite)](https://vitejs.dev/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 **下一代可视化机器人设计平台**
 
@@ -117,15 +117,15 @@
 3. **配置 API Key（可选）**
    如需使用 AI 功能，请在根目录创建 `.env.local` 文件并添加：
    ```env
-   OPENAI_API_KEY=your_openai_api_key
-   OPENAI_BASE_URL=https://your-proxy-url/v1
-   OPENAI_MODEL=bce/deepseek-v3.2
+   VITE_OPENAI_API_KEY=your_openai_api_key
+   VITE_OPENAI_BASE_URL=https://your-proxy-url/v1
+   VITE_OPENAI_MODEL=bce/deepseek-v3.2
    ```
    
    **配置说明:**
-   - `OPENAI_API_KEY`: 你的 OpenAI API Key 或代理 Key
-   - `OPENAI_BASE_URL`: (可选) 自定义 API 端点。如果不设置，默认为 `https://api.openai.com/v1`
-   - `OPENAI_MODEL`: (可选) 指定使用的模型名称。如果不设置，默认为 `bce/deepseek-v3.2`
+   - `VITE_OPENAI_API_KEY`: 你的 OpenAI API Key 或代理 Key
+   - `VITE_OPENAI_BASE_URL`: (可选) 自定义 API 端点。如果不设置，默认为 `https://api.openai.com/v1`
+   - `VITE_OPENAI_MODEL`: (可选) 指定使用的模型名称。如果不设置，默认为 `bce/deepseek-v3.2`
 
 4. **启动开发服务器**
    ```bash
@@ -140,7 +140,7 @@ URDF-Studio/
 ├── App.tsx                 # 主应用组件 / Main Application
 ├── components/             # UI 组件 / UI Components
 │   ├── TreeEditor.tsx      # 树形结构编辑器 / Tree View
-│   ├── Visualizer.tsx      # 3D 可视化器 / 3D Viewport
+│   ├── URDFViewer/         # 3D 可视化器 / 3D Viewport
 │   └── PropertyEditor.tsx  # 属性面板 / Properties Panel
 ├── services/               # 核心逻辑服务 / Core Services
 │   ├── urdfGenerator.ts    # URDF 生成 / Generation
@@ -153,7 +153,7 @@ URDF-Studio/
 
 ## 📄 License
 
-MIT License
+Apache License 2.0
 
 ## 特别致谢
 地瓜机器人 https://developer.d-robotics.cc/
