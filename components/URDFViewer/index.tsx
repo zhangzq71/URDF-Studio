@@ -532,7 +532,7 @@ export function URDFViewer({
                                     />
 
                                     {showJointAxes && (
-                                        <SliderOption label={t.size} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={5.0} step={0.01} compact />
+                                        <SliderOption label={t.size} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={2.0} step={0.01} compact />
                                     )}
                                 </div>
 

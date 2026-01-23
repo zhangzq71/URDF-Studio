@@ -129,10 +129,10 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
 
   if (compact) {
     return (
-      <div className={`${indent ? 'pl-6' : ''} pr-2 pb-1`}>
-        <div className="flex items-center gap-2">
-          {icon && <span className="text-slate-400 dark:text-slate-500">{icon}</span>}
-          <span className="text-[9px] text-slate-400">{label}</span>
+      <div className={`${indent ? 'pl-4' : ''} pr-2 pb-1`}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {icon && <span className="text-slate-400 dark:text-slate-500 shrink-0">{icon}</span>}
+          <span className="text-[9px] text-slate-400 shrink-0">{label}</span>
           <input
             type="range"
             min={min}
@@ -140,7 +140,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
             step={step}
             value={value}
             onChange={(e) => onChange(parseFloat(e.target.value))}
-            className="flex-1 h-1.5 bg-slate-200 dark:bg-google-dark-border rounded-full appearance-none cursor-pointer slider-modern"
+            className="flex-1 min-w-0 h-1.5 bg-slate-200 dark:bg-google-dark-border rounded-full appearance-none cursor-pointer slider-modern"
             style={{
               background: `linear-gradient(to right, rgb(59, 130, 246) 0%, rgb(59, 130, 246) ${((value - min) / (max - min)) * 100}%, rgb(226, 232, 240) ${((value - min) / (max - min)) * 100}%, rgb(226, 232, 240) 100%)`
             }}
