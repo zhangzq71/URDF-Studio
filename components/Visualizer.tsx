@@ -256,7 +256,7 @@ const JointNode = memo(function JointNode({
             >
                 {showAxes && (
                     <ThickerAxes
-                        size={frameSize * 0.12}
+                        size={frameSize}
                         onClick={(mode === 'skeleton' || mode === 'hardware') ? (e) => {
                             e.stopPropagation();
                             onSelect('joint', joint.id);
@@ -610,7 +610,7 @@ const RobotNode = memo(function RobotNode({
     <group>
       {showRootAxes && (
         <group>
-            <ThickerAxes size={frameSize * 0.12} />
+            <ThickerAxes size={frameSize} />
             {showRootLabel && (
                 <Html position={[0.35, 0, 0]} className="pointer-events-none">
                     <div 
@@ -1267,7 +1267,7 @@ export const Visualizer = ({ robot, onSelect, onUpdate, mode, assets, lang, them
 
                   <CheckboxOption checked={showJointAxes} onChange={setShowJointAxes} label={t.showJointAxes} />
                   {showJointAxes && (
-                    <SliderOption label={t.jointAxisSize} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={1.0} step={0.01} />
+                    <SliderOption label={t.jointAxisSize} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={2.0} step={0.01} />
                   )}
                 </div>
               </div>
