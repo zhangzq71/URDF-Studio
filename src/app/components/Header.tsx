@@ -31,7 +31,7 @@ import {
   Folder,
 } from 'lucide-react';
 import { useUIStore, useCanUndo, useCanRedo, useRobotStore } from '@/store';
-import { translations } from '@legacy/services/i18n';
+import { translations } from '@/shared/i18n';
 import type { AppMode } from '@/types';
 
 interface HeaderProps {

@@ -4,14 +4,13 @@
  */
 import React, { useRef, useMemo, useCallback, useEffect, useState } from 'react';
 import { Header } from './components/Header';
-import { TreeEditor } from '@legacy/components/TreeEditor';
-import { PropertyEditor } from '@legacy/components/PropertyEditor';
-import { Visualizer } from '@legacy/components/Visualizer';
-import { URDFViewer } from '@legacy/components/URDFViewer';
-import { SourceCodeEditor } from '@legacy/components/SourceCodeEditor';
+import { TreeEditor } from '@/features/robot-tree';
+import { PropertyEditor } from '@/features/property-editor';
+import { Visualizer } from '@/features/visualizer';
+import { URDFViewer } from '@/features/urdf-viewer';
+import { SourceCodeEditor } from '@/features/code-editor';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo } from '@/store';
-import { parseURDF } from '@legacy/services/urdfParser';
-import { generateURDF } from '@legacy/services/urdfGenerator';
+import { parseURDF, generateURDF } from '@/core/parsers';
 import type { RobotState, UrdfLink, UrdfJoint, RobotFile } from '@/types';
 
 interface AppLayoutProps {

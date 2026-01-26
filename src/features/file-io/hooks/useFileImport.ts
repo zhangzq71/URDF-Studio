@@ -6,7 +6,7 @@
 import { useCallback, useRef } from 'react';
 import JSZip from 'jszip';
 import { useAssetsStore, useUIStore } from '@/store';
-import { DEFAULT_MOTOR_LIBRARY } from '@legacy/services/motorLibrary';
+import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
 import type { RobotFile, MotorSpec } from '@/types';
 import type { AssetFile, LibraryFile, ImportResult } from '../types';
 import {

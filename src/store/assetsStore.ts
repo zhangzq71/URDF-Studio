@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import type { RobotFile, MotorSpec } from '@/types';
-import { DEFAULT_MOTOR_LIBRARY } from '@legacy/services/motorLibrary';
+import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
 
 interface AssetsState {
   // Mesh and texture assets (blob URLs)

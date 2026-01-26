@@ -26,8 +26,7 @@
 
 import * as THREE from 'three';
 import { findAssetByPath, createPlaceholderMesh, cleanFilePath } from '@/core/loaders';
-// Note: materials import uses legacy path until materials are migrated to core
-import { createMatteMaterial, MATERIAL_CONFIG } from '@legacy/components/URDFViewer/materials';
+import { createMatteMaterial, MATERIAL_CONFIG } from '@/features/urdf-viewer';
 
 // ============================================================
 // MJCF TYPES
