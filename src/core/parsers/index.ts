@@ -8,7 +8,7 @@ export { parseURDF } from './urdf/urdfParser';
 export { generateURDF } from './urdf/urdfGenerator';
 
 // MJCF Parser (MuJoCo format)
-export { parseMJCF } from './mjcf/mjcfParser';
+export { parseMJCF, isMJCF } from './mjcf/mjcfParser';
 export { loadMJCFToThreeJS, isMJCFContent } from './mjcf/mjcfLoader';
 export { generateMujocoXML } from './mjcf/mjcfGenerator';
 
