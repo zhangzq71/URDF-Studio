@@ -8,3 +8,5 @@ build/
 test/
 
 .claude/
+
+.vscode/

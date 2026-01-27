@@ -172,7 +172,7 @@ function AppContent() {
 
       {/* Toast */}
       {toast.show && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-4 duration-300">
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-100 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="bg-white dark:bg-slate-800 shadow-xl rounded-lg border border-green-200 dark:border-green-900 px-4 py-3 flex items-center gap-3 max-w-md">
             <div className="bg-green-100 dark:bg-green-900/30 p-1.5 rounded-full shrink-0">
               <svg className="w-4 h-4 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
