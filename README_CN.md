@@ -157,3 +157,7 @@ Apache License 2.0
 
 ## 特别致谢
 地瓜机器人 https://developer.d-robotics.cc/
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=OpenLegged/URDF-Studio&type=date&legend=top-left)](https://www.star-history.com/#OpenLegged/URDF-Studio&type=date&legend=top-left)
