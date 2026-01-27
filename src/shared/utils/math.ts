@@ -218,8 +218,9 @@ export class MathUtils {
             principalInertias = [Ixx, Iyy, Izz];
         }
 
-        // Sort principal inertias to ensure Ix <= Iy <= Iz (triangle inequality)
-        const [Ix, Iy, Iz] = [...principalInertias].sort((a, b) => a - b);
+        // Use principal inertias directly without sorting
+        // This preserves the correspondence between dimensions and rotation axes
+        const [Ix, Iy, Iz] = principalInertias;
 
         // Physics formula: factor = 6/mass (derived from I = m/12 * (a² + b²))
         const factor = 6.0 / mass;

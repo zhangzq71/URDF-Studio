@@ -12,6 +12,7 @@ interface MJCFBody {
     quat?: { w: number, x: number, y: number, z: number };
     geoms: MJCFGeom[];
     joints: MJCFJointDef[];
+    inertial?: MJCFInertial;
     children: MJCFBody[];
 }
 
@@ -31,6 +32,14 @@ interface MJCFJointDef {
     axis?: { x: number, y: number, z: number };
     range?: [number, number];
     pos?: { x: number, y: number, z: number };
+}
+
+interface MJCFInertial {
+    mass: number;
+    pos: { x: number, y: number, z: number };
+    quat?: { w: number, x: number, y: number, z: number };
+    diaginertia?: { ixx: number, iyy: number, izz: number };
+    fullinertia?: number[]; // ixx iyy izz ixy ixz iyz
 }
 
 interface MJCFMesh {
@@ -62,6 +71,46 @@ function parseQuat(str: string | null): { w: number, x: number, y: number, z: nu
     const nums = parseNumbers(str);
     if (nums.length < 4) return undefined;
     return { w: nums[0], x: nums[1], y: nums[2], z: nums[3] };
+}
+
+// Convert MuJoCo diaginertia + quat to URDF inertia tensor
+// MuJoCo stores principal moments (diagonal) and rotation (quat)
+// URDF needs full 6-element inertia tensor in link frame
+function convertInertia(
+    diaginertia: { ixx: number, iyy: number, izz: number },
+    quat?: { w: number, x: number, y: number, z: number }
+): { ixx: number, ixy: number, ixz: number, iyy: number, iyz: number, izz: number } {
+    const { ixx: d1, iyy: d2, izz: d3 } = diaginertia;
+
+    // If no rotation, return diagonal inertia
+    if (!quat) {
+        return { ixx: d1, ixy: 0, ixz: 0, iyy: d2, iyz: 0, izz: d3 };
+    }
+
+    // Build rotation matrix from quaternion (w, x, y, z)
+    // MuJoCo uses (w, x, y, z) format
+    const { w, x, y, z } = quat;
+
+    // Rotation matrix R from quaternion (row-major)
+    // R[i][j] means row i, column j
+    const R = [
+        [1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)    ],
+        [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)    ],
+        [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)]
+    ];
+
+    // I = R * D * R^T where D = diag(d1, d2, d3)
+    // I_ij = sum_k (R_ik * D_kk * R_jk)
+    const d = [d1, d2, d3];
+
+    const ixx = d[0]*R[0][0]*R[0][0] + d[1]*R[0][1]*R[0][1] + d[2]*R[0][2]*R[0][2];
+    const iyy = d[0]*R[1][0]*R[1][0] + d[1]*R[1][1]*R[1][1] + d[2]*R[1][2]*R[1][2];
+    const izz = d[0]*R[2][0]*R[2][0] + d[1]*R[2][1]*R[2][1] + d[2]*R[2][2]*R[2][2];
+    const ixy = d[0]*R[0][0]*R[1][0] + d[1]*R[0][1]*R[1][1] + d[2]*R[0][2]*R[1][2];
+    const ixz = d[0]*R[0][0]*R[2][0] + d[1]*R[0][1]*R[2][1] + d[2]*R[0][2]*R[2][2];
+    const iyz = d[0]*R[1][0]*R[2][0] + d[1]*R[1][1]*R[2][1] + d[2]*R[1][2]*R[2][2];
+
+    return { ixx, ixy, ixz, iyy, iyz, izz };
 }
 
 // Convert MJCF joint type to URDF joint type
@@ -145,6 +194,32 @@ function parseBody(bodyElement: Element, meshMap: Map<string, MJCFMesh>): MJCFBo
         joints.push(joint);
     });
 
+    // Parse inertial
+    let inertial: MJCFInertial | undefined;
+    const inertialEl = bodyElement.querySelector(':scope > inertial');
+    if (inertialEl) {
+        const mass = parseFloat(inertialEl.getAttribute('mass') || '0');
+        const inertialPos = parsePos(inertialEl.getAttribute('pos'));
+        const inertialQuat = parseQuat(inertialEl.getAttribute('quat'));
+
+        // Parse diaginertia (ixx iyy izz)
+        const diaginertiaStr = inertialEl.getAttribute('diaginertia');
+        let diaginertia: { ixx: number, iyy: number, izz: number } | undefined;
+        if (diaginertiaStr) {
+            const nums = parseNumbers(diaginertiaStr);
+            diaginertia = { ixx: nums[0] || 0, iyy: nums[1] || 0, izz: nums[2] || 0 };
+        }
+
+        // Parse fullinertia (ixx iyy izz ixy ixz iyz)
+        const fullinertiaStr = inertialEl.getAttribute('fullinertia');
+        let fullinertia: number[] | undefined;
+        if (fullinertiaStr) {
+            fullinertia = parseNumbers(fullinertiaStr);
+        }
+
+        inertial = { mass, pos: inertialPos, quat: inertialQuat, diaginertia, fullinertia };
+    }
+
     // Parse child bodies
     const children: MJCFBody[] = [];
     const childBodyElements = bodyElement.querySelectorAll(':scope > body');
@@ -152,7 +227,7 @@ function parseBody(bodyElement: Element, meshMap: Map<string, MJCFMesh>): MJCFBo
         children.push(parseBody(childEl, meshMap));
     });
 
-    return { name, pos, euler, quat, geoms, joints, children };
+    return { name, pos, euler, quat, geoms, joints, inertial, children };
 }
 
 // Convert parsed MJCF to RobotState
@@ -227,12 +302,39 @@ function mjcfToRobotState(
             }
         }
 
+        // Build inertial data
+        let linkInertial = { ...DEFAULT_LINK.inertial };
+        if (body.inertial) {
+            const { mass, pos: inertialPos, quat: inertialQuat, diaginertia, fullinertia } = body.inertial;
+            linkInertial.mass = mass;
+            linkInertial.origin = {
+                xyz: { x: inertialPos.x, y: inertialPos.y, z: inertialPos.z },
+                rpy: { r: 0, p: 0, y: 0 }
+            };
+
+            if (fullinertia && fullinertia.length >= 6) {
+                // Full inertia tensor provided: ixx iyy izz ixy ixz iyz
+                linkInertial.inertia = {
+                    ixx: fullinertia[0],
+                    iyy: fullinertia[1],
+                    izz: fullinertia[2],
+                    ixy: fullinertia[3],
+                    ixz: fullinertia[4],
+                    iyz: fullinertia[5]
+                };
+            } else if (diaginertia) {
+                // Convert diagonal inertia + quaternion to full tensor
+                linkInertial.inertia = convertInertia(diaginertia, inertialQuat);
+            }
+        }
+
         // Create link
         const link: UrdfLink = {
             ...DEFAULT_LINK,
             id: linkId,
             name: body.name,
-            visual
+            visual,
+            inertial: linkInertial
         };
         links[linkId] = link;
 

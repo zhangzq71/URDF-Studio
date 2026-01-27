@@ -219,15 +219,21 @@ export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Tex
  */
 export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.Texture | null): THREE.Material => {
     // Extract color from existing material
+    // Priority: URDF color > existing material color > default gray
     let color: THREE.Color;
-    if ((material as any).color) {
+    if (material.userData.urdfColorApplied && material.userData.urdfColor) {
+        // Preserve URDF-defined color (from applyURDFMaterials)
+        color = (material.userData.urdfColor as THREE.Color).clone();
+    } else if ((material as any).color) {
         color = (material as any).color.clone();
     } else {
         color = new THREE.Color(0x888888);
     }
 
     // Reduce very bright/white colors to prevent overexposure
-    if (color.r > 0.95 && color.g > 0.95 && color.b > 0.95) {
+    // But skip this for URDF colors to preserve exact values
+    if (!material.userData.urdfColorApplied &&
+        color.r > 0.95 && color.g > 0.95 && color.b > 0.95) {
         color.multiplyScalar(MATERIAL_CONFIG.whiteColorMultiplier);
     }
 
@@ -266,6 +272,11 @@ export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.T
     newMat.userData.originalRoughness = MATERIAL_CONFIG.roughness;
     newMat.userData.originalMetalness = MATERIAL_CONFIG.metalness;
     newMat.userData.originalEnvMapIntensity = MATERIAL_CONFIG.envMapIntensity;
+    // Preserve URDF color flag for future material operations
+    if (material.userData.urdfColorApplied) {
+        newMat.userData.urdfColorApplied = true;
+        newMat.userData.urdfColor = color.clone();
+    }
     newMat.name = material.name;
 
     newMat.needsUpdate = true;

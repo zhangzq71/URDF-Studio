@@ -45,15 +45,19 @@ const THROTTLE_INTERVAL = 33;
 
 // ============================================================
 // URDF Material Parser - Extract rgba colors from URDF XML
+// Supports multiple materials per visual (for DAE files with named materials)
 // ============================================================
 interface URDFMaterialInfo {
     name?: string;
     rgba?: [number, number, number, number];
 }
 
+/**
+ * Parse URDF materials - returns a Map keyed by material NAME (not link name)
+ * This allows matching materials in DAE files by their name
+ */
 function parseURDFMaterials(urdfContent: string): Map<string, URDFMaterialInfo> {
-    const linkMaterials = new Map<string, URDFMaterialInfo>();
-    const globalMaterials = new Map<string, URDFMaterialInfo>();
+    const namedMaterials = new Map<string, URDFMaterialInfo>();
 
     console.log('[RobotModel] parseURDFMaterials called, content length:', urdfContent.length);
 
@@ -72,7 +76,7 @@ function parseURDFMaterials(urdfContent: string): Map<string, URDFMaterialInfo> 
                     if (rgbaStr) {
                         const parts = rgbaStr.trim().split(/\s+/).map(Number);
                         if (parts.length >= 3) {
-                            globalMaterials.set(name, {
+                            namedMaterials.set(name, {
                                 name,
                                 rgba: [parts[0], parts[1], parts[2], parts[3] ?? 1]
                             });
@@ -82,148 +86,103 @@ function parseURDFMaterials(urdfContent: string): Map<string, URDFMaterialInfo> 
             }
         });
 
-        // Second pass: get materials from each link's visual
+        // Second pass: get ALL materials from each link's visual elements
+        // This handles DAE files where each visual can have multiple named materials
         const links = doc.querySelectorAll('link');
         links.forEach(linkEl => {
             const linkName = linkEl.getAttribute('name');
             if (!linkName) return;
 
-            // Get first visual's material
-            const visualEl = linkEl.querySelector('visual');
-            if (!visualEl) return;
+            // Get ALL visual elements (not just first)
+            const visualEls = linkEl.querySelectorAll('visual');
+            visualEls.forEach(visualEl => {
+                // Get ALL material elements in this visual (not just first)
+                const matEls = visualEl.querySelectorAll('material');
+                matEls.forEach(matEl => {
+                    const matName = matEl.getAttribute('name');
+                    if (!matName) return;
 
-            const matEl = visualEl.querySelector('material');
-            if (!matEl) return;
-
-            const matName = matEl.getAttribute('name');
-            const colorEl = matEl.querySelector('color');
-
-            if (colorEl) {
-                // Inline color definition
-                const rgbaStr = colorEl.getAttribute('rgba');
-                if (rgbaStr) {
-                    const parts = rgbaStr.trim().split(/\s+/).map(Number);
-                    if (parts.length >= 3) {
-                        const rgba: [number, number, number, number] = [parts[0], parts[1], parts[2], parts[3] ?? 1];
-                        linkMaterials.set(linkName, {
-                            name: matName || undefined,
-                            rgba
-                        });
-                        console.log(`[RobotModel] Parsed material for link "${linkName}": rgba=[${rgba.join(', ')}]`);
+                    const colorEl = matEl.querySelector('color');
+                    if (colorEl) {
+                        const rgbaStr = colorEl.getAttribute('rgba');
+                        if (rgbaStr) {
+                            const parts = rgbaStr.trim().split(/\s+/).map(Number);
+                            if (parts.length >= 3) {
+                                const rgba: [number, number, number, number] = [parts[0], parts[1], parts[2], parts[3] ?? 1];
+                                namedMaterials.set(matName, {
+                                    name: matName,
+                                    rgba
+                                });
+                            }
+                        }
                     }
-                }
-            } else if (matName && globalMaterials.has(matName)) {
-                // Reference to global material
-                linkMaterials.set(linkName, globalMaterials.get(matName)!);
-                console.log(`[RobotModel] Link "${linkName}" uses global material "${matName}"`);
-            }
+                });
+            });
         });
     } catch (error) {
         console.error('[RobotModel] Failed to parse URDF materials:', error);
     }
 
-    console.log(`[RobotModel] parseURDFMaterials complete: ${linkMaterials.size} link materials, ${globalMaterials.size} global materials`);
-    return linkMaterials;
+    console.log(`[RobotModel] parseURDFMaterials complete: ${namedMaterials.size} named materials`);
+    if (namedMaterials.size > 0) {
+        console.log('[RobotModel] Material names:', Array.from(namedMaterials.keys()).slice(0, 20));
+    }
+    return namedMaterials;
 }
 
+/**
+ * Apply URDF materials to robot model by matching material NAMES
+ * This works with DAE files where materials have specific names like "深色橡胶_005-effect"
+ */
 function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string, URDFMaterialInfo>): void {
     if (materials.size === 0) return;
 
-    console.log(`[RobotModel] Applying ${materials.size} URDF materials`);
-    console.log(`[RobotModel] Material link names:`, Array.from(materials.keys()).slice(0, 10));
+    console.log(`[RobotModel] Applying ${materials.size} URDF materials by name`);
 
     let appliedCount = 0;
     let meshCount = 0;
-
-    // First, log all link names in the robot for debugging
-    const robotLinkNames: string[] = [];
-    robot.traverse((obj: any) => {
-        if (obj.isURDFLink) {
-            robotLinkNames.push(obj.name);
-        }
-    });
-    console.log(`[RobotModel] Robot has ${robotLinkNames.length} URDFLinks:`, robotLinkNames.slice(0, 10));
 
     robot.traverse((child: any) => {
         if (!child.isMesh) return;
         meshCount++;
 
-        // Find parent link - urdf-loader hierarchy: URDFLink -> URDFVisual -> Mesh
-        let linkName: string | null = null;
-        let current = child.parent;
-        let traversePath: string[] = [];
-        
-        while (current && current !== robot) {
-            traversePath.push(`${current.constructor?.name || current.type}(${current.name})`);
-            
-            // Check for URDFLink (urdf-loader sets isURDFLink = true)
-            if (current.isURDFLink) {
-                linkName = current.name;
-                break;
-            }
-            // URDFVisual is between mesh and link, continue traversing
-            if (current.isURDFVisual) {
-                current = current.parent;
-                continue;
-            }
-            // Fallback: check if this object's name matches a link we have material for
-            if (materials.has(current.name)) {
-                linkName = current.name;
-                break;
-            }
-            current = current.parent;
-        }
+        // Process each material on this mesh
+        const processMaterial = (mat: THREE.Material): THREE.Material => {
+            // Try to match by material name
+            const matName = mat.name;
+            const matInfo = materials.get(matName);
 
-        if (!linkName) {
-            // Last resort: try mesh name or parent names
-            if (materials.has(child.name)) {
-                linkName = child.name;
-            } else if (child.parent && materials.has(child.parent.name)) {
-                linkName = child.parent.name;
-            } else if (child.parent?.parent && materials.has(child.parent.parent.name)) {
-                // Mesh -> Visual -> Link
-                linkName = child.parent.parent.name;
-            }
-        }
+            if (matInfo && matInfo.rgba) {
+                const [r, g, b, a] = matInfo.rgba;
+                const color = new THREE.Color(r, g, b);
 
-        // Log first few meshes for debugging
-        if (meshCount <= 5) {
-            console.log(`[RobotModel] Mesh #${meshCount}: path=[${traversePath.join(' -> ')}], foundLink="${linkName}", hasMaterial=${materials.has(linkName || '')}`);
-        }
-
-        if (!linkName) return;
-
-        const matInfo = materials.get(linkName);
-        if (!matInfo || !matInfo.rgba) return;
-
-        // Apply color to mesh material
-        const [r, g, b, a] = matInfo.rgba;
-        const color = new THREE.Color(r, g, b);
-        appliedCount++;
-
-        if (Array.isArray(child.material)) {
-            child.material = child.material.map((mat: THREE.Material) => {
                 const cloned = mat.clone();
                 (cloned as any).color = color;
+                // Mark this material as having URDF color applied
+                cloned.userData.urdfColorApplied = true;
+                cloned.userData.urdfColor = color.clone();
                 cloned.needsUpdate = true;
+
                 if (a < 1) {
                     cloned.transparent = true;
                     cloned.opacity = a;
                 }
+
+                appliedCount++;
                 return cloned;
-            });
-        } else if (child.material) {
-            child.material = child.material.clone();
-            child.material.color = color;
-            child.material.needsUpdate = true;
-            if (a < 1) {
-                child.material.transparent = true;
-                child.material.opacity = a;
             }
+
+            return mat;
+        };
+
+        if (Array.isArray(child.material)) {
+            child.material = child.material.map(processMaterial);
+        } else if (child.material) {
+            child.material = processMaterial(child.material);
         }
     });
 
-    console.log(`[RobotModel] Applied materials to ${appliedCount}/${meshCount} meshes`);
+    console.log(`[RobotModel] Applied URDF colors to ${appliedCount} materials across ${meshCount} meshes`);
 }
 
 /**
