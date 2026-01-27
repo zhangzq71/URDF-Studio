@@ -122,28 +122,31 @@ export const SnapshotManager = ({
 // ============================================================
 export const LIGHTING_CONFIG = {
   // Ambient: base global illumination (prevents pure black)
-  ambientIntensity: 0.5,
+  ambientIntensity: 0.4,
 
   // Hemisphere: sky/ground color blend for natural ambient
-  // Key for ensuring bottom surfaces are visible
-  hemisphereIntensity: 0.6,
-  hemisphereSky: '#ffffff',    // Pure white sky
-  hemisphereGround: '#888888', // Light grey ground
+  hemisphereIntensity: 0.35,
+  hemisphereSky: '#ffffff',
+  hemisphereGround: '#888888',
 
-  // Main front light: right-front at 45°, moderate intensity
-  mainLightIntensity: 0.8,
+  // Main front light: front-right, reduced intensity to avoid overexposure
+  mainLightIntensity: 0.4,
   mainLightPosition: [5, 5, 5] as [number, number, number],
 
-  // Left side fill light: eliminates left side shadows
-  leftFillIntensity: 0.5,
+  // Left front fill light: left-front to balance main light
+  leftFillIntensity: 0.4,
   leftFillPosition: [-5, 5, 5] as [number, number, number],
 
-  // Right side fill light: balance with left
-  rightFillIntensity: 0.4,
+  // Pure left side light: directly from left to illuminate left side
+  leftSideIntensity: 0.35,
+  leftSidePosition: [-6, 3, 0] as [number, number, number],
+
+  // Right side fill light
+  rightFillIntensity: 0.25,
   rightFillPosition: [5, 3, -3] as [number, number, number],
 
-  // Back rim light: edge highlighting for separation from background
-  rimLightIntensity: 0.5,
+  // Back rim light: edge highlighting
+  rimLightIntensity: 0.3,
   rimLightPosition: [0, 5, -5] as [number, number, number],
 } as const;
 
@@ -202,7 +205,7 @@ export function SceneLighting() {
         shadow-normalBias={0.02}
       />
 
-      {/* 2. Left side fill light - eliminates left side dark shadows */}
+      {/* 2. Left front fill light */}
       <directionalLight
         position={LIGHTING_CONFIG.leftFillPosition}
         intensity={LIGHTING_CONFIG.leftFillIntensity}
@@ -210,7 +213,15 @@ export function SceneLighting() {
         castShadow={false}
       />
 
-      {/* 3. Right side fill light - balance with left for even coverage */}
+      {/* 3. Pure left side light - directly illuminates left side */}
+      <directionalLight
+        position={LIGHTING_CONFIG.leftSidePosition}
+        intensity={LIGHTING_CONFIG.leftSideIntensity}
+        color="#ffffff"
+        castShadow={false}
+      />
+
+      {/* 4. Right side fill light */}
       <directionalLight
         position={LIGHTING_CONFIG.rightFillPosition}
         intensity={LIGHTING_CONFIG.rightFillIntensity}
@@ -218,7 +229,7 @@ export function SceneLighting() {
         castShadow={false}
       />
 
-      {/* 4. Back rim light - edge highlighting for model separation */}
+      {/* 5. Back rim light - edge highlighting */}
       <directionalLight
         position={LIGHTING_CONFIG.rimLightPosition}
         intensity={LIGHTING_CONFIG.rimLightIntensity}

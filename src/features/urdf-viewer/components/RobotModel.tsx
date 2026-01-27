@@ -1365,135 +1365,128 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     useEffect(() => {
         if (!robot) return;
 
+        // Use robot.traverse() for reliable link iteration (consistent with other effects)
         robot.traverse((child: any) => {
-            if (child.isURDFLink) {
-                const linkName = child.name || child.urdfName;
-                const linkData = robotLinks?.[linkName];
-                const inertialData = linkData?.inertial;
+            if (!child.isURDFLink) return;
+            
+            const linkName = child.name;
+            const linkData = robotLinks?.[linkName];
+            const inertialData = linkData?.inertial;
 
-                if (inertialData && inertialData.mass > 0) {
-                    let vizGroup = child.children.find((c: any) => c.name === '__inertia_visual__');
+            if (inertialData && inertialData.mass > 0) {
+                let vizGroup = child.children.find((c: any) => c.name === '__inertia_visual__');
 
-                    if (!vizGroup) {
-                        vizGroup = new THREE.Group();
-                        vizGroup.name = '__inertia_visual__';
-                        vizGroup.userData = { isGizmo: true };
-                        child.add(vizGroup);
-                    }
+                if (!vizGroup) {
+                    vizGroup = new THREE.Group();
+                    vizGroup.name = '__inertia_visual__';
+                    vizGroup.userData = { isGizmo: true };
+                    child.add(vizGroup);
+                }
 
-                    // CoM Indicator - FIXED size (not affected by model scale)
-                    let comVisual = vizGroup.children.find((c: any) => c.name === '__com_visual__');
-                    if (!comVisual) {
-                        comVisual = new THREE.Group();
-                        comVisual.name = '__com_visual__';
-                        comVisual.userData = { isGizmo: true };
+                // CoM Indicator - FIXED size (not affected by model scale)
+                let comVisual = vizGroup.children.find((c: any) => c.name === '__com_visual__');
+                if (!comVisual) {
+                    comVisual = new THREE.Group();
+                    comVisual.name = '__com_visual__';
+                    comVisual.userData = { isGizmo: true };
 
-                        // Fixed radius for CoM sphere (0.01m = 1cm)
-                        const radius = 0.01;
-                        const geometry = new THREE.SphereGeometry(radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2);
-                        const matBlack = new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: false, transparent: true, opacity: 0.8 });
-                        const matWhite = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.8 });
+                    // Fixed radius for CoM sphere (0.01m = 1cm)
+                    const radius = 0.01;
+                    const geometry = new THREE.SphereGeometry(radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2);
+                    const matBlack = new THREE.MeshBasicMaterial({ color: 0x000000, depthTest: false, transparent: true, opacity: 0.8 });
+                    const matWhite = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.8 });
 
-                        const positions = [
-                            [0, 0, 0], [0, Math.PI / 2, 0], [0, Math.PI, 0], [0, -Math.PI / 2, 0],
-                            [Math.PI, 0, 0], [Math.PI, Math.PI / 2, 0], [Math.PI, Math.PI, 0], [Math.PI, -Math.PI / 2, 0]
-                        ];
+                    const positions = [
+                        [0, 0, 0], [0, Math.PI / 2, 0], [0, Math.PI, 0], [0, -Math.PI / 2, 0],
+                        [Math.PI, 0, 0], [Math.PI, Math.PI / 2, 0], [Math.PI, Math.PI, 0], [Math.PI, -Math.PI / 2, 0]
+                    ];
 
-                        positions.forEach((rot, i) => {
-                            const mesh = new THREE.Mesh(geometry, (i % 2 === 0) ? matBlack : matWhite);
-                            mesh.rotation.set(rot[0], rot[1], rot[2]);
-                            mesh.renderOrder = 1000;
-                            mesh.userData = { isGizmo: true };
-                            mesh.raycast = () => { };
-                            comVisual.add(mesh);
-                        });
+                    positions.forEach((rot, i) => {
+                        const mesh = new THREE.Mesh(geometry, (i % 2 === 0) ? matBlack : matWhite);
+                        mesh.rotation.set(rot[0], rot[1], rot[2]);
+                        mesh.renderOrder = 1000;
+                        mesh.userData = { isGizmo: true };
+                        mesh.raycast = () => { };
+                        comVisual.add(mesh);
+                    });
 
-                        const axes = new THREE.AxesHelper(0.1);
-                        (axes.material as THREE.Material).depthTest = false;
-                        (axes.material as THREE.Material).transparent = true;
-                        axes.renderOrder = 1000;
-                        axes.userData = { isGizmo: true };
-                        axes.raycast = () => { };
-                        comVisual.add(axes);
+                    vizGroup.add(comVisual);
+                }
+                comVisual.visible = showCenterOfMass;
 
-                        vizGroup.add(comVisual);
-                    }
-                    comVisual.visible = showCenterOfMass;
+                // Inertia Box - clamped to link bounding box size
+                let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
 
-                    // Inertia Box - clamped to link bounding box size
-                    let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
-
-                    if (!inertiaBox) {
-                        // Calculate link bounding box for size clamping
-                        let maxLinkSize: number | undefined;
-                        try {
-                            const linkBox = new THREE.Box3().setFromObject(child);
-                            const linkSize = linkBox.getSize(new THREE.Vector3());
-                            maxLinkSize = Math.max(linkSize.x, linkSize.y, linkSize.z);
-                            // Use 0 if the bounding box is invalid
-                            if (!isFinite(maxLinkSize) || maxLinkSize <= 0) {
-                                maxLinkSize = undefined;
-                            }
-                        } catch (e) {
+                if (!inertiaBox) {
+                    // Calculate link bounding box for size clamping
+                    let maxLinkSize: number | undefined;
+                    try {
+                        const linkBox = new THREE.Box3().setFromObject(child);
+                        const linkSize = linkBox.getSize(new THREE.Vector3());
+                        maxLinkSize = Math.max(linkSize.x, linkSize.y, linkSize.z);
+                        // Use 0 if the bounding box is invalid
+                        if (!isFinite(maxLinkSize) || maxLinkSize <= 0) {
                             maxLinkSize = undefined;
                         }
-                        
-                        const boxData = MathUtils.computeInertiaBox(inertialData, maxLinkSize);
-
-                        if (boxData) {
-                            const { width, height, depth, rotation } = boxData;
-                            const geom = new THREE.BoxGeometry(width, height, depth);
-
-                            inertiaBox = new THREE.Group();
-                            inertiaBox.name = '__inertia_box__';
-                            inertiaBox.userData = { isGizmo: true };
-
-                            const mat = new THREE.MeshBasicMaterial({
-                                color: 0x00d4ff,
-                                transparent: true,
-                                opacity: 0.25,
-                                depthWrite: false,
-                                depthTest: false
-                            });
-                            const mesh = new THREE.Mesh(geom, mat);
-                            mesh.quaternion.copy(rotation);
-                            mesh.userData = { isGizmo: true };
-                            mesh.raycast = () => { };
-                            mesh.renderOrder = 999;
-                            inertiaBox.add(mesh);
-
-                            const edges = new THREE.EdgesGeometry(geom);
-                            const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
-                                color: 0x00d4ff,
-                                transparent: true,
-                                opacity: 0.6,
-                                depthWrite: false,
-                                depthTest: false
-                            }));
-                            line.quaternion.copy(rotation);
-                            line.userData = { isGizmo: true };
-                            line.raycast = () => { };
-                            line.renderOrder = 1000;
-                            inertiaBox.add(line);
-
-                            vizGroup.add(inertiaBox);
-                        }
+                    } catch (e) {
+                        maxLinkSize = undefined;
                     }
+                    
+                    const boxData = MathUtils.computeInertiaBox(inertialData, maxLinkSize);
 
-                    if (inertiaBox) {
-                        inertiaBox.visible = showInertia;
+                    if (boxData) {
+                        const { width, height, depth, rotation } = boxData;
+                        const geom = new THREE.BoxGeometry(width, height, depth);
+
+                        inertiaBox = new THREE.Group();
+                        inertiaBox.name = '__inertia_box__';
+                        inertiaBox.userData = { isGizmo: true };
+
+                        const mat = new THREE.MeshBasicMaterial({
+                            color: 0x00d4ff,
+                            transparent: true,
+                            opacity: 0.25,
+                            depthWrite: false,
+                            depthTest: false
+                        });
+                        const mesh = new THREE.Mesh(geom, mat);
+                        mesh.quaternion.copy(rotation);
+                        mesh.userData = { isGizmo: true };
+                        mesh.raycast = () => { };
+                        mesh.renderOrder = 999;
+                        inertiaBox.add(mesh);
+
+                        const edges = new THREE.EdgesGeometry(geom);
+                        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+                            color: 0x00d4ff,
+                            transparent: true,
+                            opacity: 0.6,
+                            depthWrite: false,
+                            depthTest: false
+                        }));
+                        line.quaternion.copy(rotation);
+                        line.userData = { isGizmo: true };
+                        line.raycast = () => { };
+                        line.renderOrder = 1000;
+                        inertiaBox.add(line);
+
+                        vizGroup.add(inertiaBox);
                     }
-
-                    if (inertialData.origin) {
-                        const origin = inertialData.origin;
-                        const xyz = origin.xyz || { x: 0, y: 0, z: 0 };
-                        const rpy = origin.rpy || { r: 0, p: 0, y: 0 };
-                        vizGroup.position.set(xyz.x, xyz.y, xyz.z);
-                        vizGroup.rotation.set(rpy.r, rpy.p, rpy.y);
-                    }
-
-                    vizGroup.visible = showInertia || showCenterOfMass;
                 }
+
+                if (inertiaBox) {
+                    inertiaBox.visible = showInertia;
+                }
+
+                if (inertialData.origin) {
+                    const origin = inertialData.origin;
+                    const xyz = origin.xyz || { x: 0, y: 0, z: 0 };
+                    const rpy = origin.rpy || { r: 0, p: 0, y: 0 };
+                    vizGroup.position.set(xyz.x, xyz.y, xyz.z);
+                    vizGroup.rotation.set(rpy.r, rpy.p, rpy.y);
+                }
+
+                vizGroup.visible = showInertia || showCenterOfMass;
             }
         });
 

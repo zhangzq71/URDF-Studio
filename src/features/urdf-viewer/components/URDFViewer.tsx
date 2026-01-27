@@ -52,6 +52,13 @@ export function URDFViewer({
 
     const [showJointControls, setShowJointControls] = useState(true);
     const [showCenterOfMass, setShowCenterOfMass] = useState(false);
+    const [centerOfMassSize, setCenterOfMassSize] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('urdf_viewer_com_size');
+            return saved ? Math.min(parseFloat(saved), 0.5) : 0.01;
+        }
+        return 0.01;
+    });
     const [showInertia, setShowInertia] = useState(false);
     const [showOrigins, setShowOrigins] = useState(false);
     const [originSize, setOriginSize] = useState(() => {
@@ -80,6 +87,10 @@ export function URDFViewer({
     useEffect(() => {
         localStorage.setItem('urdf_viewer_origin_size', originSize.toString());
     }, [originSize]);
+
+    useEffect(() => {
+        localStorage.setItem('urdf_viewer_com_size', centerOfMassSize.toString());
+    }, [centerOfMassSize]);
 
     useEffect(() => {
         localStorage.setItem('urdf_viewer_joint_axis_size', jointAxisSize.toString());
@@ -549,6 +560,9 @@ export function URDFViewer({
                                         icon={<div className="w-3 h-3 rounded-full border border-slate-500 flex items-center justify-center"><div className="w-1 h-1 bg-slate-500 rounded-full"></div></div>}
                                         compact
                                     />
+                                    {showCenterOfMass && (
+                                        <SliderOption label={t.size} value={centerOfMassSize} onChange={setCenterOfMassSize} min={0.005} max={0.1} step={0.005} decimals={3} compact />
+                                    )}
 
                                     <CheckboxOption
                                         checked={showInertia}
@@ -792,6 +806,7 @@ export function URDFViewer({
                         highlightMode={highlightMode}
                         showInertia={showInertia}
                         showCenterOfMass={showCenterOfMass}
+                        centerOfMassSize={centerOfMassSize}
                         showOrigins={showOrigins}
                         originSize={originSize}
                         showJointAxes={showJointAxes}

@@ -152,22 +152,22 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         const fileList = Array.from(files);
 
         const promises = fileList.map(async f => {
-          const lowerName = f.name.toLowerCase();
           const path = f.webkitRelativePath || f.name;
+          const lowerPath = path.toLowerCase();
 
           // Skip hidden files/folders
           const pathParts = path.split('/');
           if (pathParts.some(part => part.startsWith('.'))) return;
 
-          if (lowerName.endsWith('.urdf') || lowerName.endsWith('.xml') ||
-              lowerName.endsWith('.mjcf') || lowerName.endsWith('.usda') ||
-              lowerName.endsWith('.usd') || lowerName.endsWith('.xacro')) {
+          if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') ||
+              lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.usda') ||
+              lowerPath.endsWith('.usd') || lowerPath.endsWith('.xacro')) {
             const content = await f.text();
             const format = detectFormat(content, f.name);
             if (format) {
               newRobotFiles.push({ name: path, content, format });
             }
-          } else if (path.includes('motor library') && lowerName.endsWith('.txt')) {
+          } else if (path.includes('motor library') && lowerPath.endsWith('.txt')) {
             const content = await f.text();
             libraryFiles.push({ path: path, content });
           } else {
@@ -228,12 +228,16 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       // 3. Set Available Files
       setAvailableFiles(newRobotFiles);
 
-      // 4. Load first robot if available
+      // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       if (newRobotFiles.length > 0) {
-        const firstFile = newRobotFiles[0];
-        const robotState = loadRobot(firstFile, newRobotFiles, newAssets);
+        // Prioritize: urdf > xml (urdf format) > mjcf > usd > xacro
+        const preferredFile = newRobotFiles.find(f => f.format === 'urdf')
+          || newRobotFiles.find(f => f.format === 'mjcf')
+          || newRobotFiles.find(f => f.format === 'usd')
+          || newRobotFiles[0];
+        const robotState = loadRobot(preferredFile, newRobotFiles, newAssets);
         if (robotState && onLoadRobot) {
-          onLoadRobot(firstFile);
+          onLoadRobot(preferredFile);
         }
         setAppMode('detail');
       } else if (libraryFiles.length > 0) {
