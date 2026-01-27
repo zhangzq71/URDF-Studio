@@ -4,6 +4,9 @@
  * Provides AI-powered robot generation, modification, and inspection capabilities.
  */
 
+// Components
+export { AIModal } from './components/AIModal'
+
 // Services
 export { generateRobotFromPrompt, runRobotInspection } from './services/aiService'
 

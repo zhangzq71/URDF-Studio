@@ -9,6 +9,7 @@ import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
 interface AssetsState {
   // Mesh and texture assets (blob URLs)
   assets: Record<string, string>;
+  setAssets: (assets: Record<string, string>) => void;
   addAsset: (path: string, url: string) => void;
   addAssets: (newAssets: Record<string, string>) => void;
   getAsset: (path: string) => string | undefined;
@@ -51,6 +52,7 @@ interface AssetsState {
 export const useAssetsStore = create<AssetsState>()((set, get) => ({
   // Assets (blob URLs)
   assets: {},
+  setAssets: (assets) => set({ assets }),
   addAsset: (path, url) =>
     set((state) => ({
       assets: { ...state.assets, [path]: url },
