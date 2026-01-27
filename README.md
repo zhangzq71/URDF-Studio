@@ -158,3 +158,7 @@ Apache License 2.0
 
 ## Acknowledgments
 D-Robotics https://developer.d-robotics.cc/
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=OpenLegged/URDF-Studio&type=date&legend=top-left)](https://www.star-history.com/#OpenLegged/URDF-Studio&type=date&legend=top-left)
