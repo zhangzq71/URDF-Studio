@@ -100,6 +100,7 @@ export function URDFViewer({
         localStorage.setItem('urdf_viewer_model_opacity', modelOpacity.toString());
     }, [modelOpacity]);
 
+
     const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
     const [toolMode, setToolMode] = useState<ToolMode>('select');
 
