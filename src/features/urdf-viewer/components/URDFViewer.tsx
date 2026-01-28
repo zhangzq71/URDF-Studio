@@ -526,13 +526,6 @@ export function URDFViewer({
                                     {showOrigins && (
                                         <SliderOption label={t.size} value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact />
                                     )}
-                                </div>
-
-                                {/* Joint Axes Section - Separated */}
-                                <div className="border-t border-slate-200 dark:border-slate-700 pt-2 space-y-1">
-                                    <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 px-1">
-                                        {lang === 'zh' ? '关节轴显示' : 'Joint Axes'}
-                                    </div>
 
                                     <CheckboxOption
                                         checked={showJointAxes}

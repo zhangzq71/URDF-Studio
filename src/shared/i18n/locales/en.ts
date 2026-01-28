@@ -5,6 +5,31 @@
 import type { TranslationKeys } from '../types';
 
 export const en: TranslationKeys = {
+  // URDF Square
+  urdfSquare: "URDF Square",
+  square: "Square",
+  searchModels: "Search models...",
+  featuredModels: "Featured Models",
+  findNextProject: "Find Your Next Robot Project",
+  importNow: "Import Now",
+  noModelsFound: "No models found",
+  changeSearchKeywords: "Try changing your search keywords or category",
+  categories: "Categories",
+  allModels: "All Models",
+  quadruped: "Quadruped",
+  manipulators: "Manipulators",
+  humanoids: "Humanoids",
+  mobileBases: "Mobile Bases",
+  unitreeTech: "Unitree Robotics",
+  fetchingResources: "Fetching resources",
+  minimize: "Minimize",
+  maximize: "Maximize",
+  restore: "Restore",
+  downloadComplete: "Download complete! Would you like to load the model from the local folder now?",
+  loadFromLocal: "Please click \"Import Local URDF\" on the main screen and select the folder you just downloaded.",
+  loadFailed: "Failed to load model files. Please ensure manifest.json exists.",
+  manifestNotFound: "Manifest not found",
+
   // Header
   appName: "URDF Studio",
   skeleton: "Skeleton",

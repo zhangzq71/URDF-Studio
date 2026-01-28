@@ -9,9 +9,7 @@ import {
   Box,
   Cpu,
   Upload,
-  X,
   Check,
-  ArrowRight,
   Globe,
   ScanSearch,
   Info,
@@ -29,6 +27,7 @@ import {
   Eye,
   MoreHorizontal,
   Folder,
+  LayoutGrid,
 } from 'lucide-react';
 import { useUIStore, useCanUndo, useCanRedo, useRobotStore } from '@/store';
 import { translations } from '@/shared/i18n';
@@ -44,6 +43,7 @@ interface HeaderProps {
   onOpenCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenURDFSquare: () => void;
   // Snapshot
   onSnapshot: () => void;
   // View config
@@ -69,6 +69,7 @@ export function Header({
   onOpenCodeViewer,
   onOpenSettings,
   onOpenAbout,
+  onOpenURDFSquare,
   onSnapshot,
   viewConfig,
   setViewConfig,
@@ -326,6 +327,15 @@ export function Header({
 
       {/* Right Section - Actions */}
       <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+        <button
+          onClick={onOpenURDFSquare}
+          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all hidden sm:flex"
+          title={t.urdfSquare}
+        >
+          <LayoutGrid className="w-4 h-4" />
+          <span className="hidden lg:inline">{t.square}</span>
+        </button>
+
         <button
           onClick={onSnapshot}
           className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"

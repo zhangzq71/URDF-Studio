@@ -5,6 +5,31 @@
 import type { TranslationKeys } from '../types';
 
 export const zh: TranslationKeys = {
+  // URDF Square
+  urdfSquare: "URDF 广场",
+  square: "广场",
+  searchModels: "搜索模型...",
+  featuredModels: "精选推荐",
+  findNextProject: "发现您的下一个机器人项目",
+  importNow: "立即导入",
+  noModelsFound: "未找到相关模型",
+  changeSearchKeywords: "尝试更换搜索关键词或分类",
+  categories: "分类",
+  allModels: "全部模型",
+  quadruped: "四足机器人",
+  manipulators: "机械臂",
+  humanoids: "人形机器人",
+  mobileBases: "移动底盘",
+  unitreeTech: "宇树科技",
+  fetchingResources: "正在获取模型资源",
+  minimize: "最小化",
+  maximize: "最大化",
+  restore: "还原",
+  downloadComplete: "下载完成！是否立即从本地文件夹加载该模型？",
+  loadFromLocal: "请点击主界面的\"导入本地 URDF\"并选择刚才下载的文件夹。",
+  loadFailed: "加载模型文件失败，请确保 manifest.json 存在。",
+  manifestNotFound: "Manifest not found",
+
   // Header
   appName: "URDF Studio",
   skeleton: "骨架",
