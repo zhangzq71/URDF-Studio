@@ -1360,8 +1360,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
                     materials.forEach((mat: any) => {
                         if (mat && !mat.userData?.isSharedMaterial) {
-                            mat.transparent = modelOpacity < 1.0;
+                            const isTransparent = modelOpacity < 1.0;
+                            mat.transparent = isTransparent;
                             mat.opacity = modelOpacity;
+                            // Fix depth write: when fully opaque, enable depth writing to prevent seeing through geometry
+                            mat.depthWrite = !isTransparent;
                             mat.needsUpdate = true;
                         }
                     });
