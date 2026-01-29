@@ -280,6 +280,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     highlightMode = 'link',
     showInertia = false,
     showCenterOfMass = false,
+    centerOfMassSize = 0.01,
     showOrigins = false,
     originSize = 1.0,
     showJointAxes = false,
@@ -1447,7 +1448,37 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
                     vizGroup.add(comVisual);
                 }
-                comVisual.visible = showCenterOfMass;
+
+                // Apply size scale based on centerOfMassSize
+                const sizeScale = centerOfMassSize / 0.01; // Base size is 0.01
+                comVisual.scale.set(sizeScale, sizeScale, sizeScale);
+
+                // Apply fade-in effect based on model opacity
+                if (showCenterOfMass) {
+                    if (modelOpacity >= 1.0) {
+                        // Fully opaque: hide CoM to avoid visual clutter
+                        comVisual.visible = false;
+                    } else if (modelOpacity > 0.7) {
+                        // Light transparency (0-30%): gradually fade in CoM
+                        comVisual.visible = true;
+                        const fadeIn = (1.0 - modelOpacity) / 0.3; // 0 to 1 transition
+                        comVisual.traverse((child: any) => {
+                            if (child.material) {
+                                child.material.opacity = 0.8 * fadeIn;
+                            }
+                        });
+                    } else {
+                        // High transparency (30%+): fully visible CoM
+                        comVisual.visible = true;
+                        comVisual.traverse((child: any) => {
+                            if (child.material) {
+                                child.material.opacity = 0.8;
+                            }
+                        });
+                    }
+                } else {
+                    comVisual.visible = false;
+                }
 
                 // Inertia Box - clamped to link bounding box size
                 let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
@@ -1509,8 +1540,43 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                     }
                 }
 
+                // Apply fade-in effect to inertia box based on model opacity
                 if (inertiaBox) {
-                    inertiaBox.visible = showInertia;
+                    if (showInertia) {
+                        if (modelOpacity >= 1.0) {
+                            // Fully opaque: hide inertia box
+                            inertiaBox.visible = false;
+                        } else if (modelOpacity > 0.7) {
+                            // Light transparency (0-30%): gradually fade in
+                            inertiaBox.visible = true;
+                            const fadeIn = (1.0 - modelOpacity) / 0.3;
+                            inertiaBox.traverse((child: any) => {
+                                if (child.material) {
+                                    const baseMat = child.material as THREE.Material & { opacity?: number };
+                                    if (child.type === 'Mesh') {
+                                        baseMat.opacity = 0.25 * fadeIn;
+                                    } else if (child.type === 'LineSegments') {
+                                        baseMat.opacity = 0.6 * fadeIn;
+                                    }
+                                }
+                            });
+                        } else {
+                            // High transparency (30%+): fully visible
+                            inertiaBox.visible = true;
+                            inertiaBox.traverse((child: any) => {
+                                if (child.material) {
+                                    const baseMat = child.material as THREE.Material & { opacity?: number };
+                                    if (child.type === 'Mesh') {
+                                        baseMat.opacity = 0.25;
+                                    } else if (child.type === 'LineSegments') {
+                                        baseMat.opacity = 0.6;
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        inertiaBox.visible = false;
+                    }
                 }
 
                 if (inertialData.origin) {
@@ -1527,7 +1593,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
         invalidate();
 
-    }, [robot, showInertia, showCenterOfMass, robotVersion, invalidate, robotLinks]);
+    }, [robot, showInertia, showCenterOfMass, centerOfMassSize, modelOpacity, robotVersion, invalidate, robotLinks]);
 
     // Effect to handle origin axes visualization for each link
     useEffect(() => {
