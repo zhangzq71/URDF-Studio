@@ -1,7 +1,6 @@
 <div align="center">
 
 # URDF Studio
-
 [![React](https://img.shields.io/badge/React-19.2-blue?logo=react)](https://reactjs.org/)
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -10,7 +9,7 @@
 
 **下一代可视化机器人设计平台**
 
-**在线体验：** https://urdf.d-robotics.cc/
+**在线体验：** [urdf.d-robotics.cc](https://urdf.d-robotics.cc/)
 
 [English](./README.md) | [中文](./README_CN.md)
 
@@ -18,146 +17,98 @@
 
 ---
 
-## 📖 概览
+## 📖 项目概述
 
-**URDF Studio** 是一款先进的 Web 端可视化机器人设计环境，专为简化 URDF（Unified Robot Description Format）模型的创建、编辑与导出而生。通过将繁琐的 XML 代码编写抽象为直观的图形化交互，它赋予机器人工程师专注于设计创新与架构验证的能力。
+**URDF Studio** 是一款先进的 Web 端可视化机器人设计环境，专为简化 URDF（Unified Robot Description Format）模型的创建、编辑与导出而开发。它将繁琐的 XML 代码编写抽象为直观的图形化交互，让机器人工程师能够专注于运动学设计、几何细节打磨以及硬件参数配置。
 
-该平台覆盖了机器人建模的全生命周期——从运动学骨架的构建，到高保真几何细节的打磨，再到精密硬件参数的配置。结合 **生成式 AI** 的强大能力，URDF Studio 显著加速了原型设计流程，并确保与 MuJoCo 等工业级仿真生态系统的无缝兼容。
+平台集成了 **生成式 AI** 技术，用于快速原型生成和自动化模型审计，确保您的设计符合物理逻辑，并能无缝接入 MuJoCo 等工业级仿真环境。
 
-
-## ✨ 核心能力
+## ✨ 核心特性
 
 ### 🦴 多维设计模式
-
-| 模式 | 功能描述 |
-|------|---------|
-| **Skeleton (骨架)** | 快速构建运动学链条 (Links & Joints)，精准定义拓扑结构与自由度。 |
-| **Detail (细节)** | 精细化编辑视觉外观与碰撞流形，支持基础几何体及高精度网格模型 (STL/OBJ/DAE) 导入。 |
-| **Hardware (硬件)** | 深度配置机电参数，包括执行器选型、力矩约束及传动比设定。 |
+*   **骨架模式 (Skeleton)**：构建运动学链条，定义连杆（Link）与关节（Joint）的拓扑关系。
+*   **细节模式 (Detail)**：精细化编辑视觉与碰撞几何体，支持基础几何体及高精度网格（STL/OBJ/DAE）导入。
+*   **硬件模式 (Hardware)**：配置机电参数、执行器选型及传动比。
 
 ### 🎨 沉浸式 3D 工作区
-
-- **高保真渲染**: 基于 **Three.js** 与 **React Three Fiber** 构建，采用增强的 PBR 材质与光泽度渲染，提供逼真的视觉体验。
-- **直观操控**: 采用工业标准的变换控件 (Gizmos)，实现对机器人部件的精确空间操控。
-- **可视化分析**: 
-  - 实时显示关节轴向与参考坐标系。
-  - 支持逐连杆的 **质心 (CoM)** 与 **惯量张量 (Inertia Tensor)** 可视化（半透明实体盒指示）。
-  - **高亮模式切换**: 支持在“连杆”与“碰撞体”高亮模式间切换，便于精确检查与编辑。
-  - **碰撞体预览**: 优化的碰撞体渲染（支持双面显示），提升选中灵敏度与可视化效果。
+*   **高保真渲染**：基于 Three.js 提供增强的 PBR 材质与逼真视觉体验。
+*   **直观操控**：采用工业标准变换控件（Gizmos），实现精确的空间操作。
+*   **可视化分析**：实时显示关节轴、质心（CoM）及惯量张量。
+*   **性能优化**：支持碰撞体参数的局部实时更新，无需全局重新加载，提供极速的编辑反馈。
 
 ### 🤖 AI 增强工程
+*   **自然语言生成**：通过自然语言描述直接生成或修改机器人结构。
+*   **AI 审阅 (Inspector)**：自动化 6 大维度质量评估（物理合理性、运动学、命名规范等），生成详细评分及 PDF 报告。
 
-集成 **OpenAI 兼容的 AI 模型** (如 DeepSeek)，URDF Studio 引入了自然语言交互接口，重塑机器人设计体验：
-- *"生成一个四足移动平台"*
-- *"在 base_link 上集成一套激光雷达阵列"*
-- *"根据力矩需求为髋关节推荐最优执行器"*
+### 📥 互操作性与导出
+*   **项目导入**：支持加载包含 URDF 和网格资产的 ZIP 归档。
+*   **一键导出**：生成生产级资源包，包含标准 URDF、整合后的网格文件、BOM 清单（CSV）及 MuJoCo 仿真 XML。
 
-### 🔍 AI 审阅 (AI Inspector)
+## 📚 文档与教程
 
-**AI 审阅** 功能基于行业标准评估准则，提供全面的 URDF 模型自动化质量评估：
+通过以下步骤指南快速掌握 URDF Studio：
 
-- **多维度检查**：评估六个关键维度：
-  - **物理合理性**：质量、惯性有效性、对称一致性
-  - **坐标系位置与朝向**：关节原点共线关系、坐标系朝向公约、腰部中心对齐
-  - **装配逻辑合理性**：驱动器质量归属、传动与连杆归属
-  - **运动学与仿真属性**：树状结构验证、关节限位合理性、碰撞体优化
-  - **硬件参数配置**：电机力矩与速度限位、电枢/转子惯量
-  - **命名规范**：唯一性与描述性命名标准
+1.  **[快速入门](./docs/tutorials/zh/01_getting_started.md)**：在 URDF Studio 的最初 5 分钟。
+2.  **[设计模式详解](./docs/tutorials/zh/02_design_modes.md)**：深入了解骨架、细节和硬件模式。
+3.  **[AI 助手与审阅](./docs/tutorials/zh/03_ai_features.md)**：利用 AI 加速您的设计工作流。
 
-- **详细评分体系**：每个检查项采用 0-10 分制评分，报告包括：
-  - 总体达成率
-  - 分类别得分
-  - 具体问题识别（错误/警告/建议）
-  - 相关链接/关节引用，便于快速定位
+---
 
-- **交互功能**：
-  - 选择性检查：可选择特定检查项进行评估
-  - 单项重测：修复后重新评估特定问题
-  - AI 对话：讨论检查结果并获得改进建议
-  - PDF 导出：下载详细的检查报告
-
-- **实时进度**：检查过程中可视化进度跟踪，显示逐项状态详情
-
-### 📥 无缝互操作性
-
-- **导入**: 轻松加载包含 URDF 定义及网格资产的 ZIP 归档项目。
-- **导出**: 一键生成生产级机器人资源包：
-  - `urdf/`: 标准 URDF + 扩展 URDF（富含硬件元数据）。
-  - `meshes/`: 自动整合所有引用的 3D 资产。
-  - `hardware/`: 自动生成 CSV 格式的物料清单 (BOM)。
-  - `mujoco/`: 自动配置 XML 文件，支持即时 MuJoCo 仿真。
-
-### ⚙️ 内置电机库
-
-预置多款主流机器人电机参数，方便快速选型：
-- **Unitree (宇树)**: Go1, A1, B1 系列。
-- **RobStride**: RS 系列。
-- 支持自定义电机库扩展。
-
-## 🚀 本地部署
+## 🚀 安装指南
 
 ### 环境要求
+*   [Node.js](https://nodejs.org/) (v18 或更高版本)
+*   npm 或 yarn
 
-- Node.js 18+
-- npm 或 yarn
+### 本地部署
+1.  **克隆项目**
+    ```bash
+    git clone https://github.com/OpenLegged/URDF-Studio.git
+    cd URDF-Studio
+    ```
+2.  **安装依赖**
+    ```bash
+    npm install
+    ```
+3.  **配置 AI 接口 (可选)**
+    在根目录创建 `.env.local` 文件：
+    ```env
+    VITE_OPENAI_API_KEY=your_api_key
+    VITE_OPENAI_BASE_URL=https://api.openai.com/v1
+    VITE_OPENAI_MODEL=deepseek-v3
+    ```
+4.  **启动开发服务器**
+    ```bash
+    npm run dev
+    ```
+    在浏览器中访问 `http://localhost:5173`。
 
-### 安装与运行
+## 📝 使用方法
 
-1. **克隆项目**
-   ```bash
-   git clone https://github.com/OpenLegged/URDF-Studio.git
-   cd URDF-Studio
-   ```
+1.  **构建拓扑**：在**骨架模式**下，通过树状视图添加子连杆，并使用 3D 控件调整关节位置。
+2.  **定义物理属性**：在**细节模式**下，为连杆指定网格模型或基础形状，并在属性面板中调整质量与惯量参数。
+3.  **选型硬件**：在**硬件模式**下，为关节分配内置电机库（如 Unitree、RobStride 系列）中的执行器。
+4.  **模型审计**：使用 **AI 审阅** 功能对模型进行全面检查，根据评分和改进建议优化设计。
+5.  **导出交付**：点击 **导出** 按钮下载完整的项目压缩包，即可直接用于 ROS 开发或物理仿真。
 
-2. **安装依赖**
-   ```bash
-   npm install
-   ```
+## 🤝 贡献指南
 
-3. **配置 API Key（可选）**
-   如需使用 AI 功能，请在根目录创建 `.env.local` 文件并添加：
-   ```env
-   VITE_OPENAI_API_KEY=your_openai_api_key
-   VITE_OPENAI_BASE_URL=https://your-proxy-url/v1
-   VITE_OPENAI_MODEL=bce/deepseek-v3.2
-   ```
-   
-   **配置说明:**
-   - `VITE_OPENAI_API_KEY`: 你的 OpenAI API Key 或代理 Key
-   - `VITE_OPENAI_BASE_URL`: (可选) 自定义 API 端点。如果不设置，默认为 `https://api.openai.com/v1`
-   - `VITE_OPENAI_MODEL`: (可选) 指定使用的模型名称。如果不设置，默认为 `bce/deepseek-v3.2`
+我们欢迎任何形式的贡献！
+1.  **Fork** 本仓库。
+2.  **创建功能分支** (`git checkout -b feature/amazing-feature`)。
+3.  **提交更改** (`git commit -m 'Add some amazing feature'`)。
+4.  **推送到分支** (`git push origin feature/amazing-feature`)。
+5.  **发起 Pull Request**。
 
-4. **启动开发服务器**
-   ```bash
-   npm run dev
-   ```
-   访问 `http://localhost:5173` 开始使用。
+请确保您的代码符合项目的 TypeScript 和 React 开发规范。
 
-## 📁 项目结构
+## 📄 许可证信息
 
-```
-URDF-Studio/
-├── App.tsx                 # 主应用组件 / Main Application
-├── components/             # UI 组件 / UI Components
-│   ├── TreeEditor.tsx      # 树形结构编辑器 / Tree View
-│   ├── URDFViewer/         # 3D 可视化器 / 3D Viewport
-│   └── PropertyEditor.tsx  # 属性面板 / Properties Panel
-├── services/               # 核心逻辑服务 / Core Services
-│   ├── urdfGenerator.ts    # URDF 生成 / Generation
-│   ├── urdfParser.ts       # URDF 解析 / Parsing
-│   ├── mujocoGenerator.ts  # MuJoCo 生成 / MuJoCo Export
-│   ├── geminiService.ts    # AI 服务 / AI Integration
-│   └── motorLibrary.ts     # 电机库 / Motor Data
-└── ...
-```
+本项目采用 **Apache License 2.0** 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
 
-## 📄 License
+---
 
-Apache License 2.0
-
-## 特别致谢
-地瓜机器人 https://developer.d-robotics.cc/
-
-## Star History
+## 致谢
+感谢 [地瓜机器人 (D-Robotics)](https://developer.d-robotics.cc/) 的技术支持。
 
 [![Star History Chart](https://api.star-history.com/svg?repos=OpenLegged/URDF-Studio&type=date&legend=top-left)](https://www.star-history.com/#OpenLegged/URDF-Studio&type=date&legend=top-left)

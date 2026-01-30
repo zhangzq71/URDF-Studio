@@ -2,11 +2,12 @@
  * AI Assistant Modal Component
  * Provides AI-powered robot inspection and generation interface
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   ScanSearch, X, Move, Loader2, ChevronDown, ChevronRight,
   Check, ArrowRight, Sparkles, Box, MessageCircle, Send,
-  AlertTriangle, Info, AlertCircle, RefreshCw, FileText
+  AlertTriangle, Info, AlertCircle, RefreshCw, FileText,
+  Minimize2, Maximize2, Minus, LayoutGrid, Search, Download, Star, Clock, Globe
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import type { RobotState, MotorSpec, InspectionReport } from '@/types';
@@ -35,8 +36,156 @@ export function AIModal({
 }: AIModalProps) {
   const t = translations[lang];
 
-  // Panel position
-  const [panelPos, setPanelPos] = useState({ x: 320, y: 80 });
+  // Window state
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [position, setPosition] = useState({ x: 100, y: 100 });
+  const [size, setSize] = useState({ width: 900, height: 650 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Resize state
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeDirection, setResizeDirection] = useState<'right' | 'bottom' | 'corner' | null>(null);
+  const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
+
+  // Center the window on mount
+  useEffect(() => {
+    if (isOpen) {
+      const centerX = (window.innerWidth - size.width) / 2;
+      const centerY = (window.innerHeight - size.height) / 2;
+      setPosition({ x: Math.max(0, centerX), y: Math.max(0, centerY) });
+    }
+  }, [isOpen]);
+
+  // Handle mouse down on header for dragging
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isMaximized) return;
+    setIsDragging(true);
+    setDragOffset({
+      x: e.clientX - position.x,
+      y: e.clientY - position.y
+    });
+  }, [position, isMaximized]);
+
+  // Handle mouse move for dragging
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      const newX = Math.max(0, Math.min(window.innerWidth - size.width, e.clientX - dragOffset.x));
+      const newY = Math.max(0, Math.min(window.innerHeight - 48, e.clientY - dragOffset.y));
+      setPosition({ x: newX, y: newY });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, dragOffset, size.width, size.height]);
+
+  // Handle resize start
+  const handleResizeStart = useCallback((e: React.MouseEvent, direction: 'right' | 'bottom' | 'corner') => {
+    if (isMaximized || isMinimized) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+    setResizeDirection(direction);
+    resizeStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      width: size.width,
+      height: size.height
+    };
+  }, [isMaximized, isMinimized, size]);
+
+  // Handle mouse move for resizing
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing || !resizeDirection) return;
+      
+      const deltaX = e.clientX - resizeStartRef.current.x;
+      const deltaY = e.clientY - resizeStartRef.current.y;
+      const minWidth = 600;
+      const minHeight = 400;
+      const maxWidth = window.innerWidth - position.x;
+      const maxHeight = window.innerHeight - position.y;
+      
+      if (resizeDirection === 'right' || resizeDirection === 'corner') {
+        const newWidth = Math.max(minWidth, Math.min(maxWidth, resizeStartRef.current.width + deltaX));
+        setSize(prev => ({ ...prev, width: newWidth }));
+      }
+      
+      if (resizeDirection === 'bottom' || resizeDirection === 'corner') {
+        const newHeight = Math.max(minHeight, Math.min(maxHeight, resizeStartRef.current.height + deltaY));
+        setSize(prev => ({ ...prev, height: newHeight }));
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      setResizeDirection(null);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, resizeDirection, position.x, position.y]);
+
+  const toggleMaximize = () => {
+    setIsMaximized(!isMaximized);
+    setIsMinimized(false);
+  };
+
+  const toggleMinimize = () => {
+    setIsMinimized(!isMinimized);
+  };
+
+  // Get window style based on state
+  const getWindowStyle = (): React.CSSProperties => {
+    if (isMaximized) {
+      return {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
+      };
+    }
+    if (isMinimized) {
+      return {
+        position: 'fixed',
+        left: position.x,
+        top: position.y,
+        width: size.width,
+        height: 48,
+      };
+    }
+    return {
+      position: 'fixed',
+      left: position.x,
+      top: position.y,
+      width: size.width,
+      height: size.height,
+    };
+  };
 
   // AI states
   const [aiPrompt, setAiPrompt] = useState('');
@@ -77,29 +226,6 @@ export function AIModal({
 
   // Single item retest state
   const [retestingItem, setRetestingItem] = useState<{ categoryId: string; itemId: string } | null>(null);
-
-  // Drag handling
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const initialX = panelPos.x;
-    const initialY = panelPos.y;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-      setPanelPos({ x: initialX + dx, y: initialY + dy });
-    };
-
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [panelPos]);
 
   // Close handler
   const handleClose = useCallback(() => {
@@ -582,142 +708,200 @@ export function AIModal({
     };
 
     return (
-      <div className="space-y-4">
-        {/* Score header */}
-        <div className="bg-gradient-to-r from-slate-100 dark:from-slate-800/80 to-slate-200 dark:to-slate-900/80 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">{t.overallScore}</div>
-            <div className="flex items-center gap-3">
-              <div className={`text-2xl font-bold ${getScoreColor(overallScore, maxScore)}`}>
-                {overallScore.toFixed(1)}/{maxScore}
+      <div className="space-y-6">
+        {/* Score header - Dashboard Style */}
+        <div className="relative overflow-hidden bg-slate-900 rounded-2xl p-6 text-white shadow-xl">
+          <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12">
+            <Sparkles className="w-32 h-32" />
+          </div>
+          
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-indigo-400">
+                <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em]">{t.inspectorSummary}</span>
+              </div>
+              <h2 className="text-3xl font-black tracking-tight leading-tight">
+                {lang === 'zh' ? 'URDF 模型健康度' : 'URDF Model Health'}
+              </h2>
+              <p className="text-sm text-slate-400 max-w-md font-medium leading-relaxed">
+                {inspectionReport.summary}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-6 shrink-0">
+              <div className="text-right">
+                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{t.overallScore}</div>
+                <div className="flex items-baseline gap-1">
+                  <span className={`text-5xl font-black tracking-tighter ${getScoreColor(overallScore, maxScore)}`}>
+                    {Math.round(scorePercentage)}
+                  </span>
+                  <span className="text-xl text-slate-600 font-bold">%</span>
+                </div>
               </div>
               <button
                 onClick={handleDownloadPDF}
-                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm transition-colors"
+                className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all border border-white/10 backdrop-blur-md group shadow-lg"
+                title={t.downloadReport}
               >
-                <FileText className="w-4 h-4" />
-                <span className="text-xs">{t.downloadReport}</span>
+                <FileText className="w-6 h-6 group-hover:scale-110 transition-transform" />
               </button>
             </div>
           </div>
-          <div className="w-full h-2 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
+
+          <div className="mt-8 relative h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
             <div
-              className={`h-full transition-all duration-500 ${getScoreBgColor(overallScore, maxScore)}`}
+              className={`absolute top-0 left-0 h-full transition-all duration-1000 ease-out rounded-full ${getScoreBgColor(overallScore, maxScore)}`}
               style={{ width: `${scorePercentage}%` }}
             />
           </div>
         </div>
 
-        {/* Summary */}
-        <div className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded border border-slate-200 dark:border-slate-700">
-          <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.inspectorSummary}</div>
-          <div className="text-sm text-slate-700 dark:text-slate-300 font-medium">{inspectionReport.summary}</div>
-        </div>
-
-        {/* Categories */}
-        <div className="space-y-2">
+        {/* Categories Grid */}
+        <div className="grid grid-cols-1 gap-4">
           {INSPECTION_CRITERIA.map(category => {
             const categoryIssues = issuesByCategory[category.id] || [];
             const categoryScore = inspectionReport.categoryScores?.[category.id] ?? 10;
             const isExpanded = expandedCategories.has(category.id);
             const categoryName = lang === 'zh' ? category.nameZh : category.name;
+            const hasProblems = categoryIssues.some(i => i.type !== 'pass');
 
             return (
-              <div key={category.id} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+              <div 
+                key={category.id} 
+                className={`group border rounded-2xl overflow-hidden transition-all duration-300 ${
+                  isExpanded 
+                    ? 'bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 shadow-xl shadow-slate-200/50 dark:shadow-none' 
+                    : 'bg-slate-50 dark:bg-slate-800/30 border-transparent hover:border-slate-200 dark:hover:border-slate-700'
+                }`}
+              >
                 <button
                   onClick={() => toggleCategory(category.id)}
-                  className="w-full flex items-center justify-between p-3 bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800/70 transition-colors"
+                  className="w-full flex items-center justify-between p-4"
                 >
-                  <div className="flex items-center gap-2">
-                    {isExpanded ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
-                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{categoryName}</span>
-                    <span className="text-xs text-slate-500">({category.weight * 100}%)</span>
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                      hasProblems ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600' : 'bg-green-100 dark:bg-green-900/30 text-green-600'
+                    }`}>
+                      {category.id === 'physical' ? <Box className="w-5 h-5" /> : 
+                       category.id === 'kinematics' ? <RefreshCw className="w-5 h-5" /> : 
+                       category.id === 'naming' ? <FileText className="w-5 h-5" /> : 
+                       category.id === 'symmetry' ? <LayoutGrid className="w-5 h-5" /> : 
+                       <Sparkles className="w-5 h-5" />}
+                    </div>
+                    <div className="text-left">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-slate-800 dark:text-slate-100 tracking-tight">{categoryName}</span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{category.weight * 100}%</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-medium">{categoryIssues.length} {lang === 'zh' ? '项检查' : 'checks'}</div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-sm font-bold ${getScoreColor(categoryScore)}`}>{categoryScore.toFixed(1)}/10</span>
-                    <div className="w-16 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden">
-                      <div className={`h-full ${getScoreBgColor(categoryScore)}`} style={{ width: `${(categoryScore / 10) * 100}%` }} />
+                  
+                  <div className="flex items-center gap-6">
+                    <div className="hidden sm:flex flex-col items-end gap-1">
+                      <div className={`text-sm font-black ${getScoreColor(categoryScore)}`}>{categoryScore.toFixed(1)}/10</div>
+                      <div className="w-24 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                        <div className={`h-full ${getScoreBgColor(categoryScore)}`} style={{ width: `${(categoryScore / 10) * 100}%` }} />
+                      </div>
+                    </div>
+                    <div className={`p-1.5 rounded-lg transition-colors ${isExpanded ? 'bg-slate-100 dark:bg-slate-700 text-slate-600' : 'text-slate-400 group-hover:text-slate-600'}`}>
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </div>
                   </div>
                 </button>
 
                 {isExpanded && (
-                  <div className="p-3 bg-slate-50 dark:bg-slate-900/30 space-y-2">
+                  <div className="p-4 pt-0 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                     {categoryIssues.length === 0 ? (
-                      <div className="flex items-center gap-2 p-2 bg-green-100 dark:bg-green-900/20 border border-green-300 dark:border-green-700/30 rounded text-green-600 dark:text-green-300 text-xs">
-                        <Check className="w-3 h-3" />
-                        <span>{lang === 'zh' ? '✓ 该章节所有检查项均通过' : 'All checks passed'}</span>
+                      <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 rounded-xl text-green-600 dark:text-green-400">
+                        <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                           <Check className="w-4 h-4" />
+                        </div>
+                        <div className="text-xs font-bold">{lang === 'zh' ? '该章节所有检查项均通过' : 'All checks in this category passed'}</div>
                       </div>
                     ) : (
-                      categoryIssues.map((issue, idx) => {
-                        const issueScore = issue.score ?? 10;
-                        let colorClass = "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700";
-                        let icon = <Info className="w-4 h-4" />;
-                        let titleColor = "text-slate-700 dark:text-slate-200";
+                      <div className="grid grid-cols-1 gap-3">
+                        {categoryIssues.map((issue, idx) => {
+                          const issueScore = issue.score ?? 10;
+                          const isRetesting = retestingItem?.categoryId === issue.category && retestingItem?.itemId === issue.itemId;
+                          
+                          let bgClass = "bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700";
+                          let iconColor = "text-slate-400";
+                          let Icon = Info;
 
-                        if (issue.type === 'error') {
-                          colorClass = "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50";
-                          icon = <AlertCircle className="w-4 h-4 text-red-500" />;
-                          titleColor = "text-red-600 dark:text-red-300";
-                        } else if (issue.type === 'warning') {
-                          colorClass = "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/50";
-                          icon = <AlertTriangle className="w-4 h-4 text-amber-500" />;
-                          titleColor = "text-amber-600 dark:text-amber-300";
-                        } else if (issue.type === 'suggestion') {
-                          colorClass = "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/50";
-                          icon = <Sparkles className="w-4 h-4 text-blue-500" />;
-                          titleColor = "text-blue-600 dark:text-blue-300";
-                        } else if (issue.type === 'pass') {
-                          colorClass = "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/50";
-                          icon = <Check className="w-4 h-4 text-green-500" />;
-                          titleColor = "text-green-600 dark:text-green-300";
-                        }
+                          if (issue.type === 'error') {
+                            bgClass = "bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30";
+                            iconColor = "text-red-500";
+                            Icon = AlertCircle;
+                          } else if (issue.type === 'warning') {
+                            bgClass = "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-900/30";
+                            iconColor = "text-amber-500";
+                            Icon = AlertTriangle;
+                          } else if (issue.type === 'suggestion') {
+                            bgClass = "bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30";
+                            iconColor = "text-blue-500";
+                            Icon = Sparkles;
+                          } else if (issue.type === 'pass') {
+                            bgClass = "bg-green-50/50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30";
+                            iconColor = "text-green-500";
+                            Icon = Check;
+                          }
 
-                        const isRetesting = retestingItem?.categoryId === issue.category && retestingItem?.itemId === issue.itemId;
-
-                        return (
-                          <div key={idx} className={`p-3 rounded border flex gap-3 ${colorClass}`}>
-                            <div className="mt-0.5 shrink-0">{icon}</div>
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between mb-1">
-                                <div className={`text-sm font-bold ${titleColor}`}>{issue.title}</div>
-                                <div className="flex items-center gap-2">
-                                  <div className={`text-xs font-bold ${getScoreColor(issueScore)}`}>{issueScore.toFixed(1)}/10</div>
-                                  {issue.category && issue.itemId && issue.type !== 'pass' && (
-                                    <button
-                                      onClick={() => handleRetestItem(issue.category!, issue.itemId!)}
-                                      disabled={isRetesting || isGeneratingAI}
-                                      className="px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-[10px] rounded transition-colors disabled:opacity-50 flex items-center gap-1"
-                                    >
-                                      {isRetesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                                    </button>
+                          return (
+                            <div key={idx} className={`p-4 rounded-xl border transition-all hover:shadow-md ${bgClass} group/issue`}>
+                              <div className="flex gap-4">
+                                <div className={`shrink-0 p-2 rounded-lg bg-white dark:bg-slate-900 shadow-sm ${iconColor}`}>
+                                  <Icon className="w-4 h-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1 gap-4">
+                                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{issue.title}</h4>
+                                    <div className="flex items-center gap-3 shrink-0">
+                                      <div className={`text-xs font-black font-mono ${getScoreColor(issueScore)}`}>
+                                        {issueScore.toFixed(1)}
+                                      </div>
+                                      {issue.category && issue.itemId && issue.type !== 'pass' && (
+                                        <button
+                                          onClick={() => handleRetestItem(issue.category!, issue.itemId!)}
+                                          disabled={isRetesting || isGeneratingAI}
+                                          className="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-indigo-500 hover:text-white rounded-lg transition-all disabled:opacity-30"
+                                          title={lang === 'zh' ? '重新检查该项' : 'Retest this item'}
+                                        >
+                                          {isRetesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium mb-3">
+                                    {issue.description}
+                                  </p>
+                                  
+                                  {issue.relatedIds && issue.relatedIds.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {issue.relatedIds.map(id => {
+                                        const name = robot.links[id]?.name || robot.joints[id]?.name || id;
+                                        return (
+                                          <button
+                                            key={id}
+                                            onClick={() => {
+                                              const type = robot.links[id] ? 'link' : 'joint';
+                                              onSelectItem(type, id);
+                                            }}
+                                            className="text-[9px] font-bold bg-slate-100 dark:bg-slate-900/50 hover:bg-indigo-500 hover:text-white px-2 py-1 rounded-md text-slate-500 dark:text-slate-400 transition-all border border-transparent hover:border-indigo-400"
+                                          >
+                                            {name}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
                                   )}
                                 </div>
                               </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{issue.description}</div>
-                              {issue.relatedIds && issue.relatedIds.length > 0 && (
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                  {issue.relatedIds.map(id => {
-                                    const name = robot.links[id]?.name || robot.joints[id]?.name || id;
-                                    return (
-                                      <span
-                                        key={id}
-                                        className="text-[10px] bg-slate-200 dark:bg-slate-900/50 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700/50 cursor-pointer hover:bg-slate-300 dark:hover:bg-slate-800"
-                                        onClick={() => {
-                                          const type = robot.links[id] ? 'link' : 'joint';
-                                          onSelectItem(type, id);
-                                        }}
-                                      >
-                                        {name}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              )}
                             </div>
-                          </div>
-                        );
-                      })
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 )}
@@ -733,326 +917,423 @@ export function AIModal({
 
   return (
     <>
+      {/* Backdrop - No blur, no pointer blocking */}
+      <div className="fixed inset-0 z-[90] pointer-events-none" />
+      
+      {/* Floating Window */}
       <div
-        style={{ left: panelPos.x, top: panelPos.y }}
-        className="fixed z-50 w-[720px] h-[560px] flex flex-col bg-slate-100 dark:bg-[#181c20] backdrop-blur-md shadow-2xl rounded-lg border border-slate-300 dark:border-slate-700"
+        ref={containerRef}
+        style={{
+          ...getWindowStyle(),
+          willChange: isDragging ? 'transform' : 'auto',
+          transition: 'none',
+          transform: isDragging ? 'translateZ(0)' : 'none'
+        }}
+        className={`z-[100] bg-white dark:bg-slate-900 flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 ${
+          isDragging ? 'select-none' : ''
+        } ${isDragging ? 'cursor-grabbing' : ''}`}
       >
-        {/* Header */}
-        <div
-          onMouseDown={handleDragStart}
-          className="flex items-center justify-between p-2 border-b border-slate-200 dark:border-slate-700 shrink-0 cursor-move bg-slate-200/80 dark:bg-[#23272b] rounded-t-lg select-none"
+        {/* Resize handles - Larger hit areas */}
+        {!isMaximized && !isMinimized && (
+          <>
+            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-indigo-500/20 active:bg-indigo-500/30 transition-colors z-20" onMouseDown={(e) => handleResizeStart(e, 'right')} />
+            <div className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-indigo-500/20 active:bg-indigo-500/30 transition-colors z-20" onMouseDown={(e) => handleResizeStart(e, 'bottom')} />
+            <div className="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize hover:bg-indigo-500/30 active:bg-indigo-500/40 transition-colors z-30 flex items-center justify-center" onMouseDown={(e) => handleResizeStart(e, 'corner')}>
+              <div className="w-2 h-2 border-r-2 border-b-2 border-slate-400" />
+            </div>
+          </>
+        )}
+
+        {/* Window Header */}
+        <div 
+          className={`h-12 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 bg-slate-50 dark:bg-slate-800 shrink-0 ${
+            !isMaximized ? 'cursor-grab' : ''
+          } ${isDragging ? 'cursor-grabbing' : ''}`}
+          onMouseDown={handleMouseDown}
         >
-          <div className="flex items-center gap-2">
-            <ScanSearch className="w-4 h-4 text-purple-600 dark:text-purple-300" />
-            <h2 className="text-sm font-bold text-slate-800 dark:text-white">{t.aiTitle}</h2>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-purple-600 rounded-lg text-white shadow-lg shadow-purple-500/20">
+                <ScanSearch className="w-4 h-4" />
+              </div>
+              <h1 className="text-sm font-bold tracking-tight">
+                {t.aiTitle}
+              </h1>
+            </div>
+            
+            {inspectionReport && !isMinimized && (
+              <div className="hidden md:flex ml-4 items-center gap-2 px-2 py-1 bg-white dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
+                <div className={`w-2 h-2 rounded-full ${getScoreBgColor(inspectionReport.overallScore || 0, inspectionReport.maxScore || 100)} animation-pulse`} />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {t.overallScore}: {inspectionReport.overallScore?.toFixed(1)}
+                </span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <Move className="w-3 h-3 text-slate-400 dark:text-slate-500" />
-            <button onClick={handleClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-white">
-              <X className="w-4 h-4" />
+
+          <div className="flex items-center gap-1">
+            <button onClick={toggleMinimize} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors" title={t.minimize}>
+              <Minus className="w-4 h-4 text-slate-500" />
+            </button>
+            <button onClick={toggleMaximize} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors" title={isMaximized ? t.restore : t.maximize}>
+              {isMaximized ? <Minimize2 className="w-4 h-4 text-slate-500" /> : <Maximize2 className="w-4 h-4 text-slate-500" />}
+            </button>
+            <button onClick={handleClose} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-md transition-colors group" title={t.close}>
+              <X className="w-4 h-4 text-slate-500 group-hover:text-red-500" />
             </button>
           </div>
         </div>
 
-        <div className="flex flex-1 overflow-hidden bg-white dark:bg-[#181c20]">
-          {/* Left sidebar - Inspection items */}
-          <div className="w-52 border-r border-slate-200 dark:border-slate-700 flex flex-col bg-slate-50/30 dark:bg-[#23272b]">
-            <div className="p-2 border-b border-slate-200 dark:border-slate-700">
-              <h3 className="text-xs font-bold text-slate-500 dark:text-slate-300 uppercase mb-1.5">{t.inspectionItems}</h3>
-              <button
-                onClick={handleRunInspection}
-                disabled={isGeneratingAI}
-                className="w-full py-1.5 bg-slate-800 dark:bg-[#23272b] hover:bg-slate-700 dark:hover:bg-[#181c20] text-white rounded text-xs flex items-center justify-center gap-1.5 transition-colors border border-slate-700 dark:border-slate-600 disabled:opacity-50"
-              >
-                {isGeneratingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <ScanSearch className="w-4 h-4" />}
-                {isGeneratingAI ? t.thinking : t.runInspection}
-              </button>
-            </div>
+        {/* Content */}
+        {!isMinimized && (
+          <div className="flex-1 flex overflow-hidden relative">
+            {/* Sidebar - Inspection Items */}
+            <div className="w-56 border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 flex flex-col shrink-0">
+              <div className="p-3 border-b border-slate-200 dark:border-slate-800">
+                <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1">
+                  {t.inspectionItems}
+                </h3>
+                <button
+                  onClick={handleRunInspection}
+                  disabled={isGeneratingAI}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-500/20 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+                >
+                  {isGeneratingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  {isGeneratingAI ? t.thinking : t.runInspection}
+                </button>
+              </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1.5">
-              {INSPECTION_CRITERIA.map(category => {
-                const categoryName = lang === 'zh' ? category.nameZh : category.name;
-                const selectedItemIds = selectedItems[category.id] || new Set();
-                const allSelected = category.items.every(item => selectedItemIds.has(item.id));
-                const someSelected = category.items.some(item => selectedItemIds.has(item.id));
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                {INSPECTION_CRITERIA.map(category => {
+                  const categoryName = lang === 'zh' ? category.nameZh : category.name;
+                  const selectedItemIds = selectedItems[category.id] || new Set();
+                  const allSelected = category.items.every(item => selectedItemIds.has(item.id));
+                  const someSelected = category.items.some(item => selectedItemIds.has(item.id));
+                  const isExpanded = expandedCategories.has(category.id);
 
-                return (
-                  <div key={category.id} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
-                    <div className="w-full flex items-center justify-between p-2 bg-slate-100/50 dark:bg-slate-800/50 hover:bg-slate-200/50 dark:hover:bg-slate-800/70 transition-colors">
-                      <div className="flex items-center gap-2 flex-1">
-                        <input
-                          type="checkbox"
-                          checked={allSelected}
-                          ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
-                          onChange={() => toggleCategorySelection(category.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="rounded border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-700 text-purple-600 focus:ring-purple-500"
-                        />
-                        <button
+                  return (
+                    <div key={category.id} className={`rounded-lg transition-colors ${isExpanded ? 'bg-white dark:bg-slate-800/50 shadow-sm border border-slate-200 dark:border-slate-700' : 'hover:bg-slate-200/50 dark:hover:bg-slate-800/30'}`}>
+                      <div className="flex items-center p-2 group">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <div 
+                            className={`w-4 h-4 rounded border flex items-center justify-center transition-colors cursor-pointer ${allSelected ? 'bg-indigo-600 border-indigo-600' : someSelected ? 'bg-indigo-400 border-indigo-400' : 'border-slate-300 dark:border-slate-600 hover:border-indigo-400'}`}
+                            onClick={() => toggleCategorySelection(category.id)}
+                          >
+                            {allSelected ? <Check className="w-3 h-3 text-white" /> : someSelected ? <Minus className="w-2.5 h-2.5 text-white" /> : null}
+                          </div>
+                          <button 
+                            className="flex-1 text-left truncate text-xs font-bold text-slate-700 dark:text-slate-200"
+                            onClick={() => setExpandedCategories(prev => {
+                              const next = new Set(prev);
+                              if (next.has(category.id)) next.delete(category.id);
+                              else next.add(category.id);
+                              return next;
+                            })}
+                          >
+                            {categoryName}
+                          </button>
+                        </div>
+                        <button 
+                          className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors"
                           onClick={() => setExpandedCategories(prev => {
-                            const newSet = new Set(prev);
-                            if (newSet.has(category.id)) newSet.delete(category.id);
-                            else newSet.add(category.id);
-                            return newSet;
+                            const next = new Set(prev);
+                            if (next.has(category.id)) next.delete(category.id);
+                            else next.add(category.id);
+                            return next;
                           })}
-                          className="flex-1 text-left"
                         >
-                          <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{categoryName}</span>
+                          {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
                         </button>
                       </div>
-                      <button
-                        onClick={() => setExpandedCategories(prev => {
-                          const newSet = new Set(prev);
-                          if (newSet.has(category.id)) newSet.delete(category.id);
-                          else newSet.add(category.id);
-                          return newSet;
-                        })}
-                      >
-                        {expandedCategories.has(category.id) ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
-                      </button>
-                    </div>
 
-                    {expandedCategories.has(category.id) && (
-                      <div className="p-2 space-y-1 bg-slate-50/50 dark:bg-slate-900/30">
-                        {category.items.map(item => (
-                          <label
-                            key={item.id}
-                            className="flex items-center gap-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded cursor-pointer"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedItemIds.has(item.id)}
-                              onChange={() => toggleItemSelection(category.id, item.id)}
-                              className="rounded border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-700 text-purple-600 focus:ring-purple-500"
-                            />
-                            <span className="text-[10px] text-slate-600 dark:text-slate-300">{lang === 'zh' ? item.nameZh : item.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      {isExpanded && (
+                        <div className="px-2 pb-2 space-y-0.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                          {category.items.map(item => (
+                            <div 
+                              key={item.id}
+                              className="flex items-center gap-2 p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700/50 rounded-md cursor-pointer group/item"
+                              onClick={() => toggleItemSelection(category.id, item.id)}
+                            >
+                              <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${selectedItemIds.has(item.id) ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300 dark:border-slate-600 group-hover/item:border-indigo-400'}`}>
+                                {selectedItemIds.has(item.id) && <Check className="w-2.5 h-2.5 text-white" />}
+                              </div>
+                              <span className="text-[10px] text-slate-600 dark:text-slate-400 font-medium truncate">{lang === 'zh' ? item.nameZh : item.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
 
-          {/* Right panel - Results */}
-          <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#181c20]">
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-              {inspectionProgress ? (
-                <div className="space-y-4">
-                  <div className="bg-slate-100 dark:bg-[#23272b] border border-slate-300 dark:border-slate-700 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-sm font-bold text-purple-700 dark:text-purple-200">{t.runInspection}</h3>
-                      <span className="text-xs text-slate-500">{inspectionProgress.completed} / {inspectionProgress.total}</span>
+            {/* Main Content - Results */}
+            <div className="flex-1 overflow-y-auto bg-white dark:bg-slate-900 flex flex-col min-w-0">
+              <div className="flex-1 p-6">
+                {inspectionProgress ? (
+                  <div className="h-full flex flex-col items-center justify-center max-w-md mx-auto text-center space-y-6">
+                    <div className="relative">
+                      <div className="w-24 h-24 rounded-full border-4 border-slate-100 dark:border-slate-800 flex items-center justify-center">
+                        <Loader2 className="w-10 h-10 text-indigo-500 animate-spin" />
+                      </div>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-xs font-bold font-mono">
+                          {Math.round((inspectionProgress.completed / inspectionProgress.total) * 100)}%
+                        </span>
+                      </div>
                     </div>
-                    <div className="w-full h-2 bg-slate-300 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
-                      <div
-                        className="h-full bg-slate-800 dark:bg-[#23272b] transition-all duration-300"
+                    
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-bold text-slate-800 dark:text-white">{t.runInspection}</h3>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">
+                        {inspectionProgress.currentCategory ? (
+                          <>
+                            {t.checking}: <span className="text-indigo-500 font-bold">{inspectionProgress.currentCategory}</span>
+                            <br />
+                            <span className="opacity-60">{inspectionProgress.currentItem}</span>
+                          </>
+                        ) : (
+                          t.generatingReport
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                      <div 
+                        className="h-full bg-indigo-500 transition-all duration-300"
                         style={{ width: `${(inspectionProgress.completed / inspectionProgress.total) * 100}%` }}
                       />
                     </div>
-                    {inspectionProgress.currentCategory && inspectionProgress.currentItem && (
-                      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                        <Loader2 className="w-4 h-4 animate-spin text-purple-500" />
-                        <span>{t.checking}: <span className="font-bold text-purple-600">{inspectionProgress.currentCategory}</span> - {inspectionProgress.currentItem}</span>
+                  </div>
+                ) : !aiResponse && !inspectionReport ? (
+                  <div className="h-full flex flex-col">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                      <div className="p-4 bg-purple-50 dark:bg-purple-900/10 rounded-xl border border-purple-100 dark:border-purple-800/30">
+                        <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 mb-2">
+                          <Sparkles className="w-4 h-4" />
+                          <h3 className="text-sm font-bold uppercase tracking-tight">{lang === 'zh' ? '智能分析' : 'AI Analysis'}</h3>
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed italic">
+                          "{t.aiIntro}"
+                        </p>
+                      </div>
+                      <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 rounded-xl border border-indigo-100 dark:border-indigo-800/30">
+                        <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 mb-2">
+                          <Info className="w-4 h-4" />
+                          <h3 className="text-sm font-bold uppercase tracking-tight">{lang === 'zh' ? '常用示例' : 'Examples'}</h3>
+                        </div>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          {t.aiExamples}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                      <textarea
+                        value={aiPrompt}
+                        onChange={(e) => setAiPrompt(e.target.value)}
+                        className="flex-1 bg-transparent border-none p-0 text-slate-700 dark:text-slate-200 text-sm focus:ring-0 resize-none custom-scrollbar"
+                        placeholder={t.aiPlaceholder}
+                      />
+                      <div className="mt-4 flex justify-between items-center">
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          {lang === 'zh' ? '按 Enter 发送，Shift+Enter 换行' : 'Press Enter to send, Shift+Enter for newline'}
+                        </span>
+                        <button
+                          onClick={handleGenerateAI}
+                          disabled={isGeneratingAI || !aiPrompt.trim()}
+                          className="px-4 py-1.5 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:opacity-90 transition-all active:scale-95 disabled:opacity-30 disabled:active:scale-100"
+                        >
+                          {isGeneratingAI ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                          {t.send}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    {inspectionReport && (
+                      <div className="space-y-6 pb-20">
+                        {renderInspectionReport()}
+                        
+                        {/* Discussion Button */}
+                        <div className="flex justify-center">
+                          <button
+                            onClick={() => setIsReportChatOpen(true)}
+                            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full text-xs font-bold transition-all shadow-lg shadow-indigo-500/30 hover:scale-105 active:scale-95"
+                          >
+                            <MessageCircle className="w-4 h-4" />
+                            {lang === 'zh' ? '针对报告进行对话' : 'Discuss Report with AI'}
+                          </button>
+                        </div>
                       </div>
                     )}
-                    {inspectionProgress.completed === inspectionProgress.total && (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                          <Check className="w-4 h-4" />
-                          <span>{t.inspectionCompleted}</span>
+
+                    {aiResponse && (
+                      <div className="space-y-6">
+                        <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="w-1 h-3 bg-indigo-500 rounded-full" />
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.yourRequest}</span>
+                          </div>
+                          <p className="text-sm text-slate-700 dark:text-slate-300 font-medium italic">{aiPrompt}</p>
                         </div>
-                        {reportGenerationTimer !== null && (
-                          <div className="flex items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span>{t.generatingReport} ({reportGenerationTimer}s)</span>
+
+                        <div className="p-5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl shadow-slate-200/50 dark:shadow-none relative overflow-hidden group">
+                          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-indigo-500" />
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                              <Sparkles className="w-4 h-4 text-indigo-500" />
+                              <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-tight">
+                                {t.aiResponse} <span className="text-indigo-400 font-normal ml-1">[{aiResponse.type}]</span>
+                              </h3>
+                            </div>
+                            {aiResponse.data && (
+                               <div className="flex items-center gap-1.5 px-2 py-1 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-md text-[10px] font-bold">
+                                 <Check className="w-3 h-3" />
+                                 {lang === 'zh' ? '建议可应用' : 'Actionable'}
+                               </div>
+                            )}
+                          </div>
+                          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                            {aiResponse.explanation}
+                          </p>
+                        </div>
+
+                        {aiResponse.data && (
+                          <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl flex gap-3 items-start">
+                            <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg shrink-0">
+                               <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                            </div>
+                            <div className="space-y-1">
+                               <p className="text-xs font-bold text-amber-800 dark:text-amber-200">{lang === 'zh' ? '应用更改提示' : 'Apply Changes'}</p>
+                               <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80 leading-relaxed">{t.actionWarning}</p>
+                            </div>
                           </div>
                         )}
                       </div>
                     )}
                   </div>
-                </div>
-              ) : !aiResponse && !inspectionReport ? (
-                <>
-                  <div className="bg-slate-100 dark:bg-[#23272b] border border-slate-300 dark:border-slate-700 rounded p-4 mb-4">
-                    <h3 className="text-sm font-bold text-purple-700 dark:text-purple-200 mb-2">{t.runInspection}</h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{t.aiExamples}</p>
-                  </div>
-
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-3 border-t border-slate-200 dark:border-slate-700 pt-4">
-                    {t.aiIntro}
-                  </p>
-
-                  <textarea
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    className="w-full h-24 bg-slate-50 dark:bg-[#23272b] border border-slate-200 dark:border-slate-700 rounded p-3 text-slate-700 dark:text-slate-200 text-sm focus:border-slate-800 dark:focus:border-slate-400 focus:outline-none resize-none"
-                    placeholder={t.aiPlaceholder}
-                  />
-                </>
-              ) : (
-                <>
-                  {inspectionReport && (
-                    <div className="relative">
-                      {renderInspectionReport()}
-
-                      {/* Chat Dialog */}
-                      {isReportChatOpen && (
-                        <div className="fixed bottom-4 right-4 z-50 w-80 h-[400px] flex flex-col bg-white/95 dark:bg-slate-900/95 backdrop-blur-md shadow-2xl rounded-lg border border-slate-300 dark:border-slate-600">
-                          <div className="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100/50 dark:bg-slate-800/50 rounded-t-lg">
-                            <div className="flex items-center gap-2">
-                              <MessageCircle className="w-4 h-4 text-blue-500" />
-                              <h3 className="text-sm font-bold text-slate-800 dark:text-white">{t.chatTitle}</h3>
-                            </div>
-                            <button
-                              onClick={() => { setIsReportChatOpen(false); setReportChatMessages([]); setReportChatInput(''); }}
-                              className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-
-                          <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                            {reportChatMessages.length === 0 ? (
-                              <div className="text-sm text-slate-500 text-center py-8">{t.askAboutReport}</div>
-                            ) : (
-                              reportChatMessages.map((msg, idx) => (
-                                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                  <div className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200'}`}>
-                                    <div className="text-xs whitespace-pre-wrap leading-relaxed">{msg.content}</div>
-                                  </div>
-                                </div>
-                              ))
-                            )}
-                            {isChatGenerating && (
-                              <div className="flex justify-start">
-                                <div className="bg-slate-200 dark:bg-slate-800 rounded-lg p-3">
-                                  <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="p-3 border-t border-slate-200 dark:border-slate-700 shrink-0">
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                value={reportChatInput}
-                                onChange={(e) => setReportChatInput(e.target.value)}
-                                onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleReportChatSend(); } }}
-                                placeholder={t.chatPlaceholder}
-                                className="flex-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-3 py-2 text-slate-700 dark:text-slate-200 text-sm focus:border-blue-500 focus:outline-none"
-                                disabled={isChatGenerating}
-                              />
-                              <button
-                                onClick={handleReportChatSend}
-                                disabled={isChatGenerating || !reportChatInput.trim()}
-                                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white rounded transition-colors flex items-center gap-2"
-                              >
-                                {isChatGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Chat Button */}
-                      {!isReportChatOpen && (
-                        <button
-                          onClick={() => setIsReportChatOpen(true)}
-                          className="fixed bottom-4 right-4 z-40 w-14 h-14 bg-blue-600 hover:bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center transition-colors"
-                          title={t.chatWithAI}
-                        >
-                          <MessageCircle className="w-6 h-6" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {aiResponse && (
-                    <div className="space-y-4">
-                      <div className="bg-slate-50 dark:bg-[#23272b] p-3 rounded border border-slate-200 dark:border-slate-700">
-                        <div className="text-xs text-slate-500 uppercase font-bold mb-1">{t.yourRequest}</div>
-                        <div className="text-sm text-slate-700 dark:text-slate-300">{aiPrompt}</div>
-                      </div>
-
-                      <div className="bg-slate-100 dark:bg-[#23272b] p-3 rounded border border-slate-300 dark:border-slate-700">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Sparkles className="w-3 h-3 text-slate-800 dark:text-slate-200" />
-                          <div className="text-xs text-slate-800 dark:text-slate-200 uppercase font-bold">
-                            {t.aiResponse} {aiResponse.type ? `(${aiResponse.type})` : ''}
-                          </div>
-                        </div>
-                        <div className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                          {aiResponse.explanation || t.processing}
-                        </div>
-                      </div>
-
-                      {aiResponse.data && (
-                        <div className="flex items-center gap-2 text-xs text-yellow-600 dark:text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded border border-yellow-300 dark:border-yellow-700/30">
-                          <Box className="w-3 h-3" />
-                          {t.actionWarning}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
+                )}
+              </div>
             </div>
+
+            {/* Chat Overlay for Inspection Report */}
+            {isReportChatOpen && inspectionReport && (
+              <div className="absolute inset-0 bg-white/95 dark:bg-slate-900/95 z-40 flex flex-col animate-in slide-in-from-right-4 duration-300">
+                <div className="h-12 px-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded">
+                      <MessageCircle className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-xs font-bold">{t.chatTitle}</span>
+                  </div>
+                  <button onClick={() => { setIsReportChatOpen(false); setReportChatMessages([]); }} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                   {reportChatMessages.length === 0 ? (
+                     <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-3 px-10 text-center">
+                        <div className="p-4 bg-slate-100 dark:bg-slate-800 rounded-full">
+                           <MessageCircle className="w-8 h-8 opacity-20" />
+                        </div>
+                        <p className="text-xs italic leading-relaxed">{t.askAboutReport}</p>
+                     </div>
+                   ) : (
+                     reportChatMessages.map((msg, idx) => (
+                       <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                         <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl shadow-sm text-sm ${
+                           msg.role === 'user' 
+                             ? 'bg-indigo-600 text-white rounded-tr-none' 
+                             : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-tl-none border border-slate-200 dark:border-slate-700'
+                         }`}>
+                           {msg.content}
+                         </div>
+                       </div>
+                     ))
+                   )}
+                   {isChatGenerating && (
+                     <div className="flex justify-start">
+                        <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl rounded-tl-none border border-slate-200 dark:border-slate-700 px-4 py-2.5">
+                           <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+                        </div>
+                     </div>
+                   )}
+                </div>
+
+                <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                  <div className="relative group">
+                    <input 
+                      type="text"
+                      value={reportChatInput}
+                      onChange={(e) => setReportChatInput(e.target.value)}
+                      onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleReportChatSend(); } }}
+                      placeholder={t.chatPlaceholder}
+                      className="w-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-3 pl-4 pr-12 text-xs focus:ring-2 focus:ring-indigo-500 transition-all"
+                    />
+                    <button 
+                      onClick={handleReportChatSend}
+                      disabled={isChatGenerating || !reportChatInput.trim()}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 text-white rounded-lg shadow-md hover:opacity-90 active:scale-90 transition-all disabled:opacity-30 disabled:scale-100"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="h-14 px-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 bg-slate-50 dark:bg-slate-800/80">
+          <div className="flex items-center gap-2">
+            {(aiResponse || inspectionReport) && !inspectionProgress && (
+              <button
+                onClick={() => { setAiResponse(null); setInspectionReport(null); setAiPrompt(''); setInspectionProgress(null); setReportGenerationTimer(null); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+                {t.back}
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!(aiResponse || inspectionReport) ? (
+              <>
+                <button onClick={handleClose} className="px-4 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white rounded-lg transition-colors">
+                  {t.cancel}
+                </button>
+                <button
+                  onClick={handleGenerateAI}
+                  disabled={isGeneratingAI || !aiPrompt.trim()}
+                  className="px-6 py-1.5 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-lg text-xs font-bold transition-all hover:opacity-90 active:scale-95 disabled:opacity-30"
+                >
+                  {isGeneratingAI ? t.thinking : t.send}
+                </button>
+              </>
+            ) : aiResponse?.data ? (
+              <button
+                onClick={applyAIChanges}
+                className="px-6 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg shadow-green-500/20 active:scale-95 flex items-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                {t.applyChanges}
+              </button>
+            ) : null}
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-3 border-t border-slate-200 dark:border-slate-700 flex justify-between gap-2 shrink-0 bg-slate-100/30 dark:bg-[#23272b] rounded-b-lg">
-          {(aiResponse || inspectionReport) ? (
-            <>
-              <button
-                onClick={() => { setAiResponse(null); setInspectionReport(null); setAiPrompt(''); setInspectionProgress(null); setReportGenerationTimer(null); }}
-                className="px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white"
-              >
-                {t.back}
-              </button>
-              {aiResponse?.data && (
-                <button
-                  onClick={applyAIChanges}
-                  className="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs rounded transition-colors flex items-center gap-2"
-                >
-                  <Check className="w-3 h-3" />
-                  {t.applyChanges}
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <button
-                onClick={handleClose}
-                className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#23272b] rounded transition-colors"
-              >
-                {t.cancel}
-              </button>
-              <button
-                onClick={handleGenerateAI}
-                disabled={isGeneratingAI || !aiPrompt.trim()}
-                className="px-3 py-1.5 bg-slate-800 dark:bg-[#23272b] hover:bg-slate-700 dark:hover:bg-[#181c20] disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs rounded transition-colors flex items-center gap-2 border border-slate-700 dark:border-slate-600"
-              >
-                {isGeneratingAI ? (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    {t.thinking}
-                  </>
-                ) : (
-                  <>
-                    <ArrowRight className="w-3 h-3" />
-                    {t.send}
-                  </>
-                )}
-              </button>
-            </>
-          )}
-        </div>
+        {/* Resize Indicator */}
+        {isResizing && (
+          <div className="absolute bottom-2 right-12 z-50 px-2 py-1 bg-indigo-600 text-white text-[10px] rounded font-mono shadow-lg">
+            {size.width} × {size.height}
+          </div>
+        )}
       </div>
     </>
   );
