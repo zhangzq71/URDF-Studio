@@ -27,6 +27,7 @@ export const en: TranslationKeys = {
   restore: "Restore",
   downloadComplete: "Download complete! Would you like to load the model from the local folder now?",
   loadFromLocal: "Please click \"Import Local URDF\" on the main screen and select the folder you just downloaded.",
+  clickImport: "Click to Import",
   loadFailed: "Failed to load model files. Please ensure manifest.json exists.",
   manifestNotFound: "Manifest not found",
 

@@ -27,6 +27,7 @@ export const zh: TranslationKeys = {
   restore: "还原",
   downloadComplete: "下载完成！是否立即从本地文件夹加载该模型？",
   loadFromLocal: "请点击主界面的\"导入本地 URDF\"并选择刚才下载的文件夹。",
+  clickImport: "点击导入",
   loadFailed: "加载模型文件失败，请确保 manifest.json 存在。",
   manifestNotFound: "Manifest not found",
 

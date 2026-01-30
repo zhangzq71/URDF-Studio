@@ -172,7 +172,7 @@ const GeometryEditor = ({
   t: typeof translations['en'];
   isTabbed?: boolean;
 }) => {
-    const geomData = data[category] || {};
+    const geomData = data[category] || {} as any;
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Ensure nested objects exist if they are missing

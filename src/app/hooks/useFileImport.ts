@@ -28,7 +28,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   const assets = useAssetsStore((state) => state.assets);
 
   // Robot store
-  const resetRobot = useRobotStore((state) => state.reset);
+  const resetRobot = useRobotStore((state) => state.resetRobot);
 
   // Detect file format from content
   const detectFormat = useCallback((content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | 'xacro' | null => {

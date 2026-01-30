@@ -14,7 +14,7 @@ interface UsePdfExportReturn {
 }
 
 export function usePdfExport(): UsePdfExportReturn {
-  const lang = useUIStore((s) => s.language);
+  const lang = useUIStore((s) => s.lang);
   const robotName = useRobotStore((s) => s.name);
 
   const handleDownloadPDF = useCallback((inspectionReport: InspectionReport | null) => {

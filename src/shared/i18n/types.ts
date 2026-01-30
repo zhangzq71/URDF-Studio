@@ -21,7 +21,6 @@ export interface TranslationKeys {
   humanoids: string;
   mobileBases: string;
   unitreeTech: string;
-  processing: string;
   fetchingResources: string;
   minimize: string;
   maximize: string;

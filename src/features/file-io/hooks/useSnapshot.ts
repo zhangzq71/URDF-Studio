@@ -20,7 +20,7 @@ interface UseSnapshotReturn {
 
 export function useSnapshot(options: UseSnapshotOptions = {}): UseSnapshotReturn {
   const { onSuccess, onError, showToast } = options;
-  const lang = useUIStore((s) => s.language);
+  const lang = useUIStore((s) => s.lang);
   const snapshotActionRef = useRef<(() => void) | null>(null);
 
   const handleSnapshot = useCallback(() => {
