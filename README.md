@@ -9,7 +9,7 @@
 
 **Next-Generation Visual Robot Design Platform**
 
-**Live demo:** https://urdf.d-robotics.cc/
+**Live demo:** [urdf.d-robotics.cc](https://urdf.d-robotics.cc/)
 
 [English](./README.md) | [中文](./README_CN.md)
 
@@ -17,154 +17,98 @@
 
 ---
 
-## 📖 Overview
+## 📖 Project Overview
 
-**URDF Studio** is a state-of-the-art, web-based visual environment engineered for the seamless creation, manipulation, and export of Unified Robot Description Format (URDF) models. By abstracting the complexities of raw XML authoring into an intuitive graphical interface, it empowers roboticists to focus on design and innovation.
+**URDF Studio** is a powerful, web-based visual environment designed for creating, editing, and exporting Unified Robot Description Format (URDF) models. It abstracts complex XML authoring into an intuitive graphical interface, allowing roboticists to focus on kinematic design, geometric detailing, and hardware specification.
 
-This platform orchestrates the entire robotic modeling lifecycle—from kinematic skeleton definition to high-fidelity geometric detailing and precise hardware specification. Enhanced by **Generative AI**, URDF Studio accelerates prototyping and ensures compatibility with industry-standard simulation ecosystems like MuJoCo.
+The platform integrates **Generative AI** for rapid prototyping and automated model auditing, ensuring your designs are physically plausible and simulation-ready for environments like MuJoCo.
 
-
-## ✨ Core Capabilities
+## ✨ Key Features
 
 ### 🦴 Advanced Design Modalities
-
-| Mode | Functionality |
-|------|-------------|
-| **Skeleton** | Rapidly architect kinematic chains (Links & Joints) and define topological relationships with precision. |
-| **Detail** | Fine-tune visual aesthetics and collision manifolds, supporting primitive geometries and high-resolution mesh imports (STL/OBJ/DAE). |
-| **Hardware** | Specify electromechanical parameters, including actuator selection, torque constraints, and transmission ratios. |
+*   **Skeleton Mode**: Build kinematic chains (Links & Joints) and define topological relationships.
+*   **Detail Mode**: Fine-tune visual and collision geometries using primitives or high-resolution mesh imports (STL/OBJ/DAE).
+*   **Hardware Mode**: Specify electromechanical parameters, motor selection, and transmission ratios.
 
 ### 🎨 Immersive 3D Workspace
-
-- **High-Fidelity Rendering**: Powered by **Three.js** and **React Three Fiber** with enhanced PBR materials and glossiness for a photorealistic experience.
-- **Intuitive Manipulation**: Industry-standard gizmos for precise spatial transformation of robot segments.
-- **Visual Analytics**: 
-  - Real-time visualization of joint axes and reference frames.
-  - Per-link **Center of Mass (CoM)** and **Inertia Tensor** visualization with transparent box indicators.
-  - **Highlight Mode**: Toggle between Link and Collision highlighting for precise inspection and editing.
-  - **Collision Preview**: High-visibility collision mesh rendering with "DoubleSide" support for easier selection.
+*   **High-Fidelity Rendering**: PBR materials and photorealistic rendering via Three.js.
+*   **Intuitive Controls**: Industry-standard transformation gizmos for precise manipulation.
+*   **Visual Analytics**: Real-time visualization of joint axes, center of mass (CoM), and inertia tensors.
+*   **Optimized Performance**: Features specialized partial reloading for collision body updates, ensuring instant feedback during fine-tuning.
 
 ### 🤖 AI-Augmented Engineering
+*   **Generative AI**: Create robot structures using natural language prompts.
+*   **AI Inspector**: Automated 6-category quality assessment (Physical Plausibility, Kinematics, Naming, etc.) with detailed scoring and PDF reports.
 
-Leveraging **OpenAI-compatible AI models** (including DeepSeek), URDF Studio introduces a natural language interface for robotic design:
-- *"Generate a quadrupedal locomotion platform"*
-- *"Integrate a LiDAR sensor array onto the base_link"*
-- *"Recommend optimal actuation for the hip joint based on torque requirements"*
+### 📥 Interoperability & Export
+*   **Import**: Load existing projects via ZIP (URDF + meshes).
+*   **Export**: Production-ready packages including URDF, consolidated meshes, BOM (CSV), and MuJoCo XML.
 
-### 🔍 AI Inspector
+## 📚 Documentation & Tutorials
 
-The **AI Inspector** provides comprehensive automated quality assessment of URDF models using industry-standard evaluation criteria:
+Learn how to master URDF Studio with our step-by-step guides:
 
-- **Multi-Category Inspection**: Evaluates six key dimensions:
-  - **Physical Plausibility**: Mass, inertia validity, symmetry consistency
-  - **Link Frames**: Joint collinearity, axis conventions, waist centering
-  - **Assembly Logic**: Actuator mass attribution, linkage placement
-  - **Kinematics & Simulation**: Topology validation, joint limits, collision optimization
-  - **Hardware Configuration**: Motor specifications, armature configuration
-  - **Naming Conventions**: Uniqueness and semantic naming standards
+1.  **[Getting Started](./docs/tutorials/en/01_getting_started.md)**: Your first 5 minutes in URDF Studio.
+2.  **[Design Modes](./docs/tutorials/en/02_design_modes.md)**: Deep dive into Skeleton, Detail, and Hardware modes.
+3.  **[AI Assistant & Inspector](./docs/tutorials/en/03_ai_features.md)**: Leveraging AI to speed up your design workflow.
 
-- **Detailed Scoring System**: Each inspection item is scored on a 0-10 scale, with comprehensive reports showing:
-  - Overall achievement rate
-  - Category-specific scores
-  - Individual issue identification with severity levels (error/warning/suggestion)
-  - Related link/joint references for easy navigation
+---
 
-- **Interactive Features**:
-  - Selective inspection: Choose specific items to check
-  - Single-item retest: Re-evaluate specific issues after fixes
-  - AI-powered chat: Discuss inspection results and get recommendations
-  - PDF export: Download detailed inspection reports
-
-- **Real-time Progress**: Visual progress tracking during inspection with detailed item-by-item status
-
-### 📥 Seamless Interoperability
-
-- **Import**: Effortlessly ingest existing projects via ZIP archives containing URDF definitions and mesh assets.
-- **Export**: One-click generation of a production-ready robot package:
-  - `urdf/`: Standard URDF + Extended URDF (enriched with hardware metadata).
-  - `meshes/`: Consolidated directory of all referenced 3D assets.
-  - `hardware/`: Automated Bill of Materials (BOM) generation in CSV format.
-  - `mujoco/`: Auto-configured XML for immediate simulation in MuJoCo.
-
-### ⚙️ Motor Library
-
-Includes a built-in library of popular robot actuators:
-- **Unitree**: Go1, A1, B1 series.
-- **RobStride**: RS series.
-- *Extensible*: Easily add custom motor specifications.
-
-## 🛠️ Tech Stack
-
-- **Frontend**: React, TypeScript, Tailwind CSS
-- **3D Engine**: Three.js, React Three Fiber, @react-three/drei
-- **Build Tool**: Vite
-- **AI Integration**: OpenAI SDK (supports OpenAI-compatible APIs)
-- **Utilities**: JSZip, Lucide React
-
-## 🚀 Run Locally
+## 🚀 Installation Guide
 
 ### Prerequisites
+*   [Node.js](https://nodejs.org/) (v18 or higher)
+*   npm or yarn
 
-- Node.js 18+
-- npm or yarn
+### Setup
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/OpenLegged/URDF-Studio.git
+    cd URDF-Studio
+    ```
+2.  **Install Dependencies**
+    ```bash
+    npm install
+    ```
+3.  **Configure Environment (Optional for AI)**
+    Create a `.env.local` file:
+    ```env
+    VITE_OPENAI_API_KEY=your_api_key
+    VITE_OPENAI_BASE_URL=https://api.openai.com/v1
+    VITE_OPENAI_MODEL=deepseek-v3
+    ```
+4.  **Start Development Server**
+    ```bash
+    npm run dev
+    ```
+    Visit `http://localhost:5173` in your browser.
 
-### Installation
+## 📝 Usage Instructions
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/OpenLegged/URDF-Studio.git
-   cd URDF-Studio
-   ```
+1.  **Kinematic Setup**: Use the **Skeleton Mode** to add links and joints. Use the tree view to manage the robot hierarchy.
+2.  **Geometry & Physics**: Switch to **Detail Mode** to assign STL/OBJ meshes or primitive shapes to your links. You can adjust mass and inertia properties in the Property Editor.
+3.  **Actuator Selection**: In **Hardware Mode**, select joints to assign motors from the built-in library (Unitree, RobStride, etc.).
+4.  **Verification**: Use the **AI Inspector** to run a comprehensive check on your model. Review the scores and suggestions before exporting.
+5.  **Exporting**: Use the **Export** button to download a complete ZIP package compatible with ROS and MuJoCo.
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+## 🤝 Contribution Guidelines
 
-3. **Configure API Key (Optional)**
-   To use AI features, create a `.env.local` file in the root directory:
-   ```env
-   VITE_OPENAI_API_KEY=your_openai_api_key
-   VITE_OPENAI_BASE_URL=https://your-proxy-url/v1
-   VITE_OPENAI_MODEL=bce/deepseek-v3.2
-   ```
-   
-   **Configuration Details:**
-   - `VITE_OPENAI_API_KEY`: Your OpenAI API key or proxy API key
-   - `VITE_OPENAI_BASE_URL`: (Optional) Custom API endpoint URL. Defaults to `https://api.openai.com/v1` if not set
-   - `VITE_OPENAI_MODEL`: (Optional) Model name to use. Defaults to `bce/deepseek-v3.2` if not set
-   
-   **Example for using a proxy server:**
-   ```env
-   VITE_OPENAI_API_KEY=sk-your-proxy-api-key
-   VITE_OPENAI_BASE_URL=https://aiproxy.d-robotics.cc/v1
-   VITE_OPENAI_MODEL=bce/deepseek-v3.2
-   ```
-   
-   **Note:** The `.env.local` file is ignored by git and will not be committed to the repository.
+We welcome contributions! To contribute:
+1.  **Fork** the repository.
+2.  **Create a Feature Branch** (`git checkout -b feature/amazing-feature`).
+3.  **Commit Your Changes** (`git commit -m 'Add some amazing feature'`).
+4.  **Push to the Branch** (`git push origin feature/amazing-feature`).
+5.  **Open a Pull Request**.
 
-4. **Run the development server**
-   ```bash
-   npm run dev
-   ```
-   Open `http://localhost:5173` in your browser.
-
-## 📝 Usage Guide
-
-1. **Skeleton Mode**: Use the `+` button in the tree view to add child links. Adjust joint origins using the 3D gizmos.
-2. **Detail Mode**: Select a link to configure its visual and collision geometry. Upload custom meshes if needed.
-3. **Hardware Mode**: Select a joint to assign motors from the library. The system automatically sets limits based on the motor specs.
-4. **AI Assistant**: Click the "AI Assistant" button, type your request, and apply the generated changes.
-5. **AI Inspector**: Click the "AI审阅" (AI Inspector) button, select inspection items, run comprehensive quality checks, and review detailed reports with scoring.
-6. **Export**: Click "Export" to download the full project ZIP.
+Please ensure your code adheres to the project's TypeScript and React conventions.
 
 ## 📄 License
 
-Apache License 2.0
+This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for details.
+
+---
 
 ## Acknowledgments
-D-Robotics https://developer.d-robotics.cc/
-
-## Star History
+Supported by [D-Robotics](https://developer.d-robotics.cc/).
 
 [![Star History Chart](https://api.star-history.com/svg?repos=OpenLegged/URDF-Studio&type=date&legend=top-left)](https://www.star-history.com/#OpenLegged/URDF-Studio&type=date&legend=top-left)

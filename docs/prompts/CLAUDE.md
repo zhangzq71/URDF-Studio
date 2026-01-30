@@ -31,8 +31,13 @@ urdf-studio/
 │   └── samples/            # 示例 URDF 文件 (Go2, H1)
 │
 ├── docs/                   # 项目文档
-│   ├── CLAUDE.md           # AI 开发指南 (本文件)
-│   └── urdf_inspect_standard_{zh,en}.md  # AI 审阅标准
+│   ├── tutorials/          # 用户使用教程
+│   │   ├── zh/             # 中文教程 (01_入门, 02_模式, 03_AI)
+│   │   └── en/             # English Tutorials (01_Getting_Started, etc.)
+│   └── prompts/            # AI Prompt 参考文档 (Claude Context)
+│       ├── overview.md
+│       ├── CLAUDE.md
+│       └── visualizer_prompt.md
 │
 └── src/
     ├── main.tsx            # React 应用入口
@@ -65,15 +70,18 @@ urdf-studio/
     │   └── i18n/           # 国际化 (zh, en)
     │
     ├── features/           # 功能模块 (独立可组合)
-    │   ├── robot-tree/     # 机器人树编辑器 (TreeEditor)
+    │   ├── robot-tree/     # 机器人 tree 编辑器 (TreeEditor)
     │   ├── property-editor/ # 属性编辑器 (PropertyEditor)
     │   ├── visualizer/     # 3D 可视化 (Skeleton/Hardware 模式)
     │   ├── urdf-viewer/    # URDF 查看器 (Detail 模式，含完整渲染和交互)
     │   ├── code-editor/    # Monaco 代码编辑器 (可编辑/只读)
     │   ├── hardware-config/ # 硬件配置 (电机库数据)
     │   ├── ai-assistant/   # AI 助手 (对话、审阅、OpenAI API)
-    │   └── file-io/        # 文件 I/O (导入/导出/PDF/截图)
-    │
+    │   │   ├── components/ # AI UI 组件
+    │   │   ├── services/   # AI API 服务
+    │   │   ├── config/     # AI 审阅标准 Prompt
+    │   │   └── utils/      # 审阅标准计算逻辑
+    │   └── file-io/        # 文件 I/O (导入/导出/PDF/截图)    │
     └── app/                # 应用层
         ├── App.tsx         # 根组件
         ├── AppLayout.tsx   # 主布局 (集成所有 features)
