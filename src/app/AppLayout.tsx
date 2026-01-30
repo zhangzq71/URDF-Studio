@@ -26,6 +26,7 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenURDFSquare: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -53,6 +54,7 @@ export function AppLayout({
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
+  onOpenURDFSquare,
   viewConfig,
   setViewConfig,
   onLoadRobot,
@@ -129,12 +131,11 @@ export function AppLayout({
   }, [robotLinks]);
 
   // URDF content for viewer
+  // Always use generated URDF to reflect user modifications in real-time
+  // This ensures collision geometry and other property changes are immediately visible
   const urdfContentForViewer = useMemo(() => {
-    if (originalUrdfContent) {
-      return originalUrdfContent;
-    }
     return generateURDF(robot, false);
-  }, [originalUrdfContent, robot]);
+  }, [robot]);
 
   // Handlers
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
@@ -258,6 +259,7 @@ export function AppLayout({
         onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
+        onOpenURDFSquare={onOpenURDFSquare}
         onSnapshot={handleSnapshot}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}

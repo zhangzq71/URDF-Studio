@@ -88,6 +88,7 @@ export const parseURDF = (xmlString: string): RobotState | null => {
       const cylinder = geoEl.querySelector("cylinder");
       const sphere = geoEl.querySelector("sphere");
       const mesh = geoEl.querySelector("mesh");
+      const capsule = geoEl.querySelector("capsule");
 
       if (box) {
           return {
@@ -109,6 +110,16 @@ export const parseURDF = (xmlString: string): RobotState | null => {
               dimensions: {
                   x: parseFloat(sphere.getAttribute("radius") || "0.1"),
                   y: 0, z: 0
+              }
+          };
+      } else if (capsule) {
+          // Map capsule to cylinder for visualization
+          return {
+              type: GeometryType.CYLINDER,
+              dimensions: {
+                  x: parseFloat(capsule.getAttribute("radius") || "0.1"),
+                  y: parseFloat(capsule.getAttribute("length") || "0.5"),
+                  z: 0
               }
           };
       } else if (mesh) {
@@ -135,7 +146,7 @@ export const parseURDF = (xmlString: string): RobotState | null => {
               meshPath: cleanName
           };
       }
-      return defaultGeo;
+      return null;
   };
 
   const parseColor = (materialEl: Element | null): string | undefined => {
@@ -203,6 +214,7 @@ export const parseURDF = (xmlString: string): RobotState | null => {
       let hasExplicitMaterial = false;
       if (visualEl) {
           visualGeo = parseGeometry(visualEl.querySelector("geometry"), DEFAULT_LINK.visual);
+          if (!visualGeo) visualGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
 
           // Parse Material Color
           const materialEl = visualEl.querySelector("material");
@@ -229,16 +241,22 @@ export const parseURDF = (xmlString: string): RobotState | null => {
           visualColor = linkGazeboMaterials[linkName];
       }
 
-      // Collision
-      const collisionEl = linkEl.querySelector("collision");
-      const collisionOriginEl = collisionEl?.querySelector("origin");
+      // Collision (Handle multiple collisions)
+      const collisionEls = linkEl.querySelectorAll("collision");
+      let mainCollisionGeo: any = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
+      let mainCollisionOrigin = { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
 
-      let collisionGeo;
-      if (collisionEl) {
-          collisionGeo = parseGeometry(collisionEl.querySelector("geometry"), DEFAULT_LINK.collision);
-      } else {
-          // If no collision tag exists, map to NONE
-          collisionGeo = { type: GeometryType.NONE, dimensions: { x:0, y:0, z:0 } };
+      if (collisionEls.length > 0) {
+          // Process primary collision (index 0)
+          const firstCol = collisionEls[0];
+          const parsedGeo = parseGeometry(firstCol.querySelector("geometry"), DEFAULT_LINK.collision);
+          if (parsedGeo) mainCollisionGeo = parsedGeo;
+          
+          const originEl = firstCol.querySelector("origin");
+          mainCollisionOrigin = {
+              xyz: parseVec3(originEl?.getAttribute("xyz")),
+              rpy: parseRPY(originEl?.getAttribute("rpy"))
+          };
       }
 
       // Inertial
@@ -261,11 +279,8 @@ export const parseURDF = (xmlString: string): RobotState | null => {
           },
           collision: {
               ...DEFAULT_LINK.collision,
-              ...collisionGeo,
-              origin: {
-                  xyz: parseVec3(collisionOriginEl?.getAttribute("xyz")),
-                  rpy: parseRPY(collisionOriginEl?.getAttribute("rpy"))
-              }
+              ...mainCollisionGeo,
+              origin: mainCollisionOrigin
           },
           inertial: {
               mass: parseFloat(massEl?.getAttribute("value") || "0"),
@@ -283,6 +298,48 @@ export const parseURDF = (xmlString: string): RobotState | null => {
               }
           }
       };
+
+      // Handle additional collisions as virtual links
+      for (let i = 1; i < collisionEls.length; i++) {
+          const colEl = collisionEls[i];
+          const virtualLinkId = `${id}_collision_${i}`;
+          const virtualJointId = `${id}_collision_joint_${i}`;
+
+          // Parse geometry and origin for this collision
+          let colGeo = parseGeometry(colEl.querySelector("geometry"), DEFAULT_LINK.collision);
+          if (!colGeo) colGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
+          
+          const originEl = colEl.querySelector("origin");
+          const colOrigin = {
+              xyz: parseVec3(originEl?.getAttribute("xyz")),
+              rpy: parseRPY(originEl?.getAttribute("rpy"))
+          };
+
+          // Create Virtual Link
+          links[virtualLinkId] = {
+              id: virtualLinkId,
+              name: virtualLinkId,
+              visual: { ...DEFAULT_LINK.visual, type: GeometryType.NONE }, // Invisible
+              collision: {
+                  ...DEFAULT_LINK.collision,
+                  ...colGeo,
+                  origin: colOrigin
+              },
+              inertial: { ...DEFAULT_LINK.inertial, mass: 0 } // Massless
+          };
+
+          // Create Fixed Joint attaching to parent
+          joints[virtualJointId] = {
+              ...DEFAULT_JOINT,
+              id: virtualJointId,
+              name: virtualJointId,
+              type: JointType.FIXED,
+              parentLinkId: id,
+              childLinkId: virtualLinkId,
+              origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              axis: { x: 0, y: 0, z: 0 }
+          };
+      }
   });
 
   // 2. Parse Joints

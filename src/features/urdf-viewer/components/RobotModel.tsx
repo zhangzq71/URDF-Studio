@@ -238,8 +238,46 @@ function createJointAxisVisualization(axis: THREE.Vector3, size: number = 1.0): 
 }
 
 function offsetRobotToGround(robot: THREE.Object3D): void {
-    // Calculate bounding box
-    const box = new THREE.Box3().setFromObject(robot);
+    // Update matrix world to ensure correct bounds calculation for detached object
+    robot.updateMatrixWorld(true);
+
+    const box = new THREE.Box3();
+    
+    robot.traverse((child) => {
+        // Ignore gizmos and helpers
+        if (child.userData?.isGizmo) return;
+        
+        // Ignore specific helper names that might not be tagged
+        if (child.name === '__link_axes_helper__' || 
+            child.name === '__joint_axis_helper__' || 
+            child.name === '__debug_joint_axes__' ||
+            child.name === '__inertia_visual__' ||
+            child.name === '__com_visual__' ||
+            child.name === '__inertia_box__' ||
+            child.name === '__origin_axes__' ||
+            child.name === '__joint_axis__') return;
+
+        if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            if (mesh.geometry) {
+                if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+                const geomBox = mesh.geometry.boundingBox!.clone();
+                geomBox.applyMatrix4(mesh.matrixWorld);
+                box.union(geomBox);
+            }
+        }
+    });
+
+    // Fallback if box is empty (e.g. only gizmos found or no meshes)
+    if (box.isEmpty()) {
+        const standardBox = new THREE.Box3().setFromObject(robot);
+        if (!standardBox.isEmpty()) {
+             box.copy(standardBox);
+        } else {
+             return;
+        }
+    }
+
     const minY = box.min.y;
     const minZ = box.min.z;
 
@@ -280,6 +318,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     highlightMode = 'link',
     showInertia = false,
     showCenterOfMass = false,
+    centerOfMassSize = 0.01,
     showOrigins = false,
     originSize = 1.0,
     showJointAxes = false,
@@ -590,6 +629,20 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
         try {
             const targetSubType = subType || (highlightMode === 'collision' ? 'collision' : 'visual');
+
+            // CRITICAL: Check if the corresponding display option is enabled
+            // In link mode, only highlight if showVisual is true
+            // In collision mode, only highlight if showCollision is true
+            if (!revert) {
+                if (targetSubType === 'visual' && !showVisual) {
+                    // Link mode but visual display is off - don't highlight
+                    return;
+                }
+                if (targetSubType === 'collision' && !showCollision) {
+                    // Collision mode but collision display is off - don't highlight
+                    return;
+                }
+            }
 
             // OPTIMIZED: Use Map-based revert instead of traversing
             if (revert) {
@@ -906,6 +959,13 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
             if (!isStandardSelectionMode) return;
 
+            // CRITICAL: Only allow selection if the corresponding display option is enabled
+            const isCollisionMode = highlightMode === 'collision';
+            if ((isCollisionMode && !showCollision) || (!isCollisionMode && !showVisual)) {
+                // Selection is not allowed because the display option is disabled
+                return;
+            }
+
             const rect = gl.domElement.getBoundingClientRect();
             const mouse = new THREE.Vector2(
                 ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -913,8 +973,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
             );
 
             raycasterRef.current.setFromCamera(mouse, camera);
-
-            const isCollisionMode = highlightMode === 'collision';
 
             const intersections = raycasterRef.current.intersectObject(robot, true);
 
@@ -1125,8 +1183,21 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
             return;
         }
 
-        raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        // CRITICAL: Skip hover detection if the corresponding display option is not enabled
+        // In link mode, only allow hover if showVisual is true
+        // In collision mode, only allow hover if showCollision is true
         const isCollisionMode = highlightMode === 'collision';
+        if ((isCollisionMode && !showCollision) || (!isCollisionMode && !showVisual)) {
+            // Clear any current hover since display is disabled
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
+                hoveredLinkRef.current = null;
+                (hoveredLinkRef as any).currentMesh = null;
+            }
+            return;
+        }
+
+        raycasterRef.current.setFromCamera(mouseRef.current, camera);
 
         // PERFORMANCE: Two-phase detection - check bounding box first
         if (!rayIntersectsBoundingBox(raycasterRef.current)) {
@@ -1321,15 +1392,38 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                 }
             }
 
-            // Apply model opacity to all meshes (except gizmos)
+            // Apply model opacity to all meshes (except gizmos and collision meshes)
             if (child.isMesh && !child.userData?.isGizmo) {
-                if (child.material) {
+                // Check if this is a collision mesh or part of a collision group
+                const isCollision = child.isURDFCollider || 
+                                   child.userData?.isCollisionMesh || 
+                                   child.userData?.isCollision;
+                
+                // Also check parent hierarchy for collision or gizmo flags
+                let isSpecial = isCollision;
+                let parent = child.parent;
+                while (parent && parent !== robot && !isSpecial) {
+                    if (parent.userData?.isGizmo || 
+                        parent.isURDFCollider || 
+                        parent.userData?.isCollisionMesh ||
+                        parent.name === '__inertia_visual__' ||
+                        parent.name === '__com_visual__' ||
+                        parent.name === '__inertia_box__') {
+                        isSpecial = true;
+                    }
+                    parent = parent.parent;
+                }
+
+                if (!isSpecial && child.material) {
                     // Handle both single material and material array
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
                     materials.forEach((mat: any) => {
                         if (mat && !mat.userData?.isSharedMaterial) {
-                            mat.transparent = modelOpacity < 1.0;
+                            const isTransparent = modelOpacity < 1.0;
+                            mat.transparent = isTransparent;
                             mat.opacity = modelOpacity;
+                            // Fix depth write: when fully opaque, enable depth writing to prevent seeing through geometry
+                            mat.depthWrite = !isTransparent;
                             mat.needsUpdate = true;
                         }
                     });
@@ -1345,12 +1439,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         if (!robot) return;
 
         robot.traverse((child: any) => {
-            if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider) {
+            if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider && child.userData?.isGizmo !== true) {
                 const linkName = child.parent.name;
                 const isLinkVisible = robotLinks?.[linkName]?.visible !== false;
                 child.visible = isLinkVisible;
             }
-            if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh) {
+            if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh && child.userData?.isGizmo !== true) {
                 let linkName = '';
                 if (child.parent && child.parent.isURDFLink) linkName = child.parent.name;
                 else if (child.parent && child.parent.parent && child.parent.parent.isURDFLink) linkName = child.parent.parent.name;
@@ -1404,7 +1498,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                     positions.forEach((rot, i) => {
                         const mesh = new THREE.Mesh(geometry, (i % 2 === 0) ? matBlack : matWhite);
                         mesh.rotation.set(rot[0], rot[1], rot[2]);
-                        mesh.renderOrder = 1000;
+                        mesh.renderOrder = 10001;
                         mesh.userData = { isGizmo: true };
                         mesh.raycast = () => { };
                         comVisual.add(mesh);
@@ -1412,7 +1506,22 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
                     vizGroup.add(comVisual);
                 }
+
+                // Apply size scale based on centerOfMassSize
+                const sizeScale = centerOfMassSize / 0.01; // Base size is 0.01
+                comVisual.scale.set(sizeScale, sizeScale, sizeScale);
+
+                // Control visibility based on showCenterOfMass flag only
+                // Opacity is fixed and independent of model opacity
                 comVisual.visible = showCenterOfMass;
+                if (showCenterOfMass) {
+                    comVisual.traverse((child: any) => {
+                        if (child.material) {
+                            child.material.opacity = 0.8;
+                            child.material.transparent = true;
+                        }
+                    });
+                }
 
                 // Inertia Box - clamped to link bounding box size
                 let inertiaBox = vizGroup.children.find((c: any) => c.name === '__inertia_box__');
@@ -1453,7 +1562,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                         mesh.quaternion.copy(rotation);
                         mesh.userData = { isGizmo: true };
                         mesh.raycast = () => { };
-                        mesh.renderOrder = 999;
+                        mesh.renderOrder = 9999;
                         inertiaBox.add(mesh);
 
                         const edges = new THREE.EdgesGeometry(geom);
@@ -1467,15 +1576,29 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                         line.quaternion.copy(rotation);
                         line.userData = { isGizmo: true };
                         line.raycast = () => { };
-                        line.renderOrder = 1000;
+                        line.renderOrder = 10000;
                         inertiaBox.add(line);
 
                         vizGroup.add(inertiaBox);
                     }
                 }
 
+                // Control visibility based on showInertia flag only
+                // Opacity is fixed and independent of model opacity
                 if (inertiaBox) {
                     inertiaBox.visible = showInertia;
+                    if (showInertia) {
+                        inertiaBox.traverse((child: any) => {
+                            if (child.material) {
+                                const baseMat = child.material as THREE.Material & { opacity?: number };
+                                if (child.type === 'Mesh') {
+                                    baseMat.opacity = 0.25;
+                                } else if (child.type === 'LineSegments') {
+                                    baseMat.opacity = 0.6;
+                                }
+                            }
+                        });
+                    }
                 }
 
                 if (inertialData.origin) {
@@ -1492,7 +1615,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
         invalidate();
 
-    }, [robot, showInertia, showCenterOfMass, robotVersion, invalidate, robotLinks]);
+    }, [robot, showInertia, showCenterOfMass, centerOfMassSize, modelOpacity, robotVersion, invalidate, robotLinks]);
 
     // Effect to handle origin axes visualization for each link
     useEffect(() => {
@@ -1906,7 +2029,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         } else {
             currentSelectionRef.current = { id: null, subType: null };
         }
-    }, [robot, selection?.type, selection?.id, selection?.subType, highlightGeometry, robotVersion, highlightMode, showCollision, toolMode]);
+    }, [robot, selection?.type, selection?.id, selection?.subType, highlightGeometry, robotVersion, highlightMode, showCollision, showVisual, toolMode]);
 
     // Effect to handle hover highlighting
     useEffect(() => {
@@ -1932,7 +2055,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         } else {
             currentHoverRef.current = { id: null, subType: null };
         }
-    }, [robot, hoveredSelection?.id, hoveredSelection?.subType, selection?.id, selection?.subType, highlightGeometry, robotVersion, toolMode]);
+    }, [robot, hoveredSelection?.id, hoveredSelection?.subType, selection?.id, selection?.subType, highlightGeometry, robotVersion, toolMode, highlightMode, showVisual, showCollision]);
 
     // Load robot with proper cleanup and abort handling
     useEffect(() => {

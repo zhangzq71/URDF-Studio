@@ -100,6 +100,7 @@ export function URDFViewer({
         localStorage.setItem('urdf_viewer_model_opacity', modelOpacity.toString());
     }, [modelOpacity]);
 
+
     const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
     const [toolMode, setToolMode] = useState<ToolMode>('select');
 
@@ -269,8 +270,16 @@ export function URDFViewer({
     // Handle WebGL context creation and context lost/restored events
     const handleCanvasCreated = useCallback((state: RootState) => {
         const gl = state.gl;
+        const scene = state.scene;
         glRef.current = gl;
         const canvas = gl.domElement;
+
+        // Expose scene to window for debugging
+        if (typeof window !== 'undefined') {
+            (window as any).scene = scene;
+            (window as any).THREE = THREE;
+            console.log('Three.js scene exposed to window.scene');
+        }
 
         const handleContextLost = (event: Event) => {
             event.preventDefault();
@@ -475,7 +484,7 @@ export function URDFViewer({
                                     <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} compact />
                                 </div>
 
-                                {/* Model Opacity - Beautified */}
+                                {/* Model Transparency - Beautified */}
                                 <div className="border-t border-slate-200 dark:border-slate-700 pt-2">
                                     <div className="px-1">
                                         <div className="flex items-center gap-2 mb-1.5">
@@ -485,11 +494,11 @@ export function URDFViewer({
                                                     <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.5" />
                                                 </svg>
                                                 <span className="text-[10px] text-slate-600 dark:text-slate-300">
-                                                    {lang === 'zh' ? '透明度' : 'Opacity'}
+                                                    {lang === 'zh' ? '不透明度' : 'Opacity'}
                                                 </span>
                                             </div>
                                             <span className="text-[10px] font-mono text-google-blue ml-auto">
-                                                {Math.round(modelOpacity * 100)}%
+                                                {Math.round(modelOpacity / 1.0 * 100)}%
                                             </span>
                                         </div>
                                         <div className="relative">
@@ -497,12 +506,12 @@ export function URDFViewer({
                                                 type="range"
                                                 min={0.1}
                                                 max={1.0}
-                                                step={0.05}
+                                                step={0.01}
                                                 value={modelOpacity}
                                                 onChange={(e) => setModelOpacity(parseFloat(e.target.value))}
                                                 className="w-full h-2 rounded-full appearance-none cursor-pointer bg-gradient-to-r from-slate-200 via-slate-300 to-slate-400 dark:from-slate-700 dark:via-slate-600 dark:to-slate-500 shadow-inner"
                                                 style={{
-                                                    background: `linear-gradient(to right, rgb(59, 130, 246) 0%, rgb(59, 130, 246) ${(modelOpacity - 0.1) / 0.9 * 100}%, rgb(203, 213, 225) ${(modelOpacity - 0.1) / 0.9 * 100}%, rgb(203, 213, 225) 100%)`
+                                                    background: `linear-gradient(to right, rgb(59, 130, 246) 0%, rgb(59, 130, 246) ${(modelOpacity) / 1.0 * 100}%, rgb(203, 213, 225) ${(modelOpacity) / 1.0 * 100}%, rgb(203, 213, 225) 100%)`
                                                 }}
                                             />
                                         </div>
@@ -526,13 +535,6 @@ export function URDFViewer({
                                     {showOrigins && (
                                         <SliderOption label={t.size} value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact />
                                     )}
-                                </div>
-
-                                {/* Joint Axes Section - Separated */}
-                                <div className="border-t border-slate-200 dark:border-slate-700 pt-2 space-y-1">
-                                    <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 px-1">
-                                        {lang === 'zh' ? '关节轴显示' : 'Joint Axes'}
-                                    </div>
 
                                     <CheckboxOption
                                         checked={showJointAxes}

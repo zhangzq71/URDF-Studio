@@ -22,7 +22,7 @@ interface UseFileExportReturn {
 }
 
 export function useFileExport(): UseFileExportReturn {
-  const lang = useUIStore((s) => s.language);
+  const lang = useUIStore((s) => s.lang);
   const assets = useAssetsStore((s) => s.assets);
 
   // Get robot state - combine store data with selection

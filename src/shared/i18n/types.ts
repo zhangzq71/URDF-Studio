@@ -5,6 +5,32 @@
 export type Language = 'en' | 'zh';
 
 export interface TranslationKeys {
+  // URDF Square
+  urdfSquare: string;
+  square: string;
+  searchModels: string;
+  featuredModels: string;
+  findNextProject: string;
+  importNow: string;
+  noModelsFound: string;
+  changeSearchKeywords: string;
+  categories: string;
+  allModels: string;
+  quadruped: string;
+  manipulators: string;
+  humanoids: string;
+  mobileBases: string;
+  unitreeTech: string;
+  fetchingResources: string;
+  minimize: string;
+  maximize: string;
+  restore: string;
+  downloadComplete: string;
+  loadFromLocal: string;
+  clickImport: string;
+  loadFailed: string;
+  manifestNotFound: string;
+
   // Header
   appName: string;
   skeleton: string;

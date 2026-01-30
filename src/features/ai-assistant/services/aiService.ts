@@ -761,7 +761,7 @@ ${criteriaDescription}
 
     return {
       summary: parsedResult.summary || 'Inspection completed.',
-      issues: allIssues as InspectionReport['issues'],
+      issues: allIssues as unknown as InspectionReport['issues'],
       overallScore: Math.round(overallScore * 10) / 10,
       categoryScores: categoryScoreMap,
       maxScore: maxScore

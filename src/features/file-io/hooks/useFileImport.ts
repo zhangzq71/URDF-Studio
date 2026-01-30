@@ -38,7 +38,7 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const importFolderInputRef = useRef<HTMLInputElement | null>(null);
 
-  const lang = useUIStore((s) => s.language);
+  const lang = useUIStore((s) => s.lang);
   const assets = useAssetsStore((s) => s.assets);
   const revokeAllAssets = useAssetsStore((s) => s.revokeAllAssets);
   const addAssets = useAssetsStore((s) => s.addAssets);
