@@ -918,7 +918,7 @@ export function AIModal({
   return (
     <>
       {/* Backdrop - No blur, no pointer blocking */}
-      <div className="fixed inset-0 z-[90] pointer-events-none" />
+      <div className="fixed inset-0 z-90 pointer-events-none" />
       
       {/* Floating Window */}
       <div
@@ -929,7 +929,7 @@ export function AIModal({
           transition: 'none',
           transform: isDragging ? 'translateZ(0)' : 'none'
         }}
-        className={`z-[100] bg-white dark:bg-slate-900 flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 ${
+        className={`z-100 bg-white dark:bg-slate-900 flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 ${
           isDragging ? 'select-none' : ''
         } ${isDragging ? 'cursor-grabbing' : ''}`}
       >
@@ -1181,7 +1181,7 @@ export function AIModal({
                         </div>
 
                         <div className="p-5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl shadow-slate-200/50 dark:shadow-none relative overflow-hidden group">
-                          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-indigo-500" />
+                          <div className="absolute top-0 left-0 w-full h-1 bg-linear-to-r from-purple-500 to-indigo-500" />
                           <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
                               <Sparkles className="w-4 h-4 text-indigo-500" />

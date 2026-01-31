@@ -512,7 +512,7 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
     <>
       {/* Backdrop - no blur */}
       <div 
-        className="fixed inset-0 z-[90] bg-black/30"
+        className="fixed inset-0 z-90 bg-black/30"
         onClick={onClose}
       />
       
@@ -520,7 +520,7 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
       <div
         ref={containerRef}
         style={getWindowStyle()}
-        className={`z-[100] bg-white dark:bg-slate-900 flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 ${
+        className={`z-100 bg-white dark:bg-slate-900 flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 ${
           isDragging || isResizing ? 'select-none' : ''
         } ${isDragging ? 'cursor-grabbing' : ''}`}
       >
@@ -666,7 +666,7 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
                         </div>
                         
                         {/* Action Overlay */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3 pointer-events-none">
+                        <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3 pointer-events-none">
                           <button 
                             onClick={() => handleImportModel(model)}
                             className="w-full py-1.5 bg-white text-slate-900 rounded-md text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-indigo-50 transition-colors pointer-events-auto">

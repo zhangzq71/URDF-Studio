@@ -167,7 +167,7 @@ export function Header({
             {activeMenu === 'toolbox' && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-[280px] bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 p-2">
+                <div className="absolute top-full left-0 mt-1 w-70 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 p-2">
                   <div className="space-y-1">
                     <button
                       onClick={() => { setActiveMenu(null); onOpenAI(); }}
@@ -329,7 +329,7 @@ export function Header({
       <div className="flex items-center gap-0.5 shrink-0 ml-auto">
         <button
           onClick={onOpenURDFSquare}
-          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all hidden sm:flex"
+          className="hidden sm:flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all"
           title={t.urdfSquare}
         >
           <LayoutGrid className="w-4 h-4" />
@@ -338,7 +338,7 @@ export function Header({
 
         <button
           onClick={onSnapshot}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="hidden sm:flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
           title={lang === 'zh' ? '快照' : 'Snapshot'}
         >
           <Camera className="w-4 h-4" />
@@ -346,7 +346,7 @@ export function Header({
 
         <button
           onClick={onOpenSettings}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="hidden sm:flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
           title={lang === 'zh' ? '设置' : 'Settings'}
         >
           <Settings className="w-4 h-4" />
@@ -354,7 +354,7 @@ export function Header({
 
         <button
           onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
-          className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="hidden sm:flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
           title={lang === 'zh' ? '切换语言' : 'Switch Language'}
         >
           <Globe className="w-3.5 h-3.5" />
@@ -363,7 +363,7 @@ export function Header({
 
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="hidden sm:flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
           title={lang === 'zh' ? '切换主题' : 'Toggle Theme'}
         >
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -373,7 +373,7 @@ export function Header({
 
         <button
           onClick={onOpenAbout}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="hidden sm:flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-all"
           title={lang === 'zh' ? '关于' : 'About'}
         >
           <Info className="w-4 h-4" />

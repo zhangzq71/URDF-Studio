@@ -44,7 +44,7 @@ export function SettingsModal() {
   return (
     <div
       style={{ left: settingsPos.x, top: settingsPos.y }}
-      className="fixed z-[100] w-[320px] bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden"
+      className="fixed z-100 w-[320px] bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden"
     >
       {/* Header */}
       <div

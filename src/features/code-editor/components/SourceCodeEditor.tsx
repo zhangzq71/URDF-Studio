@@ -513,7 +513,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`fixed z-50 flex flex-col bg-white dark:bg-[#1e1e1e] rounded-lg shadow-2xl border border-slate-300 dark:border-slate-700 overflow-hidden ${isMaximized ? 'inset-0 !transform-none !w-full !h-full rounded-none' : ''}`}
+      className={`fixed z-50 flex flex-col bg-white dark:bg-[#1e1e1e] rounded-lg shadow-2xl border border-slate-300 dark:border-slate-700 overflow-hidden ${isMaximized ? 'inset-0 transform-none! w-full! h-full! rounded-none' : ''}`}
       style={!isMaximized ? {
         width: rect.width,
         height: rect.height,
@@ -524,7 +524,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     >
       {/* Header */}
       <div
-        className={`h-10 bg-slate-100 dark:bg-[#2d2d2d] border-b border-slate-200 dark:border-[#1e1e1e] flex items-center justify-between px-3 select-none ${isMaximized ? '' : 'cursor-move'}`}
+        className={`h-10 bg-slate-100 dark:bg-google-dark-surface border-b border-slate-200 dark:border-[#1e1e1e] flex items-center justify-between px-3 select-none ${isMaximized ? '' : 'cursor-move'}`}
         onMouseDown={handleMouseDown}
         onDoubleClick={toggleMaximize}
       >

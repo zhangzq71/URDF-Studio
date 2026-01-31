@@ -687,7 +687,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       {/* Side Toggle Button (Centered & Protruding Left) */}
       <button
           onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
-          className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-white dark:bg-slate-800 hover:bg-blue-500 dark:hover:bg-blue-600 hover:text-white border border-slate-300 dark:border-slate-600 rounded-l-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-slate-400 hover:text-white transition-all group"
+          className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-white dark:bg-slate-800 hover:bg-blue-500 dark:hover:bg-blue-600 hover:text-white border border-slate-300 dark:border-slate-600 rounded-l-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-slate-400 transition-all group"
           title={collapsed ? t.properties : t.collapseSidebar}
       >
           <div className="flex flex-col gap-0.5 items-center">
