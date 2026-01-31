@@ -68,6 +68,13 @@ export function URDFViewer({
     });
     const [showInertia, setShowInertia] = useState(false);
     const [showOrigins, setShowOrigins] = useState(false);
+    const [showOriginsOverlay, setShowOriginsOverlay] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('urdf_viewer_origin_overlay');
+            return saved !== 'false';
+        }
+        return true;
+    });
     const [originSize, setOriginSize] = useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('urdf_viewer_origin_size');
@@ -76,6 +83,13 @@ export function URDFViewer({
         return 0.1;
     });
     const [showJointAxes, setShowJointAxes] = useState(false);
+    const [showJointAxesOverlay, setShowJointAxesOverlay] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('urdf_viewer_joint_axis_overlay');
+            return saved !== 'false';
+        }
+        return true;
+    });
     const [jointAxisSize, setJointAxisSize] = useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('urdf_viewer_joint_axis_size');
@@ -106,6 +120,14 @@ export function URDFViewer({
     useEffect(() => {
         localStorage.setItem('urdf_viewer_joint_axis_size', jointAxisSize.toString());
     }, [jointAxisSize]);
+
+    useEffect(() => {
+        localStorage.setItem('urdf_viewer_origin_overlay', showOriginsOverlay.toString());
+    }, [showOriginsOverlay]);
+
+    useEffect(() => {
+        localStorage.setItem('urdf_viewer_joint_axis_overlay', showJointAxesOverlay.toString());
+    }, [showJointAxesOverlay]);
 
     useEffect(() => {
         localStorage.setItem('urdf_viewer_model_opacity', modelOpacity.toString());
@@ -535,25 +557,51 @@ export function URDFViewer({
                                         {lang === 'zh' ? '坐标系显示' : 'Coordinate Axes'}
                                     </div>
 
-                                    <CheckboxOption
-                                        checked={showOrigins}
-                                        onChange={setShowOrigins}
-                                        label={t.showOrigin}
-                                        icon={<Move className="w-3 h-3 text-slate-500" />}
-                                        compact
-                                    />
+                                    <div className="flex items-center justify-between pr-1">
+                                        <CheckboxOption
+                                            checked={showOrigins}
+                                            onChange={setShowOrigins}
+                                            label={t.showOrigin}
+                                            icon={<Move className="w-3 h-3 text-slate-500" />}
+                                            compact
+                                        />
+                                        {showOrigins && (
+                                            <button
+                                                className={`p-0.5 rounded transition-colors ${showOriginsOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                                onClick={() => setShowOriginsOverlay(!showOriginsOverlay)}
+                                                title={lang === 'zh' ? "显示在最前" : "Always on top"}
+                                            >
+                                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                                                </svg>
+                                            </button>
+                                        )}
+                                    </div>
 
                                     {showOrigins && (
                                         <SliderOption label={t.size} value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact />
                                     )}
 
-                                    <CheckboxOption
-                                        checked={showJointAxes}
-                                        onChange={setShowJointAxes}
-                                        label={t.showJointAxes}
-                                        icon={<ArrowUpRight className="w-3 h-3 text-red-500" />}
-                                        compact
-                                    />
+                                    <div className="flex items-center justify-between pr-1">
+                                        <CheckboxOption
+                                            checked={showJointAxes}
+                                            onChange={setShowJointAxes}
+                                            label={t.showJointAxes}
+                                            icon={<ArrowUpRight className="w-3 h-3 text-red-500" />}
+                                            compact
+                                        />
+                                        {showJointAxes && (
+                                            <button
+                                                className={`p-0.5 rounded transition-colors ${showJointAxesOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                                onClick={() => setShowJointAxesOverlay(!showJointAxesOverlay)}
+                                                title={lang === 'zh' ? "显示在最前" : "Always on top"}
+                                            >
+                                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                                                </svg>
+                                            </button>
+                                        )}
+                                    </div>
 
                                     {showJointAxes && (
                                         <SliderOption label={t.size} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={2.0} step={0.01} compact />
@@ -835,8 +883,10 @@ export function URDFViewer({
                         showCoMOverlay={showCoMOverlay}
                         centerOfMassSize={centerOfMassSize}
                         showOrigins={showOrigins}
+                        showOriginsOverlay={showOriginsOverlay}
                         originSize={originSize}
                         showJointAxes={showJointAxes}
+                        showJointAxesOverlay={showJointAxesOverlay}
                         jointAxisSize={jointAxisSize}
                         modelOpacity={modelOpacity}
                         robotLinks={robotLinks}

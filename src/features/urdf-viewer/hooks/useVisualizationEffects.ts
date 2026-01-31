@@ -24,8 +24,10 @@ export interface UseVisualizationEffectsOptions {
     showCoMOverlay?: boolean;
     centerOfMassSize: number;
     showOrigins: boolean;
+    showOriginsOverlay?: boolean;
     originSize: number;
     showJointAxes: boolean;
+    showJointAxesOverlay?: boolean;
     jointAxisSize: number;
     modelOpacity: number;
     robotLinks?: Record<string, UrdfLink>;
@@ -52,8 +54,10 @@ export function useVisualizationEffects({
     showCoMOverlay = true,
     centerOfMassSize,
     showOrigins,
+    showOriginsOverlay = true,
     originSize,
     showJointAxes,
+    showJointAxesOverlay = true,
     jointAxisSize,
     modelOpacity,
     robotLinks,
@@ -387,6 +391,8 @@ export function useVisualizationEffects({
                     if (showOrigins) {
                         const currentSize = originSize;
                         originAxes.scale.setScalar(1);
+
+                        // Checks and recreation if size changed
                         const existingAxisMesh = originAxes.children[0];
                         if (existingAxisMesh && existingAxisMesh.geometry) {
                             const params = (existingAxisMesh.geometry as THREE.CylinderGeometry).parameters;
@@ -402,13 +408,30 @@ export function useVisualizationEffects({
                                 newAxes.children.forEach((c: any) => originAxes.add(c.clone()));
                             }
                         }
+
+                        // Update overlay state via traversal (Applied AFTER potential recreation)
+                        originAxes.traverse((c: any) => {
+                            if (c.material) {
+                                // If overlay is true, disable depth test to show on top
+                                c.material.depthTest = !showOriginsOverlay;
+                                c.material.depthWrite = !showOriginsOverlay;
+                                // FORCE transparent = true when overlay is on.
+                                // This ensures these meshes are rendered in the transparent queue (after opaque objects).
+                                // Combined with high renderOrder, this guarantees they appear on top of transparent robot parts.
+                                c.material.transparent = showOriginsOverlay ? true : false;
+                                c.material.needsUpdate = true;
+                            }
+                            if (c.isMesh) {
+                                c.renderOrder = showOriginsOverlay ? 10001 : 0;
+                            }
+                        });
                     }
                 }
             }
         });
 
         invalidate();
-    }, [robot, showOrigins, originSize, robotVersion, invalidate]);
+    }, [robot, showOrigins, showOriginsOverlay, originSize, robotVersion, invalidate]);
 
     // Effect to handle joint axes visualization
     useEffect(() => {
@@ -445,14 +468,36 @@ export function useVisualizationEffects({
                             const axis = child.axis || new THREE.Vector3(0, 0, 1);
                             const newJointAxisViz = createJointAxisViz(child.jointType, axis, currentScale);
                             child.add(newJointAxisViz);
+                            // Important: Update the reference so the traversal below applies to the NEW object
+                            jointAxisViz = newJointAxisViz;
                         }
+
+                        // Update overlay state via traversal (Applied AFTER potential recreation)
+                        jointAxisViz.traverse((c: any) => {
+                            if (c.material) {
+                                // If overlay is true, disable depth test to show on top
+                                c.material.depthTest = !showJointAxesOverlay;
+                                c.material.depthWrite = !showJointAxesOverlay;
+                                // FORCE transparent = true when overlay is on.
+                                // This ensures these meshes are rendered in the transparent queue (after opaque objects).
+                                // Combined with high renderOrder, this guarantees they appear on top of transparent robot parts.
+                                c.material.transparent = showJointAxesOverlay ? true : false;
+                                if (showJointAxesOverlay && c.material.opacity === undefined) {
+                                     c.material.opacity = 1.0;
+                                }
+                                c.material.needsUpdate = true;
+                            }
+                            if (c.isMesh) {
+                                c.renderOrder = showJointAxesOverlay ? 10001 : 0;
+                            }
+                        });
                     }
                 }
             }
         });
 
         invalidate();
-    }, [robot, showJointAxes, jointAxisSize, robotVersion, invalidate]);
+    }, [robot, showJointAxes, showJointAxesOverlay, jointAxisSize, robotVersion, invalidate]);
 
     // Effect to handle selection highlighting
     useEffect(() => {
