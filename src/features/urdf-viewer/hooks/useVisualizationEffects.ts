@@ -21,6 +21,7 @@ export interface UseVisualizationEffectsOptions {
     highlightMode: 'link' | 'collision';
     showInertia: boolean;
     showCenterOfMass: boolean;
+    showCoMOverlay?: boolean;
     centerOfMassSize: number;
     showOrigins: boolean;
     originSize: number;
@@ -48,6 +49,7 @@ export function useVisualizationEffects({
     highlightMode,
     showInertia,
     showCenterOfMass,
+    showCoMOverlay = true,
     centerOfMassSize,
     showOrigins,
     originSize,
@@ -299,8 +301,14 @@ export function useVisualizationEffects({
                 if (showCenterOfMass) {
                     comVisual.traverse((c: any) => {
                         if (c.material) {
-                            c.material.opacity = 0.8;
+                            c.material.opacity = 0.95;
                             c.material.transparent = true;
+                            // When showCoMOverlay is true, disable depth test to show on top
+                            c.material.depthTest = !showCoMOverlay;
+                            c.material.depthWrite = !showCoMOverlay;
+                        }
+                        if (c.isMesh) {
+                            c.renderOrder = showCoMOverlay ? 10001 : 0;
                         }
                     });
                 }
@@ -359,7 +367,7 @@ export function useVisualizationEffects({
         });
 
         invalidate();
-    }, [robot, showInertia, showCenterOfMass, centerOfMassSize, robotVersion, invalidate, robotLinks]);
+    }, [robot, showInertia, showCenterOfMass, showCoMOverlay, centerOfMassSize, robotVersion, invalidate, robotLinks]);
 
     // Effect to handle origin axes visualization for each link
     useEffect(() => {
