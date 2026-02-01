@@ -220,4 +220,13 @@ export const zh: TranslationKeys = {
   copied: "已复制!",
   fileBrowser: "文件浏览",
   dropOrImport: "拖放或导入文件夹/ZIP",
+
+  // Measure Tool
+  measureTool: "测量工具",
+  measureInstruction1: "点击模型选择测量点",
+  measureInstruction2: "Esc 取消当前测量",
+  measureInstruction3: "Delete 删除上一个",
+  measuredCount: "已测量: {count} 个",
+  undo: "撤销",
+  clearAll: "全部清除",
 };

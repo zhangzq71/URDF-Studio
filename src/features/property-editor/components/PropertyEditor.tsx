@@ -739,7 +739,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 {mode === 'detail' && (
                   <>
                       {/* Tab Navigation - Folder Style */}
-                      <div className="flex items-end gap-1 border-t border-x border-b border-slate-200 dark:border-[#000000] mb-0 bg-slate-100/50 dark:bg-[#000000] pt-1 px-1 rounded-t-lg">
+                      <div className="flex items-stretch gap-1 border-t border-x border-b border-slate-200 dark:border-[#000000] mb-0 bg-slate-100/50 dark:bg-[#000000] pt-1 px-1 rounded-t-lg">
                         <div className="w-px"></div>
                         <button
                           onClick={() => handleTabChange('visual')}
