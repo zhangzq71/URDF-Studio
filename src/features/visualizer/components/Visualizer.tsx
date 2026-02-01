@@ -75,11 +75,16 @@ export const Visualizer = ({
   // Transform controls state for joint editing
   const transformControlsState = useTransformControls(
     selectedJointPivot,
-    state.transformMode,
+    state.transformMode === 'select' ? 'translate' : state.transformMode, // Pass valid mode to hook, but control visibility via JointTransformControls
     robot,
     onUpdate,
     mode
   );
+
+  // Reset transform mode when switching visualization modes to prevent ghost controls
+  React.useEffect(() => {
+    state.setTransformMode('translate');
+  }, [mode]);
 
   // Collision transform handler for detail mode
   const handleCollisionTransformEnd = useCallback(() => {
@@ -116,6 +121,7 @@ export const Visualizer = ({
         <div className="absolute inset-0 z-10 pointer-events-none">
           {mode === 'skeleton' && (
             <SkeletonOptionsPanel
+              key="skeleton"
               ref={panel.optionsPanelRef}
               lang={lang}
               showGeometry={state.showGeometry}
@@ -144,6 +150,7 @@ export const Visualizer = ({
           )}
           {mode === 'detail' && (
             <DetailOptionsPanel
+              key="detail"
               ref={panel.optionsPanelRef}
               lang={lang}
               showDetailOrigin={state.showDetailOrigin}
@@ -169,12 +176,15 @@ export const Visualizer = ({
           )}
           {mode === 'hardware' && (
             <HardwareOptionsPanel
+              key="hardware"
               ref={panel.optionsPanelRef}
               lang={lang}
               showHardwareOrigin={state.showHardwareOrigin}
               setShowHardwareOrigin={state.setShowHardwareOrigin}
               showHardwareLabels={state.showHardwareLabels}
               setShowHardwareLabels={state.setShowHardwareLabels}
+              transformMode={state.transformMode}
+              setTransformMode={state.setTransformMode}
               isCollapsed={panel.isOptionsCollapsed}
               toggleCollapsed={panel.toggleOptionsCollapsed}
               onMouseDown={panel.handleMouseDown}

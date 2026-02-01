@@ -124,9 +124,10 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
         {/* Footer */}
         <div className="px-6 py-4 bg-slate-50 dark:bg-app-bg border-t border-slate-200 dark:border-border-black">
           <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-            {lang === 'zh'
-              ? '© 2025 OpenLegged. 基于 Apache License 2.0 协议开源。'
-              : '© 2025 OpenLegged. Open sourced under Apache License 2.0.'}
+            {lang === 'zh' ? '© 2025-2026 OpenLegged.' : '© 2025-2026 OpenLegged.'}
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 text-center mt-1">
+            {lang === 'zh' ? '基于 Apache License 2.0 协议开源。' : 'Open sourced under Apache License 2.0.'}
           </p>
         </div>
       </div>

@@ -16,8 +16,8 @@ export interface VisualizerState {
   setFrameSize: (size: number) => void;
   labelScale: number;
   setLabelScale: (scale: number) => void;
-  transformMode: 'translate' | 'rotate';
-  setTransformMode: (mode: 'translate' | 'rotate') => void;
+  transformMode: 'translate' | 'rotate' | 'select';
+  setTransformMode: (mode: 'translate' | 'rotate' | 'select') => void;
 
   // Detail mode settings
   showDetailOrigin: boolean;
@@ -77,7 +77,7 @@ export function useVisualizerState({
   }, [frameSize]);
 
   const [labelScale, setLabelScale] = useState(1.0);
-  const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('translate');
+  const [transformMode, setTransformMode] = useState<'translate' | 'rotate' | 'select'>('translate');
 
   // Detail Settings
   const [showDetailOrigin, setShowDetailOrigin] = useState(false);

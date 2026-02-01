@@ -296,8 +296,7 @@ export function AppLayout({
             left: 0,
             right: 0,
             bottom: 0,
-            visibility: (appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? 'visible' : 'hidden',
-            pointerEvents: (appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? 'auto' : 'none'
+            display: (appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? 'block' : 'none'
           }}>
             <URDFViewer
               key="urdf-viewer"
@@ -348,8 +347,7 @@ export function AppLayout({
             left: 0,
             right: 0,
             bottom: 0,
-            visibility: appMode === 'skeleton' ? 'visible' : 'hidden',
-            pointerEvents: appMode === 'skeleton' ? 'auto' : 'none'
+            display: appMode === 'skeleton' ? 'block' : 'none'
           }}>
             <Visualizer
               key="visualizer"
