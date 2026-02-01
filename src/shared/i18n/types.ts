@@ -218,6 +218,15 @@ export interface TranslationKeys {
   copied: string;
   fileBrowser: string;
   dropOrImport: string;
+
+  // Measure Tool
+  measureTool: string;
+  measureInstruction1: string;
+  measureInstruction2: string;
+  measureInstruction3: string;
+  measuredCount: string;
+  undo: string;
+  clearAll: string;
 }
 
 export type Translations = Record<Language, TranslationKeys>;

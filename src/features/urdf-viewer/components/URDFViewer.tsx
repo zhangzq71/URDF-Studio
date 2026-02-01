@@ -380,6 +380,7 @@ export function URDFViewer({
                 onMouseDown={(e) => handleMouseDown('measure', e)}
                 measureState={measureState}
                 setMeasureState={setMeasureState}
+                lang={lang}
             />
 
             {/* Show overlay when WebGL context is lost */}

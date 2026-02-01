@@ -9,7 +9,7 @@ interface JointTransformControlsProps {
   mode: 'skeleton' | 'detail' | 'hardware';
   selectedJointPivot: THREE.Group | null;
   robot: RobotState;
-  transformMode: 'translate' | 'rotate';
+  transformMode: 'translate' | 'rotate' | 'select';
   transformControlsState: TransformControlsState;
   confirmTitle?: string;
 }
@@ -43,8 +43,8 @@ export const JointTransformControls = memo(function JointTransformControls({
     handleObjectChange,
   } = transformControlsState;
 
-  // Only show in skeleton mode
-  if (mode !== 'skeleton') return null;
+  // Only show in skeleton mode, and hide if in 'select' mode
+  if (mode !== 'skeleton' || transformMode === 'select') return null;
 
   // No joint selected
   if (!selectedJointPivot || robot.selection.type !== 'joint' || !robot.selection.id) return null;

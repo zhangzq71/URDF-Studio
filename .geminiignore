@@ -1,0 +1,40 @@
+# 依赖包
+node_modules/
+bower_components/
+venv/
+.venv/
+env/
+
+# 构建产物
+dist/
+build/
+out/
+*.egg-info/
+__pycache__/
+*.pyc
+
+# 数据库与日志
+*.log
+*.sqlite
+*.db
+
+# 敏感文件
+.env
+.env.*
+*.pem
+*.key
+
+# 静态资源 (除非你需要 AI 帮你处理图片，否则建议忽略)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.pdf
+
+# 编辑器配置
+.vscode/
+.idea/
+.DS_Store
+.claude/

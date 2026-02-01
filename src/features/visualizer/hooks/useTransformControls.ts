@@ -30,7 +30,7 @@ export interface TransformControlsState {
  */
 export function useTransformControls(
   selectedObject: THREE.Group | null,
-  transformMode: 'translate' | 'rotate',
+  transformMode: 'translate' | 'rotate' | 'select',
   robot: RobotState,
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void,
   mode: 'skeleton' | 'detail' | 'hardware'

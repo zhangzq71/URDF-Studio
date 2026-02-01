@@ -218,4 +218,13 @@ export const en: TranslationKeys = {
   copied: "Copied!",
   fileBrowser: "File Browser",
   dropOrImport: "Drop or import folder/ZIP",
+
+  // Measure Tool
+  measureTool: "Measure Tool",
+  measureInstruction1: "Click on model to select measurement points",
+  measureInstruction2: "Esc to cancel current measurement",
+  measureInstruction3: "Delete to remove last point",
+  measuredCount: "Measured: {count}",
+  undo: "Undo",
+  clearAll: "Clear All",
 };

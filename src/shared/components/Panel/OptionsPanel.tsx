@@ -51,10 +51,10 @@ export const ModelHeaderBadge: React.FC<ModelHeaderBadgeProps> = ({ fileName }) 
       <div className="flex items-center gap-2">
         <FileIcon />
         <div className="flex-1 min-w-0">
-          <div className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-0.5">
+          <div className="text-xs text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-0.5 whitespace-nowrap">
             Loaded Model
           </div>
-          <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium truncate" title={fileName}>
+          <div className="text-xs text-slate-700 dark:text-slate-300 font-medium truncate" title={fileName}>
             {fileName}
           </div>
         </div>
@@ -80,8 +80,8 @@ export const CheckboxOption: React.FC<CheckboxOptionProps> = ({
   compact = false,
 }) => {
   const baseClass = compact
-    ? "flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg select-none"
-    : "flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white select-none";
+    ? "flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white px-1 py-0.5 rounded hover:bg-slate-50 dark:hover:bg-google-dark-bg select-none whitespace-nowrap"
+    : "flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white select-none whitespace-nowrap";
 
   return (
     <label className={baseClass}>
@@ -130,9 +130,9 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   if (compact) {
     return (
       <div className={`${indent ? 'pl-4' : ''} pr-2 pb-1`}>
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="text-[10px] text-slate-400 mb-1 leading-tight">{label}</div>
+        <div className="flex items-center gap-1.5">
           {icon && <span className="text-slate-400 dark:text-slate-500 shrink-0">{icon}</span>}
-          <span className="text-[9px] text-slate-400 shrink-0">{label}</span>
           <input
             type="range"
             min={min}
@@ -145,7 +145,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
               background: `linear-gradient(to right, rgb(59, 130, 246) 0%, rgb(59, 130, 246) ${((value - min) / (max - min)) * 100}%, rgb(226, 232, 240) ${((value - min) / (max - min)) * 100}%, rgb(226, 232, 240) 100%)`
             }}
           />
-          <span className="text-[10px] font-medium text-slate-600 dark:text-slate-300 w-10 text-right shrink-0 whitespace-nowrap">{displayValue}</span>
+          <span className="text-[10px] font-medium text-slate-600 dark:text-slate-300 w-8 text-right shrink-0 whitespace-nowrap">{displayValue}</span>
         </div>
       </div>
     );
@@ -156,9 +156,9 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-1.5">
           {icon && <span className="text-slate-400 dark:text-slate-500">{icon}</span>}
-          <span className="text-[10px] text-slate-600 dark:text-slate-400">{label}</span>
+          <span className="text-xs text-slate-700 dark:text-slate-200 whitespace-nowrap">{label}</span>
         </div>
-        <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-google-dark-bg px-2 py-0.5 rounded">{displayValue}</span>
+        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-google-dark-bg px-2 py-0.5 rounded">{displayValue}</span>
       </div>
       <input
         type="range"
@@ -176,47 +176,51 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   );
 };
 
-// ============== Toggle Button Group ==============
-interface ToggleOption<T> {
+// ============== Segmented Control (Apple Style with Blue Selection) ==============
+interface SegmentedControlOption<T> {
   value: T;
   label: string;
+  icon?: ReactNode;
 }
 
-interface ToggleButtonGroupProps<T> {
-  options: ToggleOption<T>[];
+interface SegmentedControlProps<T> {
+  options: SegmentedControlOption<T>[];
   value: T;
   onChange: (value: T) => void;
   size?: 'sm' | 'md';
 }
 
-export function ToggleButtonGroup<T extends string>({
+export function SegmentedControl<T extends string>({
   options,
   value,
   onChange,
-  size = 'md',
-}: ToggleButtonGroupProps<T>) {
+  size = 'sm', // Default to small as requested
+}: SegmentedControlProps<T>) {
   const textSize = size === 'sm' ? 'text-[10px]' : 'text-xs';
-  const activeClass = size === 'sm'
-    ? 'bg-slate-100 dark:bg-google-dark-bg text-google-blue shadow-sm'
-    : 'bg-google-blue text-white shadow-sm';
-  const inactiveClass = 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white';
-
+  const padding = size === 'sm' ? 'py-1' : 'py-1.5';
+  
   return (
-    <div className="flex gap-1">
+    <div className="flex bg-slate-100 dark:bg-google-dark-bg rounded-lg p-0.5 mb-1">
       {options.map((option) => (
         <button
           key={option.value}
           onClick={() => onChange(option.value)}
-          className={`flex-1 py-1 ${textSize} font-medium rounded-md transition-all ${
-            value === option.value ? activeClass : inactiveClass
+          className={`flex-1 ${padding} ${textSize} font-medium rounded-md transition-all flex items-center justify-center gap-1.5 ${
+            value === option.value
+              ? 'bg-google-blue text-white shadow-sm'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
           }`}
         >
+          {option.icon}
           {option.label}
         </button>
       ))}
     </div>
   );
 }
+
+// Deprecated: Use SegmentedControl instead
+export const ToggleButtonGroup = SegmentedControl;
 
 // ============== Section Divider ==============
 interface SectionDividerProps {
@@ -232,7 +236,7 @@ export const SectionDivider: React.FC<SectionDividerProps> = ({ title, position 
   return (
     <div className={borderClass}>
       {title && (
-        <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1.5 px-1">
+        <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1.5 px-1 whitespace-nowrap">
           {title}
         </div>
       )}
@@ -264,12 +268,12 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
 }) => {
   return (
     <div
-      className="text-[10px] text-slate-500 uppercase font-bold tracking-wider px-3 py-2 cursor-move bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-100 dark:hover:bg-google-dark-bg select-none flex items-center justify-between"
+      className="text-[9px] text-slate-500 uppercase font-bold tracking-wider px-3 py-2 cursor-move bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-100 dark:hover:bg-google-dark-bg select-none flex items-center justify-between"
       onMouseDown={onMouseDown}
     >
       <div className="flex items-center gap-2">
         <DragGripIcon />
-        {title}
+        <span className="leading-tight">{title}</span>
       </div>
       <div className="flex items-center gap-1">
         <button
@@ -336,12 +340,12 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
 }) => {
   return (
     <div
-      className={`bg-white dark:bg-google-dark-surface rounded-lg border border-slate-200 dark:border-google-dark-border flex flex-col w-48 shadow-md dark:shadow-xl overflow-hidden ${className}`}
+      className={`bg-white dark:bg-[#1E1E1E] rounded-xl border border-black/5 dark:border-white/10 flex flex-col w-48 shadow-xl overflow-hidden ${className}`}
     >
       {children}
     </div>
   );
-};
+};;
 
 // ============== Draggable Options Panel Hook ==============
 interface DraggablePanelState {
