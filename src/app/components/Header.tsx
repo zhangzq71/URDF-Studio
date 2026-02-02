@@ -108,7 +108,7 @@ export function Header({
           <div className="relative">
             <button
               onClick={() => setActiveMenu(activeMenu === 'file' ? null : 'file')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
                 activeMenu === 'file'
                   ? 'bg-slate-100 dark:bg-element-active text-slate-900 dark:text-white'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
@@ -154,7 +154,7 @@ export function Header({
           <div className="relative">
             <button
               onClick={() => setActiveMenu(activeMenu === 'toolbox' ? null : 'toolbox')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
                 activeMenu === 'toolbox'
                   ? 'bg-system-blue text-white'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
@@ -231,7 +231,7 @@ export function Header({
           <div className="relative">
             <button
               onClick={() => setActiveMenu(activeMenu === 'view' ? null : 'view')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
                 activeMenu === 'view'
                   ? 'bg-system-blue text-white'
                   : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
@@ -538,7 +538,7 @@ function MobileMoreMenu({
     <div className="relative sm:hidden">
       <button
         onClick={() => setActiveMenu(activeMenu === 'more' ? null : 'more')}
-        className={`flex items-center justify-center w-8 h-8 rounded-md transition-all ${
+        className={`relative z-50 flex items-center justify-center w-8 h-8 rounded-md transition-all ${
           activeMenu === 'more'
             ? 'bg-slate-100 dark:bg-element-active text-slate-900 dark:text-white'
             : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg'
