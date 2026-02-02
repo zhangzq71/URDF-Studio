@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { GeometryType, UrdfLink } from '@/types';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
 import { getCachedMaterial } from '../../utils/materialCache';
+import { findAssetByPath } from '@/core/loaders/meshLoader';
 
 interface GeometryRendererProps {
   isCollision: boolean;
@@ -180,14 +181,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       </mesh>
     );
   } else if (type === GeometryType.MESH) {
-    let assetUrl = meshPath ? assets[meshPath] : undefined;
-
-    // Case insensitive fallback lookup
-    if (!assetUrl && meshPath) {
-      const lowerPath = meshPath.toLowerCase();
-      const foundKey = Object.keys(assets).find((k) => k.toLowerCase() === lowerPath);
-      if (foundKey) assetUrl = assets[foundKey];
-    }
+    let assetUrl = meshPath ? findAssetByPath(meshPath, assets) : undefined;
 
     if (meshPath && assetUrl) {
       const url = assetUrl;

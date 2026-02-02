@@ -389,9 +389,21 @@ export const createMeshLoader = (assets: Record<string, string>, manager: THREE.
             } else if (ext === 'dae') {
                 const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js');
                 const loader = new ColladaLoader(manager);
-                const result = await new Promise<any>((resolve, reject) => {
-                    loader.load(assetUrl, resolve, undefined, reject);
+
+                // Fix for Three.js warning about Z-UP coordinate system (#24289)
+                // We load the file as text, patch the up_axis to Y_UP to prevent the loader from rotating it,
+                // effectively silencing the warning while preserving the raw geometry orientation.
+                const fileLoader = new THREE.FileLoader(manager);
+                const text = await new Promise<string>((resolve, reject) => {
+                    fileLoader.load(assetUrl, (data) => resolve(data as string), undefined, reject);
                 });
+
+                // Patch Z_UP to Y_UP so loader doesn't rotate the scene
+                const patchedText = text.replace(/<up_axis>\s*Z_UP\s*<\/up_axis>/g, '<up_axis>Y_UP</up_axis>');
+                
+                const baseUrl = THREE.LoaderUtils.extractUrlBase(assetUrl);
+                const result = loader.parse(patchedText, baseUrl);
+                
                 meshObject = result.scene;
 
                 if (meshObject) {

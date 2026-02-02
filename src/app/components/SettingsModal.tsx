@@ -69,7 +69,7 @@ export function SettingsModal() {
         </div>
         <button
           onClick={closeSettings}
-          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
         >
           <X className="w-4 h-4" />
         </button>

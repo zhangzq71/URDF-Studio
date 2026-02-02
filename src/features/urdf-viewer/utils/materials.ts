@@ -147,6 +147,9 @@ export const collisionHighlightMaterial = new THREE.MeshStandardMaterial({
     emissive: 0xfacc15,
     emissiveIntensity: 0.4,
     side: THREE.DoubleSide,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
 });
 
 export const collisionBaseMaterial = new THREE.MeshStandardMaterial({

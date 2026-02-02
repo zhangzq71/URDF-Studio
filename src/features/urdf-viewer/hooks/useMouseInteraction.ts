@@ -324,6 +324,8 @@ export function useMouseInteraction({
             });
 
             if (validHits.length > 0) {
+                // Ensure strictly sorted by distance (closest first)
+                validHits.sort((a, b) => a.distance - b.distance);
                 const hit = validHits[0];
 
                 if (justSelectedRef) {

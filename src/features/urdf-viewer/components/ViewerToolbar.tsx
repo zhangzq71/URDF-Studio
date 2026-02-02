@@ -61,7 +61,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({ activeMode, setMod
                         <div className="w-px h-4 bg-slate-200 dark:bg-border-black mx-1"></div>
                         <button
                             onClick={onClose}
-                            className="group relative p-1.5 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 transition-all"
+                            className="group relative p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
                         >
                             <X className="w-4 h-4" />
                             <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-75 pointer-events-none whitespace-nowrap z-50 shadow-md dark:shadow-lg border border-slate-200 dark:border-slate-700">
@@ -105,7 +105,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({ activeMode, setMod
                         <div className="w-px h-4 bg-slate-200 dark:bg-border-black mx-1"></div>
                         <button
                             onClick={onClose}
-                            className="group relative p-1.5 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 transition-all"
+                            className="group relative p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
                         >
                             <X className="w-4 h-4" />
                             <span className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-slate-800 dark:bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-75 pointer-events-none whitespace-nowrap z-50 shadow-md dark:shadow-lg border border-slate-200 dark:border-slate-700">

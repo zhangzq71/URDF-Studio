@@ -132,8 +132,15 @@ export function useHighlightManager({
                 mesh.visible = showCollisionRef.current;
                 if (mesh.parent && (mesh.parent as any).isURDFCollider) mesh.parent.visible = showCollisionRef.current;
                 const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                materials.forEach((m: any) => { if (m) { m.transparent = true; m.opacity = 0.4; } });
-                mesh.renderOrder = 999;
+                materials.forEach((m: any) => { 
+                    if (m) { 
+                        m.transparent = true; 
+                        m.opacity = 0.35; 
+                        m.depthTest = false;
+                        m.depthWrite = false;
+                    } 
+                });
+                mesh.renderOrder = 0;
             } else {
                 mesh.visible = showVisualRef.current;
             }
@@ -185,8 +192,10 @@ export function useHighlightManager({
                 if (mesh.parent) mesh.parent.visible = true;
 
                 if (mesh.userData.isCollisionMesh && mesh.material) {
-                    (mesh.material as any).transparent = false;
+                    (mesh.material as any).transparent = true;
                     (mesh.material as any).opacity = 1.0;
+                    (mesh.material as any).depthTest = false;
+                    (mesh.material as any).depthWrite = false;
                     mesh.renderOrder = 1000;
                 }
                 return;
@@ -210,8 +219,10 @@ export function useHighlightManager({
                         if (mesh.parent) mesh.parent.visible = true;
 
                         if (targetSubType === 'collision' && mesh.material) {
-                            (mesh.material as any).transparent = false;
+                            (mesh.material as any).transparent = true;
                             (mesh.material as any).opacity = 1.0;
+                            (mesh.material as any).depthTest = false;
+                            (mesh.material as any).depthWrite = false;
                             mesh.renderOrder = 1000;
                         }
                     }
@@ -233,6 +244,14 @@ export function useHighlightManager({
                                 c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
                                 c.visible = true;
                                 if (c.parent) c.parent.visible = true;
+
+                                if (targetSubType === 'collision' && c.material) {
+                                    (c.material as any).transparent = true;
+                                    (c.material as any).opacity = 1.0;
+                                    (c.material as any).depthTest = false;
+                                    (c.material as any).depthWrite = false;
+                                    c.renderOrder = 1000;
+                                }
                             }
                         }
                         c.children?.forEach(fallbackTraverse);

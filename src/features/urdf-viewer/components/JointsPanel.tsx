@@ -85,18 +85,18 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                     </button>
                     <button
                         onClick={(e) => { e.stopPropagation(); toggleJointsCollapsed(); }}
-                        className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+                        className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
                     >
                         {isJointsCollapsed ? (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                         ) : (
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                            <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                         )}
                     </button>
                     {setShowJointPanel && (
                         <button
                             onClick={(e) => { e.stopPropagation(); setShowJointPanel(false); }}
-                            className="text-slate-400 dark:hover:text-white p-1 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 rounded"
+                            className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
                         >
                             <X className="w-3 h-3" />
                         </button>

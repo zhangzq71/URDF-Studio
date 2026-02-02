@@ -282,7 +282,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
             e.stopPropagation();
             onToggleCollapse();
           }}
-          className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+          className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
           title={isCollapsed ? expandText : collapseText}
         >
           {isCollapsed ? <ChevronDown /> : <ChevronUp />}
@@ -294,7 +294,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               e.stopPropagation();
               onClose();
             }}
-            className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 p-1 hover:bg-slate-200 dark:hover:bg-google-dark-border rounded"
+            className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
             title={closeText}
           >
             <CloseIcon />

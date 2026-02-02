@@ -599,10 +599,10 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
             </button>
             <button 
               onClick={onClose}
-              className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-md transition-colors"
+              className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
               title={t.close}
             >
-              <X className="w-4 h-4 text-slate-500 hover:text-red-500" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>

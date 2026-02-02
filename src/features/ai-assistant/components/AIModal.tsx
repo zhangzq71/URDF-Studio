@@ -964,8 +964,8 @@ export function AIModal({
             <button onClick={toggleMaximize} className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors" title={isMaximized ? t.restore : t.maximize}>
               {isMaximized ? <Minimize2 className="w-4 h-4 text-slate-500" /> : <Maximize2 className="w-4 h-4 text-slate-500" />}
             </button>
-            <button onClick={handleClose} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-md transition-colors group" title={t.close}>
-              <X className="w-4 h-4 text-slate-500 group-hover:text-red-500" />
+            <button onClick={handleClose} className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors" title={t.close}>
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>

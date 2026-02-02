@@ -98,7 +98,7 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
 
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-500 hover:text-red-500 dark:text-slate-400 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+              className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
             >
               <X className="w-5 h-5" />
             </button>

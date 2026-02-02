@@ -555,10 +555,10 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
           <button
             onClick={toggleMaximize}
-            className="p-1.5 text-slate-500 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-element-hover rounded transition-colors"
+            className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
             title={isMaximized ? t.restore : t.maximize}
           >
-            {isMaximized ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+            {isMaximized ? <Minimize className="w-3.5 h-3.5 text-slate-500" /> : <Maximize className="w-3.5 h-3.5 text-slate-500" />}
           </button>
 
           <button
