@@ -69,7 +69,16 @@ export const SnapshotManager = ({
     if (!actionRef) return;
 
     actionRef.current = () => {
-      // 1. Hide Gizmos, Grid and Helpers
+      // 1. Capture current state
+      const width = gl.domElement.clientWidth;
+      const height = gl.domElement.clientHeight;
+      const originalPixelRatio = gl.getPixelRatio();
+      const originalSize = new THREE.Vector2();
+      gl.getSize(originalSize);
+      const originalBackground = scene.background;
+      const originalFog = scene.fog;
+
+      // 2. Hide Gizmos, Grid and Helpers
       const hiddenObjects: THREE.Object3D[] = [];
       scene.traverse((obj) => {
         if (obj.userData.isGizmo ||
@@ -85,28 +94,90 @@ export const SnapshotManager = ({
         }
       });
 
-      // 2. Clear background for transparency
-      const originalBackground = scene.background;
-      scene.background = null;
+      // 3. Setup Studio Environment (Horizon & Ground)
+      // Studio Color: Neutral soft grey for professional look
+      const studioColor = new THREE.Color('#f5f5f7');
+      
+      scene.background = studioColor;
+      scene.fog = new THREE.Fog(studioColor, 20, 100);
 
-      // 3. High Res Render
-      const originalPixelRatio = gl.getPixelRatio();
-      gl.setPixelRatio(4); // 4x Super Sampling
+      // Create Infinite-looking Floor
+      const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+      const groundMat = new THREE.MeshStandardMaterial({
+        color: studioColor,
+        roughness: 0.8,
+        metalness: 0.1,
+      });
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      // Align with Z-up system (XY plane is floor)
+      ground.position.set(0, 0, -0.02);
+      ground.receiveShadow = true;
+      scene.add(ground);
 
-      gl.render(scene, camera);
-      const dataUrl = gl.domElement.toDataURL('image/png', 1.0);
+      // 4. Enhance Lighting for Snapshot (Enable Shadows)
+      const modifiedLights: { light: THREE.Light, originalCastShadow: boolean, originalBias: number, originalMapSize: THREE.Vector2 }[] = [];
+      scene.traverse((obj) => {
+        if (obj instanceof THREE.DirectionalLight && obj.intensity > 0) {
+          modifiedLights.push({
+            light: obj,
+            originalCastShadow: obj.castShadow,
+            originalBias: obj.shadow.bias,
+            originalMapSize: obj.shadow.mapSize.clone()
+          });
+          
+          obj.castShadow = true;
+          obj.shadow.mapSize.width = 4096; // High quality shadows
+          obj.shadow.mapSize.height = 4096;
+          obj.shadow.bias = -0.00005;
+          // Update shadow map
+          if (obj.shadow.map) obj.shadow.map.dispose();
+          obj.shadow.map = null;
+        }
+      });
 
-      // 4. Restore
-      gl.setPixelRatio(originalPixelRatio);
+      // 5. High Res Render Configuration
+      const scale = 3; // 3x resolution for high quality
+      gl.setPixelRatio(1); // Reset pixel ratio to 1 for explicit sizing
+      gl.setSize(width * scale, height * scale, false); // false = don't update style
+
+      // 6. Render
+      try {
+        gl.render(scene, camera);
+        const dataUrl = gl.domElement.toDataURL('image/png', 1.0);
+
+        // 7. Download
+        const link = document.createElement('a');
+        link.download = `${robotName}_snapshot.png`;
+        link.href = dataUrl;
+        link.click();
+      } catch (e) {
+        console.error('Snapshot render failed:', e);
+      }
+
+      // 8. Restore State
+      // Restore Scene
+      scene.remove(ground);
+      groundGeo.dispose();
+      groundMat.dispose();
       scene.background = originalBackground;
+      scene.fog = originalFog;
       hiddenObjects.forEach(obj => obj.visible = true);
-      gl.render(scene, camera);
 
-      // 5. Download
-      const link = document.createElement('a');
-      link.download = `${robotName}_snapshot.png`;
-      link.href = dataUrl;
-      link.click();
+      // Restore Lights
+      modifiedLights.forEach(({ light, originalCastShadow, originalBias, originalMapSize }) => {
+        light.castShadow = originalCastShadow;
+        light.shadow.bias = originalBias;
+        light.shadow.mapSize.copy(originalMapSize);
+        if (light.shadow.map) light.shadow.map.dispose();
+        light.shadow.map = null;
+      });
+
+      // Restore Renderer
+      gl.setPixelRatio(originalPixelRatio);
+      gl.setSize(originalSize.x, originalSize.y, false);
+      
+      // Trigger a re-render to ensure UI is back to normal
+      gl.render(scene, camera);
     };
 
     return () => {
