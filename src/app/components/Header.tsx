@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Sun,
   Moon,
+  Monitor,
   Briefcase,
   Undo,
   Redo,
@@ -31,7 +32,7 @@ import {
 } from 'lucide-react';
 import { useUIStore, useCanUndo, useCanRedo, useRobotStore } from '@/store';
 import { translations } from '@/shared/i18n';
-import type { AppMode } from '@/types';
+import type { AppMode, Theme } from '@/types';
 
 interface HeaderProps {
   // Import actions
@@ -362,11 +363,18 @@ export function Header({
         </button>
 
         <button
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onClick={() => {
+            if (theme === 'system') {
+              const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+              setTheme(isSystemDark ? 'light' : 'dark');
+            } else {
+              setTheme(theme === 'dark' ? 'light' : 'dark');
+            }
+          }}
           className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
           title={lang === 'zh' ? '切换主题' : 'Toggle Theme'}
         >
-          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
         <div className="w-px h-5 bg-slate-200 dark:bg-border-black mx-1 hidden sm:block" />
@@ -509,7 +517,7 @@ function MobileMoreMenu({
   t,
 }: {
   lang: 'en' | 'zh';
-  theme: 'light' | 'dark';
+  theme: Theme;
   appMode: AppMode;
   canUndo: boolean;
   canRedo: boolean;
@@ -517,7 +525,7 @@ function MobileMoreMenu({
   setActiveMenu: (menu: 'file' | 'toolbox' | 'view' | 'more' | null) => void;
   setAppMode: (mode: AppMode) => void;
   setLang: (lang: 'en' | 'zh') => void;
-  setTheme: (theme: 'light' | 'dark') => void;
+  setTheme: (theme: Theme) => void;
   undo: () => void;
   redo: () => void;
   onOpenCodeViewer: () => void;
@@ -609,10 +617,18 @@ function MobileMoreMenu({
               <Globe className="w-4 h-4" /> {lang === 'zh' ? '切换语言' : 'Switch Language'}
             </button>
             <button
-              onClick={() => { setTheme(theme === 'dark' ? 'light' : 'dark'); setActiveMenu(null); }}
+              onClick={() => { 
+                if (theme === 'system') {
+                  const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  setTheme(isSystemDark ? 'light' : 'dark');
+                } else {
+                  setTheme(theme === 'dark' ? 'light' : 'dark'); 
+                }
+                setActiveMenu(null); 
+              }}
               className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-3"
             >
-              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {lang === 'zh' ? '切换主题' : 'Toggle Theme'}
+              {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {lang === 'zh' ? '切换主题' : 'Toggle Theme'}
             </button>
             <button
               onClick={() => { onOpenAbout(); setActiveMenu(null); }}

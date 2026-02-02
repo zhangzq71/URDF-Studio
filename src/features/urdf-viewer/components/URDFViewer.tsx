@@ -3,6 +3,7 @@ import { Canvas, RootState } from '@react-three/fiber';
 import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { SnapshotManager, SceneLighting, ReferenceGrid } from '@/shared/components/3d';
+import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 
 import type { URDFViewerProps, ToolMode, MeasureState } from '../types';
@@ -116,6 +117,10 @@ export function URDFViewer({
     const [isDragging, setIsDragging] = useState(false);
 
     const justSelectedRef = useRef(false);
+    const transformPendingRef = useRef(false);
+
+    // Get effective theme (light/dark) handling 'system' preference
+    const effectiveTheme = useEffectiveTheme();
 
     const handleRobotLoaded = useCallback((loadedRobot: any) => {
         setRobot(loadedRobot);
@@ -128,6 +133,10 @@ export function URDFViewer({
             setJointAngles(angles);
             setInitialJointAngles(angles);
         }
+    }, []);
+
+    const handleTransformPending = useCallback((pending: boolean) => {
+        transformPendingRef.current = pending;
     }, []);
 
     useEffect(() => {
@@ -193,6 +202,8 @@ export function URDFViewer({
     }, [robot, jointAngles, initialJointAngles, handleJointAngleChange]);
 
     const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
+        if (transformPendingRef.current) return; // Prevent selection change if transform is pending
+
         if (onSelect) onSelect(type, id, subType || selection?.subType);
 
         if (type === 'link' && robot) {
@@ -359,7 +370,7 @@ export function URDFViewer({
                 setActiveJoint={setActiveJoint}
                 handleJointAngleChange={handleJointAngleChange}
                 handleJointChangeCommit={handleJointChangeCommit}
-                onSelect={onSelect}
+                onSelect={handleSelectWrapper}
             />
 
             {/* Toolbar */}
@@ -409,14 +420,15 @@ export function URDFViewer({
                 onPointerMissed={() => {
                     if (contextLost) return; // Don't handle events when context is lost
                     if (justSelectedRef.current) return;
+                    if (transformPendingRef.current) return; // Don't clear selection if transform confirmation is pending
                     if (onSelect) {
                         onSelect('link', '');
                     }
                     setActiveJoint(null);
                 }}
             >
-                <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
-                <SceneLighting />
+                <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
+                <SceneLighting theme={effectiveTheme} />
                 <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
                 <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />
 
@@ -464,6 +476,7 @@ export function URDFViewer({
                         toolMode={toolMode}
                         onCollisionTransformEnd={onCollisionTransform}
                         isOrbitDragging={isOrbitDragging}
+                        onTransformPending={handleTransformPending}
                     />
                 </Suspense>
 
@@ -488,7 +501,7 @@ export function URDFViewer({
                     rotation={[Math.PI / 2, 0, 0]}
                 /> */}
 
-                <ReferenceGrid theme={theme} />
+                <ReferenceGrid theme={effectiveTheme} />
 
                 <OrbitControls
                     makeDefault
@@ -501,7 +514,7 @@ export function URDFViewer({
                 />
 
                 <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-                    <GizmoViewport labelColor={theme === 'light' ? '#0f172a' : 'white'} axisHeadScale={1} />
+                    <GizmoViewport labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'} axisHeadScale={1} />
                 </GizmoHelper>
 
             </Canvas>

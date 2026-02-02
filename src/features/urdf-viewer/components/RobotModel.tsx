@@ -50,7 +50,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     transformMode = 'select',
     toolMode = 'select',
     onCollisionTransformEnd,
-    isOrbitDragging
+    isOrbitDragging,
+    onTransformPending
 }) => {
     const { invalidate } = useThree();
 
@@ -231,6 +232,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                         onTransformEnd={onCollisionTransformEnd}
                         robotLinks={robotLinks}
                         lang={t === translations['zh'] ? 'zh' : 'en'}
+                        onTransformPending={onTransformPending}
                     />
                 ) : null;
             })()}

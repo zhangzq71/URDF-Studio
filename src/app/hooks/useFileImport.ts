@@ -26,6 +26,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   const setAvailableFiles = useAssetsStore((state) => state.setAvailableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
   const assets = useAssetsStore((state) => state.assets);
+  const showImportWarning = useUIStore((state) => state.showImportWarning);
 
   // Robot store
   const resetRobot = useRobotStore((state) => state.resetRobot);
@@ -99,7 +100,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     if (!files || files.length === 0) return;
 
     // Show privacy toast
-    if (onShowToast) {
+    if (onShowToast && showImportWarning) {
       onShowToast(
         lang === 'zh'
           ? "提示：所有数据仅在您的本地浏览器中处理，不会上传到云端服务器，您的数据是安全的。"

@@ -12,7 +12,8 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     setIsDragging,
     onTransformEnd,
     robotLinks,
-    lang = 'en'
+    lang = 'en',
+    onTransformPending
 }) => {
     const t = translations[lang];
     const transformRef = useRef<any>(null);
@@ -38,6 +39,9 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const isDraggingRef = useRef(false);
     const currentAxisRef = useRef<string | null>(null);
     const startValueRef = useRef<number>(0);
+
+    // Local input value state to prevent cursor jumping/formatting issues
+    const [inputValue, setInputValue] = useState('');
 
     // Update axis opacity based on active axis and dragging state
     const updateAxisOpacity = useCallback((gizmo: any, axis: string | null, isDragging: boolean) => {
@@ -144,12 +148,21 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
                 // Show confirm UI if value changed (check for any change, positive or negative)
                 if (Math.abs(delta) > 0.0001 && axis) {
+                    const radToDeg = (rad: number) => rad * (180 / Math.PI);
+                    
                     setPendingEdit({
                         axis,
                         value: currentVal,
                         startValue: startValueRef.current,
                         isRotate
                     });
+                    
+                    // Initialize input value
+                    const displayVal = isRotate 
+                        ? radToDeg(currentVal).toFixed(2)
+                        : currentVal.toFixed(4);
+                    setInputValue(displayVal);
+                    
                     forceUpdate(n => n + 1);
                 }
             }
@@ -197,27 +210,38 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         }
     }, [robot, selection, transformMode]);
 
+    // Track pendingEdit in a ref to access it in cleanup/effects without triggering re-renders
+    const pendingEditRef = useRef(pendingEdit);
+    useEffect(() => {
+        pendingEditRef.current = pendingEdit;
+    }, [pendingEdit]);
+
     // Clear pending edit when selection changes or transformMode changes
     useEffect(() => {
         // When selection changes, cancel any pending edit by restoring original transform
-        if (pendingEdit && targetObject) {
+        if (pendingEditRef.current && targetObject) {
             targetObject.position.copy(originalPositionRef.current);
             targetObject.rotation.copy(originalRotationRef.current);
         }
         setPendingEdit(null);
     }, [selection?.id, selection?.type, selection?.subType, transformMode]);
 
+    // Report pending state
+    useEffect(() => {
+        onTransformPending?.(!!pendingEdit);
+    }, [pendingEdit, onTransformPending]);
+
     // Clear pending edit and restore when switching away from collision selection
     useEffect(() => {
         return () => {
             // Cleanup: if component unmounts with pending edit, restore original transform
-            if (pendingEdit && targetObject) {
+            if (pendingEditRef.current && targetObject) {
                 targetObject.position.copy(originalPositionRef.current);
                 targetObject.rotation.copy(originalRotationRef.current);
                 invalidate();
             }
         };
-    }, [pendingEdit, targetObject]);
+    }, [targetObject]);
 
     // Customize TransformControls appearance - thicker axes and single-axis highlight
     useEffect(() => {
@@ -325,6 +349,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const degToRad = (deg: number) => deg * (Math.PI / 180);
 
     // Get display value (degrees for rotation, meters for translation)
+    // NOTE: This is now only used for initial value, subsequent updates use inputValue state
     const getDisplayValue = useCallback(() => {
         if (!pendingEdit) return '0';
         if (pendingEdit.isRotate) {
@@ -346,11 +371,14 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
     // Handle value change in text field
     const handleValueChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const inputVal = parseFloat(e.target.value);
+        const rawValue = e.target.value;
+        setInputValue(rawValue);
+
+        const inputVal = parseFloat(rawValue);
         if (!isNaN(inputVal) && pendingEdit) {
             // Convert degrees to radians for rotation
             const val = pendingEdit.isRotate ? degToRad(inputVal) : inputVal;
-            setPendingEdit({ ...pendingEdit, value: val });
+            setPendingEdit(prev => prev ? ({ ...prev, value: val }) : null);
 
             // Live preview
             if (targetObject) {
@@ -377,6 +405,9 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         } else if (e.key === 'Escape') {
             e.preventDefault();
             handleCancel();
+        } else {
+            // Stop propagation to prevent camera movement/other shortcuts
+            e.stopPropagation();
         }
     }, [handleConfirm, handleCancel]);
 
@@ -458,7 +489,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                             <input
                                 type="number"
                                 step={pendingEdit.isRotate ? "1" : "0.001"}
-                                value={getDisplayValue()}
+                                value={inputValue}
                                 onChange={handleValueChange}
                                 onKeyDown={handleKeyDown}
                                 autoFocus

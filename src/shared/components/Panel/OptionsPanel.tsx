@@ -203,7 +203,7 @@ export function SegmentedControl<T extends string>({
     <div className="flex bg-slate-100 dark:bg-google-dark-bg rounded-lg p-0.5 mb-1">
       {options.map((option) => (
         <button
-          key={option.value}
+          key={String(option.value)}
           onClick={() => onChange(option.value)}
           className={`flex-1 ${padding} ${textSize} font-medium rounded-md transition-all flex items-center justify-center gap-1.5 ${
             value === option.value

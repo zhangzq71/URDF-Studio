@@ -11,6 +11,7 @@ export {
   ModelHeaderBadge,
   CheckboxOption,
   SliderOption,
+  SegmentedControl,
   ToggleButtonGroup,
   SectionDivider,
   useDraggablePanel,

@@ -3,4 +3,4 @@
  */
 
 export type AppMode = 'skeleton' | 'detail' | 'hardware';
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'system';

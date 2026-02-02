@@ -72,6 +72,7 @@ export interface RobotModelProps {
     toolMode?: ToolMode;
     onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
     isOrbitDragging?: React.MutableRefObject<boolean>;
+    onTransformPending?: (pending: boolean) => void;
     selection?: URDFViewerProps['selection'];
     hoveredSelection?: URDFViewerProps['selection'];
 }
@@ -84,6 +85,7 @@ export interface CollisionTransformControlsProps {
     onTransformEnd?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
     robotLinks?: Record<string, UrdfLink>;
     lang?: Language;
+    onTransformPending?: (pending: boolean) => void;
 }
 
 export interface JointControlItemProps {
