@@ -199,6 +199,8 @@ export const zh: TranslationKeys = {
 
   // 额外的 UI 元素
   gizmos: "辅助工具",
+  visuals: "可视化",
+  physics: "物理",
   size: "尺寸",
   resetJoints: "重置关节",
   expand: "展开",

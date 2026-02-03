@@ -92,6 +92,14 @@ interface UIState {
   // Import warning
   showImportWarning: boolean;
   setShowImportWarning: (show: boolean) => void;
+
+  // Panel Sections (collapsed state)
+  panelSections: Record<string, boolean>;
+  setPanelSection: (section: string, collapsed: boolean) => void;
+
+  // Font Size Preference
+  fontSize: 'small' | 'medium' | 'large';
+  setFontSize: (size: 'small' | 'medium' | 'large') => void;
 }
 
 // Default values
@@ -311,6 +319,17 @@ export const useUIStore = create<UIState>()(
       // Import warning
       showImportWarning: true,
       setShowImportWarning: (show) => set({ showImportWarning: show }),
+
+      // Panel Sections
+      panelSections: {},
+      setPanelSection: (section, collapsed) => 
+        set((state) => ({
+          panelSections: { ...state.panelSections, [section]: collapsed }
+        })),
+
+      // Font Size
+      fontSize: 'medium',
+      setFontSize: (size) => set({ fontSize: size }),
     }),
     {
       name: 'urdf-studio-ui',
@@ -320,6 +339,8 @@ export const useUIStore = create<UIState>()(
         uiScale: state.uiScale,
         sidebar: state.sidebar,
         showImportWarning: state.showImportWarning,
+        panelSections: state.panelSections,
+        fontSize: state.fontSize,
       }),
       onRehydrateStorage: () => (state) => {
         // Re-apply theme on hydration

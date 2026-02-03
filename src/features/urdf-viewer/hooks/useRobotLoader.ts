@@ -101,8 +101,6 @@ export function useRobotLoader({
 
                 // Check if content is MJCF (MuJoCo XML)
                 if (isMJCFContent(urdfContent)) {
-                    console.log('[RobotModel] Detected MJCF content, using MJCF loader');
-                    console.log('[RobotModel] Content snippet:', urdfContent.substring(0, 200));
                     robotModel = await loadMJCFToThreeJS(urdfContent, assets);
 
                     if (abortController.aborted) {
@@ -112,14 +110,11 @@ export function useRobotLoader({
                         return;
                     }
                 } else {
-                    console.log('[RobotModel] Detected Standard URDF content');
-                    console.log('[RobotModel] Content snippet:', urdfContent.substring(0, 200));
                     // Standard URDF loading
                     const urdfDir = '';
                     const manager = createLoadingManager(assets, urdfDir);
                     manager.onLoad = () => {
                         if (!abortController.aborted && isMountedRef.current) {
-                            console.log('[RobotModel] All assets loaded. Applying materials and updating view.');
 
                             // Apply URDF materials AFTER meshes are fully loaded
                             // This is critical because meshes load asynchronously
@@ -131,24 +126,6 @@ export function useRobotLoader({
 
                             // Re-offset to ground after meshes are loaded (bounds may have changed)
                             offsetRobotToGround(robotModel!);
-
-                            // Log final stats
-                            const box = new THREE.Box3().setFromObject(robotModel!);
-                            const size = box.getSize(new THREE.Vector3());
-                            let meshCount = 0;
-                            let visibleMeshCount = 0;
-                            robotModel!.traverse((c: any) => {
-                                if (c.isMesh) {
-                                    meshCount++;
-                                    if (c.visible) visibleMeshCount++;
-                                }
-                            });
-                            console.log(`[RobotModel] Final robot stats (at onLoad):`, {
-                                bounds: JSON.stringify({ size: size, min: box.min, max: box.max }),
-                                meshCount,
-                                visibleMeshCount,
-                                scale: robotModel!.scale
-                            });
 
                             setRobotVersion(v => v + 1);
                             invalidate();
@@ -264,28 +241,6 @@ export function useRobotLoader({
                         onRobotLoaded(robotModel);
                     }
 
-                    // Diagnostic: Check robot bounds and mesh count
-                    const box = new THREE.Box3().setFromObject(robotModel);
-                    const size = box.getSize(new THREE.Vector3());
-                    let meshCount = 0;
-                    let visibleMeshCount = 0;
-                    robotModel.traverse((c: any) => {
-                        if (c.isMesh) {
-                            meshCount++;
-                            if (c.visible) visibleMeshCount++;
-                        }
-                    });
-                    console.log(`[RobotModel] Loaded robot stats:`, {
-                        bounds: { size: size, min: box.min, max: box.max },
-                        meshCount,
-                        visibleMeshCount,
-                        position: robotModel.position
-                    });
-                    if (meshCount === 0) {
-                        console.warn('[RobotModel] No meshes found in loaded robot!');
-                    } else if (size.lengthSq() < 0.000001) {
-                        console.warn('[RobotModel] Robot bounds are effectively zero!');
-                    }
                 }
             } catch (err) {
                 if (!abortController.aborted && isMountedRef.current) {

@@ -5,7 +5,14 @@
 import React from 'react';
 import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useUIStore } from '@/store';
-import { SegmentedControl } from '@/shared/components/Panel';
+import { 
+  SegmentedControl, 
+  Switch, 
+  Slider, 
+  Button, 
+  Separator, 
+  Label 
+} from '@/shared/components/ui';
 
 export function SettingsModal() {
   const isSettingsOpen = useUIStore((state) => state.isSettingsOpen);
@@ -24,6 +31,9 @@ export function SettingsModal() {
 
   const showImportWarning = useUIStore((state) => state.showImportWarning);
   const setShowImportWarning = useUIStore((state) => state.setShowImportWarning);
+
+  const fontSize = useUIStore((state) => state.fontSize);
+  const setFontSize = useUIStore((state) => state.setFontSize);
 
   const handleDragStart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -54,12 +64,12 @@ export function SettingsModal() {
   return (
     <div
       style={{ left: settingsPos.x, top: settingsPos.y }}
-      className="fixed z-[100] w-[320px] bg-white dark:bg-panel-bg rounded-xl shadow-2xl border border-slate-200 dark:border-border-black overflow-hidden"
+      className="fixed z-[100] w-[320px] bg-white dark:bg-[#2C2C2E] rounded-[16px] shadow-[0_12px_32px_rgba(0,0,0,0.25)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.5)] border border-slate-200 dark:border-black/50 overflow-hidden"
     >
       {/* Header */}
       <div
         onMouseDown={handleDragStart}
-        className="bg-slate-50 dark:bg-element-active px-4 py-3 border-b border-slate-200 dark:border-border-black flex items-center justify-between cursor-move select-none"
+        className="bg-slate-50 dark:bg-[#2C2C2E] px-4 py-3 border-b border-slate-200 dark:border-black/50 flex items-center justify-between cursor-move select-none"
       >
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-slate-500 dark:text-slate-400" />
@@ -80,10 +90,10 @@ export function SettingsModal() {
         
         {/* Language Setting */}
         <div className="space-y-2">
-          <label className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2">
+          <Label className="flex items-center gap-2">
             <Languages className="w-3.5 h-3.5" />
             {lang === 'zh' ? '语言' : 'Language'}
-          </label>
+          </Label>
           <SegmentedControl
             options={[
               { value: 'en', label: 'English' },
@@ -96,10 +106,10 @@ export function SettingsModal() {
 
         {/* Theme Setting */}
         <div className="space-y-2">
-          <label className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2">
+          <Label className="flex items-center gap-2">
             {theme === 'light' ? <Sun className="w-3.5 h-3.5" /> : theme === 'dark' ? <Moon className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
             {lang === 'zh' ? '主题' : 'Theme'}
-          </label>
+          </Label>
           <SegmentedControl
             options={[
               { value: 'light', label: lang === 'zh' ? '亮色' : 'Light', icon: <Sun className="w-3 h-3" /> },
@@ -112,66 +122,73 @@ export function SettingsModal() {
         </div>
 
         {/* Divider */}
-        <div className="h-px bg-slate-100 dark:bg-border-black" />
+        <Separator />
 
         {/* Import Warning Setting */}
         <div className="flex items-center justify-between">
-          <label className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2">
+          <Label className="flex items-center gap-2 mb-0">
             <AlertTriangle className="w-3.5 h-3.5" />
             {lang === 'zh' ? '导入时提示' : 'Import Warning'}
-          </label>
-          <button
-            onClick={() => setShowImportWarning(!showImportWarning)}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none p-0.5 ${
-              showImportWarning ? 'bg-[#0060FA]' : 'bg-slate-200 dark:bg-slate-700'
-            }`}
-          >
-            <span
-              className={`${
-                showImportWarning ? 'translate-x-4' : 'translate-x-0'
-              } inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200`}
-            />
-          </button>
+          </Label>
+          <Switch
+            checked={showImportWarning}
+            onChange={setShowImportWarning}
+          />
         </div>
 
         {/* Divider */}
-        <div className="h-px bg-slate-100 dark:bg-border-black" />
+        <Separator />
 
         {/* UI Scale Setting */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-2">
-              <Type className="w-3.5 h-3.5" />
-              {lang === 'zh' ? '界面缩放' : 'Interface Scale'}
-            </label>
-            <span className="text-xs text-slate-500 font-mono">
-              {(uiScale * 100).toFixed(0)}%
-            </span>
-          </div>
-          <input
-            type="range"
-            min="0.8"
-            max="1.5"
-            step="0.05"
+          <Slider
+            label={lang === 'zh' ? '界面缩放' : 'Interface Scale'}
+            icon={<Type className="w-3.5 h-3.5" />}
+            min={0.8}
+            max={1.5}
+            step={0.05}
             value={uiScale}
-            onChange={(e) => setUiScale(parseFloat(e.target.value))}
-            className="w-full h-1.5 bg-slate-200 dark:bg-black border border-slate-200 dark:border-element-hover rounded-lg appearance-none cursor-pointer accent-[#0060FA]"
+            onChange={setUiScale}
+            showValue={true}
+            formatValue={(val) => `${(val * 100).toFixed(0)}%`}
           />
-          <div className="relative h-4 text-[10px] text-slate-400 select-none">
+          <div className="relative h-4 text-[10px] text-slate-400 select-none px-1">
             <span className="absolute left-0">80%</span>
             <span className="absolute left-[28.57%] -translate-x-1/2">100%</span>
             <span className="absolute right-0">150%</span>
           </div>
         </div>
 
+        {/* Font Size Setting (Global Text Size) */}
+        <div className="space-y-2">
+          <Label className="flex items-center gap-2">
+             <Type className="w-3.5 h-3.5" />
+             {lang === 'zh' ? '字体大小' : 'Font Size'}
+          </Label>
+          <SegmentedControl
+            options={[
+              { value: 'small', label: lang === 'zh' ? '小' : 'Small' },
+              { value: 'medium', label: lang === 'zh' ? '中' : 'Medium' },
+              { value: 'large', label: lang === 'zh' ? '大' : 'Large' },
+            ]}
+            value={fontSize}
+            onChange={(val) => setFontSize(val as 'small' | 'medium' | 'large')}
+          />
+        </div>
+
         {/* Reset Button */}
-        <button
-          onClick={() => setUiScale(1.0)}
-          className="w-full py-2 text-xs text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-element-bg hover:bg-slate-200 dark:hover:bg-element-hover rounded flex items-center justify-center gap-2 transition-colors"
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setUiScale(1.0);
+            setFontSize('medium');
+          }}
+          className="w-full justify-center"
+          icon={<RotateCcw className="w-3 h-3" />}
         >
-          <RotateCcw className="w-3 h-3" />
           {lang === 'zh' ? '重置缩放' : 'Reset Scale'}
-        </button>
+        </Button>
       </div>
     </div>
   );

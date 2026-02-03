@@ -1,12 +1,14 @@
 import React, { forwardRef } from 'react';
 import { Language, translations } from '@/shared/i18n';
+import { useUIStore } from '@/store';
 import {
   CheckboxOption,
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  SegmentedControl
-} from '@/shared/components/Panel/OptionsPanel';
+  SegmentedControl,
+  CollapsibleSection
+} from './OptionsPanel';
 
 interface DetailOptionsPanelProps {
   lang: Language;
@@ -58,6 +60,8 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
     ref
   ) => {
     const t = translations[lang];
+    const panelSections = useUIStore((state) => state.panelSections);
+    const setPanelSection = useUIStore((state) => state.setPanelSection);
 
     return (
       <div
@@ -81,43 +85,63 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
           />
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
-            <SegmentedControl
-              options={[
-                { value: 'translate', label: t.move },
-                { value: 'rotate', label: t.rotate },
-              ]}
-              value={transformMode}
-              onChange={setTransformMode}
-              size="sm"
-            />
+            {/* Main Transform - Always Visible */}
+            <div className="p-2 pb-0">
+                <SegmentedControl
+                  options={[
+                    { value: 'translate', label: t.move },
+                    { value: 'rotate', label: t.rotate },
+                  ]}
+                  value={transformMode}
+                  onChange={setTransformMode}
+                  size="xs"
+                />
+            </div>
 
-            <CheckboxOption
-              checked={showDetailOrigin}
-              onChange={setShowDetailOrigin}
-              label={t.showOrigin}
-            />
-            <CheckboxOption
-              checked={showDetailLabels}
-              onChange={setShowDetailLabels}
-              label={t.showLabels}
-            />
-            <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
-            <CheckboxOption
-              checked={showCollision}
-              onChange={setShowCollision}
-              label={t.showCollision}
-            />
-            <CheckboxOption checked={showInertia} onChange={setShowInertia} label={t.showInertia} />
-            <CheckboxOption
-              checked={showCenterOfMass}
-              onChange={setShowCenterOfMass}
-              label={t.showCenterOfMass}
-            />
+            {/* Visuals Group */}
+            <CollapsibleSection
+              title={t.visuals} // Use existing or appropriate key
+              isCollapsed={panelSections['detail_visuals'] ?? false}
+              onToggle={() => setPanelSection('detail_visuals', !(panelSections['detail_visuals'] ?? false))}
+            >
+                 <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
+                 <CheckboxOption
+                  checked={showDetailOrigin}
+                  onChange={setShowDetailOrigin}
+                  label={t.showOrigin}
+                />
+                <CheckboxOption
+                  checked={showDetailLabels}
+                  onChange={setShowDetailLabels}
+                  label={t.showLabels}
+                />
+            </CollapsibleSection>
+
+             {/* Physics Group */}
+             <CollapsibleSection
+              title={t.physics}
+              isCollapsed={panelSections['detail_physics'] ?? true}
+              onToggle={() => setPanelSection('detail_physics', !(panelSections['detail_physics'] ?? true))}
+            >
+              <CheckboxOption
+                checked={showCollision}
+                onChange={setShowCollision}
+                label={t.showCollision}
+              />
+              <CheckboxOption checked={showInertia} onChange={setShowInertia} label={t.showInertia} />
+              <CheckboxOption
+                checked={showCenterOfMass}
+                onChange={setShowCenterOfMass}
+                label={t.showCenterOfMass}
+              />
+            </CollapsibleSection>
+
           </OptionsPanelContent>
         </OptionsPanelContainer>
       </div>
     );
   }
 );
+
 
 DetailOptionsPanel.displayName = 'DetailOptionsPanel';

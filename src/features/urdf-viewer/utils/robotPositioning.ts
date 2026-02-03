@@ -48,18 +48,14 @@ export function offsetRobotToGround(robot: THREE.Object3D): void {
     const minY = box.min.y;
     const minZ = box.min.z;
 
-    console.log(`[RobotModel] Robot bounds before offset: minY=${minY.toFixed(4)}, minZ=${minZ.toFixed(4)}`);
-
     // Offset Y so bottom is at Y=0 (ground plane in Three.js Y-up convention)
     if (isFinite(minY) && Math.abs(minY) > 0.0001) {
         robot.position.y -= minY;
-        console.log(`[RobotModel] Offset robot Y by ${-minY} to place on ground`);
     }
 
     // Also offset Z if there are negative Z parts (for Z-up URDF convention)
     // This ensures the robot is fully above the XY plane
     if (isFinite(minZ) && minZ < -0.0001) {
         robot.position.z -= minZ;
-        console.log(`[RobotModel] Offset robot Z by ${-minZ} to remove negative Z parts`);
     }
 }

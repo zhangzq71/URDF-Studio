@@ -1,12 +1,15 @@
 import React from 'react';
-import { Move, ArrowUpRight, X } from 'lucide-react';
+import { Move, ArrowUpRight } from 'lucide-react';
+import { useUIStore } from '@/store';
 import {
     CheckboxOption,
     SliderOption,
     OptionsPanelContainer,
     OptionsPanelHeader,
     OptionsPanelContent,
-    SegmentedControl
+    SegmentedControl,
+    CollapsibleSection,
+    ModelHeaderBadge
 } from '@/shared/components/Panel/OptionsPanel';
 
 interface ViewerOptionsPanelProps {
@@ -100,6 +103,9 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     showInertiaOverlay,
     setShowInertiaOverlay,
 }) => {
+    const panelSections = useUIStore((state) => state.panelSections);
+    const setPanelSection = useUIStore((state) => state.setPanelSection);
+
     if (!showOptionsPanel) return null;
 
     return (
@@ -122,19 +128,9 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
 
                 <OptionsPanelContent isCollapsed={isOptionsCollapsed}>
                         {/* Loaded File Display */}
-                        {fileName && (
-                            <div className="bg-linear-to-r from-slate-50 to-slate-100 dark:from-google-dark-bg dark:to-google-dark-surface rounded-md px-2 py-1.5 border border-slate-200 dark:border-google-dark-border animate-fade-in mb-2">
-                                <div className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-0.5">
-                                    {lang === 'zh' ? '已加载' : 'Loaded'}
-                                </div>
-                                <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200 truncate" title={fileName}>
-                                    {fileName}
-                                </div>
-                            </div>
-                        )}
+                        {fileName && <ModelHeaderBadge fileName={fileName} />}
 
-                        <div className="border-b border-slate-200 dark:border-slate-700 pb-2 mb-1">
-                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1.5 px-1">{t.highlightMode}</div>
+                        <div className="p-2 pb-0">
                             <SegmentedControl
                                 options={[
                                     { value: 'link', label: t.linkMode },
@@ -142,63 +138,47 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 ]}
                                 value={highlightMode}
                                 onChange={setHighlightMode}
-                                size="sm"
+                                size="xs"
                             />
                         </div>
 
-                        <div className="space-y-1">
-                            <CheckboxOption checked={showJointControls} onChange={setShowJointControls} label={t.showJointControls} compact />
-                            <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} compact />
-                            <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} compact />
-                        </div>
-
-                        {/* Model Transparency - Beautified */}
-                        <div className="border-t border-slate-200 dark:border-slate-700 pt-2">
-                            <div className="px-1">
-                                <div className="flex items-center gap-2 mb-1.5">
-                                    <div className="flex items-center gap-1">
-                                        <svg className="w-3 h-3 text-slate-400" viewBox="0 0 24 24" fill="currentColor">
-                                            <circle cx="12" cy="12" r="10" fillOpacity={modelOpacity} />
-                                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                                        </svg>
-                                        <span className="text-[10px] text-slate-600 dark:text-slate-300">
-                                            {lang === 'zh' ? '不透明度' : 'Opacity'}
-                                        </span>
-                                    </div>
-                                    <span className="text-[10px] font-mono text-google-blue ml-auto">
-                                        {Math.round(modelOpacity / 1.0 * 100)}%
-                                    </span>
-                                </div>
-                                <div className="relative">
-                                    <input
-                                        type="range"
-                                        min={0.1}
-                                        max={1.0}
-                                        step={0.01}
-                                        value={modelOpacity}
-                                        onChange={(e) => setModelOpacity(parseFloat(e.target.value))}
-                                        className="w-full h-2 rounded-full appearance-none cursor-pointer bg-linear-to-r from-slate-200 via-slate-300 to-slate-400 dark:from-slate-700 dark:via-slate-600 dark:to-slate-500 shadow-inner"
-                                        style={{
-                                            background: `linear-gradient(to right, rgb(59, 130, 246) 0%, rgb(59, 130, 246) ${(modelOpacity) / 1.0 * 100}%, rgb(203, 213, 225) ${(modelOpacity) / 1.0 * 100}%, rgb(203, 213, 225) 100%)`
-                                        }}
-                                    />
-                                </div>
+                        {/* General Visuals */}
+                        <CollapsibleSection
+                            title={t.visuals}
+                            isCollapsed={panelSections['viewer_visuals'] ?? false}
+                            onToggle={() => setPanelSection('viewer_visuals', !(panelSections['viewer_visuals'] ?? false))}
+                        >
+                            <CheckboxOption checked={showJointControls} onChange={setShowJointControls} label={t.showJointControls} />
+                            <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
+                            <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} />
+                            
+                            {/* Model Transparency */}
+                            <div className="pt-2">
+                                <SliderOption
+                                    label={lang === 'zh' ? '模型不透明度' : 'Model Opacity'}
+                                    value={modelOpacity}
+                                    onChange={setModelOpacity}
+                                    min={0.1}
+                                    max={1.0}
+                                    step={0.01}
+                                    showPercentage
+                                    compact
+                                />
                             </div>
-                        </div>
+                        </CollapsibleSection>
 
                         {/* Coordinate Axes Section */}
-                        <div className="border-t border-slate-200 dark:border-slate-700 pt-2 space-y-1">
-                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 px-1">
-                                {lang === 'zh' ? '坐标系显示' : 'Coordinate Axes'}
-                            </div>
-
+                        <CollapsibleSection
+                            title={lang === 'zh' ? '坐标系显示' : 'Coordinate Axes'}
+                            isCollapsed={panelSections['viewer_coords'] ?? true}
+                            onToggle={() => setPanelSection('viewer_coords', !(panelSections['viewer_coords'] ?? true))}
+                        >
                             <div className="flex items-center justify-between pr-1">
                                 <CheckboxOption
                                     checked={showOrigins}
                                     onChange={setShowOrigins}
                                     label={t.showOrigin}
                                     icon={<Move className="w-3 h-3 text-slate-500" />}
-                                    compact
                                 />
                                 {showOrigins && (
                                     <button
@@ -214,16 +194,15 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                             </div>
 
                             {showOrigins && (
-                                <SliderOption label={t.size} value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact />
+                                <SliderOption label={t.size} value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact indent />
                             )}
 
-                            <div className="flex items-center justify-between pr-1">
+                            <div className="flex items-center justify-between pr-1 mt-1">
                                 <CheckboxOption
                                     checked={showJointAxes}
                                     onChange={setShowJointAxes}
                                     label={t.showJointAxes}
                                     icon={<ArrowUpRight className="w-3 h-3 text-red-500" />}
-                                    compact
                                 />
                                 {showJointAxes && (
                                     <button
@@ -239,23 +218,22 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                             </div>
 
                             {showJointAxes && (
-                                <SliderOption label={t.size} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={2.0} step={0.01} compact />
+                                <SliderOption label={t.size} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={2.0} step={0.01} compact indent />
                             )}
-                        </div>
+                        </CollapsibleSection>
 
                         {/* Physics Visualization Section */}
-                        <div className="border-t border-slate-200 dark:border-slate-700 pt-2 space-y-1">
-                            <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 px-1">
-                                {lang === 'zh' ? '物理可视化' : 'Physics'}
-                            </div>
-
+                        <CollapsibleSection
+                            title={lang === 'zh' ? '物理可视化' : 'Physics'}
+                            isCollapsed={panelSections['viewer_physics'] ?? true}
+                            onToggle={() => setPanelSection('viewer_physics', !(panelSections['viewer_physics'] ?? true))}
+                        >
                             <div className="flex items-center justify-between pr-1">
                                 <CheckboxOption
                                     checked={showCenterOfMass}
                                     onChange={setShowCenterOfMass}
                                     label={t.showCenterOfMass}
                                     icon={<div className="w-3 h-3 rounded-full border border-slate-500 flex items-center justify-center"><div className="w-1 h-1 bg-slate-500 rounded-full"></div></div>}
-                                    compact
                                 />
                                 {showCenterOfMass && (
                                     <button
@@ -270,16 +248,15 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 )}
                             </div>
                             {showCenterOfMass && (
-                                <SliderOption label={t.size} value={centerOfMassSize} onChange={setCenterOfMassSize} min={0.005} max={0.1} step={0.005} decimals={3} compact />
+                                <SliderOption label={t.size} value={centerOfMassSize} onChange={setCenterOfMassSize} min={0.005} max={0.1} step={0.005} decimals={3} compact indent />
                             )}
 
-                            <div className="flex items-center justify-between pr-1">
+                            <div className="flex items-center justify-between pr-1 mt-1">
                                 <CheckboxOption
                                     checked={showInertia}
                                     onChange={setShowInertia}
                                     label={t.showInertia}
                                     icon={<div className="w-3 h-3 border border-dashed border-slate-500"></div>}
-                                    compact
                                 />
                                 {showInertia && (
                                     <button
@@ -293,7 +270,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     </button>
                                 )}
                             </div>
-                        </div>
+                        </CollapsibleSection>
                 </OptionsPanelContent>
             </OptionsPanelContainer>
         </div>

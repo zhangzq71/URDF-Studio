@@ -13,7 +13,7 @@ import { MeasureTool } from './MeasureTool';
 import { ViewerToolbar } from './ViewerToolbar';
 import { ViewerOptionsPanel } from './ViewerOptionsPanel';
 import { MeasurePanel } from './MeasurePanel';
-import { JointsPanel } from './JointsPanel';
+import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 
 import { useViewerSettings } from '../hooks/useViewerSettings';
 import { usePanelDrag } from '../hooks/usePanelDrag';

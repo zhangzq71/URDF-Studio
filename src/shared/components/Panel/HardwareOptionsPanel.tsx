@@ -1,12 +1,14 @@
 import React, { forwardRef } from 'react';
 import { Language, translations } from '@/shared/i18n';
+import { useUIStore } from '@/store';
 import {
   CheckboxOption,
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  SegmentedControl
-} from '@/shared/components/Panel/OptionsPanel';
+  SegmentedControl,
+  CollapsibleSection
+} from './OptionsPanel';
 
 interface HardwareOptionsPanelProps {
   lang: Language;
@@ -44,6 +46,8 @@ export const HardwareOptionsPanel = forwardRef<HTMLDivElement, HardwareOptionsPa
     ref
   ) => {
     const t = translations[lang];
+    const panelSections = useUIStore((state) => state.panelSections);
+    const setPanelSection = useUIStore((state) => state.setPanelSection);
 
     return (
       <div
@@ -68,31 +72,40 @@ export const HardwareOptionsPanel = forwardRef<HTMLDivElement, HardwareOptionsPa
           />
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
-            <SegmentedControl
-              options={[
-                { value: 'translate', label: t.move },
-                { value: 'rotate', label: t.rotate },
-              ]}
-              value={transformMode}
-              onChange={setTransformMode}
-              size="sm"
-            />
+            <div className="p-2 pb-0">
+                <SegmentedControl
+                  options={[
+                    { value: 'translate', label: t.move },
+                    { value: 'rotate', label: t.rotate },
+                  ]}
+                  value={transformMode}
+                  onChange={setTransformMode}
+                  size="xs"
+                />
+            </div>
 
-            <CheckboxOption
-              checked={showHardwareOrigin}
-              onChange={setShowHardwareOrigin}
-              label={t.showOrigin}
-            />
-            <CheckboxOption
-              checked={showHardwareLabels}
-              onChange={setShowHardwareLabels}
-              label={t.showLabels}
-            />
+            <CollapsibleSection
+              title={t.visuals}
+              isCollapsed={panelSections['hardware_visuals'] ?? false}
+              onToggle={() => setPanelSection('hardware_visuals', !(panelSections['hardware_visuals'] ?? false))}
+            >
+                <CheckboxOption
+                  checked={showHardwareOrigin}
+                  onChange={setShowHardwareOrigin}
+                  label={t.showOrigin}
+                />
+                <CheckboxOption
+                  checked={showHardwareLabels}
+                  onChange={setShowHardwareLabels}
+                  label={t.showLabels}
+                />
+            </CollapsibleSection>
           </OptionsPanelContent>
         </OptionsPanelContainer>
       </div>
     );
   }
 );
+
 
 HardwareOptionsPanel.displayName = 'HardwareOptionsPanel';

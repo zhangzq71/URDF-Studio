@@ -81,10 +81,22 @@ export function useSystemThemeListener() {
 }
 
 /**
+ * Hook to apply font size preference
+ */
+export function useFontSizeListener() {
+  const fontSize = useUIStore((state) => state.fontSize);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-font-size', fontSize);
+  }, [fontSize]);
+}
+
+/**
  * Combined hook for all app effects
  */
 export function useAppEffects() {
   useKeyboardShortcuts();
   useSelectionCleanup();
   useSystemThemeListener();
+  useFontSizeListener();
 }

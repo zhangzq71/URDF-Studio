@@ -197,6 +197,8 @@ export const en: TranslationKeys = {
 
   // Additional UI Elements
   gizmos: "Gizmos",
+  visuals: "Visuals",
+  physics: "Physics",
   size: "Size",
   resetJoints: "Reset Joints",
   expand: "Expand",

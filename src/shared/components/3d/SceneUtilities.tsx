@@ -55,7 +55,7 @@ export const HoverInvalidator = () => {
   return null;
 };
 
-// Snapshot Manager for high-res capture without gizmos
+// Snapshot Manager - captures high-quality snapshot
 export const SnapshotManager = ({
   actionRef,
   robotName
@@ -63,164 +63,159 @@ export const SnapshotManager = ({
   actionRef?: React.MutableRefObject<(() => void) | null>;
   robotName: string;
 }) => {
-  const { gl, scene, camera } = useThree();
+  const { gl, scene, camera, invalidate } = useThree();
+  
+  // Use refs to ensure the snapshot function always uses the latest scene/camera
+  const sceneRef = useRef(scene);
+  const cameraRef = useRef(camera);
+  
+  useEffect(() => {
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+  }, [scene, camera]);
 
   useEffect(() => {
     if (!actionRef) return;
 
     actionRef.current = () => {
-      // 1. Capture current state
-      const width = gl.domElement.clientWidth;
-      const height = gl.domElement.clientHeight;
-      const originalPixelRatio = gl.getPixelRatio();
-      const originalSize = new THREE.Vector2();
-      gl.getSize(originalSize);
-      const originalBackground = scene.background;
-      const originalFog = scene.fog;
+      try {
+        const currentScene = sceneRef.current;
+        const currentCamera = cameraRef.current;
 
-      // 2. Hide Gizmos, Grid and Helpers
-      const hiddenObjects: THREE.Object3D[] = [];
-      scene.traverse((obj) => {
-        if (obj.userData.isGizmo ||
-          obj.name === 'ReferenceGrid' ||
-          obj.type.includes('Grid') ||
-          obj.type.includes('Helper') ||
-          obj.type === 'AxesHelper' ||
-          (obj as any).isTransformControls) {
-          if (obj.visible) {
-            obj.visible = false;
-            hiddenObjects.push(obj);
-          }
+        // 1. Determine Dimensions (High Resolution)
+        const maxTextureSize = gl.capabilities.maxTextureSize || 4096;
+        const scale = 2; // 2x resolution is usually sufficient and stable
+        
+        let width = gl.domElement.width;
+        let height = gl.domElement.height;
+
+        // Handle high-DPI displays where domElement size might be different from CSS size
+        if (width === 0 || height === 0) {
+            width = gl.domElement.clientWidth * gl.getPixelRatio();
+            height = gl.domElement.clientHeight * gl.getPixelRatio();
         }
-      });
 
-      // 3. Setup Studio Environment (Horizon & Ground)
-      // Studio Color: Pure white for Fusion 360 style clean look
-      const studioColor = new THREE.Color('#ffffff');
-      const fogColor = new THREE.Color('#ffffff');
-      
-      scene.background = studioColor;
-      // Soft fog to blend floor into background (infinite studio look)
-      scene.fog = new THREE.Fog(fogColor, 5, 50);
+        // Clamp to safe limits
+        width = Math.max(width, 1024);
+        height = Math.max(height, 768);
 
-      // Create Infinite-looking Floor (Fusion 360 style)
-      const groundGeo = new THREE.PlaneGeometry(1000, 1000);
-      const groundMat = new THREE.MeshStandardMaterial({
-        color: studioColor,
-        roughness: 0.45, // Semi-gloss floor
-        metalness: 0.1,  // Slight reflectivity
-        envMapIntensity: 1.0,
-      });
-      const ground = new THREE.Mesh(groundGeo, groundMat);
-      // Align with Z-up system (XY plane is floor)
-      ground.position.set(0, 0, -0.02);
-      ground.receiveShadow = true;
-      scene.add(ground);
+        let renderWidth = width * scale;
+        let renderHeight = height * scale;
 
-      // 4. Enhance Lighting for Snapshot (Enable Shadows)
-      // Only enable shadows for the main light to avoid multi-shadow artifacts and VRAM issues
-      const modifiedLights: { light: THREE.Light, originalCastShadow: boolean, originalBias: number, originalMapSize: THREE.Vector2 }[] = [];
-      scene.traverse((obj) => {
-        if (obj instanceof THREE.DirectionalLight && obj.intensity > 0) {
-          // Heuristic to identify Main Light (pos: 5,5,5) or similar key lights
-          // Avoid enabling shadows on fill lights (negative X or Z)
-          const isMainLight = obj.position.x > 1 && obj.position.y > 0 && obj.position.z > 0;
-
-          if (isMainLight) {
-            modifiedLights.push({
-              light: obj,
-              originalCastShadow: obj.castShadow,
-              originalBias: obj.shadow.bias,
-              originalMapSize: obj.shadow.mapSize.clone()
-            });
-            
-            obj.castShadow = true;
-            obj.shadow.mapSize.width = 2048; // Standard high quality
-            obj.shadow.mapSize.height = 2048;
-            obj.shadow.bias = -0.00005;
-            obj.shadow.radius = 4; // Soft shadows
-            
-            // Force update shadow map
-            if (obj.shadow.map) {
-              obj.shadow.map.dispose();
-              obj.shadow.map = null;
+        // Prevent exceeding GPU limits
+        if (renderWidth > maxTextureSize || renderHeight > maxTextureSize) {
+            const aspect = width / height;
+            if (renderWidth > renderHeight) {
+                renderWidth = maxTextureSize;
+                renderHeight = Math.floor(maxTextureSize / aspect);
+            } else {
+                renderHeight = maxTextureSize;
+                renderWidth = Math.floor(maxTextureSize * aspect);
             }
-          }
         }
-      });
 
-      // 5. High Res Render Configuration
-      const snapshotScale = 2; // 2x scale (Retina quality) is safe and high-res
-      gl.setPixelRatio(snapshotScale);
-      gl.setSize(width, height, false);
+        console.log(`[Snapshot] Capture size: ${renderWidth}x${renderHeight}`);
 
-      // Define restore function
-      const restoreState = () => {
-        // Restore Scene
-        scene.remove(ground);
-        groundGeo.dispose();
-        groundMat.dispose();
-        scene.background = originalBackground;
-        scene.fog = originalFog;
-        hiddenObjects.forEach(obj => obj.visible = true);
-
-        // Restore Lights
-        modifiedLights.forEach(({ light, originalCastShadow, originalBias, originalMapSize }) => {
-          light.castShadow = originalCastShadow;
-          light.shadow.bias = originalBias;
-          light.shadow.mapSize.copy(originalMapSize);
-          if (light.shadow.map) light.shadow.map.dispose();
-          light.shadow.map = null;
+        // 2. Hide Grid and Helpers
+        const hiddenNodes: THREE.Object3D[] = [];
+        currentScene.traverse((node) => {
+          if (
+            (node.name === 'ReferenceGrid' || 
+             node.type === 'AxesHelper' || 
+             node.type === 'GridHelper' ||
+             node.name?.includes('Gizmo') ||
+             node.name?.includes('axis') ||
+             node.userData?.isGizmo
+            ) && node.visible
+          ) {
+            hiddenNodes.push(node);
+            node.visible = false;
+          }
         });
 
-        // Restore Renderer
-        gl.setPixelRatio(originalPixelRatio);
-        gl.setSize(originalSize.x, originalSize.y, false);
-        
-        // Trigger a re-render to ensure UI is back to normal
-        gl.render(scene, camera);
-        console.log('[Snapshot] State restored');
-      };
+        // 3. Prepare for Transparent Capture
+        const originalBackground = currentScene.background;
+        currentScene.background = null; // Transparent background
 
-      // 6. Render & Download
-      try {
-        console.log('[Snapshot] Rendering scene...');
-        gl.render(scene, camera);
+        // 4. Create Off-screen Render Target
+        const renderTarget = new THREE.WebGLRenderTarget(renderWidth, renderHeight, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.UnsignedByteType,
+          samples: 4, // MSAA
+          colorSpace: THREE.SRGBColorSpace,
+        });
+
+        // Save Renderer State
+        const originalRenderTarget = gl.getRenderTarget();
+        const originalClearAlpha = gl.getClearAlpha();
+        const originalClearColor = new THREE.Color();
+        gl.getClearColor(originalClearColor);
+
+        // 5. Render
+        gl.setRenderTarget(renderTarget);
+        gl.setClearColor(0x000000, 0); // Transparent clear
+        gl.render(currentScene, currentCamera);
+
+        // 6. Read Pixels & Create Image
+        const pixels = new Uint8Array(renderWidth * renderHeight * 4);
+        gl.readRenderTargetPixels(renderTarget, 0, 0, renderWidth, renderHeight, pixels);
+
+        // Flip Y (WebGL reads bottom-up) and draw to canvas
+        const canvas = document.createElement('canvas');
+        canvas.width = renderWidth;
+        canvas.height = renderHeight;
+        const ctx = canvas.getContext('2d')!;
+        const imageData = ctx.createImageData(renderWidth, renderHeight);
         
-        console.log('[Snapshot] Generating blob...');
-        gl.domElement.toBlob((blob) => {
+        // Optimize pixel flip
+        const data = imageData.data;
+        for (let y = 0; y < renderHeight; y++) {
+          const srcRow = (renderHeight - 1 - y) * renderWidth * 4;
+          const dstRow = y * renderWidth * 4;
+          data.set(pixels.subarray(srcRow, srcRow + renderWidth * 4), dstRow);
+        }
+        ctx.putImageData(imageData, 0, 0);
+
+        // 7. Download
+        canvas.toBlob((blob) => {
           if (blob) {
-            console.log(`[Snapshot] Blob generated: ${blob.size} bytes`);
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
-            link.download = `${robotName}_snapshot.png`;
             link.href = url;
+            link.download = `${robotName}_snapshot.png`;
+            document.body.appendChild(link);
             link.click();
+            document.body.removeChild(link);
             URL.revokeObjectURL(url);
-          } else {
-            console.error('[Snapshot] Blob is null, attempting DataURL fallback');
-            try {
-              const dataUrl = gl.domElement.toDataURL('image/png', 1.0);
-              const link = document.createElement('a');
-              link.download = `${robotName}_snapshot.png`;
-              link.href = dataUrl;
-              link.click();
-            } catch (fallbackErr) {
-              console.error('[Snapshot] Fallback failed:', fallbackErr);
-            }
           }
-          restoreState();
-        }, 'image/png', 1.0);
+        }, 'image/png');
+
+        // 8. Restore State
+        gl.setRenderTarget(originalRenderTarget);
+        gl.setClearColor(originalClearColor, originalClearAlpha);
+        renderTarget.dispose();
+        
+        currentScene.background = originalBackground;
+        hiddenNodes.forEach(node => node.visible = true);
+        
+        // Force a re-render to ensure UI is back to normal
+        invalidate();
+
       } catch (e) {
-        console.error('[Snapshot] Render error:', e);
-        restoreState();
+        console.error('[Snapshot] Failed:', e);
+        // Emergency cleanup
+        const currentScene = sceneRef.current;
+        const grid = currentScene.getObjectByName('ReferenceGrid');
+        if (grid) grid.visible = true;
       }
     };
 
     return () => {
       if (actionRef) actionRef.current = null;
     };
-  }, [gl, scene, camera, robotName, actionRef]);
+  }, [gl, scene, camera, robotName, actionRef, invalidate]);
 
   return null;
 };
@@ -230,16 +225,16 @@ export const SnapshotManager = ({
 // 5-Point Lighting System for comprehensive robot illumination
 // ============================================================
 export const LIGHTING_CONFIG = {
-  // Ambient: base global illumination (prevents pure black)
-  ambientIntensity: 0.4,
+  // Ambient: increased for softer look
+  ambientIntensity: 0.5,
 
-  // Hemisphere: sky/ground color blend for natural ambient
-  hemisphereIntensity: 0.35,
+  // Hemisphere: softer sky/ground blend
+  hemisphereIntensity: 0.4,
   hemisphereSky: '#ffffff',
-  hemisphereGround: '#888888',
+  hemisphereGround: '#d4d4d8', // Light gray ground
 
-  // Main front light: front-right, reduced intensity to avoid overexposure
-  mainLightIntensity: 0.4,
+  // Main front light: reduced intensity, balanced
+  mainLightIntensity: 0.5,
   mainLightPosition: [5, 5, 5] as [number, number, number],
 
   // Left front fill light: left-front to balance main light
@@ -247,11 +242,11 @@ export const LIGHTING_CONFIG = {
   leftFillPosition: [-5, 5, 5] as [number, number, number],
 
   // Pure left side light: directly from left to illuminate left side
-  leftSideIntensity: 0.35,
+  leftSideIntensity: 0.3,
   leftSidePosition: [-6, 3, 0] as [number, number, number],
 
   // Right side fill light
-  rightFillIntensity: 0.25,
+  rightFillIntensity: 0.3,
   rightFillPosition: [5, 3, -3] as [number, number, number],
 
   // Back rim light: edge highlighting
@@ -282,7 +277,6 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
     // Ensure proper sRGB output color space
     gl.outputColorSpace = THREE.SRGBColorSpace;
 
-    console.log(`[SceneLighting] Configured: ACESFilmic tone mapping, exposure ${gl.toneMappingExposure}, sRGB output`);
   }, [scene, gl, effectiveTheme]);
 
   return (
@@ -303,6 +297,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 
       {/* 1. Main front light - right-front 45° with shadows */}
       <directionalLight
+        name="MainLight"
         position={LIGHTING_CONFIG.mainLightPosition}
         intensity={effectiveTheme === 'light' ? 0.5 : LIGHTING_CONFIG.mainLightIntensity}
         color="#ffffff"
@@ -320,6 +315,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 
       {/* 2. Left front fill light */}
       <directionalLight
+        name="FillLightLeft"
         position={LIGHTING_CONFIG.leftFillPosition}
         intensity={LIGHTING_CONFIG.leftFillIntensity}
         color="#ffffff"
@@ -328,6 +324,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 
       {/* 3. Pure left side light - directly illuminates left side */}
       <directionalLight
+        name="FillLightLeftSide"
         position={LIGHTING_CONFIG.leftSidePosition}
         intensity={LIGHTING_CONFIG.leftSideIntensity}
         color="#ffffff"
@@ -336,6 +333,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 
       {/* 4. Right side fill light */}
       <directionalLight
+        name="FillLightRight"
         position={LIGHTING_CONFIG.rightFillPosition}
         intensity={LIGHTING_CONFIG.rightFillIntensity}
         color="#ffffff"
@@ -344,6 +342,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 
       {/* 5. Back rim light - edge highlighting */}
       <directionalLight
+        name="RimLight"
         position={LIGHTING_CONFIG.rimLightPosition}
         intensity={LIGHTING_CONFIG.rimLightIntensity}
         color="#ffffff"
@@ -370,12 +369,12 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
 
   useEffect(() => {
     if (gridRef.current) {
-// ... existing code ...
       // Set low renderOrder so grid renders before collision meshes (renderOrder=999)
       gridRef.current.renderOrder = -100;
-// ... existing code ...
+      
+      // Ensure all children also inherit this
       gridRef.current.traverse((child) => {
-// ... existing code ...
+        child.renderOrder = -100;
       });
     }
   }, []);

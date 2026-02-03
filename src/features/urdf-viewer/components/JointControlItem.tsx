@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { Slider } from '@/shared/components/ui';
 import type { JointControlItemProps } from '../types';
 
 export const JointControlItem: React.FC<JointControlItemProps> = ({
@@ -19,7 +20,32 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
     // Auto-scroll into view when active
     useEffect(() => {
         if (activeJoint === name && itemRef.current) {
-            itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Use manual scroll calculation instead of scrollIntoView to prevent 
+            // the parent OptionsPanelContainer (which has overflow-hidden) from scrolling 
+            // and hiding the header.
+            const scrollParent = itemRef.current.closest('.overflow-y-auto');
+            if (scrollParent) {
+                const parentRect = scrollParent.getBoundingClientRect();
+                const itemRect = itemRef.current.getBoundingClientRect();
+                
+                // Calculate target scroll position to center the item
+                // itemRelativeTop = itemRect.top - parentRect.top;
+                // We want: itemRelativeTop to be (parentHeight/2) - (itemHeight/2)
+                // Current scrollTop affects itemRect.top.
+                // NewScrollTop = CurrentScrollTop + (itemRelativeTop - (TargetVisualTop))
+                
+                const currentScroll = scrollParent.scrollTop;
+                const itemRelativeTop = itemRect.top - parentRect.top;
+                const targetVisualTop = (parentRect.height / 2) - (itemRect.height / 2);
+                
+                scrollParent.scrollTo({
+                    top: currentScroll + (itemRelativeTop - targetVisualTop),
+                    behavior: 'smooth'
+                });
+            } else {
+                // Fallback using 'nearest' which is less aggressive than 'center'
+                itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
         }
     }, [activeJoint, name]);
 
@@ -29,12 +55,19 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
     const displayMax = angleUnit === 'deg' ? limit.upper * 180 / Math.PI : limit.upper;
     const step = angleUnit === 'deg' ? 1 : 0.01;
 
-    // Local state for the input field to allow free-form typing (e.g. deleting everything, typing minus sign)
+    // Local state for the input field
     const [inputValue, setInputValue] = useState(displayValue.toFixed(2));
 
-    // Update local state when external value changes (e.g. from dragging or unit switch)
     useEffect(() => {
-        setInputValue(displayValue.toFixed(2));
+        // Only update local input if the incoming value is different from what we currently have (numerically)
+        // to avoid overwriting "1." with "1.00" while typing
+        const currentParsed = parseFloat(inputValue);
+        // Check if values are effectively different (handling potential NaN for empty input)
+        const isDifferent = isNaN(currentParsed) || Math.abs(currentParsed - displayValue) > 0.0001;
+        
+        if (isDifferent) {
+            setInputValue(displayValue.toFixed(2));
+        }
     }, [displayValue]);
 
     const commitChange = (valStr: string) => {
@@ -48,8 +81,6 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const s = e.target.value;
         setInputValue(s);
-
-        // Only update the actual joint if it's a valid number
         const val = parseFloat(s);
         if (!isNaN(val)) {
             const radVal = angleUnit === 'deg' ? val * Math.PI / 180 : val;
@@ -64,24 +95,25 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                 setActiveJoint(name);
                 onSelect?.('joint', name);
             }}
-            className={`space-y-1 p-2 rounded-lg transition-colors cursor-pointer ${
+            className={`space-y-1.5 p-2 rounded-lg transition-colors cursor-pointer border ${
                 activeJoint === name
-                    ? 'bg-blue-100/50 dark:bg-google-blue/20 border border-blue-300 dark:border-google-blue/50'
-                    : 'bg-white/50 dark:bg-google-dark-bg/30 border border-transparent hover:bg-slate-100 dark:hover:bg-google-dark-bg/50'
+                    ? 'bg-blue-50 dark:bg-google-blue/10 border-blue-200 dark:border-google-blue/30'
+                    : 'bg-transparent border-transparent hover:bg-slate-50 dark:hover:bg-white/5'
             }`}
         >
-            <div className="flex justify-between text-xs items-center">
+            {/* Header: Name and Input */}
+            <div className="flex justify-between items-center gap-2">
                 <span
-                    className={`truncate cursor-pointer font-medium ${activeJoint === name ? 'text-blue-600 dark:text-google-blue' : 'text-slate-700 dark:text-slate-200'}`}
+                    className={`text-[11px] font-medium truncate flex-1 min-w-0 ${
+                        activeJoint === name 
+                            ? 'text-google-blue dark:text-google-blue-light' 
+                            : 'text-slate-700 dark:text-slate-300'
+                    }`}
                     title={name}
-                    onClick={() => {
-                        setActiveJoint(name);
-                        onSelect?.('joint', name);
-                    }}
                 >
                     {name}
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                     <input
                         type="text"
                         value={inputValue}
@@ -93,37 +125,31 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                                 (e.target as HTMLInputElement).blur();
                             }
                         }}
-                        className="w-16 bg-white dark:bg-google-dark-bg border border-slate-300 dark:border-google-dark-border rounded px-1 py-0.5 text-right text-xs text-slate-900 dark:text-white focus:border-google-blue outline-none"
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-14 bg-white dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-right text-[10px] text-slate-900 dark:text-slate-200 focus:border-google-blue outline-none transition-colors"
                     />
-                    <span className="text-slate-500 w-4">{angleUnit === 'deg' ? '°' : 'rad'}</span>
+                    <span className="text-[10px] text-slate-400 w-5 text-right">{angleUnit === 'deg' ? 'deg' : 'rad'}</span>
                 </div>
             </div>
+
+            {/* Slider Row */}
             <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-500 w-8 text-right">{displayMin.toFixed(1)}</span>
-                <input
-                    type="range"
-                    min={displayMin}
-                    max={displayMax}
-                    step={step}
-                    value={displayValue}
-                    onChange={(e) => {
-                        const newVal = parseFloat(e.target.value);
-                        const radVal = angleUnit === 'deg' ? newVal * Math.PI / 180 : newVal;
-                        handleJointAngleChange(name, radVal);
-                    }}
-                    onMouseUp={(e) => {
-                        const newVal = parseFloat((e.target as HTMLInputElement).value);
-                        const radVal = angleUnit === 'deg' ? newVal * Math.PI / 180 : newVal;
-                        handleJointChangeCommit(name, radVal);
-                    }}
-                    onTouchEnd={(e) => {
-                        const newVal = parseFloat((e.target as HTMLInputElement).value);
-                        const radVal = angleUnit === 'deg' ? newVal * Math.PI / 180 : newVal;
-                        handleJointChangeCommit(name, radVal);
-                    }}
-                    className="flex-1 h-1 bg-slate-300 dark:bg-google-dark-border rounded-lg appearance-none cursor-pointer accent-google-blue"
-                />
-                <span className="text-[10px] text-slate-500 w-8">{displayMax.toFixed(1)}</span>
+                <span className="text-[9px] text-slate-400 w-7 text-right font-mono">{displayMin.toFixed(2)}</span>
+                <div className="flex-1 min-w-0 px-3">
+                    <Slider
+                        value={displayValue}
+                        min={displayMin}
+                        max={displayMax}
+                        step={step}
+                        onChange={(val) => {
+                            const radVal = angleUnit === 'deg' ? val * Math.PI / 180 : val;
+                            handleJointAngleChange(name, radVal);
+                        }}
+                        showValue={false}
+                        className="w-full"
+                    />
+                </div>
+                <span className="text-[9px] text-slate-400 w-7 font-mono">{displayMax.toFixed(2)}</span>
             </div>
         </div>
     );

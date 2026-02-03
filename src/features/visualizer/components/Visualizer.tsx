@@ -13,7 +13,7 @@ import {
 } from '../hooks';
 
 // Components
-import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from './panels';
+import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
 import { RobotNode } from './nodes';
 import { JointTransformControls } from './controls';
 import { VisualizerCanvas } from './VisualizerCanvas';
