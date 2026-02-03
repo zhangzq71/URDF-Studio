@@ -11,12 +11,14 @@ import { URDFViewer } from '@/features/urdf-viewer';
 import { SourceCodeEditor } from '@/features/code-editor';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo } from '@/store';
 import { parseURDF, generateURDF } from '@/core/parsers';
+import { getDroppedFiles } from '@/features/file-io/utils';
 import type { RobotState, UrdfLink, UrdfJoint, RobotFile } from '@/types';
 
 interface AppLayoutProps {
   // Import handlers (passed from App)
   importInputRef: React.RefObject<HTMLInputElement>;
   importFolderInputRef: React.RefObject<HTMLInputElement>;
+  onFileDrop: (files: File[]) => void;
   onExport: () => void;
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
@@ -47,6 +49,7 @@ interface AppLayoutProps {
 export function AppLayout({
   importInputRef,
   importFolderInputRef,
+  onFileDrop,
   onExport,
   showToast,
   onOpenAI,
@@ -234,8 +237,35 @@ export function AppLayout({
     }
   }, [robotLinks, robotJoints, selection, setSelection]);
 
+  // Drag and Drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.dataTransfer.items) {
+      try {
+        const files = await getDroppedFiles(e.dataTransfer.items);
+        if (files.length > 0) {
+          onFileDrop(files);
+        }
+      } catch (err) {
+        console.error('Failed to process dropped files:', err);
+        showToast(lang === 'zh' ? '处理文件失败' : 'Failed to process files', 'info');
+      }
+    }
+  }, [onFileDrop, showToast, lang]);
+
   return (
-    <div className="flex flex-col h-screen font-sans bg-google-light-bg dark:bg-app-bg text-slate-800 dark:text-slate-200">
+    <div
+      className="flex flex-col h-screen font-sans bg-google-light-bg dark:bg-app-bg text-slate-800 dark:text-slate-200"
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       {/* Hidden file inputs */}
       <input
         type="file"

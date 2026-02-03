@@ -147,6 +147,7 @@ function AppContent() {
       <AppLayout
         importInputRef={importInputRef}
         importFolderInputRef={importFolderInputRef}
+        onFileDrop={(files) => handleImport(files as any)}
         onExport={handleExport}
         showToast={showToast}
         onOpenAI={() => setIsAIModalOpen(true)}

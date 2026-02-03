@@ -19,3 +19,5 @@ export {
   fetchMeshBlobs,
   downloadBlob,
 } from './assetUtils';
+
+export { getDroppedFiles } from './fileTraverser';

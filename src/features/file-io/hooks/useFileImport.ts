@@ -28,7 +28,7 @@ interface UseFileImportOptions {
 interface UseFileImportReturn {
   importInputRef: React.RefObject<HTMLInputElement | null>;
   importFolderInputRef: React.RefObject<HTMLInputElement | null>;
-  handleImport: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
+  handleImport: (input: React.ChangeEvent<HTMLInputElement> | FileList | File[] | null) => Promise<void>;
   handleUploadAsset: (file: File) => void;
 }
 
@@ -46,12 +46,22 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
   const setMotorLibrary = useAssetsStore((s) => s.setMotorLibrary);
   const uploadAsset = useAssetsStore((s) => s.uploadAsset);
 
-  const handleImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = useCallback(async (input: React.ChangeEvent<HTMLInputElement> | FileList | File[] | null) => {
     // Show privacy toast when import starts
     showPrivacyToast?.();
 
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+    if (!input) return;
+
+    let files: File[] = [];
+    if (Array.isArray(input)) {
+      files = input;
+    } else if (input instanceof FileList) {
+      files = Array.from(input);
+    } else if (input && 'target' in input && input.target.files) {
+       files = Array.from(input.target.files);
+    }
+
+    if (files.length === 0) return;
 
     try {
       const newRobotFiles: RobotFile[] = [];
@@ -93,10 +103,11 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
 
       } else {
         // Mode 2: Multiple Files (Folder upload or Multi-select)
-        const fileList = Array.from(files);
+        // files is already File[]
 
-        const promises = fileList.map(async (f) => {
+        const promises = files.map(async (f) => {
           const lowerName = f.name.toLowerCase();
+          // Use webkitRelativePath if available (from folder upload or our traverser), else fallback to name
           const path = f.webkitRelativePath || f.name;
 
           // Skip hidden files/folders
