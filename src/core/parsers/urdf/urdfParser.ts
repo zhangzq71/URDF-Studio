@@ -212,7 +212,9 @@ export const parseURDF = (xmlString: string): RobotState | null => {
   });
 
   // 1. Parse Links
-  robotEl.querySelectorAll("link").forEach(linkEl => {
+  Array.from(robotEl.children).forEach(child => {
+      if (child.tagName !== 'link') return;
+      const linkEl = child;
       const linkName = linkEl.getAttribute("name");
       if (!linkName) return;
       const id = linkName; // Use name as ID for imported structure
@@ -356,7 +358,9 @@ export const parseURDF = (xmlString: string): RobotState | null => {
   });
 
   // 2. Parse Joints
-  robotEl.querySelectorAll("joint").forEach(jointEl => {
+  Array.from(robotEl.children).forEach(child => {
+      if (child.tagName !== 'joint') return;
+      const jointEl = child;
       const jointName = jointEl.getAttribute("name");
       if (!jointName) return;
       const id = jointName;

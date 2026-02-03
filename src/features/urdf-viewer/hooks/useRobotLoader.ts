@@ -11,6 +11,12 @@ import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
 
+function preprocessURDFForLoader(content: string): string {
+    // Remove <transmission> blocks to prevent urdf-loader from finding duplicate joints
+    // which can overwrite valid joints with empty origins
+    return content.replace(/<transmission[\s\S]*?<\/transmission>/g, '');
+}
+
 export interface UseRobotLoaderOptions {
     urdfContent: string;
     assets: Record<string, string>;
@@ -154,7 +160,8 @@ export function useRobotLoader({
                     loader.loadMeshCb = createMeshLoader(assets, manager, urdfDir);
                     loader.packages = (pkg: string) => '';
 
-                    robotModel = loader.parse(urdfContent);
+                    const cleanContent = preprocessURDFForLoader(urdfContent);
+                    robotModel = loader.parse(cleanContent);
 
                     // Check if load was aborted (e.g., by StrictMode remount or urdfContent change)
                     if (abortController.aborted) {
