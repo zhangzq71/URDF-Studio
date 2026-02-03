@@ -311,18 +311,20 @@ export const createPlaceholderMesh = (path: string): THREE.Object3D => {
 // PERFORMANCE: First-detection mode for unit scaling
 // Once we detect the scale factor, apply it to all subsequent meshes
 // ============================================================
-let _detectedUnitScale: number | null = null;
-let _unitScaleDetectionCount = 0;
+// State moved to createMeshLoader closure
 const MAX_UNIT_DETECTION_SAMPLES = 3; // Sample first few meshes then use cached scale
 
 // Reset unit detection (call when loading new model)
+// Deprecated: State is now scoped to createMeshLoader closure
 export const resetUnitDetection = () => {
-    _detectedUnitScale = null;
-    _unitScaleDetectionCount = 0;
+    // No-op
 };
 
 // Custom mesh loader callback with first-detection unit scaling
 export const createMeshLoader = (assets: Record<string, string>, manager: THREE.LoadingManager, urdfDir: string = '', assetIndex?: AssetIndex) => {
+    // Scoped state for this loader instance
+    let _detectedUnitScale: number | null = null;
+
     return async (
         path: string,
         _manager: THREE.LoadingManager,
@@ -362,27 +364,34 @@ export const createMeshLoader = (assets: Record<string, string>, manager: THREE.
                 // Use default material - urdf-loader will override with URDF-defined materials if present
                 meshObject = new THREE.Mesh(geometry, DEFAULT_MESH_MATERIAL.clone());
 
-                // PERFORMANCE: First-detection mode for unit scaling
+                // Unit Detection Logic
                 if (_detectedUnitScale !== null) {
-                    // Use cached scale factor
+                    // We have already decided on a scale factor
                     if (_detectedUnitScale !== 1) {
                         meshObject.scale.set(_detectedUnitScale, _detectedUnitScale, _detectedUnitScale);
                     }
-                } else if (_unitScaleDetectionCount < MAX_UNIT_DETECTION_SAMPLES) {
-                    // Sample this mesh to detect unit scale
+                } else {
+                    // Not yet decided, check this mesh
                     geometry.computeBoundingBox();
                     if (geometry.boundingBox) {
                         geometry.boundingBox.getSize(_tempSize);
                         const maxDim = Math.max(_tempSize.x, _tempSize.y, _tempSize.z);
+                        
+                        // Log the raw size for debugging
+                        console.debug(`[MeshLoader] Loaded STL "${filename}" Raw Size:`, _tempSize, `Max: ${maxDim}`);
+
                         if (maxDim > 10) {
+                            // Definitive proof of MM units (unless giant robot)
                             _detectedUnitScale = 0.001;
-                            console.warn('[MeshLoader] Detected mm units, caching scale factor 0.001 for subsequent meshes');
+                            console.warn(`[MeshLoader] Detected mm units from "${filename}" (size ${maxDim.toFixed(2)}), setting scale 0.001`);
                             meshObject.scale.set(0.001, 0.001, 0.001);
+                        } else if (maxDim > 0.001) {
+                            // It's a "reasonable" size. Could be meters, or could be small MM parts.
+                            // We do NOT lock to Meters (1.0) here, because a small screw (5mm) looks like 5.0.
+                            // If we locked to 1.0, a subsequent Body (1000mm) would be treated as 1000m.
+                            // So we leave _detectedUnitScale as null.
+                            // Default behavior for null is "Apply 1.0", effectively.
                         }
-                    }
-                    _unitScaleDetectionCount++;
-                    if (_unitScaleDetectionCount >= MAX_UNIT_DETECTION_SAMPLES && _detectedUnitScale === null) {
-                        _detectedUnitScale = 1; // Units are correct, no scaling needed
                     }
                 }
 
@@ -409,25 +418,23 @@ export const createMeshLoader = (assets: Record<string, string>, manager: THREE.
                 if (meshObject) {
                     meshObject.rotation.set(0, 0, 0);
 
-                    // PERFORMANCE: First-detection mode for unit scaling
+                    // Unit Detection Logic
                     if (_detectedUnitScale !== null) {
                         if (_detectedUnitScale !== 1) {
                             meshObject.scale.set(_detectedUnitScale, _detectedUnitScale, _detectedUnitScale);
                         }
-                    } else if (_unitScaleDetectionCount < MAX_UNIT_DETECTION_SAMPLES) {
-                        // Use pooled Box3 instead of creating new one
+                    } else {
+                        // Use pooled Box3
                         _tempBox.setFromObject(meshObject);
                         _tempBox.getSize(_tempSize);
                         const maxDim = Math.max(_tempSize.x, _tempSize.y, _tempSize.z);
 
+                        console.debug(`[MeshLoader] Loaded DAE "${filename}" Raw Size:`, _tempSize, `Max: ${maxDim}`);
+
                         if (maxDim > 10) {
                             _detectedUnitScale = 0.001;
-                            console.warn('[MeshLoader] Detected mm units in DAE, caching scale factor 0.001');
+                            console.warn(`[MeshLoader] Detected mm units from DAE "${filename}" (size ${maxDim.toFixed(2)}), setting scale 0.001`);
                             meshObject.scale.set(0.001, 0.001, 0.001);
-                        }
-                        _unitScaleDetectionCount++;
-                        if (_unitScaleDetectionCount >= MAX_UNIT_DETECTION_SAMPLES && _detectedUnitScale === null) {
-                            _detectedUnitScale = 1;
                         }
                     }
 

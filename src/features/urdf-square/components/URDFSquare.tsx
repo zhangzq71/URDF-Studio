@@ -652,7 +652,7 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
                 </div>
 
                 {/* Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
                   {filteredModels.map(model => (
                     <div key={model.id} className="group bg-white dark:bg-panel-bg rounded-lg border border-slate-200 dark:border-border-black hover:border-[#0060FA] dark:hover:border-[#0060FA] overflow-hidden transition-all shadow-md hover:shadow-2xl dark:shadow-black flex flex-col">
                       {/* Thumbnail Area */}
