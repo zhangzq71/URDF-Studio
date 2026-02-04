@@ -317,9 +317,9 @@ export const OptionsPanelContent: React.FC<OptionsPanelContentProps> = ({
     <div
       className={`transition-all duration-200 ease-in-out ${
         isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[70vh] opacity-100'
-      } ${className} flex flex-col`}
+      } ${className} flex flex-col min-h-0`}
     >
-      <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar min-h-0">
          {/* No padding here, padding moved to sections or specific children */}
          {children}
       </div>
@@ -348,7 +348,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   resizable = false,
   minWidth = 160,
   maxWidth = 600,
-  minHeight = 100,
+  minHeight = 150,
   maxHeight = 800,
 }) => {
   const [panelSize, setPanelSize] = useState<{ width: number | string; height: number | string }>({
@@ -548,7 +548,7 @@ interface OptionsPanelProps {
   show: boolean;
   onClose?: () => void;
   position?: { x: number; y: number } | null;
-  defaultPosition?: { top?: string; right?: string; left?: string; bottom?: string };
+  defaultPosition?: { top?: string; right?: string; left?: string; bottom?: string; transform?: string };
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   onMouseDown?: (e: React.MouseEvent) => void;
@@ -580,8 +580,10 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
 }) => {
   if (!show) return null;
 
+  // When position is set (dragged), use pixel positioning without transform
+  // When using defaultPosition, preserve all CSS properties including transform
   const style = position
-    ? { left: position.x, top: position.y, right: 'auto' }
+    ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', transform: 'none' }
     : defaultPosition;
 
   return (

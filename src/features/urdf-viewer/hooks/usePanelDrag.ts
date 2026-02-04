@@ -30,22 +30,27 @@ export function usePanelDrag(
         e.preventDefault();
         e.stopPropagation();
 
-        const panelRef = panel === 'options' ? optionsPanelRef : 
+        const panelRef = panel === 'options' ? optionsPanelRef :
                         panel === 'joints' ? jointPanelRef : measurePanelRef;
-                        
+
         if (!panelRef.current || !containerRef.current) return;
 
         const rect = panelRef.current.getBoundingClientRect();
         const containerRect = containerRef.current.getBoundingClientRect();
 
+        // Get the current position state to check if panel was already moved
+        const currentPos = panel === 'options' ? optionsPanelPos :
+                          panel === 'joints' ? jointPanelPos : measurePanelPos;
+
         dragStartRef.current = {
             mouseX: e.clientX,
             mouseY: e.clientY,
-            panelX: rect.left - containerRect.left,
-            panelY: rect.top - containerRect.top
+            // If panel has been moved before, use the stored position, otherwise calculate from DOM
+            panelX: currentPos ? currentPos.x : rect.left - containerRect.left,
+            panelY: currentPos ? currentPos.y : rect.top - containerRect.top
         };
         setDragging(panel);
-    }, []);
+    }, [optionsPanelPos, jointPanelPos, measurePanelPos]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         if (!dragging || !dragStartRef.current || !containerRef.current) return;
@@ -70,6 +75,7 @@ export function usePanelDrag(
         newX = Math.max(padding, Math.min(newX, Math.max(padding, maxX)));
         newY = Math.max(padding, Math.min(newY, Math.max(padding, maxY)));
 
+        // Set position, which will override defaultPosition including transform
         if (dragging === 'options') {
             setOptionsPanelPos({ x: newX, y: newY });
         } else if (dragging === 'joints') {

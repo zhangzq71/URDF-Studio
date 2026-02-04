@@ -74,12 +74,12 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             show={!!shouldShow}
             panelRef={jointPanelRef}
             position={jointPanelPos}
-            defaultPosition={{ bottom: '16px', right: '16px' }}
+            defaultPosition={{ top: '50%', left: '16px', transform: 'translateY(-50%)' }}
             isCollapsed={isJointsCollapsed}
             onToggleCollapse={toggleJointsCollapsed}
             onClose={() => setShowJointPanel && setShowJointPanel(false)}
             onMouseDown={onMouseDown}
-            resizable={true} 
+            resizable={true}
             additionalControls={additionalControls}
             zIndex={30}
         >

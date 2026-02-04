@@ -117,7 +117,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 : { top: '16px', right: '16px' }
             }
         >
-            <OptionsPanelContainer>
+            <OptionsPanelContainer resizable={true}>
                 <OptionsPanelHeader
                     title={mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
                     isCollapsed={isOptionsCollapsed}
