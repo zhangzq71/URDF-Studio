@@ -34,31 +34,31 @@ export const ThickerAxes = ({ size = 0.1, onClick }: CoordinateAxesProps) => {
       {/* X Axis - Red */}
       <mesh rotation={[0, 0, -Math.PI / 2]} position={[size / 2, 0, 0]} onClick={onClick ? handleClick : undefined}>
         <cylinderGeometry args={[thickness, thickness, size, 12]} />
-        <meshBasicMaterial color="#ef4444" depthTest={false} />
+        <meshBasicMaterial color="#ef4444" />
       </mesh>
       <mesh rotation={[0, 0, -Math.PI / 2]} position={[size, 0, 0]} onClick={onClick ? handleClick : undefined}>
         <coneGeometry args={[headRadius, headSize, 12]} />
-        <meshBasicMaterial color="#ef4444" depthTest={false} />
+        <meshBasicMaterial color="#ef4444" />
       </mesh>
 
       {/* Y Axis - Green */}
       <mesh position={[0, size / 2, 0]} onClick={onClick ? handleClick : undefined}>
         <cylinderGeometry args={[thickness, thickness, size, 12]} />
-        <meshBasicMaterial color="#22c55e" depthTest={false} />
+        <meshBasicMaterial color="#22c55e" />
       </mesh>
       <mesh position={[0, size, 0]} onClick={onClick ? handleClick : undefined}>
         <coneGeometry args={[headRadius, headSize, 12]} />
-        <meshBasicMaterial color="#22c55e" depthTest={false} />
+        <meshBasicMaterial color="#22c55e" />
       </mesh>
 
       {/* Z Axis - Blue */}
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, size / 2]} onClick={onClick ? handleClick : undefined}>
         <cylinderGeometry args={[thickness, thickness, size, 12]} />
-        <meshBasicMaterial color="#3b82f6" depthTest={false} />
+        <meshBasicMaterial color="#3b82f6" />
       </mesh>
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, size]} onClick={onClick ? handleClick : undefined}>
         <coneGeometry args={[headRadius, headSize, 12]} />
-        <meshBasicMaterial color="#3b82f6" depthTest={false} />
+        <meshBasicMaterial color="#3b82f6" />
       </mesh>
     </group>
   );
