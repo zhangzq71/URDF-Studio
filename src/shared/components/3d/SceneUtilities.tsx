@@ -63,24 +63,16 @@ export const SnapshotManager = ({
   actionRef?: React.MutableRefObject<(() => void) | null>;
   robotName: string;
 }) => {
-  const { gl, scene, camera, invalidate } = useThree();
-  
-  // Use refs to ensure the snapshot function always uses the latest scene/camera
-  const sceneRef = useRef(scene);
-  const cameraRef = useRef(camera);
-  
-  useEffect(() => {
-    sceneRef.current = scene;
-    cameraRef.current = camera;
-  }, [scene, camera]);
+  // Use 'get' to access real-time state in callbacks (refs don't update when camera moves)
+  const { gl, get, invalidate } = useThree();
 
   useEffect(() => {
     if (!actionRef) return;
 
     actionRef.current = () => {
       try {
-        const currentScene = sceneRef.current;
-        const currentCamera = cameraRef.current;
+        // Get real-time scene and camera from R3F store
+        const { scene: currentScene, camera: currentCamera } = get();
 
         // 1. Determine Dimensions (High Resolution)
         const maxTextureSize = gl.capabilities.maxTextureSize || 4096;
@@ -156,6 +148,11 @@ export const SnapshotManager = ({
         // 5. Render
         gl.setRenderTarget(renderTarget);
         gl.setClearColor(0x000000, 0); // Transparent clear
+
+        // Force update matrices (fixes camera position not syncing in frameloop="demand" mode)
+        currentCamera.updateMatrixWorld(true);
+        currentScene.updateMatrixWorld(true);
+
         gl.render(currentScene, currentCamera);
 
         // 6. Read Pixels & Create Image
@@ -206,8 +203,8 @@ export const SnapshotManager = ({
       } catch (e) {
         console.error('[Snapshot] Failed:', e);
         // Emergency cleanup
-        const currentScene = sceneRef.current;
-        const grid = currentScene.getObjectByName('ReferenceGrid');
+        const { scene: errorScene } = get();
+        const grid = errorScene.getObjectByName('ReferenceGrid');
         if (grid) grid.visible = true;
       }
     };
@@ -215,7 +212,7 @@ export const SnapshotManager = ({
     return () => {
       if (actionRef) actionRef.current = null;
     };
-  }, [gl, scene, camera, robotName, actionRef, invalidate]);
+  }, [gl, get, robotName, actionRef, invalidate]);
 
   return null;
 };
