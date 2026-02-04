@@ -23,30 +23,17 @@ export const Switch: React.FC<SwitchProps> = ({
     }
   };
 
-  const sizes = {
-    sm: {
-      switch: "h-4 w-7",
-      dot: "h-3 w-3",
-      translate: "translate-x-3",
-    },
-    md: {
-      switch: "h-[31px] w-[51px]", // Standard iOS size is roughly this, but let's stick to a bit smaller for desktop: h-6 w-11
-      dot: "h-[27px] w-[27px]",
-      translate: "translate-x-[20px]",
-    },
-  };
-  
-  // Overriding sizes for a more desktop-friendly compact look while maintaining the style
+  // Desktop-friendly compact sizes with proper alignment
   const desktopSizes = {
     sm: {
-      switch: "h-4 w-8 p-[2px]",
+      switch: "h-4 w-8",
       dot: "h-3 w-3",
       translate: "translate-x-4",
     },
     md: {
-      switch: "h-6 w-10 p-[2px]",
+      switch: "h-6 w-11",
       dot: "h-5 w-5",
-      translate: "translate-x-4",
+      translate: "translate-x-5",
     },
   };
 
@@ -64,7 +51,7 @@ export const Switch: React.FC<SwitchProps> = ({
         onClick={handleToggle}
         disabled={disabled}
         className={`
-          relative inline-flex flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none box-content
+          relative inline-flex items-center shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none p-0.5
           ${checked ? 'bg-[#007AFF] dark:bg-[#0A84FF]' : 'bg-[#E9E9EA] dark:bg-[#1C1C1E]'}
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           ${desktopSizes[size].switch}
