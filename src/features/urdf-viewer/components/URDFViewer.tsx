@@ -197,9 +197,22 @@ export function URDFViewer({
 
         Object.keys(jointAngles).forEach(name => {
             const initialAngle = initialJointAngles[name] || 0;
-            handleJointAngleChange(name, initialAngle);
+            const joint = robot.joints[name];
+
+            // Temporarily disable limit checking to allow resetting to 0 even if 0 is outside the limit range
+            if (joint) {
+                const originalIgnoreLimits = joint.ignoreLimits;
+                joint.ignoreLimits = true;
+                handleJointAngleChange(name, initialAngle);
+                joint.ignoreLimits = originalIgnoreLimits;
+            } else {
+                handleJointAngleChange(name, initialAngle);
+            }
+
+            // Commit the change to external state to prevent other joints from reverting when any joint is adjusted
+            handleJointChangeCommit(name, initialAngle);
         });
-    }, [robot, jointAngles, initialJointAngles, handleJointAngleChange]);
+    }, [robot, jointAngles, initialJointAngles, handleJointAngleChange, handleJointChangeCommit]);
 
     const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
         if (transformPendingRef.current) return; // Prevent selection change if transform is pending
