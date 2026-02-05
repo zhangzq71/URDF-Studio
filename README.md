@@ -29,6 +29,8 @@ The platform integrates **Generative AI** for rapid prototyping and automated mo
 *   **Skeleton Mode**: Build kinematic chains (Links & Joints) and define topological relationships.
 *   **Detail Mode**: Fine-tune visual and collision geometries using primitives or high-resolution mesh imports (STL/OBJ/DAE).
 *   **Hardware Mode**: Specify electromechanical parameters, motor selection, and transmission ratios.
+*   **Multi-Robot Assembly**: Merge multiple URDFs into a single model (e.g., attaching a robotic hand to an arm) with automatic joint re-parenting.
+*   **Precision Collision Editor**: Edit collision bodies independently from visual geometry for accurate physics simulation.
 
 ### 🎨 Immersive 3D Workspace
 *   **High-Fidelity Rendering**: PBR materials and photorealistic rendering via Three.js.

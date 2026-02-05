@@ -1,5 +1,20 @@
 {
   "name": "urdf-studio",
+  "description": "Professional URDF design and visualization workstation. Supports rapid editing, collision optimization, modular assembly, parameter configuration, and AI review.",
+  "keywords": [
+    "urdf",
+    "robotics",
+    "visualization",
+    "webgl",
+    "three.js",
+    "ros",
+    "simulation",
+    "kinematics",
+    "collision-editor",
+    "robot-assembly",
+    "mjcf",
+    "usd"
+  ],
   "private": true,
   "version": "0.0.0",
   "type": "module",
