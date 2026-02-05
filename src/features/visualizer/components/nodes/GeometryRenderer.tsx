@@ -180,6 +180,20 @@ export const GeometryRenderer = memo(function GeometryRenderer({
         <primitive object={material} attach="material" />
       </mesh>
     );
+  } else if (type === GeometryType.CAPSULE) {
+    // Three.js CapsuleGeometry is Y-axis aligned by default
+    // Rotate -90 degrees around X axis to align with Z-up coordinate system
+    meshRotation = [-Math.PI / 2, 0, 0];
+    // args: [radius, length, capSegments, radialSegments]
+    // dimensions.x = radius, dimensions.y = total length (including caps)
+    // CapsuleGeometry length is the cylindrical section only, so subtract the sphere caps
+    const cylinderLength = Math.max(0, dimensions.y - 2 * dimensions.x);
+    geometryNode = (
+      <mesh rotation={meshRotation}>
+        <capsuleGeometry args={[dimensions.x, cylinderLength, radialSegments / 2, radialSegments]} />
+        <primitive object={material} attach="material" />
+      </mesh>
+    );
   } else if (type === GeometryType.MESH) {
     let assetUrl = meshPath ? findAssetByPath(meshPath, assets) : undefined;
 

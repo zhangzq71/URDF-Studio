@@ -148,7 +148,7 @@ function convertGeomType(mjcfType: string): GeometryType {
         case 'box': return GeometryType.BOX;
         case 'sphere': return GeometryType.SPHERE;
         case 'cylinder': return GeometryType.CYLINDER;
-        case 'capsule': return GeometryType.CYLINDER;
+        case 'capsule': return GeometryType.CAPSULE;
         case 'ellipsoid': return GeometryType.SPHERE;
         case 'mesh': return GeometryType.MESH;
         case 'plane': return GeometryType.BOX;

@@ -303,13 +303,57 @@ const GeometryEditor = ({
                                 origin: { ...(geomData.origin || { xyz: {x:0,y:0,z:0} }), rpy: newRpy }
                             });
                             return;
+                        } else if (newType === GeometryType.CAPSULE) {
+                            // Similar to cylinder: use smart conversion
+                            const { x, y, z } = currentDims;
+                            const maxDim = Math.max(x, y, z);
+
+                            let length = maxDim;
+                            let radius = 0.1;
+
+                            const currentRpy = geomData.origin?.rpy || { r: 0, p: 0, y: 0 };
+                            const currentQuat = new THREE.Quaternion().setFromEuler(
+                                new THREE.Euler(currentRpy.r, currentRpy.p, currentRpy.y, 'XYZ')
+                            );
+
+                            const zAxis = new THREE.Vector3(0, 0, 1);
+                            const targetAxis = new THREE.Vector3(0, 0, 1);
+
+                            if (x === maxDim) {
+                                length = x;
+                                radius = Math.max(y, z) / 2;
+                                targetAxis.set(1, 0, 0);
+                            } else if (y === maxDim) {
+                                length = y;
+                                radius = Math.max(x, z) / 2;
+                                targetAxis.set(0, 1, 0);
+                            } else {
+                                length = z;
+                                radius = Math.max(x, y) / 2;
+                                targetAxis.set(0, 0, 1);
+                            }
+
+                            const alignQuat = new THREE.Quaternion().setFromUnitVectors(zAxis, targetAxis);
+                            currentQuat.multiply(alignQuat);
+
+                            const newEuler = new THREE.Euler().setFromQuaternion(currentQuat, 'XYZ');
+                            const newRpy = { r: newEuler.x, p: newEuler.y, y: newEuler.z };
+
+                            const convertedDims = { x: radius, y: length, z: radius };
+
+                            update({
+                                type: newType,
+                                dimensions: convertedDims,
+                                origin: { ...(geomData.origin || { xyz: {x:0,y:0,z:0} }), rpy: newRpy }
+                            });
+                            return;
                         } else if (newType === GeometryType.SPHERE) {
                             // Use average dimension as radius
                             const sphereRadius = Math.max(0.05, (currentDims.x + currentDims.y + currentDims.z) / 3);
                             newDims = { x: sphereRadius, y: sphereRadius, z: sphereRadius };
                         } else if (newType === GeometryType.BOX) {
-                            // If coming from cylinder, convert radius/length back to box
-                            if (geomData.type === GeometryType.CYLINDER) {
+                            // If coming from cylinder or capsule, convert radius/length back to box
+                            if (geomData.type === GeometryType.CYLINDER || geomData.type === GeometryType.CAPSULE) {
                                 newDims = { x: currentDims.x * 2, y: currentDims.x * 2, z: currentDims.y };
                             } else if (geomData.type === GeometryType.SPHERE) {
                                 const diameter = currentDims.x * 2;
@@ -324,6 +368,7 @@ const GeometryEditor = ({
                     <option value={GeometryType.BOX}>{t.box}</option>
                     <option value={GeometryType.CYLINDER}>{t.cylinder}</option>
                     <option value={GeometryType.SPHERE}>{t.sphere}</option>
+                    <option value={GeometryType.CAPSULE}>{t.capsule}</option>
                     <option value={GeometryType.MESH}>{t.mesh}</option>
                     <option value={GeometryType.NONE}>{t.none}</option>
                 </select>
@@ -429,6 +474,26 @@ const GeometryEditor = ({
                         />
                         <NumberInput
                             label={t.height || 'Height'}
+                            value={geomData.dimensions?.y || 0.5}
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
+                            step={0.01}
+                        />
+                    </div>
+                </InputGroup>
+            )}
+
+            {/* Capsule dimensions: Radius and Total Length */}
+            {geomData.type === GeometryType.CAPSULE && (
+                <InputGroup label={t.dimensions}>
+                    <div className="grid grid-cols-2 gap-2">
+                        <NumberInput
+                            label={t.radius || 'Radius'}
+                            value={geomData.dimensions?.x || 0.05}
+                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } })}
+                            step={0.01}
+                        />
+                        <NumberInput
+                            label={t.totalLength || 'Total Length'}
                             value={geomData.dimensions?.y || 0.5}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
                             step={0.01}

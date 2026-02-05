@@ -119,6 +119,9 @@ export const generateMujocoXML = (robot: RobotState): string => {
             vGeomAttrs += ` type="cylinder" size="${f(v.dimensions.x)} ${f(v.dimensions.y/2)}"`;
         } else if (v.type === GeometryType.SPHERE) {
             vGeomAttrs += ` type="sphere" size="${f(v.dimensions.x)}"`;
+        } else if (v.type === GeometryType.CAPSULE) {
+            // MuJoCo capsule size is radius half-height
+            vGeomAttrs += ` type="capsule" size="${f(v.dimensions.x)} ${f(v.dimensions.y/2)}"`;
         } else if (v.type === GeometryType.MESH && v.meshPath) {
             vGeomAttrs += ` type="mesh" mesh="${v.meshPath}"`;
         }
@@ -145,6 +148,8 @@ export const generateMujocoXML = (robot: RobotState): string => {
             cGeomAttrs += ` type="cylinder" size="${f(c.dimensions.x)} ${f(c.dimensions.y/2)}"`;
         } else if (c.type === GeometryType.SPHERE) {
             cGeomAttrs += ` type="sphere" size="${f(c.dimensions.x)}"`;
+        } else if (c.type === GeometryType.CAPSULE) {
+            cGeomAttrs += ` type="capsule" size="${f(c.dimensions.x)} ${f(c.dimensions.y/2)}"`;
         } else if (c.type === GeometryType.MESH && c.meshPath) {
             cGeomAttrs += ` type="mesh" mesh="${c.meshPath}"`;
         }

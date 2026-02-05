@@ -126,9 +126,8 @@ export const parseURDF = (xmlString: string): RobotState | null => {
               }
           };
       } else if (capsule) {
-          // Map capsule to cylinder for visualization
           return {
-              type: GeometryType.CYLINDER,
+              type: GeometryType.CAPSULE,
               dimensions: {
                   x: parseFloat(capsule.getAttribute("radius") || "0.1"),
                   y: parseFloat(capsule.getAttribute("length") || "0.5"),

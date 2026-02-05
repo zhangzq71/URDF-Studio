@@ -45,6 +45,8 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
           xml += `        <cylinder radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.SPHERE) {
           xml += `        <sphere radius="${f(link.visual.dimensions.x)}" />\n`;
+        } else if (link.visual.type === GeometryType.CAPSULE) {
+          xml += `        <capsule radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
            const filename = link.visual.meshPath ? `package://${name}/meshes/${link.visual.meshPath}` : 'package://robot/meshes/part.stl';
            xml += `        <mesh filename="${filename}" />\n`;
@@ -69,6 +71,8 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
           xml += `        <cylinder radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
         } else if (link.collision.type === GeometryType.SPHERE) {
           xml += `        <sphere radius="${f(link.collision.dimensions.x)}" />\n`;
+        } else if (link.collision.type === GeometryType.CAPSULE) {
+          xml += `        <capsule radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
         } else if (link.collision.type === GeometryType.MESH) {
            const filename = link.collision.meshPath ? `package://${name}/meshes/${link.collision.meshPath}` : 'package://robot/meshes/part_collision.stl';
            xml += `        <mesh filename="${filename}" />\n`;

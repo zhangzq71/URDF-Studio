@@ -9,6 +9,7 @@ export enum GeometryType {
   BOX = 'box',
   CYLINDER = 'cylinder',
   SPHERE = 'sphere',
+  CAPSULE = 'capsule',
   MESH = 'mesh',
   NONE = 'none',
 }

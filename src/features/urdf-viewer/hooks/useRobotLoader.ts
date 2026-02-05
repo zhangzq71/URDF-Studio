@@ -10,6 +10,7 @@ import { offsetRobotToGround } from '../utils/robotPositioning';
 import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
+import { processCapsuleGeometries } from '../utils/capsulePostProcessor';
 
 function preprocessURDFForLoader(content: string): string {
     // Remove <transmission> blocks to prevent urdf-loader from finding duplicate joints
@@ -121,6 +122,9 @@ export function useRobotLoader({
                             const materials = parseURDFMaterials(urdfContent);
                             applyURDFMaterials(robotModel!, materials);
 
+                            // Process capsule geometries after materials are applied
+                            processCapsuleGeometries(robotModel!, urdfContent);
+
                             // Re-run enhanceMaterials to ensure proper lighting on loaded meshes
                             enhanceMaterials(robotModel!);
 
@@ -155,6 +159,9 @@ export function useRobotLoader({
                     if (!isMJCFContent(urdfContent)) {
                         const materials = parseURDFMaterials(urdfContent);
                         applyURDFMaterials(robotModel, materials);
+
+                        // Process capsule geometries (urdf-loader doesn't support capsule natively)
+                        processCapsuleGeometries(robotModel, urdfContent);
                     }
 
                     // Offset robot so bottom is at ground level (Y=0)

@@ -100,11 +100,13 @@ export const en: TranslationKeys = {
   box: "Box",
   cylinder: "Cylinder",
   sphere: "Sphere",
+  capsule: "Capsule",
   mesh: "Mesh (File)",
   width: "Width (X)",
   depth: "Depth (Y)",
   height: "Height (Z)",
   radius: "Radius",
+  totalLength: "Total Length",
 
   // Visualizer
   skeletonOptions: "Skeleton Options",

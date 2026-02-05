@@ -100,11 +100,13 @@ export const zh: TranslationKeys = {
   box: "方块",
   cylinder: "圆柱体",
   sphere: "球体",
+  capsule: "胶囊体",
   mesh: "网格 (文件)",
   width: "宽度 (X)",
   depth: "深度 (Y)",
   height: "高度 (Z)",
   radius: "半径",
+  totalLength: "总长度",
 
   // Visualizer
   skeletonOptions: "骨架选项",

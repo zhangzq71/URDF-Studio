@@ -50,6 +50,10 @@ export const validateLink = (link: UrdfLink): ValidationResult => {
             if (dims.x <= 0 || dims.y <= 0) {
                 errors.push({ type: 'error', message: 'Cylinder radius and length must be positive', path: 'visual.dimensions' });
             }
+        } else if (link.visual.type === GeometryType.CAPSULE) {
+            if (dims.x <= 0 || dims.y <= 0) {
+                errors.push({ type: 'error', message: 'Capsule radius and length must be positive', path: 'visual.dimensions' });
+            }
         } else if (link.visual.type === GeometryType.SPHERE) {
             if (dims.x <= 0) {
                 errors.push({ type: 'error', message: 'Sphere radius must be positive', path: 'visual.dimensions' });
