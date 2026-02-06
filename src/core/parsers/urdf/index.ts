@@ -1,7 +1,5 @@
-/**
- * URDF Parser Module
- * Provides parsing and generation of URDF format
- */
+// Export XML Parser
+export * from './parser';
 
-export { parseURDF } from './urdfParser';
-export { generateURDF } from './urdfGenerator';
+// Export Three.js Loader
+export * from './loader';

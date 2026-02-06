@@ -4,7 +4,7 @@
  */
 
 // URDF Parser
-export { parseURDF } from './urdf/urdfParser';
+export { parseURDF } from './urdf/parser';
 export { generateURDF } from './urdf/urdfGenerator';
 
 // MJCF Parser (MuJoCo format)

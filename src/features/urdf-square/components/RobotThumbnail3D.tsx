@@ -7,8 +7,7 @@ import React, { Suspense, useRef, useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Environment } from '@react-three/drei';
 import * as THREE from 'three';
-// @ts-ignore
-import URDFLoader from 'urdf-loader';
+import { URDFLoader } from '@/core/parsers/urdf/loader';
 import { Box, Loader2 } from 'lucide-react';
 import { SceneLighting, ReferenceGrid } from '@/shared/components/3d';
 import { createLoadingManager, createMeshLoader, buildAssetIndex, resetUnitDetection } from '@/core/loaders';

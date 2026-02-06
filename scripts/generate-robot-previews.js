@@ -104,15 +104,477 @@ const getPreviewHTML = (urdfPath, urdfFile) => `
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-      "urdf-loader": "https://unpkg.com/urdf-loader@0.12.2/src/URDFLoader.js"
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
     }
   }
   </script>
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-    import URDFLoader from 'urdf-loader';
+
+    // Full version of our custom URDFLoader classes to match project behavior exactly
+    
+    // --- Utils ---
+    const _tempAxis = new THREE.Vector3();
+    const _tempEuler = new THREE.Euler();
+    const _tempTransform = new THREE.Matrix4();
+    const _tempOrigTransform = new THREE.Matrix4();
+    const _tempQuat = new THREE.Quaternion();
+    const _tempScale = new THREE.Vector3(1.0, 1.0, 1.0);
+    const _tempPosition = new THREE.Vector3();
+    
+    const tempQuaternion = new THREE.Quaternion();
+    const tempEuler = new THREE.Euler();
+
+    function processTuple(val) {
+        if (!val) return [0, 0, 0];
+        return val.trim().split(/\\s+/g).map(num => parseFloat(num));
+    }
+
+    function applyRotation(obj, rpy, additive = false) {
+        if (!additive) obj.rotation.set(0, 0, 0);
+        tempEuler.set(rpy[0], rpy[1], rpy[2], 'ZYX');
+        tempQuaternion.setFromEuler(tempEuler);
+        tempQuaternion.multiply(obj.quaternion);
+        obj.quaternion.copy(tempQuaternion);
+    }
+
+    // --- Classes from URDFClasses.ts ---
+
+    class URDFBase extends THREE.Object3D {
+        constructor() {
+            super();
+            this.urdfNode = null;
+            this.urdfName = '';
+        }
+    }
+
+    class URDFCollider extends URDFBase {
+        constructor() {
+            super();
+            this.isURDFCollider = true;
+            this.type = 'URDFCollider';
+        }
+    }
+
+    class URDFVisual extends URDFBase {
+        constructor() {
+            super();
+            this.isURDFVisual = true;
+            this.type = 'URDFVisual';
+        }
+    }
+
+    class URDFLink extends URDFBase {
+        constructor() {
+            super();
+            this.isURDFLink = true;
+            this.type = 'URDFLink';
+        }
+    }
+
+    class URDFJoint extends URDFBase {
+        constructor() {
+            super();
+            this.isURDFJoint = true;
+            this.jointValue = null;
+            this.axis = new THREE.Vector3(1, 0, 0);
+            this.limit = { lower: 0, upper: 0, effort: 0, velocity: 0 };
+            this.ignoreLimits = false;
+            this.origPosition = null;
+            this.origQuaternion = null;
+            this.mimicJoints = [];
+            this._jointType = 'fixed';
+            this.type = 'URDFJoint';
+            this.jointType = 'fixed'; // Set via setter
+        }
+
+        get jointType() { return this._jointType; }
+        
+        set jointType(v) {
+            if (this._jointType === v) return;
+            this._jointType = v;
+            this.matrixWorldNeedsUpdate = true;
+            switch (v) {
+                case 'fixed': this.jointValue = []; break;
+                case 'continuous':
+                case 'revolute':
+                case 'prismatic': this.jointValue = new Array(1).fill(0); break;
+                case 'planar':
+                    this.jointValue = new Array(3).fill(0);
+                    this.axis = new THREE.Vector3(0, 0, 1);
+                    break;
+                case 'floating': this.jointValue = new Array(6).fill(0); break;
+                default: this.jointValue = []; break;
+            }
+        }
+
+        get angle() {
+            if (!this.jointValue || this.jointValue.length === 0) return 0;
+            return this.jointValue[0];
+        }
+
+        setJointValue(...values) {
+            values = values.map(value => (value === null ? null : parseFloat(value)));
+
+            if (!this.origPosition || !this.origQuaternion) {
+                this.origPosition = this.position.clone();
+                this.origQuaternion = this.quaternion.clone();
+            }
+
+            let didUpdate = false;
+            this.mimicJoints.forEach(joint => {
+                didUpdate = joint.updateFromMimickedJoint(...values) || didUpdate;
+            });
+
+            const currentValues = this.jointValue || [];
+
+            switch (this.jointType) {
+                case 'fixed': return didUpdate;
+                case 'continuous':
+                case 'revolute': {
+                    let angle = values[0];
+                    if (angle == null) return didUpdate;
+                    if (angle === currentValues[0]) return didUpdate;
+                    
+                    if (!this.ignoreLimits && this.jointType === 'revolute') {
+                        angle = Math.min(this.limit.upper, angle);
+                        angle = Math.max(this.limit.lower, angle);
+                    }
+                    this.quaternion.setFromAxisAngle(this.axis, angle).premultiply(this.origQuaternion);
+                    if (currentValues[0] !== angle) {
+                        currentValues[0] = angle;
+                        this.matrixWorldNeedsUpdate = true;
+                        return true;
+                    }
+                    return didUpdate;
+                }
+                case 'prismatic': {
+                    let position = values[0];
+                    if (position == null) return didUpdate;
+                    if (position === currentValues[0]) return didUpdate;
+                    if (!this.ignoreLimits) {
+                        position = Math.min(this.limit.upper, position);
+                        position = Math.max(this.limit.lower, position);
+                    }
+                    this.position.copy(this.origPosition);
+                    _tempAxis.copy(this.axis).applyEuler(this.rotation);
+                    this.position.addScaledVector(_tempAxis, position);
+                    if (currentValues[0] !== position) {
+                        currentValues[0] = position;
+                        this.matrixWorldNeedsUpdate = true;
+                        return true;
+                    }
+                    return didUpdate;
+                }
+                // (floating and planar omitted for brevity in preview, usually not needed for simple display)
+                default: return didUpdate;
+            }
+        }
+    }
+
+    class URDFMimicJoint extends URDFJoint {
+        constructor() {
+            super();
+            this.isURDFMimicJoint = true;
+            this.mimicJoint = null;
+            this.offset = 0;
+            this.multiplier = 1;
+            this.type = 'URDFMimicJoint';
+        }
+        updateFromMimickedJoint(...values) {
+            const modifiedValues = values.map(value => (value === null ? null : value * this.multiplier + this.offset));
+            return super.setJointValue(...modifiedValues);
+        }
+    }
+
+    class URDFRobot extends URDFLink {
+        constructor() {
+            super();
+            this.isURDFRobot = true;
+            this.urdfRobotNode = null;
+            this.robotName = null;
+            this.links = {};
+            this.joints = {};
+            this.colliders = {};
+            this.visual = {};
+            this.visuals = this.visual;
+            this.frames = {};
+        }
+    }
+
+    // --- Loader from URDFLoader.ts ---
+
+    class URDFLoader {
+        constructor(manager) {
+            this.manager = manager || new THREE.LoadingManager();
+            this.loadMeshCb = this.defaultMeshLoader.bind(this);
+            this.parseVisual = true;
+            this.parseCollision = true;
+            this.packages = '';
+            this.workingPath = '';
+        }
+
+        parse(content, workingPath = '') {
+            const manager = this.manager;
+            const linkMap = {};
+            const jointMap = {};
+            const materialMap = {};
+
+            // Path resolver
+            const resolvePath = (path) => {
+                if (!/^package:\\/\\//.test(path)) {
+                    return workingPath ? workingPath + path : path;
+                }
+                const [targetPkg, relPath] = path.replace(/^package:\\/\\//, '').split(/\\/(.+)/);
+                if (typeof this.packages === 'string') {
+                    if (this.packages.endsWith(targetPkg)) return this.packages + '/' + relPath;
+                    return this.packages + '/' + targetPkg + '/' + relPath;
+                }
+                return null;
+            };
+
+            const processMaterial = (node) => {
+                const matNodes = Array.from(node.children);
+                const material = new THREE.MeshPhongMaterial();
+                material.name = node.getAttribute('name') || '';
+
+                matNodes.forEach(n => {
+                    const type = n.nodeName.toLowerCase();
+                    if (type === 'color') {
+                        const rgba = (n.getAttribute('rgba') || '').split(/\\s+/g).map(v => parseFloat(v));
+                        material.color.setRGB(rgba[0] || 0, rgba[1] || 0, rgba[2] || 0);
+                        material.opacity = rgba[3] ?? 1;
+                        material.transparent = material.opacity < 1;
+                        material.depthWrite = !material.transparent;
+                    } else if (type === 'texture') {
+                        const filename = n.getAttribute('filename');
+                        if (filename) {
+                            const loader = new THREE.TextureLoader(manager);
+                            const filePath = resolvePath(filename);
+                            if (filePath) {
+                                material.map = loader.load(filePath);
+                                material.map.colorSpace = THREE.SRGBColorSpace;
+                            }
+                        }
+                    }
+                });
+                return material;
+            };
+
+            const processLinkElement = (node, namedMaterialMap = {}) => {
+                const isCollisionNode = node.nodeName.toLowerCase() === 'collision';
+                const children = Array.from(node.children);
+                let material;
+
+                const materialNode = children.find(n => n.nodeName.toLowerCase() === 'material');
+                if (materialNode) {
+                    const name = materialNode.getAttribute('name');
+                    if (name && name in namedMaterialMap) {
+                        material = namedMaterialMap[name];
+                    } else {
+                        material = processMaterial(materialNode);
+                    }
+                } else {
+                    material = new THREE.MeshPhongMaterial();
+                }
+
+                const group = isCollisionNode ? new URDFCollider() : new URDFVisual();
+                group.urdfNode = node;
+
+                children.forEach(n => {
+                    const type = n.nodeName.toLowerCase();
+                    if (type === 'geometry') {
+                        if (!n.children[0]) return;
+                        const geoType = n.children[0].nodeName.toLowerCase();
+                        
+                        if (geoType === 'mesh') {
+                            const filename = n.children[0].getAttribute('filename');
+                            if (!filename) return;
+                            const filePath = resolvePath(filename);
+                            if (filePath !== null) {
+                                const scaleAttr = n.children[0].getAttribute('scale');
+                                const scale = scaleAttr ? processTuple(scaleAttr) : [1, 1, 1];
+                                
+                                this.loadMeshCb(filePath, manager, (obj, err) => {
+                                    if (obj) {
+                                        if (obj instanceof THREE.Mesh) obj.material = material;
+                                        // Also apply to children if it's a group/scene
+                                        obj.traverse(c => {
+                                            if (c.isMesh) c.material = material;
+                                        });
+                                        obj.position.set(0, 0, 0);
+                                        obj.quaternion.identity();
+                                        obj.scale.set(scale[0], scale[1], scale[2]); // Apply scale here
+                                        group.add(obj);
+                                    }
+                                });
+                            }
+                        } else if (geoType === 'box') {
+                            const primitive = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+                            const size = processTuple(n.children[0].getAttribute('size'));
+                            primitive.scale.set(size[0], size[1], size[2]);
+                            group.add(primitive);
+                        } else if (geoType === 'sphere') {
+                            const primitive = new THREE.Mesh(new THREE.SphereGeometry(1, 30, 30), material);
+                            const radius = parseFloat(n.children[0].getAttribute('radius') || '0');
+                            primitive.scale.set(radius, radius, radius);
+                            group.add(primitive);
+                        } else if (geoType === 'cylinder') {
+                            const primitive = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 30), material);
+                            const radius = parseFloat(n.children[0].getAttribute('radius') || '0');
+                            const length = parseFloat(n.children[0].getAttribute('length') || '0');
+                            primitive.scale.set(radius, length, radius);
+                            primitive.rotation.set(Math.PI / 2, 0, 0);
+                            group.add(primitive);
+                        }
+                    } else if (type === 'origin') {
+                        const xyz = processTuple(n.getAttribute('xyz'));
+                        const rpy = processTuple(n.getAttribute('rpy'));
+                        group.position.set(xyz[0], xyz[1], xyz[2]);
+                        group.rotation.set(0, 0, 0);
+                        applyRotation(group, rpy);
+                    }
+                });
+                return group;
+            };
+
+            const processLink = (linkNode, visualMap, colliderMap, target = null) => {
+                const linkTarget = target || new URDFLink();
+                const children = Array.from(linkNode.children);
+                linkTarget.name = linkNode.getAttribute('name') || '';
+                linkTarget.urdfName = linkTarget.name;
+                
+                if (this.parseVisual) {
+                    children.filter(n => n.nodeName.toLowerCase() === 'visual').forEach(vNode => {
+                        const visual = processLinkElement(vNode, materialMap);
+                        linkTarget.add(visual);
+                        if (vNode.hasAttribute('name')) {
+                            const name = vNode.getAttribute('name');
+                            visual.name = name;
+                            visual.urdfName = name;
+                            visualMap[name] = visual;
+                        }
+                    });
+                }
+                if (this.parseCollision) {
+                    children.filter(n => n.nodeName.toLowerCase() === 'collision').forEach(cNode => {
+                        const collider = processLinkElement(cNode); // Pass empty map for collider mats usually
+                        linkTarget.add(collider);
+                        if (cNode.hasAttribute('name')) {
+                            const name = cNode.getAttribute('name');
+                            collider.name = name;
+                            collider.urdfName = name;
+                            colliderMap[name] = collider;
+                        }
+                    });
+                }
+                return linkTarget;
+            };
+
+            const processJoint = (jointNode) => {
+                const children = Array.from(jointNode.children);
+                const jointType = jointNode.getAttribute('type') || 'fixed';
+                let joint;
+                
+                const mimicTag = children.find(n => n.nodeName.toLowerCase() === 'mimic');
+                if (mimicTag) {
+                    joint = new URDFMimicJoint();
+                    joint.mimicJoint = mimicTag.getAttribute('joint');
+                    joint.multiplier = parseFloat(mimicTag.getAttribute('multiplier') || '1');
+                    joint.offset = parseFloat(mimicTag.getAttribute('offset') || '0');
+                } else {
+                    joint = new URDFJoint();
+                }
+
+                joint.name = jointNode.getAttribute('name') || '';
+                joint.urdfName = joint.name;
+                joint.jointType = jointType;
+
+                let parent = null;
+                let child = null;
+                let xyz = [0, 0, 0];
+                let rpy = [0, 0, 0];
+
+                children.forEach(n => {
+                    const type = n.nodeName.toLowerCase();
+                    if (type === 'origin') {
+                        xyz = processTuple(n.getAttribute('xyz'));
+                        rpy = processTuple(n.getAttribute('rpy'));
+                    } else if (type === 'child') {
+                        child = linkMap[n.getAttribute('link')];
+                    } else if (type === 'parent') {
+                        parent = linkMap[n.getAttribute('link')];
+                    } else if (type === 'limit') {
+                        joint.limit.lower = parseFloat(n.getAttribute('lower') || '0');
+                        joint.limit.upper = parseFloat(n.getAttribute('upper') || '0');
+                    } else if (type === 'axis') {
+                        const a = processTuple(n.getAttribute('xyz') || '1 0 0');
+                        joint.axis.set(a[0], a[1], a[2]).normalize();
+                    }
+                });
+
+                if (parent && child) {
+                    parent.add(joint);
+                    joint.add(child);
+                }
+                
+                applyRotation(joint, rpy);
+                joint.position.set(xyz[0], xyz[1], xyz[2]);
+                return joint;
+            };
+
+            // Main Parse Logic
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(content, 'text/xml');
+            const robotNode = xmlDoc.querySelector('robot');
+            if (!robotNode) throw new Error('URDFLoader: No <robot> node found');
+
+            const robot = new URDFRobot();
+            robot.robotName = robotNode.getAttribute('name');
+            robot.name = robot.robotName || '';
+            
+            // Materials
+            Array.from(robotNode.querySelectorAll('material')).forEach(n => {
+                const name = n.getAttribute('name');
+                if (name) materialMap[name] = processMaterial(n);
+            });
+
+            // Links
+            const visualMap = {};
+            const colliderMap = {};
+            Array.from(robotNode.querySelectorAll('link')).forEach(node => {
+                const name = node.getAttribute('name') || '';
+                const isRoot = robotNode.querySelector(\`child[link="\${name}"]\`) === null;
+                linkMap[name] = processLink(node, visualMap, colliderMap, isRoot ? robot : null);
+            });
+
+            // Joints
+            Array.from(robotNode.querySelectorAll('joint')).forEach(node => {
+                const name = node.getAttribute('name');
+                jointMap[name] = processJoint(node);
+            });
+
+            // Mimic Logic
+            Object.values(jointMap).forEach(joint => {
+                if (joint.isURDFMimicJoint && joint.mimicJoint && jointMap[joint.mimicJoint]) {
+                    jointMap[joint.mimicJoint].mimicJoints.push(joint);
+                }
+            });
+
+            robot.joints = jointMap;
+            robot.links = linkMap;
+            robot.colliders = colliderMap;
+            robot.visual = visualMap;
+
+            return robot;
+        }
+
+        defaultMeshLoader(path, manager, done) {
+             // Will be overridden in the main script logic
+             done(new THREE.Object3D());
+        }
+    }
 
     const container = document.getElementById('container');
     

@@ -2,7 +2,7 @@ import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react
 import { Canvas, RootState } from '@react-three/fiber';
 import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { SnapshotManager, SceneLighting, ReferenceGrid, PerformanceMonitor } from '@/shared/components/3d';
+import { SnapshotManager, SceneLighting, ReferenceGrid } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 
@@ -463,7 +463,6 @@ export function URDFViewer({
                 }}
             >
                 <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
-                <PerformanceMonitor />
                 <SceneLighting theme={effectiveTheme} />
                 <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
                 <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />

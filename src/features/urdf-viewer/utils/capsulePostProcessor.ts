@@ -223,10 +223,13 @@ export function processCapsuleGeometries(
                                 def.origin.xyz[1],
                                 def.origin.xyz[2]
                             );
-                            capsuleGroup.rotation.set(
-                                def.origin.rpy[0],
-                                def.origin.rpy[1],
-                                def.origin.rpy[2]
+                            capsuleGroup.quaternion.setFromEuler(
+                                new THREE.Euler(
+                                    def.origin.rpy[0],
+                                    def.origin.rpy[1],
+                                    def.origin.rpy[2],
+                                    'ZYX'
+                                )
                             );
                         }
 

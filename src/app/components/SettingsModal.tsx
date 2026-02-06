@@ -3,7 +3,7 @@
  * Draggable settings panel for UI configuration (Theme, Language, Scale)
  */
 import React from 'react';
-import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle, Activity } from 'lucide-react';
+import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useUIStore } from '@/store';
 import { 
   SegmentedControl, 
@@ -137,39 +137,6 @@ export function SettingsModal() {
             checked={showImportWarning}
             onChange={setShowImportWarning}
           />
-        </div>
-
-        {/* Divider */}
-        <Separator />
-
-        {/* Performance Settings */}
-        <div className="space-y-3">
-          <Label className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-medium">
-            <Activity className="w-3.5 h-3.5" />
-            {lang === 'zh' ? '性能监控' : 'Performance'}
-          </Label>
-          
-          <div className="pl-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-600 dark:text-slate-400">
-                {lang === 'zh' ? '显示帧数 (FPS)' : 'Show FPS'}
-              </span>
-              <Switch
-                checked={viewOptions.showFPS}
-                onChange={(checked) => setViewOption('showFPS', checked)}
-              />
-            </div>
-            
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-600 dark:text-slate-400">
-                {lang === 'zh' ? '显示显卡占用' : 'Show Render Stats'}
-              </span>
-              <Switch
-                checked={viewOptions.showMemory}
-                onChange={(checked) => setViewOption('showMemory', checked)}
-              />
-            </div>
-          </div>
         </div>
 
         {/* Divider */}

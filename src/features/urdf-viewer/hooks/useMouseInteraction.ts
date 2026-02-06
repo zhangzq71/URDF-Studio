@@ -202,7 +202,7 @@ export function useMouseInteraction({
             }
 
             if (delta !== 0) {
-                const currentAngle = dragJoint.current.angle || 0;
+                const currentAngle = dragJoint.current.angle ?? dragJoint.current.jointValue ?? 0;
                 let newAngle = currentAngle + delta;
 
                 const limit = dragJoint.current.limit || { lower: -Math.PI, upper: Math.PI };
@@ -378,7 +378,7 @@ export function useMouseInteraction({
         const handleMouseUp = () => {
             if (isDraggingJoint.current) {
                 if (onJointChangeCommitRef.current && dragJoint.current) {
-                    const currentAngle = dragJoint.current.angle || 0;
+                    const currentAngle = dragJoint.current.angle ?? dragJoint.current.jointValue ?? 0;
                     onJointChangeCommitRef.current(dragJoint.current.name, currentAngle);
                 }
 

@@ -18,6 +18,7 @@ export interface UrdfVisual {
   type: GeometryType;
   dimensions: Vector3; // Used variably based on type (x=radius, y=length for cylinder)
   color: string;
+  materialSource?: 'inline' | 'named' | 'gazebo';
   meshPath?: string; // For later detailed design
   origin: { xyz: Vector3; rpy: Euler }; // Offset relative to link frame
 }

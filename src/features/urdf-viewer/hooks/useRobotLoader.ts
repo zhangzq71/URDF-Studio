@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-// @ts-ignore
-import URDFLoader from 'urdf-loader';
+import { URDFLoader } from '@/core/parsers/urdf/loader';
 import { disposeObject3D } from '../utils/dispose';
 import { enhanceMaterials, collisionBaseMaterial } from '../utils/materials';
 import { parseURDFMaterials, applyURDFMaterials } from '../utils/urdfMaterials';
@@ -10,7 +9,7 @@ import { offsetRobotToGround } from '../utils/robotPositioning';
 import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
-import { parseURDF } from '@/core/parsers/urdf/urdfParser';
+import { parseURDF } from '@/core/parsers/urdf/parser';
 import { processCapsuleGeometries } from '../utils/capsulePostProcessor';
 
 function preprocessURDFForLoader(content: string): string {
@@ -116,31 +115,23 @@ export function useRobotLoader({
                     const urdfDir = '';
                     const manager = createLoadingManager(assets, urdfDir);
                     manager.onLoad = () => {
-                        if (!abortController.aborted && isMountedRef.current) {
+                        if (!robotModel || abortController.aborted || !isMountedRef.current) return;
 
-                            // Apply URDF materials AFTER meshes are fully loaded
-                            // This is critical because meshes load asynchronously
-                            const materials = parseURDFMaterials(urdfContent);
-                            applyURDFMaterials(robotModel!, materials);
-
-                            // Process capsule geometries after materials are applied
-                            processCapsuleGeometries(robotModel!, urdfContent);
-
-                            // Re-run enhanceMaterials to ensure proper lighting on loaded meshes
-                            enhanceMaterials(robotModel!);
-
-                            // Re-offset to ground after meshes are loaded (bounds may have changed)
-                            offsetRobotToGround(robotModel!);
-
-                            setRobotVersion(v => v + 1);
-                            invalidate();
-                        }
+                        const materials = parseURDFMaterials(urdfContent);
+                        applyURDFMaterials(robotModel, materials);
+                        processCapsuleGeometries(robotModel, urdfContent);
+                        enhanceMaterials(robotModel);
+                        offsetRobotToGround(robotModel);
+                        setRobotVersion(v => v + 1);
+                        invalidate();
                     };
-
+                    // Use new local URDFLoader
                     const loader = new URDFLoader(manager);
                     loader.parseCollision = true;
+                    loader.parseVisual = true;
+                    // Fix: loader.loadMeshCb expects 3 args (path, manager, done)
                     loader.loadMeshCb = createMeshLoader(assets, manager, urdfDir);
-                    loader.packages = (pkg: string) => '';
+                    loader.packages = '';
 
                     const cleanContent = preprocessURDFForLoader(urdfContent);
                     robotModel = loader.parse(cleanContent);
