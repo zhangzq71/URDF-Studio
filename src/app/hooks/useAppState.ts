@@ -26,7 +26,9 @@ export function useAppState() {
     theme,
     setTheme,
     toggleTheme: () => setTheme(theme === 'light' ? 'dark' : 'light'),
-    isDarkMode: theme === 'dark',
+    isDarkMode: theme === 'dark' || 
+      (theme === 'system' && typeof window !== 'undefined' && 
+       window.matchMedia('(prefers-color-scheme: dark)').matches),
 
     // Language
     lang,
