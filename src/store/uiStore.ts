@@ -25,6 +25,8 @@ export interface ViewOptions {
   showInertia: boolean;
   showCenterOfMass: boolean;
   showCollision: boolean;
+  showFPS: boolean;
+  showMemory: boolean;
 }
 
 // Panel visibility state
@@ -117,6 +119,8 @@ const defaultViewOptions: ViewOptions = {
   showInertia: false,
   showCenterOfMass: false,
   showCollision: false,
+  showFPS: false,
+  showMemory: false,
 };
 
 const defaultPanels: PanelsState = {

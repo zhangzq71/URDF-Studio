@@ -419,7 +419,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
 
   return (
     <div
-      className={`bg-white dark:bg-[#1E1E1E] rounded-xl border border-black/5 dark:border-white/10 flex flex-col shadow-xl overflow-hidden relative ${className}`}
+      className={`bg-white dark:bg-[#1E1E1E] rounded-xl border border-black/5 dark:border-white/10 flex flex-col shadow-xl overflow-hidden relative @container ${className}`}
       style={{ width: panelSize.width, height: panelSize.height }}
     >
       {children}

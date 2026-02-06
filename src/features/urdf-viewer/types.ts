@@ -98,6 +98,7 @@ export interface JointControlItemProps {
     handleJointAngleChange: (name: string, val: number) => void;
     handleJointChangeCommit: (name: string, val: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
+    isAdvanced?: boolean;
 }
 
 export interface ViewerToolbarProps {

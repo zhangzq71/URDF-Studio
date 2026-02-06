@@ -45,6 +45,12 @@ const GAZEBO_COLORS: Record<string, string> = {
     'Gazebo/FlatBlack': '#000000',
 };
 
+const parseFloatSafe = (val: string | null | undefined, def: number): number => {
+    if (val === null || val === undefined) return def;
+    const n = parseFloat(val);
+    return isNaN(n) ? def : n;
+};
+
 export const parseURDF = (xmlString: string): RobotState | null => {
   // Preprocess XML to fix common issues
   xmlString = preprocessXML(xmlString);
@@ -424,14 +430,14 @@ export const parseURDF = (xmlString: string): RobotState | null => {
           },
           axis: parseVec3(axisEl?.getAttribute("xyz") || "0 0 1"),
           limit: {
-              lower: parseFloat(limitEl?.getAttribute("lower") || "-1.57"),
-              upper: parseFloat(limitEl?.getAttribute("upper") || "1.57"),
-              effort: parseFloat(limitEl?.getAttribute("effort") || "100"),
-              velocity: parseFloat(limitEl?.getAttribute("velocity") || "10")
+              lower: parseFloatSafe(limitEl?.getAttribute("lower"), -1.57),
+              upper: parseFloatSafe(limitEl?.getAttribute("upper"), 1.57),
+              effort: parseFloatSafe(limitEl?.getAttribute("effort"), 100),
+              velocity: parseFloatSafe(limitEl?.getAttribute("velocity"), 10)
           },
           dynamics: {
-              damping: parseFloat(dynamicsEl?.getAttribute("damping") || "0"),
-              friction: parseFloat(dynamicsEl?.getAttribute("friction") || "0")
+              damping: parseFloatSafe(dynamicsEl?.getAttribute("damping"), 0),
+              friction: parseFloatSafe(dynamicsEl?.getAttribute("friction"), 0)
           },
           hardware: hardware
       };

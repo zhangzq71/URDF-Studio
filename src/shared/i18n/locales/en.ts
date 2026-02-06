@@ -168,6 +168,7 @@ export const en: TranslationKeys = {
   showCenterOfMass: "Show Center of Mass",
   showInertia: "Show Inertia",
   jointControls: "Joint Controls",
+  joints: "Joints",
   viewOptions: "View Options",
   loadingRobot: "Loading robot...",
   enterRobotName: "Enter robot name...",
@@ -203,6 +204,8 @@ export const en: TranslationKeys = {
   physics: "Physics",
   size: "Size",
   resetJoints: "Reset Joints",
+  reset: "Reset",
+  advanced: "Advanced",
   expand: "Expand",
   collapse: "Collapse",
   close: "Close",
@@ -231,4 +234,9 @@ export const en: TranslationKeys = {
   measuredCount: "Measured: {count}",
   undo: "Undo",
   clearAll: "Clear All",
+
+  // Performance
+  performance: "Performance",
+  showFPS: "Show FPS",
+  showMemory: "Show Render Stats",
 };

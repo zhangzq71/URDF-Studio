@@ -10,6 +10,7 @@ import { offsetRobotToGround } from '../utils/robotPositioning';
 import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
+import { parseURDF } from '@/core/parsers/urdf/urdfParser';
 import { processCapsuleGeometries } from '../utils/capsulePostProcessor';
 
 function preprocessURDFForLoader(content: string): string {
@@ -143,6 +144,26 @@ export function useRobotLoader({
 
                     const cleanContent = preprocessURDFForLoader(urdfContent);
                     robotModel = loader.parse(cleanContent);
+
+                    // Extract full joint limits (effort, velocity) which urdf-loader might miss
+                    const fullRobotState = parseURDF(urdfContent);
+                    if (fullRobotState && fullRobotState.joints && (robotModel as any).joints) {
+                        Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
+                             const parsedJoint = fullRobotState.joints[name];
+                             if (parsedJoint && parsedJoint.limit) {
+                                 // Ensure limit object exists on the threejs joint
+                                 if (!joint.limit) joint.limit = {};
+                                 
+                                 // Update missing properties
+                                 joint.limit.effort = parsedJoint.limit.effort;
+                                 joint.limit.velocity = parsedJoint.limit.velocity;
+                                 
+                                 // Also ensure lower/upper are consistent if they were missing
+                                 if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
+                                 if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
+                             }
+                        });
+                    }
 
                     // Check if load was aborted (e.g., by StrictMode remount or urdfContent change)
                     if (abortController.aborted) {

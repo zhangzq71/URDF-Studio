@@ -1,5 +1,5 @@
-import React from 'react';
-import { RotateCcw } from 'lucide-react';
+import React, { useState } from 'react';
+import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from '@/features/urdf-viewer/components/JointControlItem';
 
@@ -48,15 +48,25 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
 }) => {
     // Condition to show
     const shouldShow = showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
+    const [isAdvanced, setIsAdvanced] = useState(false);
 
     const additionalControls = (
         <div className="flex items-center gap-1 mr-1">
              <button
                 onClick={(e) => { e.stopPropagation(); handleResetJoints(); }}
-                className="p-1 rounded bg-slate-200 dark:bg-google-dark-bg hover:bg-slate-300 dark:hover:bg-google-dark-border text-slate-700 dark:text-white transition-colors"
+                className="flex items-center gap-1.5 p-1 px-2 rounded bg-slate-200 dark:bg-google-dark-bg hover:bg-slate-300 dark:hover:bg-google-dark-border text-slate-700 dark:text-white transition-colors"
                 title={t.resetJoints}
             >
                 <RotateCcw className="w-3 h-3" />
+                <span className="text-[10px] hidden @[300px]:inline whitespace-nowrap">{t.reset || 'Reset'}</span>
+            </button>
+            <button
+                onClick={(e) => { e.stopPropagation(); setIsAdvanced(!isAdvanced); }}
+                className={`flex items-center gap-1.5 p-1 px-2 rounded transition-colors ${isAdvanced ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-slate-200 dark:bg-google-dark-bg text-slate-700 dark:text-white hover:bg-slate-300 dark:hover:bg-google-dark-border'}`}
+                title={t.advanced || "Advanced"}
+            >
+                <Settings className="w-3 h-3" />
+                <span className="text-[10px] hidden @[300px]:inline whitespace-nowrap">{t.advanced || 'Advanced'}</span>
             </button>
             <button
                 onClick={(e) => { e.stopPropagation(); setAngleUnit(angleUnit === 'rad' ? 'deg' : 'rad'); }}
@@ -70,7 +80,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
 
     return (
         <OptionsPanel
-            title={t.jointControls}
+            title={t.joints || "Joints"}
             show={!!shouldShow}
             panelRef={jointPanelRef}
             position={jointPanelPos}
@@ -98,6 +108,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             handleJointAngleChange={handleJointAngleChange}
                             handleJointChangeCommit={handleJointChangeCommit}
                             onSelect={onSelect}
+                            isAdvanced={isAdvanced}
                         />
                     ))}
             </div>
