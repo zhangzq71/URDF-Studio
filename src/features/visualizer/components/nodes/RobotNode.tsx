@@ -156,7 +156,7 @@ export const RobotNode = memo(function RobotNode({
         <group>
             <ThickerAxes size={frameSize} />
             {showRootLabel && (
-                <Html position={[0.35, 0, 0]} className="pointer-events-none">
+                <Html position={[0.35, 0, 0]} className="pointer-events-none" zIndexRange={[0, 0]}>
                     <div
                         style={{ transform: `scale(${labelScale})`, transformOrigin: 'left center' }}
                         onClick={handleLinkClick}

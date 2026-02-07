@@ -153,7 +153,7 @@ export const JointNode = memo(function JointNode({
           {(mode === 'skeleton' || mode === 'hardware') && (
             <group>
               {showJointLabel && (
-                <Html position={[0.25, 0, 0]} className="pointer-events-none">
+                <Html position={[0.25, 0, 0]} className="pointer-events-none" zIndexRange={[0, 0]}>
                   <div
                     style={{ transform: `scale(${labelScale})`, transformOrigin: 'left center' }}
                     onClick={(e) => {
