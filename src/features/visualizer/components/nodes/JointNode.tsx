@@ -112,10 +112,10 @@ export const JointNode = memo(function JointNode({
 
   return (
     <group>
-      {mode === 'skeleton' && showGeometry && (
+      {/* Connecting line: dashed for skeleton geometry, solid thin for labels */}
+      {(Math.abs(x) > 0.001 || Math.abs(y) > 0.001 || Math.abs(z) > 0.001) && (
         <>
-          {/* Only render line if distance is significant (> 0.001m) to avoid rendering glitches */}
-          {(Math.abs(x) > 0.001 || Math.abs(y) > 0.001 || Math.abs(z) > 0.001) && (
+          {mode === 'skeleton' && showGeometry && (
             <Line
               points={[[0, 0, 0], [x, y, z]]}
               color={isSelected ? "#fbbf24" : "#94a3b8"}
@@ -123,6 +123,13 @@ export const JointNode = memo(function JointNode({
               dashed
               dashSize={0.02}
               gapSize={0.01}
+            />
+          )}
+          {showJointLabel && !(mode === 'skeleton' && showGeometry) && (
+            <Line
+              points={[[0, 0, 0], [x, y, z]]}
+              color={isSelected ? "#fbbf24" : "#64748b"}
+              lineWidth={1}
             />
           )}
         </>
@@ -154,9 +161,9 @@ export const JointNode = memo(function JointNode({
           {(mode === 'skeleton' || mode === 'hardware') && (
             <group>
               {showJointLabel && (
-                <Html position={[0.06, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
+                <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
                   <div
-                    style={{ transform: `scale(${labelScale})`, transformOrigin: 'left center' }}
+                    style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
                     className="pointer-events-auto cursor-pointer select-none"
                     onMouseEnter={() => setIsHovered(true)}
                     onMouseLeave={() => setIsHovered(false)}

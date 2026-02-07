@@ -158,9 +158,9 @@ export const RobotNode = memo(function RobotNode({
         <group>
             <ThickerAxes size={frameSize} />
             {showRootLabel && (
-                <Html position={[0.08, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
+                <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
                     <div
-                        style={{ transform: `scale(${labelScale})`, transformOrigin: 'left center' }}
+                        style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
                         className="pointer-events-auto cursor-pointer select-none"
                         onMouseEnter={() => setIsHovered(true)}
                         onMouseLeave={() => setIsHovered(false)}
@@ -239,7 +239,7 @@ export const RobotNode = memo(function RobotNode({
       */}
 
       {showLinkLabel && (
-        <Html position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[100, 0]}>
+        <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[100, 0]}>
           <div
             style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
             className="pointer-events-auto cursor-pointer select-none"
