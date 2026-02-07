@@ -68,6 +68,8 @@ export interface TranslationKeys {
   meshLibrary: string;
   upload: string;
   selected: string;
+  applyMesh: string;
+  meshHint: string;
   inertial: string;
   mass: string;
   centerOfMass: string;

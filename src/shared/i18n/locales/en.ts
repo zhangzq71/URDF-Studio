@@ -68,6 +68,8 @@ export const en: TranslationKeys = {
   meshLibrary: "Mesh Library",
   upload: "Upload (.stl, .obj, .dae)",
   selected: "Selected",
+  applyMesh: "Apply",
+  meshHint: "Click to preview, double-click to apply",
   inertial: "Inertial",
   mass: "Mass (kg)",
   centerOfMass: "Center of Mass",

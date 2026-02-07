@@ -3,12 +3,13 @@
  * Features: Visual/Collision geometry, Inertial properties, Joint kinematics, Hardware config
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Upload, File, Wand, ExternalLink, ChevronRight, PanelRightOpen, Eye, Box, ChevronDown, ChevronLeft } from 'lucide-react';
+import { Upload, File, Wand, ExternalLink, ChevronRight, PanelRightOpen, Eye, Box, ChevronDown, ChevronLeft, Check } from 'lucide-react';
 import * as THREE from 'three';
 import type { RobotState, JointType, AppMode, UrdfLink, MotorSpec, Theme } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
+import { MeshPreview } from './MeshPreview';
 
 // ============================================================
 // REUSABLE THREE OBJECTS - Avoid allocation in render functions
@@ -174,10 +175,18 @@ const GeometryEditor = ({
 }) => {
     const geomData = data[category] || {} as any;
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
 
     // Ensure nested objects exist if they are missing
     const update = (newData: Partial<typeof geomData>) => {
         onUpdate({ ...data, [category]: { ...geomData, ...newData } });
+    };
+
+    const handleApplyMesh = () => {
+        if (previewMeshPath) {
+            update({ meshPath: previewMeshPath });
+            setPreviewMeshPath(null);
+        }
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -400,23 +409,67 @@ const GeometryEditor = ({
                                 {Object.keys(assets).length === 0 && (
                                     <div className="text-[10px] text-slate-500 italic"></div>
                                 )}
-                                {Object.keys(assets).map(filename => (
-                                    <div
-                                        key={filename}
-                                        onClick={() => update({ meshPath: filename })}
-                                        className={`
-                                            flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs
-                                            ${geomData.meshPath === filename ? 'bg-blue-100 dark:bg-[#0060FA] text-google-blue dark:text-white border border-blue-200 dark:border-transparent' : 'hover:bg-slate-200 dark:hover:bg-google-dark-bg text-slate-700 dark:text-slate-300'}
-                                        `}
-                                    >
-                                        <File className="w-3 h-3 shrink-0" />
-                                        <span className="truncate">{filename}</span>
-                                    </div>
-                                ))}
+                                {Object.keys(assets).map(filename => {
+                                    const isApplied = geomData.meshPath === filename && !previewMeshPath;
+                                    const isPreviewing = previewMeshPath === filename;
+                                    return (
+                                        <div
+                                            key={filename}
+                                            onClick={() => setPreviewMeshPath(filename)}
+                                            onDoubleClick={() => {
+                                                update({ meshPath: filename });
+                                                setPreviewMeshPath(null);
+                                            }}
+                                            className={`
+                                                flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors
+                                                ${isApplied
+                                                    ? 'bg-blue-100 dark:bg-[#0060FA] text-google-blue dark:text-white border border-blue-200 dark:border-transparent'
+                                                    : isPreviewing
+                                                        ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
+                                                        : 'hover:bg-slate-200 dark:hover:bg-google-dark-bg text-slate-700 dark:text-slate-300'
+                                                }
+                                            `}
+                                        >
+                                            <File className="w-3 h-3 shrink-0" />
+                                            <span className="truncate">{filename}</span>
+                                            {isApplied && <Check className="w-3 h-3 shrink-0 ml-auto" />}
+                                        </div>
+                                    );
+                                })}
                              </div>
-                             {geomData.meshPath && (
+
+                             {/* Inline 3D Preview */}
+                             {previewMeshPath && (
+                                 <div className="mt-1 flex flex-col gap-1.5">
+                                     <MeshPreview meshPath={previewMeshPath} assets={assets} />
+                                     <div className="flex items-center gap-2">
+                                         <button
+                                             onClick={handleApplyMesh}
+                                             className="flex-1 flex items-center justify-center gap-1 bg-google-blue hover:bg-blue-600 text-white text-xs px-2 py-1.5 rounded transition-colors"
+                                         >
+                                             <Check className="w-3 h-3" />
+                                             {t.applyMesh}
+                                         </button>
+                                         <button
+                                             onClick={() => setPreviewMeshPath(null)}
+                                             className="flex-1 text-xs px-2 py-1.5 rounded border border-slate-300 dark:border-google-dark-border text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-google-dark-bg transition-colors"
+                                         >
+                                             {t.cancel}
+                                         </button>
+                                     </div>
+                                 </div>
+                             )}
+
+                             {geomData.meshPath && !previewMeshPath && (
                                  <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-1">
                                      {t.selected}: <span className="text-google-blue dark:text-blue-400">{geomData.meshPath}</span>
+                                 </div>
+                             )}
+
+                             {/* Hint for double-click */}
+                             {!previewMeshPath && Object.keys(assets).length > 0 && (
+                                 <div className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5">
+                                     {t.meshHint}
                                  </div>
                              )}
                         </div>

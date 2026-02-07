@@ -68,6 +68,8 @@ export const zh: TranslationKeys = {
   meshLibrary: "网格库",
   upload: "上传 (.stl, .obj, .dae)",
   selected: "已选",
+  applyMesh: "应用",
+  meshHint: "单击预览，双击直接应用",
   inertial: "惯性参数",
   mass: "质量 (kg)",
   centerOfMass: "质心",
