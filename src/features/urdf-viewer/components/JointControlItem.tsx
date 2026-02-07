@@ -223,7 +223,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                 className="flex items-center gap-1.5 cursor-text group"
                 onClick={(e) => { e.stopPropagation(); setIsEditingEffort(true); }}
             >
-                <span className="text-[10px] text-slate-400 font-serif italic">τ</span>
+                <span className="inline-flex items-center justify-center text-[10px] text-slate-400 font-serif italic h-4 w-3 leading-none">τ</span>
                 {isEditingEffort ? (
                     <input 
                         autoFocus
@@ -236,7 +236,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                         className="w-12 bg-white dark:bg-black/20 border border-blue-400 rounded px-0.5 py-0 text-center text-[10px] outline-none h-4 leading-none"
                     />
                 ) : (
-                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-12 text-center h-4 flex items-center justify-center">
+                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-12 text-center h-4 flex items-center justify-center leading-none">
                         {localLimits.effort.toFixed(2)}
                     </span>
                 )}
@@ -246,7 +246,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                 className="flex items-center gap-1.5 cursor-text group"
                 onClick={(e) => { e.stopPropagation(); setIsEditingVelocity(true); }}
             >
-                <span className="text-[10px] text-slate-400 font-serif italic">v</span>
+                <span className="inline-flex items-center justify-center text-[10px] text-slate-400 font-serif italic h-4 w-3 leading-none">v</span>
                 {isEditingVelocity ? (
                     <input 
                         autoFocus
