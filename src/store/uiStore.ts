@@ -185,6 +185,20 @@ const getSavedUiScale = (): number => {
   return 1.0;
 };
 
+// Helper to apply font size (affects text size via CSS variable)
+const applyFontSize = (fontSize: 'small' | 'medium' | 'large') => {
+  if (typeof window === 'undefined') return;
+  let scale: number;
+  switch (fontSize) {
+    case 'small': scale = 0.85; break;  // 85%
+    case 'large': scale = 1.25; break;  // 125%
+    case 'medium':
+    default: scale = 1.0; break;  // 100%
+  }
+  document.documentElement.style.setProperty('--font-scale', scale.toString());
+  document.documentElement.setAttribute('data-font-size', fontSize);
+};
+
 // Helper to apply theme
 const applyTheme = (theme: Theme) => {
   if (typeof window === 'undefined') return;
@@ -329,7 +343,10 @@ export const useUIStore = create<UIState>()(
 
       // Font Size
       fontSize: 'medium',
-      setFontSize: (size) => set({ fontSize: size }),
+      setFontSize: (size) => {
+        applyFontSize(size);
+        set({ fontSize: size });
+      },
     }),
     {
       name: 'urdf-studio-ui',
@@ -343,9 +360,15 @@ export const useUIStore = create<UIState>()(
         fontSize: state.fontSize,
       }),
       onRehydrateStorage: () => (state) => {
-        // Re-apply theme on hydration
+        // Re-apply theme, UI scale and font size on hydration
         if (state) {
           applyTheme(state.theme);
+          // Re-apply UI scale
+          if (state.uiScale) {
+            document.documentElement.style.fontSize = `${state.uiScale * 100}%`;
+          }
+          // Re-apply font size
+          applyFontSize(state.fontSize || 'medium');
         }
       },
     }

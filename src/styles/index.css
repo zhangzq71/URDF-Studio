@@ -21,11 +21,38 @@
   --color-google-light-surface: #ffffff;
 }
 
+/* Root element with font scale variable */
+:root {
+  --font-scale: 1;
+}
+
 body {
   font-family: 'Inter', sans-serif;
   @apply bg-google-light-bg dark:bg-app-bg text-slate-900 dark:text-slate-200;
   overflow: hidden;
 }
+
+/* Apply font scale to body base size */
+body {
+  font-size: calc(1rem * var(--font-scale));
+}
+
+/* Override Tailwind text utilities to scale */
+.text-xs { font-size: calc(0.75rem * var(--font-scale)) !important; }
+.text-sm { font-size: calc(0.875rem * var(--font-scale)) !important; }
+.text-base { font-size: calc(1rem * var(--font-scale)) !important; }
+.text-lg { font-size: calc(1.125rem * var(--font-scale)) !important; }
+.text-xl { font-size: calc(1.25rem * var(--font-scale)) !important; }
+.text-2xl { font-size: calc(1.5rem * var(--font-scale)) !important; }
+.text-3xl { font-size: calc(1.875rem * var(--font-scale)) !important; }
+.text-4xl { font-size: calc(2.25rem * var(--font-scale)) !important; }
+
+/* Override arbitrary pixel font sizes commonly used in the app */
+.text-\[10px\] { font-size: calc(10px * var(--font-scale)) !important; }
+.text-\[11px\] { font-size: calc(11px * var(--font-scale)) !important; }
+.text-\[12px\] { font-size: calc(12px * var(--font-scale)) !important; }
+.text-\[13px\] { font-size: calc(13px * var(--font-scale)) !important; }
+.text-\[14px\] { font-size: calc(14px * var(--font-scale)) !important; }
 
 /* Custom scrollbar for panels */
 ::-webkit-scrollbar {
