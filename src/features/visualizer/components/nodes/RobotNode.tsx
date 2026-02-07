@@ -155,7 +155,7 @@ export const RobotNode = memo(function RobotNode({
   return (
     <group>
       {showRootAxes && (
-        <group>
+        <group userData={{ isHelper: true }}>
             <ThickerAxes size={frameSize} />
             {showRootLabel && (
                 <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
@@ -220,10 +220,10 @@ export const RobotNode = memo(function RobotNode({
       )}
 
       {/* Inertia Visualization */}
-      {showInertia && <InertiaBox link={link} />}
+      {showInertia && <group userData={{ isHelper: true }}><InertiaBox link={link} /></group>}
 
       {/* Center of Mass Indicator */}
-      {showCenterOfMass && <LinkCenterOfMass link={link} />}
+      {showCenterOfMass && <group userData={{ isHelper: true }}><LinkCenterOfMass link={link} /></group>}
 
       {/* Transform Controls for Link Geometry in Detail Mode - Disabled to prioritize Joint Controls
       {isSelected && mode === 'detail' && activeGeometryRef && (

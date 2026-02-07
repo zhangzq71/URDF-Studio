@@ -22,8 +22,25 @@ import { JointTransformControls } from './controls';
 import { VisualizerCanvas } from './VisualizerCanvas';
 
 /**
+ * Traverse the scene graph, skipping subtrees marked as helpers or gizmos.
+ * This ensures only actual robot geometry is considered for bounding box calculations.
+ */
+function traverseRobotMeshes(obj: THREE.Object3D, callback: (mesh: THREE.Mesh) => void) {
+  if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
+  if ((obj as THREE.Mesh).isMesh) {
+    callback(obj as THREE.Mesh);
+  }
+  for (const child of obj.children) {
+    traverseRobotMeshes(child, callback);
+  }
+}
+
+/**
  * GroundedGroup - Offsets child robot so its bottom sits at ground level (Z=0).
  * Uses Z-up convention matching the Visualizer's camera and grid setup.
+ * Only considers actual robot geometry meshes (skips helper visualizations like
+ * joint axes, coordinate frames, inertia boxes, etc.) so that scaling up helpers
+ * does not shift the ground plane.
  */
 function GroundedGroup({ children }: { children: React.ReactNode }) {
   const groupRef = useRef<THREE.Group>(null);
@@ -35,18 +52,12 @@ function GroundedGroup({ children }: { children: React.ReactNode }) {
     group.updateMatrixWorld(true);
 
     const box = new THREE.Box3();
-    group.traverse((child) => {
-      if (child.userData?.isGizmo) return;
-      if (child.name?.startsWith('__')) return;
-
-      if ((child as THREE.Mesh).isMesh) {
-        const mesh = child as THREE.Mesh;
-        if (mesh.geometry) {
-          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-          const geomBox = mesh.geometry.boundingBox!.clone();
-          geomBox.applyMatrix4(mesh.matrixWorld);
-          box.union(geomBox);
-        }
+    traverseRobotMeshes(group, (mesh) => {
+      if (mesh.geometry) {
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        const geomBox = mesh.geometry.boundingBox!.clone();
+        geomBox.applyMatrix4(mesh.matrixWorld);
+        box.union(geomBox);
       }
     });
 

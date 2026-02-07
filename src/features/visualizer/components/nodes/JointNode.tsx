@@ -149,13 +149,15 @@ export const JointNode = memo(function JointNode({
                 rotation={[0, 0, 0]}
             >
                 {showAxes && (
-                    <ThickerAxes
-                        size={frameSize}
-                        onClick={(mode === 'skeleton' || mode === 'hardware') ? (e) => {
-                            e.stopPropagation();
-                            onSelect('joint', joint.id);
-                        } : undefined}
-                    />
+                    <group userData={{ isHelper: true }}>
+                        <ThickerAxes
+                            size={frameSize}
+                            onClick={(mode === 'skeleton' || mode === 'hardware') ? (e) => {
+                                e.stopPropagation();
+                                onSelect('joint', joint.id);
+                            } : undefined}
+                        />
+                    </group>
                 )}
 
           {(mode === 'skeleton' || mode === 'hardware') && (
@@ -190,15 +192,17 @@ export const JointNode = memo(function JointNode({
                   </div>
                 </Html>
               )}
-              {mode === 'skeleton' && showJointAxes && joint.type !== 'fixed' && <JointAxesVisual joint={joint} scale={jointAxisSize / 0.35} />}
+              {mode === 'skeleton' && showJointAxes && joint.type !== 'fixed' && <group userData={{ isHelper: true }}><JointAxesVisual joint={joint} scale={jointAxisSize / 0.35} /></group>}
             </group>
           )}
 
           {mode !== 'skeleton' && (
-            <mesh onClick={(e: any) => { e.stopPropagation(); onSelect('joint', joint.id); }}>
-              <sphereGeometry args={[0.02, 16, 16]} />
-              <meshBasicMaterial color={isSelected ? "orange" : "white"} opacity={isSelected ? 1 : 0} transparent />
-            </mesh>
+            <group userData={{ isHelper: true }}>
+              <mesh onClick={(e: any) => { e.stopPropagation(); onSelect('joint', joint.id); }}>
+                <sphereGeometry args={[0.02, 16, 16]} />
+                <meshBasicMaterial color={isSelected ? "orange" : "white"} opacity={isSelected ? 1 : 0} transparent />
+              </mesh>
+            </group>
           )}
 
           <RobotNode
