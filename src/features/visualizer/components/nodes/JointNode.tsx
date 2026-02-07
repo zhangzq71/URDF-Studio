@@ -96,6 +96,7 @@ export const JointNode = memo(function JointNode({
   const [jointPivot, setJointPivot] = useState<THREE.Group | null>(null);
   // Joint group: contains visualization, positioned at [0,0,0] relative to pivot
   const [jointGroup, setJointGroup] = useState<THREE.Group | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
 
   // Register pivot with parent Visualizer component
   useEffect(() => {
@@ -153,23 +154,32 @@ export const JointNode = memo(function JointNode({
           {(mode === 'skeleton' || mode === 'hardware') && (
             <group>
               {showJointLabel && (
-                <Html position={[0.25, 0, 0]} className="pointer-events-none" zIndexRange={[0, 0]}>
+                <Html position={[0.06, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
                   <div
                     style={{ transform: `scale(${labelScale})`, transformOrigin: 'left center' }}
+                    className="pointer-events-auto cursor-pointer select-none"
+                    onMouseEnter={() => setIsHovered(true)}
+                    onMouseLeave={() => setIsHovered(false)}
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelect('joint', joint.id);
                     }}
-                    className={`
-                                        px-1.5 py-0.5 text-[10px] font-mono rounded border whitespace-nowrap shadow-xl
-                                        pointer-events-auto cursor-pointer select-none transition-colors
-                                        ${isSelected
-                        ? 'bg-blue-600 text-white border-blue-400 z-50'
-                        : 'bg-white/90 dark:bg-[#1C1C1E] text-orange-700 dark:text-orange-200 border-orange-200 dark:border-[#000000] hover:bg-orange-50 dark:hover:bg-[#3A3A3C]'
-                      }
-                                    `}
                   >
-                    {joint.name}
+                    {(isSelected || isHovered) ? (
+                      <div
+                        className={`
+                          px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
+                          ${isSelected
+                            ? 'bg-blue-600 text-white border-blue-400 z-50'
+                            : 'bg-white/90 dark:bg-[#1C1C1E] text-orange-700 dark:text-orange-200 border-orange-200 dark:border-[#000000] hover:bg-orange-50 dark:hover:bg-[#3A3A3C]'
+                          }
+                        `}
+                      >
+                        {joint.name}
+                      </div>
+                    ) : (
+                      <div className="w-2 h-2 rounded-full bg-orange-400/80 hover:scale-150 transition-transform" />
+                    )}
                   </div>
                 </Html>
               )}

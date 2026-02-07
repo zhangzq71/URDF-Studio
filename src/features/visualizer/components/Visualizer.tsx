@@ -4,6 +4,7 @@ import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { RobotState, Theme } from '@/types';
 import { translations, Language } from '@/shared/i18n';
+import { useSelectionStore } from '@/store/selectionStore';
 
 // Hooks
 import {
@@ -100,6 +101,7 @@ export const Visualizer = ({
   setShowOptionsPanel,
 }: VisualizerProps) => {
   const t = translations[lang];
+  const clearSelection = useSelectionStore((s) => s.clearSelection);
 
   // Use custom hooks for state management
   const state = useVisualizerState({ propShowVisual, propSetShowVisual });
@@ -243,6 +245,7 @@ export const Visualizer = ({
         theme={theme}
         snapshotAction={snapshotAction}
         robotName={robot?.name || 'robot'}
+        onPointerMissed={clearSelection}
       >
         {/* Robot Hierarchy - GroundedGroup offsets robot so bottom sits at Z=0 */}
         <GroundedGroup>

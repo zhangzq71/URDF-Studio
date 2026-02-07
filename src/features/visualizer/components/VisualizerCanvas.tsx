@@ -10,6 +10,7 @@ interface VisualizerCanvasProps {
   theme: Theme;
   snapshotAction?: React.MutableRefObject<(() => void) | null>;
   robotName?: string;
+  onPointerMissed?: () => void;
   children: React.ReactNode;
 }
 
@@ -27,6 +28,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
   theme: propTheme,
   snapshotAction,
   robotName = 'robot',
+  onPointerMissed,
   children,
 }: VisualizerCanvasProps) {
   // Use the hook to get the effective theme (light/dark)
@@ -38,6 +40,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
       shadows
       frameloop="demand"
       camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
+      onPointerMissed={onPointerMissed}
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,

@@ -103,6 +103,8 @@ export const RobotNode = memo(function RobotNode({
   const selectionSubType = robot.selection.subType;
   const isRoot = linkId === robot.rootLinkId;
 
+  const [isHovered, setIsHovered] = useState(false);
+
   // Refs for dragging geometry in Detail mode
   const [visualRef, setVisualRef] = useState<THREE.Group | null>(null);
   const [collisionRef, setCollisionRef] = useState<THREE.Group | null>(null);
@@ -156,22 +158,31 @@ export const RobotNode = memo(function RobotNode({
         <group>
             <ThickerAxes size={frameSize} />
             {showRootLabel && (
-                <Html position={[0.35, 0, 0]} className="pointer-events-none" zIndexRange={[0, 0]}>
+                <Html position={[0.08, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
                     <div
                         style={{ transform: `scale(${labelScale})`, transformOrigin: 'left center' }}
+                        className="pointer-events-auto cursor-pointer select-none"
+                        onMouseEnter={() => setIsHovered(true)}
+                        onMouseLeave={() => setIsHovered(false)}
                         onClick={handleLinkClick}
-                        className={`
-                            px-1.5 py-0.5 text-[10px] font-mono rounded border whitespace-nowrap shadow-xl
-                            pointer-events-auto cursor-pointer select-none transition-colors
+                    >
+                      {(isSelected || isHovered) ? (
+                        <div
+                          className={`
+                            px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
                             ${isSelected
-                    ? 'bg-blue-600 text-white border-blue-400 z-50'
-                    : 'bg-white dark:bg-[#151515] text-slate-800 dark:text-slate-200 border-slate-300 dark:border-[#000000] hover:bg-slate-100 dark:hover:bg-[#2C2C2E]'
-                  }
-                        `}
-              >
-                {link.name} (Base)
-              </div>
-            </Html>
+                              ? 'bg-blue-600 text-white border-blue-400 z-50'
+                              : 'bg-white dark:bg-[#151515] text-slate-800 dark:text-slate-200 border-slate-300 dark:border-[#000000] hover:bg-slate-100 dark:hover:bg-[#2C2C2E]'
+                            }
+                          `}
+                        >
+                          {link.name} (Base)
+                        </div>
+                      ) : (
+                        <div className="w-2 h-2 rounded-full bg-slate-400/80 hover:scale-150 transition-transform" />
+                      )}
+                    </div>
+                </Html>
           )}
         </group>
       )}
@@ -228,20 +239,29 @@ export const RobotNode = memo(function RobotNode({
       */}
 
       {showLinkLabel && (
-        <Html position={[0, 0, 0]} className="pointer-events-none" zIndexRange={[100, 0]}>
+        <Html position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[100, 0]}>
           <div
             style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
+            className="pointer-events-auto cursor-pointer select-none"
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
             onClick={handleLinkClick}
-            className={`
-                    px-1.5 py-0.5 text-[10px] font-mono rounded border whitespace-nowrap shadow-xl
-                    pointer-events-auto cursor-pointer select-none transition-colors opacity-90 hover:opacity-100
-                    ${isSelected
-                ? 'bg-blue-600 text-white border-blue-400 z-50'
-                : 'bg-white dark:bg-[#151515] text-blue-700 dark:text-blue-200 border-slate-300 dark:border-[#000000] hover:bg-slate-100 dark:hover:bg-[#2C2C2E]'
-              }
-                `}
           >
-            {link.name}
+            {(isSelected || isHovered) ? (
+              <div
+                className={`
+                  px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
+                  ${isSelected
+                    ? 'bg-blue-600 text-white border-blue-400 z-50'
+                    : 'bg-white dark:bg-[#151515] text-blue-700 dark:text-blue-200 border-slate-300 dark:border-[#000000] hover:bg-slate-100 dark:hover:bg-[#2C2C2E]'
+                  }
+                `}
+              >
+                {link.name}
+              </div>
+            ) : (
+              <div className="w-2 h-2 rounded-full bg-blue-400/80 hover:scale-150 transition-transform" />
+            )}
           </div>
         </Html>
       )}
