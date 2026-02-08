@@ -49,7 +49,7 @@ export const Dialog: React.FC<DialogProps> = ({
           </h2>
           <button
             onClick={onClose}
-            className="p-1 text-[#86868B] hover:bg-black/5 hover:text-black dark:hover:bg-white/10 dark:hover:text-white rounded-md transition-colors"
+            className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
           >
             <X className="w-4 h-4" />
           </button>

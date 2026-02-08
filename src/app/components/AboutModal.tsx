@@ -23,10 +23,10 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
       width="w-[400px]"
       footer={
         <div className="text-center">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-[#86868B]">
             {lang === 'zh' ? '© 2025-2026 OpenLegged.' : '© 2025-2026 OpenLegged.'}
           </p>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          <p className="text-xs text-[#86868B] mt-1">
             {lang === 'zh' ? '基于 Apache License 2.0 协议开源。' : 'Open sourced under Apache License 2.0.'}
           </p>
         </div>
@@ -37,7 +37,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
           <img src="/logos/logo.png" alt="URDF Studio" className="w-12 h-12 object-contain" />
           <div>
             <h2 className="text-lg font-bold text-slate-800 dark:text-white">URDF Studio</h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">v1.0.0</p>
+            <p className="text-xs text-[#86868B] font-mono">v1.0.0</p>
           </div>
         </div>
 
@@ -53,25 +53,25 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
             href="https://github.com/OpenLegged/URDF-Studio"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-[#38383A] hover:bg-slate-50 dark:hover:bg-[#3A3A3C] transition-colors group"
+            className="flex items-center gap-3 p-3 rounded-[12px] border border-[#E5E5E5] dark:border-[#38383A] hover:bg-[#F5F5F7] dark:hover:bg-[#3A3A3C] transition-colors group"
           >
-            <div className="w-9 h-9 bg-slate-900 dark:bg-black rounded-lg flex items-center justify-center">
+            <div className="w-9 h-9 bg-[#1C1C1E] dark:bg-black rounded-[8px] flex items-center justify-center">
               <Github className="w-4 h-4 text-white" />
             </div>
             <div className="flex-1">
-              <div className="text-sm font-medium text-slate-800 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">GitHub</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">OpenLegged/URDF-Studio</div>
+              <div className="text-sm font-medium text-black dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">GitHub</div>
+              <div className="text-xs text-[#86868B]">OpenLegged/URDF-Studio</div>
             </div>
-            <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
+            <ArrowRight className="w-4 h-4 text-[#86868B] group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
           </a>
 
           <a
             href="https://www.motphys.com/"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-[#38383A] hover:bg-slate-50 dark:hover:bg-[#3A3A3C] transition-colors group"
+            className="flex items-center gap-3 p-3 rounded-[12px] border border-[#E5E5E5] dark:border-[#38383A] hover:bg-[#F5F5F7] dark:hover:bg-[#3A3A3C] transition-colors group"
           >
-            <div className="w-9 h-9 bg-white dark:bg-black rounded-lg flex items-center justify-center overflow-hidden border border-slate-100 dark:border-[#38383A]">
+            <div className="w-9 h-9 bg-white dark:bg-black rounded-[8px] flex items-center justify-center overflow-hidden border border-[#E5E5E5] dark:border-[#38383A]">
               <img
                 src="/logos/Motphys_Logo_only_Black_100x100px.svg"
                 alt="Motphys"
@@ -84,34 +84,34 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
               />
             </div>
             <div className="flex-1">
-              <div className="text-sm font-medium text-slate-800 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+              <div className="text-sm font-medium text-black dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                 Motphys
               </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
+              <div className="text-xs text-[#86868B]">
                 {lang === 'zh' ? '超越物理，进化不止' : 'Evolution Beyond Physics'}
               </div>
             </div>
-            <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
+            <ArrowRight className="w-4 h-4 text-[#86868B] group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
           </a>
 
           <a
             href="https://www.d-robotics.cc/"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-3 p-3 rounded-lg border border-slate-200 dark:border-[#38383A] hover:bg-slate-50 dark:hover:bg-[#3A3A3C] transition-colors group"
+            className="flex items-center gap-3 p-3 rounded-[12px] border border-[#E5E5E5] dark:border-[#38383A] hover:bg-[#F5F5F7] dark:hover:bg-[#3A3A3C] transition-colors group"
           >
-            <div className="w-9 h-9 bg-white dark:bg-black rounded-lg flex items-center justify-center overflow-hidden border border-slate-100 dark:border-[#38383A]">
+            <div className="w-9 h-9 bg-white dark:bg-black rounded-[8px] flex items-center justify-center overflow-hidden border border-[#E5E5E5] dark:border-[#38383A]">
               <img src="/logos/d-robotics-logo.jpg" alt="D-Robotics" className="w-full h-full object-cover" />
             </div>
             <div className="flex-1">
-              <div className="text-sm font-medium text-slate-800 dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
+              <div className="text-sm font-medium text-black dark:text-white group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">
                 {lang === 'zh' ? '地瓜机器人' : 'D-Robotics'}
               </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
+              <div className="text-xs text-[#86868B]">
                 {lang === 'zh' ? '感谢支持' : 'Thanks for support'}
               </div>
             </div>
-            <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
+            <ArrowRight className="w-4 h-4 text-[#86868B] group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />
           </a>
         </div>
       </div>
