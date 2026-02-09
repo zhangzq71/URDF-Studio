@@ -2,7 +2,7 @@
  * MeshPreview - Inline 3D preview for mesh files in the property editor
  * Shows a small Canvas with the selected mesh, auto-rotating for inspection
  */
-import React, { Suspense, useMemo, useRef, useEffect } from 'react';
+import React, { Suspense, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
@@ -13,41 +13,90 @@ interface MeshPreviewProps {
   assets: Record<string, string>;
 }
 
-/** Auto-fit camera to mesh bounding box */
+/** Auto-fit camera using frustum projection to guarantee the full mesh is visible and centered */
 function AutoFitCamera() {
-  const { scene, camera } = useThree();
+  const { scene, camera, gl } = useThree();
+  const fitted = useRef(false);
+  const frameCount = useRef(0);
 
-  useEffect(() => {
-    // Wait a frame for mesh to load
-    const timer = setTimeout(() => {
-      const box = new THREE.Box3().setFromObject(scene);
-      if (box.isEmpty()) return;
+  useFrame(() => {
+    if (fitted.current) return;
+    // Wait a few frames for RotatingGroup centering + matrix propagation
+    frameCount.current++;
+    if (frameCount.current < 3) return;
 
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const dist = maxDim * 2;
+    scene.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(scene);
+    if (box.isEmpty()) return;
 
-      camera.position.set(center.x + dist * 0.6, center.y + dist * 0.4, center.z + dist * 0.6);
-      camera.lookAt(center);
-      camera.updateProjectionMatrix();
-    }, 100);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (maxDim < 1e-6) return;
 
-    return () => clearTimeout(timer);
-  }, [scene, camera]);
+    const perspCamera = camera as THREE.PerspectiveCamera;
+    const vFovHalf = (perspCamera.fov * Math.PI) / 360; // half vertical FOV in radians
+    const aspect = gl.domElement.clientWidth / gl.domElement.clientHeight;
+    const hFovHalf = Math.atan(Math.tan(vFovHalf) * aspect); // half horizontal FOV
+
+    // Camera viewing direction — slightly elevated front 3/4 view
+    const dir = new THREE.Vector3(0.3, 0.25, 0.92).normalize();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(dir, worldUp).normalize();
+    const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+
+    // Project AABB half-extents onto camera up/right to get visible extent
+    const hs = size.clone().multiplyScalar(0.5);
+    const projUp = Math.abs(up.x) * hs.x + Math.abs(up.y) * hs.y + Math.abs(up.z) * hs.z;
+    const projRight = Math.abs(right.x) * hs.x + Math.abs(right.y) * hs.y + Math.abs(right.z) * hs.z;
+
+    // Required distance for each axis — like tracing rays from bbox edges to the focal point
+    const distV = projUp / Math.tan(vFovHalf);
+    const distH = projRight / Math.tan(hFovHalf);
+    const dist = Math.max(distV, distH) * 1.05;
+
+    camera.position.copy(center).addScaledVector(dir, dist);
+    camera.lookAt(center);
+
+    perspCamera.near = maxDim * 0.01;
+    perspCamera.far = dist * 3;
+    perspCamera.updateProjectionMatrix();
+
+    fitted.current = true;
+  });
 
   return null;
 }
 
-/** Auto-rotate the mesh group */
+/** Auto-rotate the mesh group, centered on the mesh's own bounding box center */
 function RotatingGroup({ children }: { children: React.ReactNode }) {
-  const ref = useRef<THREE.Group>(null);
+  const groupRef = useRef<THREE.Group>(null);
+  const innerRef = useRef<THREE.Group>(null);
+  const centered = useRef(false);
+
   useFrame((_, delta) => {
-    if (ref.current) {
-      ref.current.rotation.y += delta * 0.5;
+    if (!groupRef.current || !innerRef.current) return;
+
+    // Center once on the first valid frame — before any rotation is applied
+    if (!centered.current) {
+      innerRef.current.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(innerRef.current);
+      if (!box.isEmpty()) {
+        const center = box.getCenter(new THREE.Vector3());
+        innerRef.current.position.set(-center.x, -center.y, -center.z);
+        innerRef.current.updateMatrixWorld(true);
+        centered.current = true;
+      }
     }
+
+    groupRef.current.rotation.y += delta * 0.5;
   });
-  return <group ref={ref}>{children}</group>;
+
+  return (
+    <group ref={groupRef}>
+      <group ref={innerRef}>{children}</group>
+    </group>
+  );
 }
 
 /** Render the appropriate mesh based on file extension */
@@ -106,8 +155,8 @@ export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({ meshPath, a
           <RotatingGroup>
             <MeshContent meshPath={meshPath} assetUrl={assetUrl} assets={assets} />
           </RotatingGroup>
+          <AutoFitCamera />
         </Suspense>
-        <AutoFitCamera />
       </Canvas>
     </div>
   );
