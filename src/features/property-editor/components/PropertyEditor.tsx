@@ -393,7 +393,7 @@ const GeometryEditor = ({
                                     type="file"
                                     ref={fileInputRef}
                                     className="hidden"
-                                    accept=".stl,.STL,.obj,.OBJ,.dae,.DAE"
+                                    accept=".stl,.STL,.obj,.OBJ,.dae,.DAE,.gltf,.GLTF,.glb,.GLB"
                                     onChange={handleFileChange}
                                 />
                                 <button
@@ -406,10 +406,10 @@ const GeometryEditor = ({
                              </div>
 
                              <div className="max-h-32 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-1">
-                                {Object.keys(assets).length === 0 && (
+                                {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).length === 0 && (
                                     <div className="text-[10px] text-slate-500 italic"></div>
                                 )}
-                                {Object.keys(assets).map(filename => {
+                                {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).map(filename => {
                                     const isApplied = geomData.meshPath === filename && !previewMeshPath;
                                     const isPreviewing = previewMeshPath === filename;
                                     return (
