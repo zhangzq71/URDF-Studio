@@ -2,7 +2,7 @@ import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react
 import { Canvas, RootState } from '@react-three/fiber';
 import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { SnapshotManager, SceneLighting, ReferenceGrid } from '@/shared/components/3d';
+import { SnapshotManager, SceneLighting, ReferenceGrid, CanvasResizeSync } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 
@@ -265,11 +265,10 @@ export function URDFViewer({
         glRef.current = gl;
         const canvas = gl.domElement;
 
-        // Expose scene to window for debugging
-        if (typeof window !== 'undefined') {
+        // Expose scene to window for debugging (development only)
+        if (typeof window !== 'undefined' && import.meta.env.DEV) {
             (window as any).scene = scene;
             (window as any).THREE = THREE;
-            console.log('Three.js scene exposed to window.scene');
         }
 
         const handleContextLost = (event: Event) => {
@@ -462,6 +461,7 @@ export function URDFViewer({
                     setActiveJoint(null);
                 }}
             >
+                <CanvasResizeSync />
                 <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
                 <SceneLighting theme={effectiveTheme} />
                 <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />

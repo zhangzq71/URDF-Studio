@@ -34,6 +34,38 @@ import { useUIStore, useCanUndo, useCanRedo, useRobotStore } from '@/store';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
 
+/**
+ * Unified Header Button Component
+ * Provides consistent styling for all navigation buttons
+ */
+function HeaderButton({
+  isActive,
+  onClick,
+  children,
+  className = '',
+  title,
+}: {
+  isActive: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+        isActive
+          ? 'bg-slate-100 dark:bg-element-active text-slate-900 dark:text-white'
+          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
+      } ${className}`}
+      title={title}
+    >
+      {children}
+    </button>
+  );
+}
+
 interface HeaderProps {
   // Import actions
   onImportFile: () => void;
@@ -106,18 +138,14 @@ export function Header({
         <div className="flex items-center">
           {/* File Menu */}
           <div className="relative">
-            <button
+            <HeaderButton
+              isActive={activeMenu === 'file'}
               onClick={() => setActiveMenu(activeMenu === 'file' ? null : 'file')}
-              className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                activeMenu === 'file'
-                  ? 'bg-slate-100 dark:bg-element-active text-slate-900 dark:text-white'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
-              }`}
             >
               <FileText className="w-3.5 h-3.5" />
               <span className="hidden md:inline">{t.file}</span>
               <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
-            </button>
+            </HeaderButton>
 
             {activeMenu === 'file' && (
               <>
@@ -152,18 +180,14 @@ export function Header({
 
           {/* Toolbox Menu */}
           <div className="relative">
-            <button
+            <HeaderButton
+              isActive={activeMenu === 'toolbox'}
               onClick={() => setActiveMenu(activeMenu === 'toolbox' ? null : 'toolbox')}
-              className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                activeMenu === 'toolbox'
-                  ? 'bg-system-blue text-white'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
-              }`}
             >
               <Briefcase className="w-3.5 h-3.5" />
               <span className="hidden md:inline">{t.toolbox}</span>
               <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
-            </button>
+            </HeaderButton>
 
             {activeMenu === 'toolbox' && (
               <>
@@ -229,18 +253,14 @@ export function Header({
 
           {/* View Menu */}
           <div className="relative">
-            <button
+            <HeaderButton
+              isActive={activeMenu === 'view'}
               onClick={() => setActiveMenu(activeMenu === 'view' ? null : 'view')}
-              className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                activeMenu === 'view'
-                  ? 'bg-system-blue text-white'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
-              }`}
             >
               <Eye className="w-3.5 h-3.5" />
               <span className="hidden md:inline">{lang === 'zh' ? '视图' : 'View'}</span>
               <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'view' ? 'rotate-180' : ''}`} />
-            </button>
+            </HeaderButton>
 
             {activeMenu === 'view' && (
               <>

@@ -3,7 +3,7 @@
  * Used by both Visualizer.tsx and URDFViewer.tsx
  */
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
 import * as THREE from 'three';
@@ -51,6 +51,115 @@ export const HoverInvalidator = () => {
       gl.domElement.removeEventListener('pointerleave', handlePointerUp);
     };
   }, [gl, invalidate]);
+
+  return null;
+};
+
+// Keep Canvas responsive during layout width/height transitions (e.g. sidebar collapse)
+export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number }) => {
+  const { gl, setSize, invalidate, setFrameloop } = useThree();
+  const loopFrameRef = useRef<number | null>(null);
+  const lastSizeRef = useRef({ width: 0, height: 0 });
+  const appliedBufferSizeRef = useRef({ width: 0, height: 0 });
+  const pendingBufferSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const restoreFrameLoopTimerRef = useRef<number | null>(null);
+  const lastResizeAtRef = useRef(0);
+
+  const beginSmoothResize = useCallback(() => {
+    setFrameloop('always');
+    if (restoreFrameLoopTimerRef.current !== null) {
+      clearTimeout(restoreFrameLoopTimerRef.current);
+    }
+    restoreFrameLoopTimerRef.current = window.setTimeout(() => {
+      setFrameloop('demand');
+      invalidate();
+      restoreFrameLoopTimerRef.current = null;
+    }, transitionMs + 120);
+  }, [setFrameloop, transitionMs, invalidate]);
+
+  const syncCanvasSize = useCallback(() => {
+    const parent = gl.domElement.parentElement;
+    if (!parent) return false;
+
+    const width = parent.clientWidth;
+    const height = parent.clientHeight;
+    if (width <= 0 || height <= 0) return false;
+
+    const canvas = gl.domElement;
+    const widthPx = `${width}px`;
+    const heightPx = `${height}px`;
+    const styleChanged = canvas.style.width !== widthPx || canvas.style.height !== heightPx;
+    if (styleChanged) {
+      canvas.style.width = widthPx;
+      canvas.style.height = heightPx;
+    }
+
+    let sizeChanged = false;
+    if (width !== lastSizeRef.current.width || height !== lastSizeRef.current.height) {
+      lastSizeRef.current = { width, height };
+      pendingBufferSizeRef.current = { width, height };
+      sizeChanged = true;
+    }
+
+    const changed = styleChanged || sizeChanged;
+    if (changed) invalidate();
+    return changed;
+  }, [gl, setSize, invalidate]);
+
+  const flushPendingBufferSize = useCallback(() => {
+    const pending = pendingBufferSizeRef.current;
+    if (!pending) return false;
+
+    const { width, height } = pending;
+    const applied = appliedBufferSizeRef.current;
+    if (width === applied.width && height === applied.height) {
+      pendingBufferSizeRef.current = null;
+      return false;
+    }
+
+    gl.setSize(width, height, false);
+    setSize(width, height);
+    appliedBufferSizeRef.current = { width, height };
+    pendingBufferSizeRef.current = null;
+    invalidate();
+    return true;
+  }, [gl, setSize, invalidate]);
+
+  useLayoutEffect(() => {
+    syncCanvasSize();
+    flushPendingBufferSize();
+
+    const loop = () => {
+      const now = performance.now();
+      const changed = syncCanvasSize();
+      if (changed) {
+        lastResizeAtRef.current = now;
+        beginSmoothResize();
+      } else if (now - lastResizeAtRef.current > 80) {
+        flushPendingBufferSize();
+      }
+
+      if (now - lastResizeAtRef.current < transitionMs + 80) {
+        invalidate();
+      }
+      loopFrameRef.current = requestAnimationFrame(loop);
+    };
+
+    loopFrameRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      if (loopFrameRef.current !== null) {
+        cancelAnimationFrame(loopFrameRef.current);
+        loopFrameRef.current = null;
+      }
+      if (restoreFrameLoopTimerRef.current !== null) {
+        clearTimeout(restoreFrameLoopTimerRef.current);
+        restoreFrameLoopTimerRef.current = null;
+      }
+      flushPendingBufferSize();
+      setFrameloop('demand');
+    };
+  }, [syncCanvasSize, flushPendingBufferSize, transitionMs, setFrameloop, beginSmoothResize, invalidate]);
 
   return null;
 };

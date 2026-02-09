@@ -633,20 +633,22 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
             {/* Robot Name Input - Moved to Top */}
-            <div className="px-4 pt-3 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
-                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">{t.robotName}</label>
-                    <input
-                    type="text"
-                    value={robot.name}
-                    onChange={(e) => onNameChange(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-[#000000] focus:bg-white dark:focus:bg-[#000000] text-sm text-slate-900 dark:text-white px-3 py-2 rounded-lg border border-slate-300 dark:border-[#48484A] focus:border-google-blue outline-none transition-colors"
-                    placeholder={t.enterRobotName}
-                />
+            <div className="px-4 pt-2 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
+                    <div className="flex items-center gap-3">
+                        <label className="text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{t.robotName}</label>
+                        <input
+                        type="text"
+                        value={robot.name}
+                        onChange={(e) => onNameChange(e.target.value)}
+                        className="flex-1 bg-transparent text-sm font-medium text-slate-800 dark:text-slate-200 px-2 py-1.5 rounded border border-transparent focus:bg-slate-100 dark:focus:bg-[#1C1C1E] focus:border-blue-500 outline-none transition-colors"
+                        placeholder={t.enterRobotName}
+                    />
+                    </div>
                 {/* Current Loaded File Display */}
                 {currentFileName && (
-                    <div className="mt-2 flex items-center gap-1.5">
-                        <FileCode className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                        <span className="text-[11px] text-slate-600 dark:text-slate-400 truncate" title={currentFileName}>
+                    <div className="mt-1.5 flex items-center gap-1.5 ml-1">
+                        <FileCode className="w-3 h-3 text-blue-500 shrink-0" />
+                        <span className="text-xs text-slate-500 dark:text-slate-500 truncate" title={currentFileName}>
                             {currentFileName}
                         </span>
                     </div>

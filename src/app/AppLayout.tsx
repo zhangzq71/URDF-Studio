@@ -318,7 +318,7 @@ export function AppLayout({
         />
 
         {/* Viewer Container */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-w-0">
           {/* URDFViewer for detail/hardware modes */}
           <div style={{
             position: 'absolute',

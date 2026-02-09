@@ -14,6 +14,7 @@ export {
 // Scene Utilities
 export {
   HoverInvalidator,
+  CanvasResizeSync,
   SnapshotManager,
   SceneLighting,
   ReferenceGrid,

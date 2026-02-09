@@ -44,7 +44,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   const data = selection.id ? (isLink ? robot.links[selection.id] : robot.joints[selection.id]) : null;
   const t = translations[lang];
 
-  const { width, displayWidth, isDragging, handleResizeMouseDown } = useResizablePanel(collapsed);
+  const { displayWidth, isDragging, handleResizeMouseDown } = useResizablePanel(collapsed);
 
   return (
     <div
@@ -53,7 +53,6 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
         width: `${displayWidth}px`,
         minWidth: `${displayWidth}px`,
         flex: `0 0 ${displayWidth}px`,
-        overflow: 'visible'
       }}
     >
       {/* Side Toggle Button (Centered & Protruding Left) */}
@@ -69,8 +68,9 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
           </div>
       </button>
 
-      <div className="h-full w-full overflow-hidden flex flex-col relative bg-slate-50 dark:bg-google-dark-bg">
-        <div style={{ width: `${Math.max(width, 280)}px`, minWidth: `${Math.max(width, 280)}px` }} className="h-full flex flex-col">
+      {/* Content Container - use visibility to prevent flash but allow smooth transition */}
+      <div className="h-full w-full flex flex-col overflow-hidden">
+        <div style={{ width: `${displayWidth}px` }} className="h-full flex flex-col bg-slate-50 dark:bg-google-dark-bg transition-all duration-200 ease-out">
           {/* Header */}
           <div className="w-full flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-google-dark-border bg-white dark:bg-[#2C2C2E] shrink-0 relative z-30">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.properties}</span>
