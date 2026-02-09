@@ -160,7 +160,7 @@ export function InspectionReportTemplate({ inspectionReport, robotName, lang }: 
 // Styles for PDF template - inline styles for proper print rendering
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
+    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
     padding: '40px 50px',
     maxWidth: '210mm',
     margin: '0 auto',

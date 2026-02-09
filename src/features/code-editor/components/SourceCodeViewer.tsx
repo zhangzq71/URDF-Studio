@@ -121,7 +121,7 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
               backgroundColor: theme === 'dark' ? '#000000' : '#ffffff',
             }}
             codeTagProps={{
-                style: { fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace" }
+                style: { fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace" }
             }}
           >
             {code}

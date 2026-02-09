@@ -595,7 +595,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           options={{
             minimap: { enabled: false },
             fontSize: 13,
-            fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace",
+            fontLigatures: true,
             scrollBeyondLastLine: false,
             wordWrap: 'on',
             automaticLayout: false, // Performance optimization
