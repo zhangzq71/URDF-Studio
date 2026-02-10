@@ -91,7 +91,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             onMouseDown={onMouseDown}
             resizable={true}
             additionalControls={additionalControls}
-            zIndex={30}
+            zIndex={40}
         >
             <div className="p-2 space-y-2">
                 {robot?.joints && Object.entries(robot.joints)

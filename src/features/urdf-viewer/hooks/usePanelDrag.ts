@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 type PanelType = 'options' | 'joints' | 'measure';
 
@@ -89,6 +89,46 @@ export function usePanelDrag(
         setDragging(null);
         dragStartRef.current = null;
     }, []);
+
+    // Add ResizeObserver to clamp positions when container resizes
+    useEffect(() => {
+        if (!containerRef.current) return;
+
+        const clamp = (pos: {x: number, y: number} | null, panelRef: React.RefObject<HTMLDivElement>) => {
+            if (!pos || !panelRef.current || !containerRef.current) return pos;
+            const containerRect = containerRef.current.getBoundingClientRect();
+            const panelRect = panelRef.current.getBoundingClientRect();
+            const padding = 2;
+            const maxX = Math.max(padding, containerRect.width - panelRect.width - padding);
+            const maxY = Math.max(padding, containerRect.height - panelRect.height - padding);
+            
+            if (pos.x > maxX || pos.y > maxY) {
+                 return {
+                     x: Math.min(pos.x, maxX),
+                     y: Math.min(pos.y, maxY)
+                 };
+            }
+            return pos;
+        };
+
+        const observer = new ResizeObserver(() => {
+             setOptionsPanelPos(prev => {
+                 const newPos = clamp(prev, optionsPanelRef);
+                 return newPos === prev ? prev : newPos;
+             });
+             setJointPanelPos(prev => {
+                 const newPos = clamp(prev, jointPanelRef);
+                 return newPos === prev ? prev : newPos;
+             });
+             setMeasurePanelPos(prev => {
+                 const newPos = clamp(prev, measurePanelRef);
+                 return newPos === prev ? prev : newPos;
+             });
+        });
+
+        observer.observe(containerRef.current);
+        return () => observer.disconnect();
+    }, []); // Empty dependency array as refs are stable
 
     return {
         optionsPanelPos,

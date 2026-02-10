@@ -111,13 +111,13 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     return (
         <div
             ref={optionsPanelRef}
-            className="absolute z-30 pointer-events-auto"
+            className="absolute z-40 pointer-events-auto"
             style={optionsPanelPos
                 ? { left: optionsPanelPos.x, top: optionsPanelPos.y, right: 'auto' }
                 : { top: '16px', right: '16px' }
             }
         >
-            <OptionsPanelContainer resizable={true}>
+            <OptionsPanelContainer resizable={true} isCollapsed={isOptionsCollapsed}>
                 <OptionsPanelHeader
                     title={mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
                     isCollapsed={isOptionsCollapsed}
