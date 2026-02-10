@@ -41,6 +41,8 @@ export interface TranslationKeys {
   import: string;
   importFolder: string;
   export: string;
+  exportProject: string;
+  importUsp: string;
 
   // Tree Editor
   robotName: string;
@@ -48,6 +50,18 @@ export interface TranslationKeys {
   addChildLink: string;
   addChildJoint: string;
   deleteBranch: string;
+
+  // Assembly
+  components: string;
+  bridges: string;
+  addComponent: string;
+  createBridge: string;
+  bridgeJoint: string;
+  parentComponent: string;
+  parentLink: string;
+  childComponent: string;
+  childLink: string;
+  add: string;
 
   // Property Editor
   properties: string;
@@ -222,6 +236,8 @@ export interface TranslationKeys {
   copied: string;
   fileBrowser: string;
   dropOrImport: string;
+  simplified: string;
+  professional: string;
 
   // Measure Tool
   measureTool: string;

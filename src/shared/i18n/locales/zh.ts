@@ -41,6 +41,8 @@ export const zh: TranslationKeys = {
   import: "导入",
   importFolder: "导入文件夹",
   export: "导出",
+  exportProject: "导出工程 (.usp)",
+  importUsp: "导入工程 (.usp)",
 
   // Tree Editor
   robotName: "机器人名称",
@@ -48,6 +50,18 @@ export const zh: TranslationKeys = {
   addChildLink: "添加子连杆",
   addChildJoint: "添加子关节",
   deleteBranch: "删除分支",
+
+  // Assembly
+  components: "组件",
+  bridges: "拼接关系",
+  addComponent: "加载到工作空间",
+  createBridge: "创建拼接",
+  bridgeJoint: "桥接关节",
+  parentComponent: "父组件",
+  parentLink: "父连杆",
+  childComponent: "子组件",
+  childLink: "子连杆",
+  add: "添加",
 
   // Property Editor
   properties: "属性",
@@ -227,8 +241,10 @@ export const zh: TranslationKeys = {
   copyToClipboard: "复制到剪贴板",
   copy: "复制",
   copied: "已复制!",
-  fileBrowser: "文件浏览",
+  fileBrowser: "素材库",
   dropOrImport: "拖放或导入文件夹/ZIP",
+  simplified: "结构",
+  professional: "工作区",
 
   // Measure Tool
   measureTool: "测量工具",

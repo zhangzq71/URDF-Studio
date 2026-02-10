@@ -71,6 +71,7 @@ interface HeaderProps {
   onImportFile: () => void;
   onImportFolder: () => void;
   onExport: () => void;
+  onExportProject: () => void;
   // Modal actions
   onOpenAI: () => void;
   onOpenCodeViewer: () => void;
@@ -98,6 +99,7 @@ export function Header({
   onImportFile,
   onImportFolder,
   onExport,
+  onExportProject,
   onOpenAI,
   onOpenCodeViewer,
   onOpenSettings,
@@ -163,7 +165,7 @@ export function Header({
                     className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
                     <Download className="w-4 h-4 text-slate-400" />
-                    {lang === 'zh' ? '导入 ZIP / 文件' : 'Import ZIP / File'}
+                    {lang === 'zh' ? '导入 USP / ZIP / 文件' : 'Import USP / ZIP / File'}
                   </button>
                   <div className="h-px bg-slate-100 dark:bg-border-black my-1" />
                   <button
@@ -172,6 +174,13 @@ export function Header({
                   >
                     <Upload className="w-4 h-4 text-slate-400" />
                     {t.export}
+                  </button>
+                  <button
+                    onClick={() => { setActiveMenu(null); onExportProject(); }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                  >
+                    <Briefcase className="w-4 h-4 text-slate-400" />
+                    {t.exportProject}
                   </button>
                 </div>
               </>

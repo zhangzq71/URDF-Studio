@@ -67,6 +67,42 @@ export interface RobotState {
   selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
 }
 
+/** Robot data without selection (selection is in selectionStore) */
+export interface RobotData {
+  name: string;
+  links: Record<string, UrdfLink>;
+  joints: Record<string, UrdfJoint>;
+  rootLinkId: string;
+  materials?: Record<string, { color?: string; texture?: string }>;
+}
+
+/** Assembly component: a URDF parsed into RobotData with namespace */
+export interface AssemblyComponent {
+  id: string;
+  name: string;
+  sourceFile: string;
+  robot: RobotData;
+  visible?: boolean;
+}
+
+/** Bridge joint: connects two components */
+export interface BridgeJoint {
+  id: string;
+  name: string;
+  parentComponentId: string;
+  parentLinkId: string;
+  childComponentId: string;
+  childLinkId: string;
+  joint: UrdfJoint;
+}
+
+/** Assembly state for multi-URDF composition */
+export interface AssemblyState {
+  name: string;
+  components: Record<string, AssemblyComponent>;
+  bridges: Record<string, BridgeJoint>;
+}
+
 export interface RobotFile {
   name: string;
   content: string;
