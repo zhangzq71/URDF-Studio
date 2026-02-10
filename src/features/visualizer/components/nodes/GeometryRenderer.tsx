@@ -197,6 +197,14 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   } else if (type === GeometryType.MESH) {
     let assetUrl = meshPath ? findAssetByPath(meshPath, assets) : undefined;
 
+    // Try to find asset with component-specific prefix if available
+    if (!assetUrl && meshPath) {
+      const potentialKeys = Object.keys(assets).filter(k => k.endsWith(meshPath));
+      if (potentialKeys.length > 0) {
+        assetUrl = assets[potentialKeys[potentialKeys.length - 1]];
+      }
+    }
+
     if (meshPath && assetUrl) {
       const url = assetUrl;
       const ext = meshPath.split('.').pop()?.toLowerCase();

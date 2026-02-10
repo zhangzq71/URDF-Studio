@@ -7,7 +7,9 @@ import JSZip from 'jszip';
 import type { RobotFile, MotorSpec, RobotState } from '@/types';
 import { parseURDF, parseMJCF, isMJCF, parseUSDA, isUSDA, parseXacro, isXacro } from '@/core/parsers';
 import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
-import { useAssetsStore, useRobotStore, useUIStore } from '@/store';
+import { useAssetsStore, useRobotStore, useUIStore, useAssemblyStore } from '@/store';
+import { importProject } from '@/features/file-io/utils';
+import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
 
 interface UseFileImportOptions {
@@ -20,16 +22,29 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
   const lang = useUIStore((state) => state.lang);
   const setAppMode = useUIStore((state) => state.setAppMode);
+  const setTheme = useUIStore((state) => state.setTheme);
+  const setLang = useUIStore((state) => state.setLang);
+  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
 
   // Assets store
   const setAssets = useAssetsStore((state) => state.setAssets);
+  const addAssets = useAssetsStore((state) => state.addAssets);
   const setAvailableFiles = useAssetsStore((state) => state.setAvailableFiles);
+  const availableFiles = useAssetsStore((state) => state.availableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
+  const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const assets = useAssetsStore((state) => state.assets);
   const showImportWarning = useUIStore((state) => state.showImportWarning);
 
   // Robot store
+  const robotName = useRobotStore((state) => state.name);
   const resetRobot = useRobotStore((state) => state.resetRobot);
+  const setRobot = useRobotStore((state) => state.setRobot);
+
+  // Assembly store
+  const initAssembly = useAssemblyStore((state) => state.initAssembly);
+  const setAssembly = useAssemblyStore((state) => state.setAssembly);
+  const addComponent = useAssemblyStore((state) => state.addComponent);
 
   // Detect file format from content
   const detectFormat = useCallback((content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | 'xacro' | null => {
@@ -110,6 +125,38 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     }
 
     try {
+      // Mode 0: .usp Project File
+      if (files.length === 1 && files[0].name.toLowerCase().endsWith('.usp')) {
+        const result = await importProject(files[0]);
+        const { manifest, assets: newAssetUrls, availableFiles: newFiles, assemblyState: newAssembly } = result;
+        if (manifest.ui) {
+          if (manifest.ui.appMode) setAppMode(manifest.ui.appMode as any);
+          if (manifest.ui.theme) setTheme(manifest.ui.theme as any);
+          if (manifest.ui.lang) setLang(manifest.ui.lang as any);
+        }
+        addAssets(newAssetUrls);
+        setAvailableFiles(newFiles);
+        if (newAssembly) {
+          setAssembly(newAssembly);
+          setSidebarTab('workspace');
+          const firstCompId = Object.keys(newAssembly.components)[0];
+          if (firstCompId) {
+            setRobot(newAssembly.components[firstCompId].robot);
+          }
+        }
+        if (manifest.assets?.originalFileFormat) {
+          setOriginalFileFormat(manifest.assets.originalFileFormat as any);
+        }
+        if (onShowToast) {
+          const t = translations[lang];
+          onShowToast(
+            t.importUsp + (lang === 'zh' ? "成功" : " Successful"),
+            'success'
+          );
+        }
+        return;
+      }
+
       const newRobotFiles: RobotFile[] = [];
       const assetFiles: { name: string; blob: Blob }[] = [];
       const libraryFiles: { path: string; content: string }[] = [];
@@ -222,25 +269,41 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       });
       await Promise.all(assetPromises);
 
-      // Cleanup old assets
-      Object.values(assets).forEach(url => URL.revokeObjectURL(url));
-      setAssets(newAssets);
+      // Add new assets (merge with existing)
+      addAssets(newAssets);
 
-      // 3. Set Available Files
-      setAvailableFiles(newRobotFiles);
+      // 3. Set Available Files (merge with existing)
+      const existingNames = new Set(availableFiles.map(f => f.name));
+      const uniqueNewFiles = newRobotFiles.filter(f => !existingNames.has(f.name));
+      const mergedFiles = [...availableFiles, ...uniqueNewFiles];
+      setAvailableFiles(mergedFiles);
 
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       if (newRobotFiles.length > 0) {
-        // Prioritize: urdf > xml (urdf format) > mjcf > usd > xacro
-        const preferredFile = newRobotFiles.find(f => f.format === 'urdf')
-          || newRobotFiles.find(f => f.format === 'mjcf')
-          || newRobotFiles.find(f => f.format === 'usd')
-          || newRobotFiles[0];
-        const robotState = loadRobot(preferredFile, newRobotFiles, newAssets);
-        if (robotState && onLoadRobot) {
-          onLoadRobot(preferredFile);
+        if (availableFiles.length === 0) {
+          // First import: initialize assembly and load robot
+          initAssembly(robotName || 'my_project');
+          const preferredFile = newRobotFiles.find(f => f.format === 'urdf')
+            || newRobotFiles.find(f => f.format === 'mjcf')
+            || newRobotFiles.find(f => f.format === 'usd')
+            || newRobotFiles[0];
+          addComponent(preferredFile, { availableFiles: mergedFiles, assets: { ...assets, ...newAssets } });
+          setSidebarTab('structure');
+          const robotState = loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
+          if (robotState && onLoadRobot) {
+            onLoadRobot(preferredFile);
+          }
+          setAppMode('detail');
+        } else {
+          // Subsequent import: notify user
+          if (onShowToast) {
+            const t = translations[lang];
+            onShowToast(
+              lang === 'zh' ? `已添加 ${newRobotFiles.length} 个文件到素材库` : `Added ${newRobotFiles.length} file(s) to asset library`,
+              'success'
+            );
+          }
         }
-        setAppMode('detail');
       } else if (libraryFiles.length > 0) {
         alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
       } else if (assetFiles.length === 0) {
@@ -251,7 +314,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       console.error("Import failed:", error);
       alert(lang === 'zh' ? "导入失败。请检查文件是否有效。" : "Failed to import. Please check if the file(s) are valid.");
     }
-  }, [lang, assets, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, setAvailableFiles, setMotorLibrary, setAppMode]);
+  }, [lang, assets, availableFiles, robotName, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, addAssets, setAvailableFiles, setMotorLibrary, setAppMode, setTheme, setLang, setSidebarTab, setOriginalFileFormat, setRobot, initAssembly, setAssembly, addComponent]);
 
   return {
     handleImport,

@@ -3,10 +3,10 @@
  * Features: File tree, robot structure tree, link/joint management
  */
 import React, { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
-import { Box, ArrowRightLeft, Plus, Trash2, ChevronDown, ChevronRight, ChevronLeft, PanelLeftOpen, FileCode, Folder, FolderOpen, FileText, File, Cuboid, Eye, EyeOff, Shapes, Shield } from 'lucide-react';
-import type { RobotState, AppMode, Theme, RobotFile, GeometryType } from '@/types';
+import { Box, ArrowRightLeft, Plus, Trash2, ChevronDown, ChevronRight, ChevronLeft, Link2, FileCode, Folder, FolderOpen, FileText, File, Cuboid, Eye, EyeOff, Shapes, Shield, LayoutGrid, Trees } from 'lucide-react';
+import type { RobotState, AppMode, Theme, RobotFile, AssemblyState, AssemblyComponent } from '@/types';
 import { translations } from '@/shared/i18n';
-import type { Language } from '@/store';
+import { useUIStore, useAssemblyStore, type Language } from '@/store';
 
 // --- File Tree Types and Components ---
 
@@ -95,9 +95,12 @@ const FileTreeNodeComponent: React.FC<{
     node: FileTreeNode;
     depth: number;
     onLoadRobot?: (file: RobotFile) => void;
+    onAddAsComponent?: (file: RobotFile) => void;
     expandedFolders: Set<string>;
     toggleFolder: (path: string) => void;
-}> = ({ node, depth, onLoadRobot, expandedFolders, toggleFolder }) => {
+    showAddAsComponent?: boolean;
+    t: typeof translations['en'];
+}> = ({ node, depth, onLoadRobot, onAddAsComponent, expandedFolders, toggleFolder, showAddAsComponent, t }) => {
     const isExpanded = expandedFolders.has(node.path);
     const paddingLeft = depth * 12 + 8;
 
@@ -107,6 +110,11 @@ const FileTreeNodeComponent: React.FC<{
         } else if (node.file && onLoadRobot) {
             onLoadRobot(node.file);
         }
+    };
+
+    const handleAddAsComponent = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (node.file && onAddAsComponent) onAddAsComponent(node.file);
     };
 
     return (
@@ -151,19 +159,34 @@ const FileTreeNodeComponent: React.FC<{
                         {node.file.format.toUpperCase()}
                     </span>
                 )}
+
+                {/* Add as Component button */}
+                {showAddAsComponent && node.file && onAddAsComponent && (
+                    <button
+                        onClick={handleAddAsComponent}
+                        className="px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/50 flex items-center gap-1 transition-colors group/btn"
+                        title={t.addComponent}
+                    >
+                        <Plus size={10} strokeWidth={3} className="group-hover/btn:scale-110 transition-transform" />
+                        <span className="text-[9px] font-bold uppercase tracking-tighter">{t.add}</span>
+                    </button>
+                )}
             </div>
 
       {/* Children */}
             {node.isFolder && isExpanded && node.children && (
                 <div>
-                    {node.children.map((child, idx) => (
+                    {node.children.map((child) => (
                         <FileTreeNodeComponent
                             key={child.path}
                             node={child}
                             depth={depth + 1}
                             onLoadRobot={onLoadRobot}
+                            onAddAsComponent={onAddAsComponent}
                             expandedFolders={expandedFolders}
                             toggleFolder={toggleFolder}
+                            showAddAsComponent={showAddAsComponent}
+                            t={t}
                         />
                     ))}
                 </div>
@@ -190,6 +213,12 @@ export interface TreeEditorProps {
   availableFiles?: RobotFile[];
   onLoadRobot?: (file: RobotFile) => void;
   currentFileName?: string;  // Currently loaded file name
+  // Assembly mode
+  assemblyState?: AssemblyState | null;
+  onAddComponent?: (file: RobotFile) => void;
+  onCreateBridge?: () => void;
+  onRemoveComponent?: (id: string) => void;
+  onRemoveBridge?: (id: string) => void;
 }
 
 // --- Structure View Components ---
@@ -498,11 +527,190 @@ const TreeNode = memo(({
 
 TreeNode.displayName = 'TreeNode';
 
+// --- Assembly View Components ---
+
+const AssemblyTreeView = memo(({
+  assemblyState,
+  robot,
+  onSelect,
+  onFocus,
+  onAddChild,
+  onDelete,
+  onUpdate,
+  onRemoveComponent,
+  onRemoveBridge,
+  onCreateBridge,
+  onToggleComponentVisibility,
+  mode,
+  t
+}: {
+  assemblyState: AssemblyState;
+  robot: RobotState;
+  onSelect: TreeEditorProps['onSelect'];
+  onFocus?: (id: string) => void;
+  onAddChild: (parentId: string) => void;
+  onDelete: (id: string) => void;
+  onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  onRemoveComponent?: (id: string) => void;
+  onRemoveBridge?: (id: string) => void;
+  onCreateBridge?: () => void;
+  onToggleComponentVisibility?: (id: string) => void;
+  mode: AppMode;
+  t: typeof translations['en'];
+}) => {
+  const [isComponentsExpanded, setIsComponentsExpanded] = useState(true);
+  const [isBridgesExpanded, setIsBridgesExpanded] = useState(true);
+  const [expandedComponents, setExpandedComponents] = useState<Record<string, boolean>>({});
+
+  const toggleComponent = (id: string) => {
+    setExpandedComponents(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const components = Object.values(assemblyState.components);
+  const bridges = Object.values(assemblyState.bridges);
+
+  return (
+    <div className="space-y-1">
+      {/* Workspace Root */}
+      <div className="flex items-center py-1 px-2 mx-1 my-0.5 rounded-md bg-slate-100 dark:bg-[#2C2C2E] text-slate-700 dark:text-slate-200">
+        <Cuboid size={14} className="mr-1.5 text-blue-500" />
+        <span className="text-xs font-bold uppercase tracking-wider truncate">{assemblyState.name}</span>
+      </div>
+
+      {/* Components Section */}
+      <div className="mt-2">
+        <div
+          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors group"
+          onClick={() => setIsComponentsExpanded(!isComponentsExpanded)}
+        >
+          {isComponentsExpanded ? <ChevronDown size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
+          <Folder size={12} className="text-amber-500" />
+          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{t.components}</span>
+          <span className="text-[10px] text-slate-400 ml-auto">{components.length}</span>
+        </div>
+
+        {isComponentsExpanded && (
+          <div className="ml-2 border-l border-slate-200 dark:border-slate-700 space-y-0.5 mt-0.5">
+            {components.map(comp => {
+              const isExpanded = expandedComponents[comp.id] ?? false;
+              const isVisible = comp.visible !== false;
+              return (
+                <div key={comp.id}>
+                  <div
+                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group hover:bg-slate-100 dark:hover:bg-[#3A3A3C]
+                      ${!isVisible ? 'opacity-60' : ''}`}
+                    onClick={() => {
+                      toggleComponent(comp.id);
+                      if (!isVisible && onToggleComponentVisibility) {
+                        onToggleComponentVisibility(comp.id);
+                      }
+                    }}
+                  >
+                    {isExpanded ? <ChevronDown size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
+                    <Box size={12} className="text-blue-500" />
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate flex-1">{comp.name}</span>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onToggleComponentVisibility?.(comp.id); }}
+                        className={`p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500`}
+                        title={isVisible ? t.hide : t.show}
+                      >
+                        {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onRemoveComponent?.(comp.id); }}
+                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500"
+                        title={t.deleteBranch}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="ml-2">
+                      <TreeNode
+                        linkId={comp.robot.rootLinkId}
+                        robot={robot}
+                        onSelect={onSelect}
+                        onFocus={onFocus}
+                        onAddChild={onAddChild}
+                        onDelete={onDelete}
+                        onUpdate={onUpdate}
+                        mode={mode}
+                        t={t}
+                        depth={0}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Bridges Section */}
+      <div className="mt-2">
+        <div
+          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors group"
+          onClick={() => setIsBridgesExpanded(!isBridgesExpanded)}
+        >
+          {isBridgesExpanded ? <ChevronDown size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
+          <Link2 size={12} className="text-green-500" />
+          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{t.bridges}</span>
+          <span className="text-[10px] text-slate-400 ml-auto mr-1">{bridges.length}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onCreateBridge?.(); }}
+            className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/50 flex items-center gap-1 transition-colors group/btn"
+            title={t.createBridge}
+          >
+            <Plus size={10} strokeWidth={3} className="group-hover/btn:scale-110 transition-transform" />
+            <span className="text-[9px] font-bold uppercase tracking-tighter">{t.add}</span>
+          </button>
+        </div>
+
+        {isBridgesExpanded && (
+          <div className="ml-2 border-l border-slate-200 dark:border-slate-700 space-y-0.5 mt-0.5">
+            {bridges.length === 0 ? (
+              <div className="px-4 py-2 text-[10px] italic text-slate-400">{t.none}</div>
+            ) : (
+              bridges.map(bridge => (
+                <div
+                  key={bridge.id}
+                  className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] group
+                    ${robot.selection.type === 'joint' && robot.selection.id === bridge.id ? 'bg-orange-100 dark:bg-orange-900/20 text-orange-600' : ''}`}
+                  onClick={() => onSelect('joint', bridge.id)}
+                >
+                  <ArrowRightLeft size={12} className="text-orange-500" />
+                  <span className="text-xs font-medium truncate flex-1">{bridge.name}</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onRemoveBridge?.(bridge.id); }}
+                    className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-opacity"
+                    title={t.deleteBranch}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+AssemblyTreeView.displayName = 'AssemblyTreeView';
+
 export const TreeEditor: React.FC<TreeEditorProps> = ({
     robot, onSelect, onFocus, onAddChild, onDelete, onNameChange, onUpdate, showVisual, setShowVisual, mode, lang, collapsed, onToggle, theme,
-    availableFiles = [], onLoadRobot, currentFileName
+    availableFiles = [], onLoadRobot, currentFileName,
+    assemblyState, onAddComponent, onCreateBridge, onRemoveComponent, onRemoveBridge
 }) => {
   const t = translations[lang];
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
+  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
+  const toggleComponentVisibility = useAssemblyStore((state) => state.toggleComponentVisibility);
   const [width, setWidth] = useState(288);
   const [isDragging, setIsDragging] = useState(false);
   const isResizing = useRef(false);
@@ -633,22 +841,22 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
             {/* Robot Name Input - Moved to Top */}
-            <div className="px-4 pt-2 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
-                    <div className="flex items-center gap-3">
-                        <label className="text-xs font-medium text-slate-500 uppercase tracking-wide whitespace-nowrap">{t.robotName}</label>
-                        <input
-                        type="text"
-                        value={robot.name}
-                        onChange={(e) => onNameChange(e.target.value)}
-                        className="flex-1 bg-transparent text-sm font-medium text-slate-800 dark:text-slate-200 px-2 py-1.5 rounded border border-transparent focus:bg-slate-100 dark:focus:bg-[#1C1C1E] focus:border-blue-500 outline-none transition-colors"
-                        placeholder={t.enterRobotName}
-                    />
-                    </div>
+            <div className="px-4 pt-3 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
+                <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">
+                    {sidebarTab === 'workspace' && assemblyState ? t.professional : t.robotName}
+                </label>
+                <input
+                    type="text"
+                    value={sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name}
+                    onChange={(e) => onNameChange(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-[#000000] focus:bg-white dark:focus:bg-[#000000] text-sm text-slate-900 dark:text-white px-3 py-2 rounded-lg border border-slate-300 dark:border-[#48484A] focus:border-google-blue outline-none transition-colors"
+                    placeholder={sidebarTab === 'workspace' && assemblyState ? t.professional : t.enterRobotName}
+                />
                 {/* Current Loaded File Display */}
-                {currentFileName && (
-                    <div className="mt-1.5 flex items-center gap-1.5 ml-1">
-                        <FileCode className="w-3 h-3 text-blue-500 shrink-0" />
-                        <span className="text-xs text-slate-500 dark:text-slate-500 truncate" title={currentFileName}>
+                {currentFileName && sidebarTab === 'structure' && !assemblyState && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                        <FileCode className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-[11px] text-slate-600 dark:text-slate-400 truncate" title={currentFileName}>
                             {currentFileName}
                         </span>
                     </div>
@@ -684,8 +892,11 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                                     node={node}
                                     depth={0}
                                     onLoadRobot={onLoadRobot}
+                                    onAddAsComponent={onAddComponent}
                                     expandedFolders={expandedFolders}
                                     toggleFolder={toggleFolder}
+                                    showAddAsComponent={true}
+                                    t={t}
                                 />
                             ))
                         )}
@@ -701,6 +912,32 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 />
             )}
 
+            {/* Tab Switcher */}
+            <div className="px-4 py-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
+                <div className="flex bg-slate-100 dark:bg-[#1C1C1E] p-1 rounded-lg">
+                    <button
+                        onClick={() => setSidebarTab('structure')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
+                        ${sidebarTab === 'structure'
+                            ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                    >
+                        <Trees size={14} />
+                        {t.simplified}
+                    </button>
+                    <button
+                        onClick={() => setSidebarTab('workspace')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
+                        ${sidebarTab === 'workspace'
+                            ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                    >
+                        <LayoutGrid size={14} />
+                        {t.professional}
+                    </button>
+                </div>
+            </div>
+
             {/* Bottom: Structure Tree */}
             <div
                 className="flex flex-col min-h-0 transition-all flex-1"
@@ -712,7 +949,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 >
                      <div className="flex items-center gap-2">
                         {isStructureOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{t.structure}</span>
+                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{sidebarTab === 'workspace' && assemblyState ? t.professional : t.simplified}</span>
                      </div>
 
                      {/* Master Visual Toggle */}
@@ -733,8 +970,8 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
 
                         <div className="flex items-center justify-between px-4 py-2 bg-white dark:bg-google-dark-surface border-b border-slate-200 dark:border-google-dark-border shrink-0">
-                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.structure}</span>
-                             {mode === 'skeleton' && (
+                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{sidebarTab === 'workspace' && assemblyState ? t.professional : t.simplified}</span>
+                             {mode === 'skeleton' && sidebarTab === 'structure' && !assemblyState && (
                                  <button
                                     className="p-1 hover:bg-blue-600 bg-blue-700 text-white rounded-md transition-colors shadow-sm"
                                     onClick={() => {
@@ -756,17 +993,35 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
                         {/* 3. Content Area */}
                         <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-google-dark-bg">
-                             <TreeNode
-                                linkId={robot.rootLinkId}
-                                robot={robot}
-                                onSelect={onSelect}
-                                onFocus={onFocus}
-                                onAddChild={onAddChild}
-                                onDelete={onDelete}
-                                onUpdate={onUpdate}
-                                mode={mode}
-                                t={t}
-                            />
+                             {sidebarTab === 'workspace' && assemblyState ? (
+                               <AssemblyTreeView
+                                 assemblyState={assemblyState}
+                                 robot={robot}
+                                 onSelect={onSelect}
+                                 onFocus={onFocus}
+                                 onAddChild={onAddChild}
+                                 onDelete={onDelete}
+                                 onUpdate={onUpdate}
+                                 onRemoveComponent={onRemoveComponent}
+                                 onRemoveBridge={onRemoveBridge}
+                                 onCreateBridge={onCreateBridge}
+                                 onToggleComponentVisibility={toggleComponentVisibility}
+                                 mode={mode}
+                                 t={t}
+                               />
+                             ) : (
+                               <TreeNode
+                                  linkId={robot.rootLinkId}
+                                  robot={robot}
+                                  onSelect={onSelect}
+                                  onFocus={onFocus}
+                                  onAddChild={onAddChild}
+                                  onDelete={onDelete}
+                                  onUpdate={onUpdate}
+                                  mode={mode}
+                                  t={t}
+                              />
+                             )}
                         </div>
                     </div>
                 )}

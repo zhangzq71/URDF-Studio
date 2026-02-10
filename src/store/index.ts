@@ -32,6 +32,9 @@ export {
 } from './robotStore';
 export type { RobotData } from './robotStore';
 
+// Assembly Store - multi-URDF assembly
+export { useAssemblyStore } from './assemblyStore';
+
 // History helper (for custom stores that need undo/redo)
 export { createHistoryManager } from './historyMiddleware';
 export type { HistoryState, HistoryActions, HistoryOptions } from './historyMiddleware';

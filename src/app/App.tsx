@@ -114,7 +114,7 @@ function AppContent() {
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
-  const { handleExport } = useFileExport();
+  const { handleExport, handleExportProject } = useFileExport();
 
   // AI changes handler
   const handleApplyAIChanges = useCallback((data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => {
@@ -149,6 +149,7 @@ function AppContent() {
         importFolderInputRef={importFolderInputRef}
         onFileDrop={(files) => handleImport(files as any)}
         onExport={handleExport}
+        onExportProject={handleExportProject}
         showToast={showToast}
         onOpenAI={() => setIsAIModalOpen(true)}
         isCodeViewerOpen={isCodeViewerOpen}

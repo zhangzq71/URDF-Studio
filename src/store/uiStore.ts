@@ -74,6 +74,10 @@ interface UIState {
   toggleSidebar: (side: 'left' | 'right') => void;
   setSidebar: (side: 'left' | 'right', collapsed: boolean) => void;
 
+  // Sidebar Tab (structure/workspace)
+  sidebarTab: 'structure' | 'workspace';
+  setSidebarTab: (tab: 'structure' | 'workspace') => void;
+
   // Settings modal
   isSettingsOpen: boolean;
   settingsPos: { x: number; y: number };
@@ -296,6 +300,10 @@ export const useUIStore = create<UIState>()(
             sidebar: { ...state.sidebar, [key]: collapsed },
           };
         }),
+
+      // Sidebar Tab
+      sidebarTab: 'structure',
+      setSidebarTab: (tab) => set({ sidebarTab: tab }),
 
       // Settings modal
       isSettingsOpen: false,

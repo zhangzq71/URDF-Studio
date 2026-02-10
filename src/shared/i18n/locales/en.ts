@@ -41,6 +41,8 @@ export const en: TranslationKeys = {
   import: "Import",
   importFolder: "Import Folder",
   export: "Export",
+  exportProject: "Export Project (.usp)",
+  importUsp: "Import Project (.usp)",
 
   // Tree Editor
   robotName: "Robot Name",
@@ -48,6 +50,18 @@ export const en: TranslationKeys = {
   addChildLink: "Add Child Link",
   addChildJoint: "Add Child Joint",
   deleteBranch: "Delete Branch",
+
+  // Assembly
+  components: "Components",
+  bridges: "Bridges",
+  addComponent: "Load to Workspace",
+  createBridge: "Create Bridge",
+  bridgeJoint: "Bridge Joint",
+  parentComponent: "Parent Component",
+  parentLink: "Parent Link",
+  childComponent: "Child Component",
+  childLink: "Child Link",
+  add: "Add",
 
   // Property Editor
   properties: "Properties",
@@ -225,8 +239,10 @@ export const en: TranslationKeys = {
   copyToClipboard: "Copy to Clipboard",
   copy: "Copy",
   copied: "Copied!",
-  fileBrowser: "File Browser",
+  fileBrowser: "Asset Library",
   dropOrImport: "Drop or import folder/ZIP",
+  simplified: "Structure",
+  professional: "Workspace",
 
   // Measure Tool
   measureTool: "Measure Tool",
