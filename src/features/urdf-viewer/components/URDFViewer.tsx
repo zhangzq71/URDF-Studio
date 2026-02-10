@@ -2,7 +2,7 @@ import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react
 import { Canvas, RootState } from '@react-three/fiber';
 import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { SnapshotManager, SceneLighting, ReferenceGrid, CanvasResizeSync } from '@/shared/components/3d';
+import { SnapshotManager, SceneLighting, ReferenceGrid, CanvasResizeSync, UsageGuide } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 
@@ -336,6 +336,9 @@ export function URDFViewer({
                     {mode === 'hardware' ? t.hardware : t.detail} {t.modeLabel}
                 </div>
             </div>
+
+            {/* Usage Guide */}
+            <UsageGuide lang={lang} />
 
             {/* Settings panel */}
             <ViewerOptionsPanel
