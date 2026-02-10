@@ -48,7 +48,7 @@ export function useRobotLoader({
 
     // Ref to track current robot for proper cleanup (avoids stale closure issues)
     const robotRef = useRef<THREE.Object3D | null>(null);
-    // Track if component is mounted to prevent state updates after unmount
+    // Track component mount state for preventing state updates after unmount
     const isMountedRef = useRef(true);
     // Track loading abort controller to cancel duplicate loads
     const loadAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
@@ -72,6 +72,22 @@ export function useRobotLoader({
         };
     }, []);
 
+    // Cleanup on unmount ONLY
+    useEffect(() => {
+        return () => {
+            // Deep cleanup of robot resources on unmount
+            if (robotRef.current) {
+                // Remove from scene
+                if (robotRef.current.parent) {
+                    robotRef.current.parent.remove(robotRef.current);
+                }
+                // Dispose all geometries, materials (except shared), and textures
+                disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
+                robotRef.current = null;
+            }
+        };
+    }, []);
+
     // Load robot with proper cleanup and abort handling
     useEffect(() => {
         if (!urdfContent) return;
@@ -80,23 +96,10 @@ export function useRobotLoader({
         const abortController = { aborted: false };
         loadAbortRef.current = abortController;
 
-        // Cleanup previous robot before loading new one
-        const cleanupPreviousRobot = () => {
-            if (robotRef.current) {
-                // Remove from scene first
-                if (robotRef.current.parent) {
-                    robotRef.current.parent.remove(robotRef.current);
-                }
-                // Deep dispose with shared materials exclusion
-                disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
-                robotRef.current = null;
-            }
-        };
-
         const loadRobot = async () => {
             try {
-                // Cleanup any existing robot before loading new one
-                cleanupPreviousRobot();
+                // NOTE: We do NOT cleanup the previous robot here immediately.
+                // We wait until the new robot is ready to avoid flickering/rendering disposed objects.
 
                 let robotModel: THREE.Object3D | null = null;
 
@@ -248,6 +251,17 @@ export function useRobotLoader({
                         }
                     });
 
+                    // Cleanup previous robot NOW, before replacing it
+                    if (robotRef.current) {
+                        // Remove from scene first
+                        if (robotRef.current.parent) {
+                            robotRef.current.parent.remove(robotRef.current);
+                        }
+                        // Deep dispose with shared materials exclusion
+                        disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
+                        robotRef.current = null;
+                    }
+
                     // Store the pre-built map
                     linkMeshMapRef.current = newLinkMeshMap;
 
@@ -259,7 +273,9 @@ export function useRobotLoader({
                     if (onRobotLoaded) {
                         onRobotLoaded(robotModel);
                     }
-
+                } else if (robotModel) {
+                     // Aborted or unmounted after load but before we could use it
+                     disposeObject3D(robotModel, true, SHARED_MATERIALS);
                 }
             } catch (err) {
                 if (!abortController.aborted && isMountedRef.current) {
@@ -271,21 +287,14 @@ export function useRobotLoader({
 
         loadRobot();
 
-        // Cleanup function - runs on unmount or when dependencies change
+        // Cleanup function - runs when dependencies change
         return () => {
             // Mark this load as aborted to prevent state updates
             abortController.aborted = true;
 
-            // Deep cleanup of robot resources
-            if (robotRef.current) {
-                // Remove from scene
-                if (robotRef.current.parent) {
-                    robotRef.current.parent.remove(robotRef.current);
-                }
-                // Dispose all geometries, materials (except shared), and textures
-                disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
-                robotRef.current = null;
-            }
+            // NOTE: We do NOT dispose robotRef.current here.
+            // We allow the old robot to persist until the new one is ready, 
+            // or until the component unmounts (handled by the separate useEffect).
         };
     }, [urdfContent, assets, invalidate, onRobotLoaded]);
 

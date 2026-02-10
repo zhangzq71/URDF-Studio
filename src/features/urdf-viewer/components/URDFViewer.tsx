@@ -325,7 +325,7 @@ export function URDFViewer({
     return (
         <div
             ref={containerRef}
-            className="flex-1 relative bg-google-light-bg dark:bg-google-dark-bg h-full min-w-0 overflow-hidden"
+            className="flex-1 relative bg-google-light-bg dark:bg-google-dark-bg h-full min-w-0"
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
