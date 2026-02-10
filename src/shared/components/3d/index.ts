@@ -23,3 +23,6 @@ export {
 
 // Visualization Helpers
 export * from './helpers';
+
+export { UsageGuide } from './UsageGuide';
+

@@ -17,6 +17,7 @@ import {
 
 // Components
 import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
+import { UsageGuide } from '@/shared/components/3d';
 import { RobotNode } from './nodes';
 import { JointTransformControls } from './controls';
 import { VisualizerCanvas } from './VisualizerCanvas';
@@ -250,6 +251,9 @@ export const Visualizer = ({
           )}
         </div>
       )}
+
+      {/* Usage Guide */}
+      <UsageGuide lang={lang} />
 
       {/* 3D Canvas */}
       <VisualizerCanvas

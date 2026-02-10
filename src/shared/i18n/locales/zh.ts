@@ -99,7 +99,7 @@ export const zh: TranslationKeys = {
   library: "库",
   custom: "自定义",
   autoAlign: "自动与子关节对齐",
-  box: "方块",
+  box: "长方体",
   cylinder: "圆柱体",
   sphere: "球体",
   capsule: "胶囊体",
