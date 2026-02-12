@@ -247,6 +247,13 @@ export const en: TranslationKeys = {
   assemblyTree: "Assembly View",
   projectName: "Project Name",
   enterProjectName: "Enter project name",
+  emptyAssemblyHint: "Click files in the asset library above to add components",
+  clickToAddComponent: "Click file to add as component",
+
+  // Ground Plane
+  groundPlane: "Ground Plane",
+  groundPlaneOffset: "Height Offset",
+  autoFitGround: "Auto Fit",
 
   // Measure Tool
   measureTool: "Measure Tool",

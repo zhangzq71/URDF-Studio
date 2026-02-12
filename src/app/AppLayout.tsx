@@ -131,9 +131,22 @@ export function AppLayout({
   }, [assemblyState, sidebarTab, getMergedRobotData]);
 
   // Construct robot object for legacy components
+  // Pro mode: use merged assembly data, or empty robot if no components
+  // Simple mode: use robotStore data
+  const emptyRobot: RobotState = useMemo(() => ({
+    name: '',
+    links: { empty_root: { id: 'empty_root', name: 'base_link', visual: { type: 'none' as const }, collision: { type: 'none' as const }, inertial: { mass: 0, origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }, inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 } } } },
+    joints: {},
+    rootLinkId: 'empty_root',
+    selection: { type: null, id: null },
+  }), []);
+
   const robot: RobotState = useMemo(() => {
-    if (assemblyState && sidebarTab === 'workspace' && mergedRobotData) {
-      return { ...mergedRobotData, selection };
+    if (assemblyState && sidebarTab === 'workspace') {
+      if (mergedRobotData) {
+        return { ...mergedRobotData, selection };
+      }
+      return emptyRobot;
     }
     return {
       name: robotName,
@@ -142,7 +155,7 @@ export function AppLayout({
       rootLinkId,
       selection,
     };
-  }, [robotName, robotLinks, robotJoints, rootLinkId, selection, assemblyState, sidebarTab, mergedRobotData]);
+  }, [robotName, robotLinks, robotJoints, rootLinkId, selection, assemblyState, sidebarTab, mergedRobotData, emptyRobot]);
 
   // Joint angle state for URDFViewer
   const jointAngleState = useMemo(() => {
@@ -164,15 +177,19 @@ export function AppLayout({
   // URDF content for viewer
   // Always use generated URDF to reflect user modifications in real-time
   // This ensures collision geometry and other property changes are immediately visible
+  // NOTE: Depends on links/joints only (not name) to avoid re-rendering on name input
   const urdfContentForViewer = useMemo(() => {
     if (assemblyState && sidebarTab === 'workspace') {
       const merged = getMergedRobotData();
       if (merged) {
         return generateURDF(merged as unknown as RobotState, false);
       }
+      // Pro mode with no components: empty URDF
+      return generateURDF(emptyRobot, false);
     }
     return generateURDF(robot, false);
-  }, [robot, assemblyState, sidebarTab, getMergedRobotData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [robotLinks, robotJoints, rootLinkId, emptyRobot, assemblyState?.components, assemblyState?.bridges, sidebarTab, getMergedRobotData]);
 
   // Handlers
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {

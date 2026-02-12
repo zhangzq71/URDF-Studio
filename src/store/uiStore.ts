@@ -64,6 +64,10 @@ interface UIState {
   viewOptions: ViewOptions;
   setViewOption: <K extends keyof ViewOptions>(key: K, value: ViewOptions[K]) => void;
 
+  // Ground plane offset (Z position)
+  groundPlaneOffset: number;
+  setGroundPlaneOffset: (offset: number) => void;
+
   // Panel visibility
   panels: PanelsState;
   togglePanel: (panel: keyof PanelsState) => void;
@@ -262,6 +266,10 @@ export const useUIStore = create<UIState>()(
         set((state) => ({
           viewOptions: { ...state.viewOptions, [key]: value },
         })),
+
+      // Ground plane offset
+      groundPlaneOffset: 0,
+      setGroundPlaneOffset: (offset) => set({ groundPlaneOffset: offset }),
 
       // Panels
       panels: defaultPanels,
