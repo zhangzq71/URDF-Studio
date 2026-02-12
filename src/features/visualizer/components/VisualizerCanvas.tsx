@@ -1,5 +1,5 @@
-import React, { memo, Suspense } from 'react';
-import { Canvas } from '@react-three/fiber';
+import React, { memo, Suspense, useEffect } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { Theme } from '@/types';
@@ -9,9 +9,17 @@ import { useEffectiveTheme } from '@/shared/hooks';
 interface VisualizerCanvasProps {
   theme: Theme;
   snapshotAction?: React.MutableRefObject<(() => void) | null>;
+  sceneRef?: React.MutableRefObject<THREE.Scene | null>;
   robotName?: string;
   onPointerMissed?: () => void;
   children: React.ReactNode;
+}
+
+/** Captures Three.js scene into an external ref */
+function SceneCapture({ sceneRef }: { sceneRef: React.MutableRefObject<THREE.Scene | null> }) {
+  const { scene } = useThree();
+  useEffect(() => { sceneRef.current = scene; }, [scene, sceneRef]);
+  return null;
 }
 
 /**
@@ -28,6 +36,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
   theme: propTheme,
   snapshotAction,
   robotName = 'robot',
+  sceneRef,
   onPointerMissed,
   children,
 }: VisualizerCanvasProps) {
@@ -49,6 +58,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
       }}
     >
       <CanvasResizeSync />
+      {sceneRef && <SceneCapture sceneRef={sceneRef} />}
       <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#000000']} />
       <Suspense fallback={null}>
         <OrbitControls makeDefault enableDamping={false} />

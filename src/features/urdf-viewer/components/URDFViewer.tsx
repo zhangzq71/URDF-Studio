@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { SnapshotManager, SceneLighting, ReferenceGrid, CanvasResizeSync, UsageGuide } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
+import { useUIStore } from '@/store';
 
 import type { URDFViewerProps, ToolMode, MeasureState } from '../types';
 import { RobotModel } from './RobotModel';
@@ -77,6 +78,7 @@ export function URDFViewer({
     // WebGL context lost state
     const [contextLost, setContextLost] = useState(false);
     const glRef = useRef<THREE.WebGLRenderer | null>(null);
+    const sceneRef = useRef<THREE.Scene | null>(null);
 
     const [measureState, setMeasureState] = useState<MeasureState>({
         measurements: [],
@@ -258,11 +260,34 @@ export function URDFViewer({
         }
     }, [onSelect, robot, selection?.subType]);
 
+    const handleAutoFitGround = useCallback(() => {
+        const scene = sceneRef.current;
+        if (!scene) return;
+        const box = new THREE.Box3();
+        scene.traverse((obj) => {
+            if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
+            if (obj.name === 'ReferenceGrid') return;
+            if ((obj as THREE.Mesh).isMesh) {
+                const mesh = obj as THREE.Mesh;
+                if (mesh.geometry) {
+                    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+                    const geomBox = mesh.geometry.boundingBox!.clone();
+                    geomBox.applyMatrix4(mesh.matrixWorld);
+                    box.union(geomBox);
+                }
+            }
+        });
+        if (!box.isEmpty() && isFinite(box.min.z)) {
+            useUIStore.getState().setGroundPlaneOffset(box.min.z);
+        }
+    }, []);
+
     // Handle WebGL context creation and context lost/restored events
     const handleCanvasCreated = useCallback((state: RootState) => {
         const gl = state.gl;
         const scene = state.scene;
         glRef.current = gl;
+        sceneRef.current = scene;
         const canvas = gl.domElement;
 
         // Expose scene to window for debugging (development only)
@@ -385,6 +410,7 @@ export function URDFViewer({
                 setShowInertia={setShowInertia}
                 showInertiaOverlay={showInertiaOverlay}
                 setShowInertiaOverlay={setShowInertiaOverlay}
+                onAutoFitGround={handleAutoFitGround}
             />
 
             {/* Joint controls panel */}

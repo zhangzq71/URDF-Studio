@@ -591,6 +591,11 @@ const AssemblyTreeView = memo(({
 
         {isComponentsExpanded && (
           <div className="ml-2 border-l border-slate-200 dark:border-slate-700 space-y-0.5 mt-0.5">
+            {components.length === 0 && (
+              <div className="px-4 py-3 text-[11px] text-slate-400 italic text-center">
+                {t.emptyAssemblyHint}
+              </div>
+            )}
             {components.map(comp => {
               const isExpanded = expandedComponents[comp.id] ?? false;
               const isVisible = comp.visible !== false;
@@ -711,6 +716,17 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const sidebarTab = useUIStore((state) => state.sidebarTab);
   const setSidebarTab = useUIStore((state) => state.setSidebarTab);
   const toggleComponentVisibility = useAssemblyStore((state) => state.toggleComponentVisibility);
+  const initAssembly = useAssemblyStore((state) => state.initAssembly);
+
+  const isProMode = sidebarTab === 'workspace';
+
+  // Switch to Pro mode: auto-init assembly if not yet created
+  const handleSwitchToProMode = useCallback(() => {
+    if (!assemblyState) {
+      initAssembly(robot.name || 'assembly');
+    }
+    setSidebarTab('workspace');
+  }, [assemblyState, initAssembly, setSidebarTab, robot.name]);
   const [width, setWidth] = useState(288);
   const [isDragging, setIsDragging] = useState(false);
   const isResizing = useRef(false);
@@ -840,7 +856,33 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
-            {/* Robot Name Input - Moved to Top */}
+            {/* Tab Switcher - Top */}
+            <div className="px-3 py-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
+                <div className="flex bg-slate-100 dark:bg-[#1C1C1E] p-1 rounded-lg">
+                    <button
+                        onClick={() => setSidebarTab('structure')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
+                        ${sidebarTab === 'structure'
+                            ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                    >
+                        <Trees size={14} />
+                        {t.simpleMode}
+                    </button>
+                    <button
+                        onClick={handleSwitchToProMode}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
+                        ${sidebarTab === 'workspace'
+                            ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                    >
+                        <LayoutGrid size={14} />
+                        {t.proMode}
+                    </button>
+                </div>
+            </div>
+
+            {/* Robot Name Input */}
             <div className="px-4 pt-3 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
                 <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">
                     {sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName}
@@ -879,6 +921,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                      <span className="text-[10px] text-slate-400">{availableFiles.length}</span>
                 </div>
 
+                {isFileBrowserOpen && isProMode && availableFiles.length > 0 && (
+                    <div className="px-3 py-1 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-100 dark:border-blue-900/30">
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400">{t.clickToAddComponent}</span>
+                    </div>
+                )}
+
                 {isFileBrowserOpen && (
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1">
                         {availableFiles.length === 0 ? (
@@ -891,11 +939,11 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                                     key={node.path}
                                     node={node}
                                     depth={0}
-                                    onLoadRobot={onLoadRobot}
+                                    onLoadRobot={isProMode ? onAddComponent : onLoadRobot}
                                     onAddAsComponent={onAddComponent}
                                     expandedFolders={expandedFolders}
                                     toggleFolder={toggleFolder}
-                                    showAddAsComponent={true}
+                                    showAddAsComponent={false}
                                     t={t}
                                 />
                             ))
@@ -911,32 +959,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                     onMouseDown={handleVerticalMouseDown}
                 />
             )}
-
-            {/* Tab Switcher */}
-            <div className="px-4 py-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
-                <div className="flex bg-slate-100 dark:bg-[#1C1C1E] p-1 rounded-lg">
-                    <button
-                        onClick={() => setSidebarTab('structure')}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
-                        ${sidebarTab === 'structure'
-                            ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
-                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
-                    >
-                        <Trees size={14} />
-                        {t.simpleMode}
-                    </button>
-                    <button
-                        onClick={() => setSidebarTab('workspace')}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
-                        ${sidebarTab === 'workspace'
-                            ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
-                            : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
-                    >
-                        <LayoutGrid size={14} />
-                        {t.proMode}
-                    </button>
-                </div>
-            </div>
 
             {/* Bottom: Structure Tree */}
             <div

@@ -249,6 +249,13 @@ export const zh: TranslationKeys = {
   assemblyTree: "组装视图",
   projectName: "项目名称",
   enterProjectName: "输入项目名称",
+  emptyAssemblyHint: "从上方素材库点击文件即可添加组件",
+  clickToAddComponent: "点击文件添加为组件",
+
+  // Ground Plane
+  groundPlane: "地平面",
+  groundPlaneOffset: "高度偏移",
+  autoFitGround: "自动适配",
 
   // Measure Tool
   measureTool: "测量工具",

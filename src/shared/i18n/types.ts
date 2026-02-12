@@ -242,6 +242,13 @@ export interface TranslationKeys {
   assemblyTree: string;
   projectName: string;
   enterProjectName: string;
+  emptyAssemblyHint: string;
+  clickToAddComponent: string;
+
+  // Ground Plane
+  groundPlane: string;
+  groundPlaneOffset: string;
+  autoFitGround: string;
 
   // Measure Tool
   measureTool: string;
