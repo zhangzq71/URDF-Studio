@@ -236,8 +236,12 @@ export interface TranslationKeys {
   copied: string;
   fileBrowser: string;
   dropOrImport: string;
-  simplified: string;
-  professional: string;
+  simpleMode: string;
+  proMode: string;
+  structureTree: string;
+  assemblyTree: string;
+  projectName: string;
+  enterProjectName: string;
 
   // Measure Tool
   measureTool: string;

@@ -843,14 +843,14 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             {/* Robot Name Input - Moved to Top */}
             <div className="px-4 pt-3 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
                 <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">
-                    {sidebarTab === 'workspace' && assemblyState ? t.professional : t.robotName}
+                    {sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName}
                 </label>
                 <input
                     type="text"
                     value={sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name}
                     onChange={(e) => onNameChange(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-[#000000] focus:bg-white dark:focus:bg-[#000000] text-sm text-slate-900 dark:text-white px-3 py-2 rounded-lg border border-slate-300 dark:border-[#48484A] focus:border-google-blue outline-none transition-colors"
-                    placeholder={sidebarTab === 'workspace' && assemblyState ? t.professional : t.enterRobotName}
+                    placeholder={sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName}
                 />
                 {/* Current Loaded File Display */}
                 {currentFileName && sidebarTab === 'structure' && !assemblyState && (
@@ -923,7 +923,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                             : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
                     >
                         <Trees size={14} />
-                        {t.simplified}
+                        {t.simpleMode}
                     </button>
                     <button
                         onClick={() => setSidebarTab('workspace')}
@@ -933,7 +933,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                             : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
                     >
                         <LayoutGrid size={14} />
-                        {t.professional}
+                        {t.proMode}
                     </button>
                 </div>
             </div>
@@ -949,49 +949,48 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 >
                      <div className="flex items-center gap-2">
                         {isStructureOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{sidebarTab === 'workspace' && assemblyState ? t.professional : t.simplified}</span>
+                        <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">{sidebarTab === 'workspace' && assemblyState ? t.assemblyTree : t.structureTree}</span>
                      </div>
 
-                     {/* Master Visual Toggle */}
-                     <div
-                        className={`flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer text-slate-500 dark:text-slate-400`}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setShowVisual(!showVisual);
-                        }}
-                        title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
-                     >
-                        {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
+                     <div className="flex items-center gap-1">
+                       {/* Add child button - skeleton + simple mode only */}
+                       {mode === 'skeleton' && sidebarTab === 'structure' && !assemblyState && (
+                         <button
+                            className="p-1 hover:bg-blue-600 bg-blue-700 text-white rounded-md transition-colors shadow-sm"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                let targetId = robot.rootLinkId;
+                                if (robot.selection.type === 'link' && robot.selection.id) {
+                                    targetId = robot.selection.id;
+                                } else if (robot.selection.type === 'joint' && robot.selection.id) {
+                                    const selectedJoint = robot.joints[robot.selection.id];
+                                    if (selectedJoint) targetId = selectedJoint.childLinkId;
+                                }
+                                onAddChild(targetId);
+                            }}
+                            title={t.addChildLink}
+                         >
+                            <Plus className="w-3.5 h-3.5" />
+                         </button>
+                       )}
+
+                       {/* Master Visual Toggle */}
+                       <div
+                          className={`flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer text-slate-500 dark:text-slate-400`}
+                          onClick={(e) => {
+                              e.stopPropagation();
+                              setShowVisual(!showVisual);
+                          }}
+                          title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
+                       >
+                          {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
+                       </div>
                      </div>
                 </div>
 
                 {isStructureOpen && (
                     <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-
-
-                        <div className="flex items-center justify-between px-4 py-2 bg-white dark:bg-google-dark-surface border-b border-slate-200 dark:border-google-dark-border shrink-0">
-                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{sidebarTab === 'workspace' && assemblyState ? t.professional : t.simplified}</span>
-                             {mode === 'skeleton' && sidebarTab === 'structure' && !assemblyState && (
-                                 <button
-                                    className="p-1 hover:bg-blue-600 bg-blue-700 text-white rounded-md transition-colors shadow-sm"
-                                    onClick={() => {
-                                        let targetId = robot.rootLinkId;
-                                        if (robot.selection.type === 'link' && robot.selection.id) {
-                                            targetId = robot.selection.id;
-                                        } else if (robot.selection.type === 'joint' && robot.selection.id) {
-                                            const selectedJoint = robot.joints[robot.selection.id];
-                                            if (selectedJoint) targetId = selectedJoint.childLinkId;
-                                        }
-                                        onAddChild(targetId);
-                                    }}
-                                    title={t.addChildLink}
-                                >
-                                    <Plus className="w-3.5 h-3.5" />
-                                </button>
-                             )}
-                        </div>
-
-                        {/* 3. Content Area */}
+                        {/* Content Area */}
                         <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-google-dark-bg">
                              {sidebarTab === 'workspace' && assemblyState ? (
                                <AssemblyTreeView
