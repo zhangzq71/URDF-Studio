@@ -243,8 +243,12 @@ export const zh: TranslationKeys = {
   copied: "已复制!",
   fileBrowser: "素材库",
   dropOrImport: "拖放或导入文件夹/ZIP",
-  simplified: "结构",
-  professional: "工作区",
+  simpleMode: "简单模式",
+  proMode: "专业模式",
+  structureTree: "结构树",
+  assemblyTree: "组装视图",
+  projectName: "项目名称",
+  enterProjectName: "输入项目名称",
 
   // Measure Tool
   measureTool: "测量工具",

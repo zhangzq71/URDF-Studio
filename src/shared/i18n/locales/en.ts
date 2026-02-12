@@ -241,8 +241,12 @@ export const en: TranslationKeys = {
   copied: "Copied!",
   fileBrowser: "Asset Library",
   dropOrImport: "Drop or import folder/ZIP",
-  simplified: "Structure",
-  professional: "Workspace",
+  simpleMode: "Simple",
+  proMode: "Pro",
+  structureTree: "Structure Tree",
+  assemblyTree: "Assembly View",
+  projectName: "Project Name",
+  enterProjectName: "Enter project name",
 
   // Measure Tool
   measureTool: "Measure Tool",
