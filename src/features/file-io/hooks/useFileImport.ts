@@ -13,6 +13,7 @@ import {
   detectFormat,
   isRobotDefinitionFile,
   isAssetFile,
+  isMeshFile,
   isMotorLibraryFile,
   shouldSkipPath,
   createAssetUrls,
@@ -95,6 +96,10 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
               // Assume asset
               const blob = await fileEntry.async('blob');
               assetFiles.push({ name: relativePath, blob });
+              // Mesh files also appear in file browser
+              if (isMeshFile(relativePath)) {
+                newRobotFiles.push({ name: relativePath, content: '', format: 'mesh' });
+              }
             }
           })();
           promises.push(p);
@@ -125,6 +130,10 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
             libraryFiles.push({ path, content });
           } else {
             assetFiles.push({ name: path, blob: f });
+            // Mesh files also appear in file browser
+            if (isMeshFile(path)) {
+              newRobotFiles.push({ name: path, content: '', format: 'mesh' });
+            }
           }
         });
         await Promise.all(promises);
@@ -166,8 +175,11 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
       const result: ImportResult = { robotFiles: newRobotFiles, assetFiles, libraryFiles };
       onImportComplete?.(result);
 
-      // 5. Load first robot if available
-      if (newRobotFiles.length > 0) {
+      // 5. Load first robot file if available (prefer real robot files over mesh)
+      const robotDefinitionFiles = newRobotFiles.filter(f => f.format !== 'mesh');
+      if (robotDefinitionFiles.length > 0) {
+        onLoadRobot?.(robotDefinitionFiles[0]);
+      } else if (newRobotFiles.length > 0) {
         onLoadRobot?.(newRobotFiles[0]);
       } else if (libraryFiles.length > 0) {
         alert(lang === 'zh' ? '库导入成功！' : 'Library imported successfully!');

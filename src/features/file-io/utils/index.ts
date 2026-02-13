@@ -8,6 +8,7 @@ export {
   isRobotDefinitionFile,
   isAssetFile,
   isMotorLibraryFile,
+  isMeshFile,
   shouldSkipPath,
 } from './formatDetection';
 

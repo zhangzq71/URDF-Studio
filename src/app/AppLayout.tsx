@@ -315,16 +315,17 @@ export function AppLayout({
   }, [undo, redo, canUndo, canRedo]);
 
   // Clean up selection if selected item no longer exists
+  // Use robot.links/joints (which includes merged assembly data in workspace mode)
   useEffect(() => {
     if (selection.id && selection.type) {
       const exists = selection.type === 'link'
-        ? robotLinks[selection.id]
-        : robotJoints[selection.id];
+        ? robot.links[selection.id]
+        : robot.joints[selection.id];
       if (!exists) {
         setSelection({ type: null, id: null });
       }
     }
-  }, [robotLinks, robotJoints, selection, setSelection]);
+  }, [robot.links, robot.joints, selection, setSelection]);
 
   // Drag and Drop handlers
   const handleDragOver = useCallback((e: React.DragEvent) => {

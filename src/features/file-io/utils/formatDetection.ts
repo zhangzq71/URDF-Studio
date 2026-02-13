@@ -72,6 +72,14 @@ export function isMotorLibraryFile(path: string): boolean {
 }
 
 /**
+ * Check if file is a 3D mesh file (.stl, .obj, .dae)
+ */
+export function isMeshFile(filename: string): boolean {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  return ['stl', 'obj', 'dae'].includes(ext || '');
+}
+
+/**
  * Check if path should be skipped (hidden files/folders)
  */
 export function shouldSkipPath(path: string): boolean {
