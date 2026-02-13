@@ -129,7 +129,7 @@ urdf-studio/
     │   │   ├── hooks/         # useFileImport, useFileExport, usePdfExport, useSnapshot
     │   │   └── utils/         # projectImport/Export, assetUtils, bomGenerator,
     │   │                      # formatDetection, fileTraverser, generatePdfFromHtml
-    │   └── urdf-square/       # 模型广场 (浏览/导入示例机器人)
+    │   └── urdf-gallery/      # 模型广场 (浏览/导入示例机器人)
     │
     └── app/                   # 应用层
         ├── App.tsx            # 根组件

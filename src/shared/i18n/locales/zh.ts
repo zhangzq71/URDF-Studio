@@ -5,9 +5,9 @@
 import type { TranslationKeys } from '../types';
 
 export const zh: TranslationKeys = {
-  // URDF Square
-  urdfSquare: "URDF 广场",
-  square: "广场",
+  // URDF Gallery
+  urdfGallery: "URDF 广场",
+  gallery: "广场",
   searchModels: "搜索模型...",
   featuredModels: "精选推荐",
   findNextProject: "发现您的下一个机器人项目",
