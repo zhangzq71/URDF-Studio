@@ -5,9 +5,9 @@
 import type { TranslationKeys } from '../types';
 
 export const en: TranslationKeys = {
-  // URDF Square
-  urdfSquare: "URDF Square",
-  square: "Square",
+  // URDF Gallery
+  urdfGallery: "URDF Gallery",
+  gallery: "Gallery",
   searchModels: "Search models...",
   featuredModels: "Featured Models",
   findNextProject: "Find Your Next Robot Project",

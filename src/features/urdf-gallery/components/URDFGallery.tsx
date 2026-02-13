@@ -7,7 +7,7 @@ import {
 import { RobotThumbnail3D } from './RobotThumbnail3D';
 import { translations } from '@/shared/i18n';
 
-interface URDFSquareProps {
+interface URDFGalleryProps {
   onClose: () => void;
   lang: 'en' | 'zh';
   onImport: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -222,7 +222,7 @@ const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' |
   );
 };
 
-export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport }) => {
+export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImport }) => {
   const t = translations[lang];
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -563,7 +563,7 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
                 <LayoutGrid className="w-4 h-4" />
               </div>
               <h1 className="text-sm font-bold tracking-tight">
-                {t.urdfSquare}
+                {t.urdfGallery}
               </h1>
             </div>
             
@@ -761,4 +761,4 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
   );
 };
 
-export default URDFSquare;
+export default URDFGallery;

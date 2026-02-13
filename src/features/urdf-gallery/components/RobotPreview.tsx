@@ -1,7 +1,7 @@
 /**
  * RobotPreview - Smart preview component
  * Uses pre-recorded animated WebP if available, falls back to 3D rendering
- * This significantly reduces CPU/GPU usage for the URDF Square
+ * This significantly reduces CPU/GPU usage for the URDF Gallery
  */
 
 import React, { useState, useEffect, useRef } from 'react';

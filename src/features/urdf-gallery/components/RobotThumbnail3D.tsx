@@ -1,5 +1,5 @@
 /**
- * RobotThumbnail3D - Mini 3D preview for URDF Square
+ * RobotThumbnail3D - Mini 3D preview for URDF Gallery
  * Pure real-time rendering with continuous rotation
  */
 

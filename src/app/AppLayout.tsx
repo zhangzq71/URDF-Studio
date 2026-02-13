@@ -30,7 +30,7 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFSquare: () => void;
+  onOpenURDFGallery: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -60,7 +60,7 @@ export function AppLayout({
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFSquare,
+  onOpenURDFGallery,
   viewConfig,
   setViewConfig,
   onLoadRobot,
@@ -380,7 +380,7 @@ export function AppLayout({
         onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenURDFSquare={onOpenURDFSquare}
+        onOpenURDFGallery={onOpenURDFGallery}
         onSnapshot={handleSnapshot}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}

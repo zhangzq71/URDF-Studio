@@ -8,7 +8,7 @@ import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { AIModal } from '@/features/ai-assistant';
-import { URDFSquare } from '@/features/urdf-square';
+import { URDFGallery } from '@/features/urdf-gallery';
 import { useFileImport, useFileExport } from './hooks';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore } from '@/store';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
@@ -51,7 +51,7 @@ function AppContent() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
-  const [isURDFSquareOpen, setIsURDFSquareOpen] = useState(false);
+  const [isURDFGalleryOpen, setIsURDFGalleryOpen] = useState(false);
   const [viewConfig, setViewConfig] = useState({
     showToolbar: true,
     showOptionsPanel: true,
@@ -193,7 +193,7 @@ function AppContent() {
         setIsCodeViewerOpen={setIsCodeViewerOpen}
         onOpenSettings={() => openSettings()}
         onOpenAbout={() => setIsAboutOpen(true)}
-        onOpenURDFSquare={() => setIsURDFSquareOpen(true)}
+        onOpenURDFGallery={() => setIsURDFGalleryOpen(true)}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
@@ -212,10 +212,10 @@ function AppContent() {
         onSelectItem={(type, id) => setSelection({ type, id })}
       />
 
-      {/* URDF Square */}
-      {isURDFSquareOpen && (
-        <URDFSquare
-          onClose={() => setIsURDFSquareOpen(false)}
+      {/* URDF Gallery */}
+      {isURDFGalleryOpen && (
+        <URDFGallery
+          onClose={() => setIsURDFGalleryOpen(false)}
           lang={lang}
           onImport={(e) => handleImport(e.target.files)}
         />

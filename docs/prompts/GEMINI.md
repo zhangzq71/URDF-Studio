@@ -106,13 +106,13 @@ const state = useVisualizerState({ propShowVisual, propSetShowVisual });
 
 ---
 
-## 广场 (URDF Square)
+## 广场 (URDF Gallery)
 
 模型库广场，提供预设机器人模型的浏览和导入。
 
 ### 位置
 
-`src/features/urdf-square/components/URDFSquare.tsx`
+`src/features/urdf-gallery/components/URDFGallery.tsx`
 
 ### 功能特性
 
@@ -312,7 +312,7 @@ urdf-studio/
 │   │   ├── code-editor/         # Monaco 代码编辑器
 │   │   ├── hardware-config/     # 硬件配置
 │   │   ├── ai-assistant/        # AI 助手
-│   │   ├── urdf-square/         # 模型库广场
+│   │   ├── urdf-gallery/        # 模型库广场
 │   │   └── file-io/             # 文件 I/O (导入/导出/快照)
 │   │
 │   └── app/                     # 应用层

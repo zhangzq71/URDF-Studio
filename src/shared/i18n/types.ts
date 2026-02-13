@@ -5,9 +5,9 @@
 export type Language = 'en' | 'zh';
 
 export interface TranslationKeys {
-  // URDF Square
-  urdfSquare: string;
-  square: string;
+  // URDF Gallery
+  urdfGallery: string;
+  gallery: string;
   searchModels: string;
   featuredModels: string;
   findNextProject: string;
