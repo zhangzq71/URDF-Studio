@@ -13,7 +13,7 @@ import type {
   UrdfLink,
   UrdfJoint,
 } from '@/types';
-import { DEFAULT_JOINT, JointType } from '@/types';
+import { DEFAULT_JOINT, JointType, GeometryType } from '@/types';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 
@@ -154,6 +154,41 @@ export const useAssemblyStore = create<
                 materials: (parsed as RobotData & { materials?: RobotData['materials'] }).materials,
               }
             : null;
+          break;
+        }
+        case 'mesh': {
+          const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
+          const linkId = 'base_link';
+          robotData = {
+            name: meshName,
+            links: {
+              [linkId]: {
+                id: linkId,
+                name: 'base_link',
+                visible: true,
+                visual: {
+                  type: GeometryType.MESH,
+                  dimensions: { x: 1, y: 1, z: 1 },
+                  color: '#808080',
+                  meshPath: file.name,
+                  origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                  type: GeometryType.NONE,
+                  dimensions: { x: 0, y: 0, z: 0 },
+                  color: '#ef4444',
+                  origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                inertial: {
+                  mass: 1.0,
+                  origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                  inertia: { ixx: 0.1, ixy: 0, ixz: 0, iyy: 0.1, iyz: 0, izz: 0.1 },
+                },
+              },
+            },
+            joints: {},
+            rootLinkId: linkId,
+          };
           break;
         }
       }

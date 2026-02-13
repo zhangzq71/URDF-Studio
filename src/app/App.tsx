@@ -13,6 +13,7 @@ import { useFileImport, useFileExport } from './hooks';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore } from '@/store';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
+import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 
 function AppContent() {
@@ -97,6 +98,42 @@ function AppContent() {
         pathParts.pop();
         newState = parseXacro(file.content, {}, fileMap, pathParts.join('/'));
         break;
+      case 'mesh': {
+        const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
+        const linkId = 'base_link';
+        newState = {
+          name: meshName,
+          links: {
+            [linkId]: {
+              id: linkId,
+              name: 'base_link',
+              visible: true,
+              visual: {
+                type: GeometryType.MESH,
+                dimensions: { x: 1, y: 1, z: 1 },
+                color: '#808080',
+                meshPath: file.name,
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              },
+              collision: {
+                type: GeometryType.NONE,
+                dimensions: { x: 0, y: 0, z: 0 },
+                color: '#ef4444',
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              },
+              inertial: {
+                mass: 1.0,
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                inertia: { ixx: 0.1, ixy: 0, ixz: 0, iyy: 0.1, iyz: 0, izz: 0.1 },
+              },
+            },
+          },
+          joints: {},
+          rootLinkId: linkId,
+          selection: { type: null, id: null },
+        };
+        break;
+      }
     }
 
     if (newState) {
@@ -104,7 +141,7 @@ function AppContent() {
       setRobot(data);
       setSelection({ type: null, id: null });
       setSelectedFile(file);
-      setOriginalUrdfContent(file.content);
+      setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
       setOriginalFileFormat(file.format);
       setAppMode('detail');
     } else {

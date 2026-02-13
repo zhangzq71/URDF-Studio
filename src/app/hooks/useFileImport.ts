@@ -5,10 +5,11 @@
 import { useCallback } from 'react';
 import JSZip from 'jszip';
 import type { RobotFile, MotorSpec, RobotState } from '@/types';
+import { GeometryType } from '@/types';
 import { parseURDF, parseMJCF, isMJCF, parseUSDA, isUSDA, parseXacro, isXacro } from '@/core/parsers';
 import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
 import { useAssetsStore, useRobotStore, useUIStore, useAssemblyStore } from '@/store';
-import { importProject } from '@/features/file-io/utils';
+import { importProject, isMeshFile } from '@/features/file-io/utils';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
 
@@ -101,6 +102,42 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         const basePath = pathParts.join('/');
         newState = parseXacro(file.content, {}, fileMap, basePath);
         break;
+      case 'mesh': {
+        const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
+        const linkId = 'base_link';
+        newState = {
+          name: meshName,
+          links: {
+            [linkId]: {
+              id: linkId,
+              name: 'base_link',
+              visible: true,
+              visual: {
+                type: GeometryType.MESH,
+                dimensions: { x: 1, y: 1, z: 1 },
+                color: '#808080',
+                meshPath: file.name,
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              },
+              collision: {
+                type: GeometryType.NONE,
+                dimensions: { x: 0, y: 0, z: 0 },
+                color: '#ef4444',
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              },
+              inertial: {
+                mass: 1.0,
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                inertia: { ixx: 0.1, ixy: 0, ixz: 0, iyy: 0.1, iyz: 0, izz: 0.1 },
+              },
+            },
+          },
+          joints: {},
+          rootLinkId: linkId,
+          selection: { type: null, id: null },
+        };
+        break;
+      }
     }
 
     if (newState && onLoadRobot) {
@@ -189,6 +226,9 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             } else {
               const blob = await fileEntry.async("blob");
               assetFiles.push({ name: relativePath, blob });
+              if (isMeshFile(relativePath)) {
+                newRobotFiles.push({ name: relativePath, content: '', format: 'mesh' });
+              }
             }
           })();
           promises.push(p);
@@ -220,6 +260,9 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             libraryFiles.push({ path: path, content });
           } else {
             assetFiles.push({ name: path, blob: f });
+            if (isMeshFile(path)) {
+              newRobotFiles.push({ name: path, content: '', format: 'mesh' });
+            }
           }
         });
         await Promise.all(promises);
@@ -279,13 +322,16 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       setAvailableFiles(mergedFiles);
 
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
+      // Filter to get only real robot definition files (exclude mesh)
+      const robotDefinitionFiles = newRobotFiles.filter(f => f.format !== 'mesh');
       if (newRobotFiles.length > 0) {
         if (availableFiles.length === 0) {
           // First import: initialize assembly and load robot
           initAssembly(robotName || 'my_project');
-          const preferredFile = newRobotFiles.find(f => f.format === 'urdf')
-            || newRobotFiles.find(f => f.format === 'mjcf')
-            || newRobotFiles.find(f => f.format === 'usd')
+          const preferredFile = robotDefinitionFiles.find(f => f.format === 'urdf')
+            || robotDefinitionFiles.find(f => f.format === 'mjcf')
+            || robotDefinitionFiles.find(f => f.format === 'usd')
+            || robotDefinitionFiles[0]
             || newRobotFiles[0];
           addComponent(preferredFile, { availableFiles: mergedFiles, assets: { ...assets, ...newAssets } });
           setSidebarTab('structure');
@@ -306,7 +352,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         }
       } else if (libraryFiles.length > 0) {
         alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
-      } else if (assetFiles.length === 0) {
+      } else if (assetFiles.length === 0 && newRobotFiles.length === 0) {
         alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
       }
 

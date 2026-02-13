@@ -154,9 +154,12 @@ const FileTreeNodeComponent: React.FC<{
                         node.file.format === 'urdf' ? 'bg-blue-100 dark:bg-slate-700 text-blue-600 dark:text-slate-300' :
                         node.file.format === 'xacro' ? 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300' :
                         node.file.format === 'mjcf' ? 'bg-orange-100 dark:bg-slate-700 text-orange-600 dark:text-slate-300' :
+                        node.file.format === 'mesh' ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400' :
                         'bg-slate-200 dark:bg-slate-700 text-slate-500'
                     }`}>
-                        {node.file.format.toUpperCase()}
+                        {node.file.format === 'mesh'
+                            ? (node.file.name.split('.').pop()?.toUpperCase() ?? 'MESH')
+                            : node.file.format.toUpperCase()}
                     </span>
                 )}
 
