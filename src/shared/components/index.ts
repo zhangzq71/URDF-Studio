@@ -8,3 +8,6 @@ export * from './3d';
 
 // Panel Components
 export * from './Panel';
+
+// Draggable Window Components
+export * from './DraggableWindow';

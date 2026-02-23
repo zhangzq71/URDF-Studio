@@ -4,15 +4,16 @@
  */
 import React, { useState, useCallback } from 'react';
 import {
-  ScanSearch, X, Move, Loader2, ChevronDown, ChevronRight,
+  ScanSearch, X, Loader2, ChevronDown, ChevronRight,
   Check, ArrowRight, Sparkles, Box, MessageCircle, Send,
   AlertTriangle, Info, AlertCircle, RefreshCw, FileText,
-  Minimize2, Maximize2, Minus, LayoutGrid, Search, Download, Star, Clock, Globe
+  Minus, LayoutGrid
 } from 'lucide-react';
 import { createRoot } from 'react-dom/client';
 import type { RobotState, MotorSpec, InspectionReport } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
+import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import { generateRobotFromPrompt, runRobotInspection, INSPECTION_CRITERIA } from '../index';
 import { InspectionReportTemplate } from '@/features/file-io/components/InspectionReportTemplate';
@@ -37,25 +38,18 @@ export function AIModal({
   onSelectItem,
 }: AIModalProps) {
   const t = translations[lang];
-  const {
-    isMaximized,
-    isMinimized,
-    size,
-    isDragging,
-    isResizing,
-    containerRef,
-    handleDragStart,
-    handleResizeStart,
-    toggleMaximize,
-    toggleMinimize,
-    windowStyle,
-  } = useDraggableWindow({
+  const windowState = useDraggableWindow({
     isOpen,
     defaultSize: { width: 900, height: 650 },
     minSize: { width: 600, height: 400 },
     centerOnMount: true,
     enableMinimize: true,
   });
+  const {
+    isMinimized,
+    size,
+    isResizing,
+  } = windowState;
 
   // AI states
   const [aiPrompt, setAiPrompt] = useState('');
@@ -769,30 +763,11 @@ export function AIModal({
       <div className="fixed inset-0 z-[90] pointer-events-none" />
       
       {/* Floating Window */}
-      <div
-        ref={containerRef}
-        style={windowStyle}
-        className={`z-[100] bg-white dark:bg-[#1C1C1E] flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-white/10 select-none`}
-      >
-        {/* Resize handles - Larger hit areas */}
-        {!isMaximized && !isMinimized && (
+      <DraggableWindow
+        window={windowState}
+        onClose={handleClose}
+        title={
           <>
-            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 active:bg-[#0060FA]/30 transition-colors z-20" onMouseDown={(e) => handleResizeStart(e, 'right')} />
-            <div className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 active:bg-[#0060FA]/30 transition-colors z-20" onMouseDown={(e) => handleResizeStart(e, 'bottom')} />
-            <div className="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize hover:bg-[#0060FA]/30 active:bg-[#0060FA]/40 transition-colors z-30 flex items-center justify-center" onMouseDown={(e) => handleResizeStart(e, 'corner')}>
-              <div className="w-2 h-2 border-r-2 border-b-2 border-slate-400" />
-            </div>
-          </>
-        )}
-
-        {/* Window Header */}
-        <div
-          className={`h-12 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-4 bg-slate-50 dark:bg-[#1C1C1E] shrink-0 ${
-            isMaximized ? '' : 'cursor-grab'
-          } ${isDragging ? '!cursor-grabbing' : ''}`}
-          onMouseDown={handleDragStart}
-        >
-          <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <div className="p-1.5 bg-[#0060FA] rounded-lg text-white shadow-lg shadow-black/20">
                 <ScanSearch className="w-4 h-4" />
@@ -801,7 +776,7 @@ export function AIModal({
                 {t.aiTitle}
               </h1>
             </div>
-            
+
             {inspectionReport && !isMinimized && (
               <div className="hidden md:flex ml-4 items-center gap-2 px-2 py-1 bg-white dark:bg-element-bg/50 border border-slate-200 dark:border-element-hover rounded-lg">
                 <div className={`w-2 h-2 rounded-full ${getScoreBgColor(inspectionReport.overallScore || 0, inspectionReport.maxScore || 100)} animation-pulse`} />
@@ -810,20 +785,24 @@ export function AIModal({
                 </span>
               </div>
             )}
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button onClick={toggleMinimize} className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors" title={t.minimize}>
-              <Minus className="w-4 h-4 text-slate-500" />
-            </button>
-            <button onClick={toggleMaximize} className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors" title={isMaximized ? t.restore : t.maximize}>
-              {isMaximized ? <Minimize2 className="w-4 h-4 text-slate-500" /> : <Maximize2 className="w-4 h-4 text-slate-500" />}
-            </button>
-            <button onClick={handleClose} className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors" title={t.close}>
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+          </>
+        }
+        className="z-[100] bg-white dark:bg-[#1C1C1E] flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-white/10 select-none"
+        headerClassName="h-12 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-4 bg-slate-50 dark:bg-[#1C1C1E] shrink-0"
+        interactionClassName="select-none"
+        headerDraggableClassName="cursor-grab"
+        headerDraggingClassName="!cursor-grabbing"
+        minimizeTitle={t.minimize}
+        maximizeTitle={t.maximize}
+        restoreTitle={t.restore}
+        closeTitle={t.close}
+        controlButtonClassName="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
+        closeButtonClassName="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 active:bg-[#0060FA]/30 transition-colors z-20"
+        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 active:bg-[#0060FA]/30 transition-colors z-20"
+        cornerResizeHandleClassName="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize hover:bg-[#0060FA]/30 active:bg-[#0060FA]/40 transition-colors z-30 flex items-center justify-center"
+        cornerResizeHandle={<div className="w-2 h-2 border-r-2 border-b-2 border-slate-400" />}
+      >
 
         {/* Content */}
         {!isMinimized && (
@@ -1202,7 +1181,7 @@ export function AIModal({
             {size.width} × {size.height}
           </div>
         )}
-      </div>
+      </DraggableWindow>
     </>
   );
 }
