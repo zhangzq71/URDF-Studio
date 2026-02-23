@@ -2,7 +2,7 @@
  * AI Assistant Modal Component
  * Provides AI-powered robot inspection and generation interface
  */
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   ScanSearch, X, Move, Loader2, ChevronDown, ChevronRight,
   Check, ArrowRight, Sparkles, Box, MessageCircle, Send,
@@ -13,6 +13,7 @@ import { createRoot } from 'react-dom/client';
 import type { RobotState, MotorSpec, InspectionReport } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
+import { useDraggableWindow } from '@/shared/hooks';
 import { generateRobotFromPrompt, runRobotInspection, INSPECTION_CRITERIA } from '../index';
 import { InspectionReportTemplate } from '@/features/file-io/components/InspectionReportTemplate';
 
@@ -36,171 +37,25 @@ export function AIModal({
   onSelectItem,
 }: AIModalProps) {
   const t = translations[lang];
-
-  // Window state
-  const [isMaximized, setIsMaximized] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [position, setPosition] = useState({ x: 100, y: 100 });
-  const [dragTransform, setDragTransform] = useState({ x: 0, y: 0 });
-  const [size, setSize] = useState({ width: 900, height: 650 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Resize state
-  const [isResizing, setIsResizing] = useState(false);
-  const [resizeDirection, setResizeDirection] = useState<'right' | 'bottom' | 'corner' | null>(null);
-  const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
-
-  // Center the window on mount
-  useEffect(() => {
-    if (isOpen) {
-      const centerX = (window.innerWidth - size.width) / 2;
-      const centerY = (window.innerHeight - size.height) / 2;
-      setPosition({ x: Math.max(0, centerX), y: Math.max(0, centerY) });
-    }
-  }, [isOpen]);
-
-  // Handle mouse down on header for dragging
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (isMaximized) return;
-    setIsDragging(true);
-    setDragOffset({
-      x: e.clientX,
-      y: e.clientY
-    });
-    setDragTransform({ x: 0, y: 0 });
-  }, [isMaximized]);
-
-  // Handle mouse move for dragging - use transform for smoother performance
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      const deltaX = e.clientX - dragOffset.x;
-      const deltaY = e.clientY - dragOffset.y;
-      setDragTransform({ x: deltaX, y: deltaY });
-    };
-
-    const handleMouseUp = () => {
-      if (isDragging && (dragTransform.x !== 0 || dragTransform.y !== 0)) {
-        // Commit the drag position
-        setPosition(prev => ({
-          x: Math.max(0, Math.min(window.innerWidth - size.width, prev.x + dragTransform.x)),
-          y: Math.max(0, Math.min(window.innerHeight - 48, prev.y + dragTransform.y))
-        }));
-        setDragTransform({ x: 0, y: 0 });
-      }
-      setIsDragging(false);
-    };
-
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging, dragOffset, dragTransform, size.width, size.height]);
-
-  // Handle resize start
-  const handleResizeStart = useCallback((e: React.MouseEvent, direction: 'right' | 'bottom' | 'corner') => {
-    if (isMaximized || isMinimized) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsResizing(true);
-    setResizeDirection(direction);
-    resizeStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      width: size.width,
-      height: size.height
-    };
-  }, [isMaximized, isMinimized, size]);
-
-  // Handle mouse move for resizing
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing || !resizeDirection) return;
-      
-      const deltaX = e.clientX - resizeStartRef.current.x;
-      const deltaY = e.clientY - resizeStartRef.current.y;
-      const minWidth = 600;
-      const minHeight = 400;
-      const maxWidth = window.innerWidth - position.x;
-      const maxHeight = window.innerHeight - position.y;
-      
-      if (resizeDirection === 'right' || resizeDirection === 'corner') {
-        const newWidth = Math.max(minWidth, Math.min(maxWidth, resizeStartRef.current.width + deltaX));
-        setSize(prev => ({ ...prev, width: newWidth }));
-      }
-      
-      if (resizeDirection === 'bottom' || resizeDirection === 'corner') {
-        const newHeight = Math.max(minHeight, Math.min(maxHeight, resizeStartRef.current.height + deltaY));
-        setSize(prev => ({ ...prev, height: newHeight }));
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      setResizeDirection(null);
-    };
-
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing, resizeDirection, position.x, position.y]);
-
-  const toggleMaximize = () => {
-    setIsMaximized(!isMaximized);
-    setIsMinimized(false);
-  };
-
-  const toggleMinimize = () => {
-    setIsMinimized(!isMinimized);
-  };
-
-  // Get window style based on state
-  const getWindowStyle = (): React.CSSProperties => {
-    if (isMaximized) {
-      return {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: '100%',
-        height: '100%',
-        transform: 'none',
-      };
-    }
-    if (isMinimized) {
-      return {
-        position: 'fixed',
-        left: position.x,
-        top: position.y,
-        width: size.width,
-        height: 48,
-        transform: 'none',
-      };
-    }
-    // Use transform for dragging to avoid layout reflow
-    return {
-      position: 'fixed',
-      left: position.x,
-      top: position.y,
-      width: size.width,
-      height: size.height,
-      transform: isDragging ? `translate(${dragTransform.x}px, ${dragTransform.y}px)` : 'none',
-    };
-  };
+  const {
+    isMaximized,
+    isMinimized,
+    size,
+    isDragging,
+    isResizing,
+    containerRef,
+    handleDragStart,
+    handleResizeStart,
+    toggleMaximize,
+    toggleMinimize,
+    windowStyle,
+  } = useDraggableWindow({
+    isOpen,
+    defaultSize: { width: 900, height: 650 },
+    minSize: { width: 600, height: 400 },
+    centerOnMount: true,
+    enableMinimize: true,
+  });
 
   // AI states
   const [aiPrompt, setAiPrompt] = useState('');
@@ -916,7 +771,7 @@ export function AIModal({
       {/* Floating Window */}
       <div
         ref={containerRef}
-        style={getWindowStyle()}
+        style={windowStyle}
         className={`z-[100] bg-white dark:bg-[#1C1C1E] flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-white/10 select-none`}
       >
         {/* Resize handles - Larger hit areas */}
@@ -935,7 +790,7 @@ export function AIModal({
           className={`h-12 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-4 bg-slate-50 dark:bg-[#1C1C1E] shrink-0 ${
             isMaximized ? '' : 'cursor-grab'
           } ${isDragging ? '!cursor-grabbing' : ''}`}
-          onMouseDown={handleMouseDown}
+          onMouseDown={handleDragStart}
         >
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
