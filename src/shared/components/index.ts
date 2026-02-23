@@ -11,3 +11,6 @@ export * from './Panel';
 
 // Draggable Window Components
 export * from './DraggableWindow';
+
+// Shared Primitive Components
+export * from './SelectableText';
