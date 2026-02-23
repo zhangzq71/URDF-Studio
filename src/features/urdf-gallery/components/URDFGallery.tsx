@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  X, LayoutGrid, Search, Box, User, Heart, Download,
-  Star, Clock, Globe, Loader2,
-  Minimize2, Maximize2, Minus
+  LayoutGrid, Search, Box, User, Heart, Download,
+  Star, Clock, Globe, Loader2
 } from 'lucide-react';
 import { RobotThumbnail3D } from './RobotThumbnail3D';
+import { DraggableWindow } from '@/shared/components';
 import { translations } from '@/shared/i18n';
 import { useDraggableWindow } from '@/shared/hooks';
 
@@ -228,24 +228,17 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isDownloading, setIsDownloading] = useState(false);
-  const {
-    isMaximized,
-    isMinimized,
-    size,
-    isDragging,
-    isResizing,
-    containerRef,
-    handleDragStart,
-    handleResizeStart,
-    toggleMaximize,
-    toggleMinimize,
-    windowStyle,
-  } = useDraggableWindow({
+  const windowState = useDraggableWindow({
     defaultSize: { width: 900, height: 600 },
     minSize: { width: 600, height: 400 },
     centerOnMount: true,
     enableMinimize: true,
   });
+  const {
+    isMinimized,
+    size,
+    isResizing,
+  } = windowState;
   
   // Detect theme from document class
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
@@ -387,47 +380,11 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       />
       
       {/* Floating Window */}
-      <div
-        ref={containerRef}
-        style={windowStyle}
-        className={`z-[100] bg-white dark:bg-panel-bg flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-border-black ${
-          isDragging || isResizing ? 'select-none' : ''
-        } ${isDragging ? 'cursor-grabbing' : ''}`}
-      >
-        {/* Resize handles - only show when not maximized or minimized */}
-        {!isMaximized && !isMinimized && (
+      <DraggableWindow
+        window={windowState}
+        onClose={onClose}
+        title={
           <>
-            {/* Right edge resize handle */}
-            <div
-              className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 transition-colors z-20"
-              onMouseDown={(e) => handleResizeStart(e, 'right')}
-            />
-            {/* Bottom edge resize handle */}
-            <div
-              className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 transition-colors z-20"
-              onMouseDown={(e) => handleResizeStart(e, 'bottom')}
-            />
-            {/* Bottom-right corner resize handle */}
-            <div
-              className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-[#0060FA]/30 transition-colors z-30"
-              onMouseDown={(e) => handleResizeStart(e, 'corner')}
-            >
-              <svg className="w-4 h-4 text-slate-400" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M14 14H10V12H12V10H14V14Z" />
-                <path d="M14 8H12V6H14V8Z" />
-                <path d="M8 14H6V12H8V14Z" />
-              </svg>
-            </div>
-          </>
-        )}
-        {/* Window Header - Draggable */}
-        <div 
-          className={`h-12 border-b border-slate-200 dark:border-border-black flex items-center justify-between px-4 bg-slate-50 dark:bg-element-active shrink-0 ${
-            !isMaximized ? 'cursor-grab' : ''
-          } ${isDragging ? 'cursor-grabbing' : ''}`}
-          onMouseDown={handleDragStart}
-        >
-          <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <div className="p-1.5 bg-[#0060FA] rounded-lg text-white">
                 <LayoutGrid className="w-4 h-4" />
@@ -436,11 +393,11 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                 {t.urdfGallery}
               </h1>
             </div>
-            
+
             {!isMinimized && (
               <div className="hidden md:flex ml-4 relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                <input 
+                <input
                   type="text"
                   placeholder={t.searchModels}
                   value={searchQuery}
@@ -450,32 +407,31 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                 />
               </div>
             )}
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button 
-              onClick={toggleMinimize}
-              className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
-              title={t.minimize}
-            >
-              <Minus className="w-4 h-4 text-slate-500" />
-            </button>
-            <button 
-              onClick={toggleMaximize}
-              className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
-              title={isMaximized ? t.restore : t.maximize}
-            >
-              {isMaximized ? <Minimize2 className="w-4 h-4 text-slate-500" /> : <Maximize2 className="w-4 h-4 text-slate-500" />}
-            </button>
-            <button 
-              onClick={onClose}
-              className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
-              title={t.close}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+          </>
+        }
+        className="z-[100] bg-white dark:bg-panel-bg flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-border-black"
+        headerClassName="h-12 border-b border-slate-200 dark:border-border-black flex items-center justify-between px-4 bg-slate-50 dark:bg-element-active shrink-0"
+        interactionClassName="select-none"
+        draggingClassName="cursor-grabbing"
+        headerDraggableClassName="cursor-grab"
+        headerDraggingClassName="cursor-grabbing"
+        minimizeTitle={t.minimize}
+        maximizeTitle={t.maximize}
+        restoreTitle={t.restore}
+        closeTitle={t.close}
+        controlButtonClassName="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
+        closeButtonClassName="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 transition-colors z-20"
+        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 transition-colors z-20"
+        cornerResizeHandleClassName="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-[#0060FA]/30 transition-colors z-30"
+        cornerResizeHandle={
+          <svg className="w-4 h-4 text-slate-400" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14 14H10V12H12V10H14V14Z" />
+            <path d="M14 8H12V6H14V8Z" />
+            <path d="M8 14H6V12H8V14Z" />
+          </svg>
+        }
+      >
 
         {/* Content - Hidden when minimized */}
         {!isMinimized && (
@@ -626,7 +582,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
             {size.width} × {size.height}
           </div>
         )}
-      </div>
+      </DraggableWindow>
     </>
   );
 };
