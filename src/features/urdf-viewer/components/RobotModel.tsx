@@ -74,6 +74,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         assets,
         showCollision,
         showVisual,
+        robotLinks,
         onRobotLoaded
     });
 
