@@ -4,6 +4,14 @@
  */
 
 import { RobotState, UrdfLink, UrdfJoint, DEFAULT_LINK, DEFAULT_JOINT, GeometryType, JointType, UrdfVisual } from '@/types';
+import {
+    parseCompilerSettings,
+    parseNumbers,
+    parsePosAsObject as parsePos,
+    parseQuatAsObject as parseQuat,
+    type MJCFCompilerSettings,
+    type MJCFMesh
+} from './mjcfUtils';
 
 interface MJCFBody {
     name: string;
@@ -46,36 +54,6 @@ interface MJCFInertial {
     fullinertia?: number[]; // ixx iyy izz ixy ixz iyz
 }
 
-interface MJCFMesh {
-    name: string;
-    file: string;
-    scale?: number[];
-}
-
-interface MJCFCompilerSettings {
-    angleUnit: 'radian' | 'degree';
-    meshdir: string;
-}
-
-// Parse space-separated numbers
-function parseNumbers(str: string | null): number[] {
-    if (!str) return [];
-    return str.trim().split(/\s+/).map(s => {
-        const num = parseFloat(s);
-        return isNaN(num) ? 0 : num;
-    });
-}
-
-// Parse xyz position
-function parsePos(str: string | null): { x: number, y: number, z: number } {
-    const nums = parseNumbers(str);
-    return {
-        x: nums.length > 0 ? nums[0] : 0,
-        y: nums.length > 1 ? nums[1] : 0,
-        z: nums.length > 2 ? nums[2] : 0
-    };
-}
-
 // Parse euler angles (in radians)
 function parseEuler(str: string | null): { r: number, p: number, y: number } {
     const nums = parseNumbers(str);
@@ -83,24 +61,6 @@ function parseEuler(str: string | null): { r: number, p: number, y: number } {
         r: nums.length > 0 ? nums[0] : 0,
         p: nums.length > 1 ? nums[1] : 0,
         y: nums.length > 2 ? nums[2] : 0
-    };
-}
-
-// Parse quaternion (w x y z)
-function parseQuat(str: string | null): { w: number, x: number, y: number, z: number } | undefined {
-    const nums = parseNumbers(str);
-    if (nums.length < 4) return undefined;
-    return { w: nums[0], x: nums[1], y: nums[2], z: nums[3] };
-}
-
-// Parse compiler settings
-function parseCompilerSettings(doc: Document): MJCFCompilerSettings {
-    const compiler = doc.querySelector('compiler');
-    const angleAttr = compiler?.getAttribute('angle')?.toLowerCase() || 'radian';
-    const meshdir = compiler?.getAttribute('meshdir') || '';
-    return {
-        angleUnit: angleAttr === 'degree' ? 'degree' : 'radian',
-        meshdir
     };
 }
 
