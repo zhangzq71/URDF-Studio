@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface DraggablePanelState {
   containerRef: React.RefObject<HTMLDivElement>;
@@ -95,6 +95,34 @@ export function useDraggablePanel(): DraggablePanelState {
   const handleMouseUp = useCallback(() => {
     setDragging(false);
     dragStartRef.current = null;
+  }, []);
+
+  // Add ResizeObserver to clamp position when container resizes
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new ResizeObserver(() => {
+      setOptionsPanelPos((prev) => {
+        if (!prev || !optionsPanelRef.current || !containerRef.current) return prev;
+        
+        const containerRect = containerRef.current.getBoundingClientRect();
+        const panelRect = optionsPanelRef.current.getBoundingClientRect();
+        const padding = 2;
+        const maxX = Math.max(padding, containerRect.width - panelRect.width - padding);
+        const maxY = Math.max(padding, containerRect.height - panelRect.height - padding);
+
+        if (prev.x > maxX || prev.y > maxY) {
+          return {
+            x: Math.min(prev.x, maxX),
+            y: Math.min(prev.y, maxY),
+          };
+        }
+        return prev;
+      });
+    });
+
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
   }, []);
 
   return {

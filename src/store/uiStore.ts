@@ -64,6 +64,10 @@ interface UIState {
   viewOptions: ViewOptions;
   setViewOption: <K extends keyof ViewOptions>(key: K, value: ViewOptions[K]) => void;
 
+  // Ground plane offset (Z position)
+  groundPlaneOffset: number;
+  setGroundPlaneOffset: (offset: number) => void;
+
   // Panel visibility
   panels: PanelsState;
   togglePanel: (panel: keyof PanelsState) => void;
@@ -73,6 +77,10 @@ interface UIState {
   sidebar: SidebarState;
   toggleSidebar: (side: 'left' | 'right') => void;
   setSidebar: (side: 'left' | 'right', collapsed: boolean) => void;
+
+  // Sidebar Tab (structure/workspace)
+  sidebarTab: 'structure' | 'workspace';
+  setSidebarTab: (tab: 'structure' | 'workspace') => void;
 
   // Settings modal
   isSettingsOpen: boolean;
@@ -259,6 +267,10 @@ export const useUIStore = create<UIState>()(
           viewOptions: { ...state.viewOptions, [key]: value },
         })),
 
+      // Ground plane offset
+      groundPlaneOffset: 0,
+      setGroundPlaneOffset: (offset) => set({ groundPlaneOffset: offset }),
+
       // Panels
       panels: defaultPanels,
       togglePanel: (panel) =>
@@ -296,6 +308,10 @@ export const useUIStore = create<UIState>()(
             sidebar: { ...state.sidebar, [key]: collapsed },
           };
         }),
+
+      // Sidebar Tab
+      sidebarTab: 'structure',
+      setSidebarTab: (tab) => set({ sidebarTab: tab }),
 
       // Settings modal
       isSettingsOpen: false,

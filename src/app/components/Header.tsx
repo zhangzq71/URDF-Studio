@@ -71,12 +71,13 @@ interface HeaderProps {
   onImportFile: () => void;
   onImportFolder: () => void;
   onExport: () => void;
+  onExportProject: () => void;
   // Modal actions
   onOpenAI: () => void;
   onOpenCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFSquare: () => void;
+  onOpenURDFGallery: () => void;
   // Snapshot
   onSnapshot: () => void;
   // View config
@@ -98,11 +99,12 @@ export function Header({
   onImportFile,
   onImportFolder,
   onExport,
+  onExportProject,
   onOpenAI,
   onOpenCodeViewer,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFSquare,
+  onOpenURDFGallery,
   onSnapshot,
   viewConfig,
   setViewConfig,
@@ -163,7 +165,7 @@ export function Header({
                     className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
                     <Download className="w-4 h-4 text-slate-400" />
-                    {lang === 'zh' ? '导入 ZIP / 文件' : 'Import ZIP / File'}
+                    {lang === 'zh' ? '导入 USP / ZIP / 文件' : 'Import USP / ZIP / File'}
                   </button>
                   <div className="h-px bg-slate-100 dark:bg-border-black my-1" />
                   <button
@@ -172,6 +174,13 @@ export function Header({
                   >
                     <Upload className="w-4 h-4 text-slate-400" />
                     {t.export}
+                  </button>
+                  <button
+                    onClick={() => { setActiveMenu(null); onExportProject(); }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                  >
+                    <Briefcase className="w-4 h-4 text-slate-400" />
+                    {t.exportProject}
                   </button>
                 </div>
               </>
@@ -349,12 +358,12 @@ export function Header({
       {/* Right Section - Actions */}
       <div className="flex items-center gap-0.5 shrink-0 ml-auto">
         <button
-          onClick={onOpenURDFSquare}
+          onClick={onOpenURDFGallery}
           className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-slate-300 hover:bg-system-blue hover:text-white dark:hover:bg-element-bg transition-all hidden sm:flex"
-          title={t.urdfSquare}
+          title={t.urdfGallery}
         >
           <LayoutGrid className="w-4 h-4" />
-          <span className="hidden lg:inline">{t.square}</span>
+          <span className="hidden lg:inline">{t.gallery}</span>
         </button>
 
         <button

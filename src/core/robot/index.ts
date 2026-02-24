@@ -34,6 +34,9 @@ export {
 
 export type { ValidationError, ValidationResult } from './validators';
 
+// Assembly Merger - Merge AssemblyState to RobotData
+export { mergeAssembly } from './assemblyMerger';
+
 // Transforms - Coordinate transformation utilities
 export {
     zeroVector,

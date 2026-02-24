@@ -66,14 +66,14 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
     return (
       <div
         ref={ref}
-        className="absolute z-10 pointer-events-auto"
+        className="absolute z-40 pointer-events-auto"
         style={
           optionsPanelPos
             ? { left: optionsPanelPos.x, top: optionsPanelPos.y, right: 'auto' }
             : { top: '16px', right: '16px' }
         }
       >
-        <OptionsPanelContainer>
+        <OptionsPanelContainer isCollapsed={isCollapsed}>
           <OptionsPanelHeader
             title={t.detailOptions}
             isCollapsed={isCollapsed}

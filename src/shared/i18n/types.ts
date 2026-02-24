@@ -5,9 +5,9 @@
 export type Language = 'en' | 'zh';
 
 export interface TranslationKeys {
-  // URDF Square
-  urdfSquare: string;
-  square: string;
+  // URDF Gallery
+  urdfGallery: string;
+  gallery: string;
   searchModels: string;
   featuredModels: string;
   findNextProject: string;
@@ -41,6 +41,8 @@ export interface TranslationKeys {
   import: string;
   importFolder: string;
   export: string;
+  exportProject: string;
+  importUsp: string;
 
   // Tree Editor
   robotName: string;
@@ -48,6 +50,18 @@ export interface TranslationKeys {
   addChildLink: string;
   addChildJoint: string;
   deleteBranch: string;
+
+  // Assembly
+  components: string;
+  bridges: string;
+  addComponent: string;
+  createBridge: string;
+  bridgeJoint: string;
+  parentComponent: string;
+  parentLink: string;
+  childComponent: string;
+  childLink: string;
+  add: string;
 
   // Property Editor
   properties: string;
@@ -222,6 +236,19 @@ export interface TranslationKeys {
   copied: string;
   fileBrowser: string;
   dropOrImport: string;
+  simpleMode: string;
+  proMode: string;
+  structureTree: string;
+  assemblyTree: string;
+  projectName: string;
+  enterProjectName: string;
+  emptyAssemblyHint: string;
+  clickToAddComponent: string;
+
+  // Ground Plane
+  groundPlane: string;
+  groundPlaneOffset: string;
+  autoFitGround: string;
 
   // Measure Tool
   measureTool: string;

@@ -1,13 +1,14 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
-  X, LayoutGrid, Search, Box, User, Heart, Download,
-  Star, Clock, Globe, Loader2,
-  Minimize2, Maximize2, Minus
+  LayoutGrid, Search, Box, User, Heart, Download,
+  Star, Clock, Globe, Loader2
 } from 'lucide-react';
 import { RobotThumbnail3D } from './RobotThumbnail3D';
+import { DraggableWindow } from '@/shared/components';
 import { translations } from '@/shared/i18n';
+import { useDraggableWindow } from '@/shared/hooks';
 
-interface URDFSquareProps {
+interface URDFGalleryProps {
   onClose: () => void;
   lang: 'en' | 'zh';
   onImport: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -222,13 +223,22 @@ const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' |
   );
 };
 
-export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport }) => {
+export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImport }) => {
   const t = translations[lang];
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  const windowState = useDraggableWindow({
+    defaultSize: { width: 900, height: 600 },
+    minSize: { width: 600, height: 400 },
+    centerOnMount: true,
+    enableMinimize: true,
+  });
+  const {
+    isMinimized,
+    size,
+    isResizing,
+  } = windowState;
   
   // Detect theme from document class
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
@@ -245,113 +255,6 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
     return () => observer.disconnect();
   }, []);
   
-  // Draggable state
-  const [position, setPosition] = useState({ x: 100, y: 100 });
-  const [size, setSize] = useState({ width: 900, height: 600 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-  
-  // Resize state
-  const [isResizing, setIsResizing] = useState(false);
-  const [resizeDirection, setResizeDirection] = useState<'right' | 'bottom' | 'corner' | null>(null);
-  const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0 });
-
-  // Center the window on mount
-  useEffect(() => {
-    const centerX = (window.innerWidth - size.width) / 2;
-    const centerY = (window.innerHeight - size.height) / 2;
-    setPosition({ x: Math.max(0, centerX), y: Math.max(0, centerY) });
-  }, []);
-
-  // Handle mouse down on header for dragging
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (isMaximized) return;
-    setIsDragging(true);
-    setDragOffset({
-      x: e.clientX - position.x,
-      y: e.clientY - position.y
-    });
-  }, [position, isMaximized]);
-
-  // Handle mouse move for dragging
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      const newX = Math.max(0, Math.min(window.innerWidth - size.width, e.clientX - dragOffset.x));
-      const newY = Math.max(0, Math.min(window.innerHeight - 48, e.clientY - dragOffset.y));
-      setPosition({ x: newX, y: newY });
-    };
-
-    const handleMouseUp = () => {
-      setIsDragging(false);
-    };
-
-    if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging, dragOffset, size.width]);
-
-  // Handle resize start
-  const handleResizeStart = useCallback((e: React.MouseEvent, direction: 'right' | 'bottom' | 'corner') => {
-    if (isMaximized || isMinimized) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsResizing(true);
-    setResizeDirection(direction);
-    resizeStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
-      width: size.width,
-      height: size.height
-    };
-  }, [isMaximized, isMinimized, size]);
-
-  // Handle mouse move for resizing
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing || !resizeDirection) return;
-      
-      const deltaX = e.clientX - resizeStartRef.current.x;
-      const deltaY = e.clientY - resizeStartRef.current.y;
-      const minWidth = 600;
-      const minHeight = 400;
-      const maxWidth = window.innerWidth - position.x;
-      const maxHeight = window.innerHeight - position.y;
-      
-      if (resizeDirection === 'right' || resizeDirection === 'corner') {
-        const newWidth = Math.max(minWidth, Math.min(maxWidth, resizeStartRef.current.width + deltaX));
-        setSize(prev => ({ ...prev, width: newWidth }));
-      }
-      
-      if (resizeDirection === 'bottom' || resizeDirection === 'corner') {
-        const newHeight = Math.max(minHeight, Math.min(maxHeight, resizeStartRef.current.height + deltaY));
-        setSize(prev => ({ ...prev, height: newHeight }));
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      setResizeDirection(null);
-    };
-
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing, resizeDirection, position.x, position.y]);
-
   const downloadFromGithub = async (model: RobotModel) => {
     if (!model.urdfPath) return;
     setIsDownloading(true);
@@ -468,46 +371,6 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
     });
   }, [searchQuery, selectedCategory]);
 
-  const toggleMaximize = () => {
-    setIsMaximized(!isMaximized);
-    setIsMinimized(false);
-  };
-
-  const toggleMinimize = () => {
-    setIsMinimized(!isMinimized);
-  };
-
-  // Get window style based on state
-  const getWindowStyle = (): React.CSSProperties => {
-    if (isMaximized) {
-      return {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: '100%',
-        height: '100%',
-      };
-    }
-    if (isMinimized) {
-      return {
-        position: 'fixed',
-        left: position.x,
-        top: position.y,
-        width: size.width,
-        height: 48,
-      };
-    }
-    return {
-      position: 'fixed',
-      left: position.x,
-      top: position.y,
-      width: size.width,
-      height: size.height,
-    };
-  };
-
   return (
     <>
       {/* Backdrop - no blur */}
@@ -517,60 +380,24 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
       />
       
       {/* Floating Window */}
-      <div
-        ref={containerRef}
-        style={getWindowStyle()}
-        className={`z-[100] bg-white dark:bg-panel-bg flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-border-black ${
-          isDragging || isResizing ? 'select-none' : ''
-        } ${isDragging ? 'cursor-grabbing' : ''}`}
-      >
-        {/* Resize handles - only show when not maximized or minimized */}
-        {!isMaximized && !isMinimized && (
+      <DraggableWindow
+        window={windowState}
+        onClose={onClose}
+        title={
           <>
-            {/* Right edge resize handle */}
-            <div
-              className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 transition-colors z-20"
-              onMouseDown={(e) => handleResizeStart(e, 'right')}
-            />
-            {/* Bottom edge resize handle */}
-            <div
-              className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 transition-colors z-20"
-              onMouseDown={(e) => handleResizeStart(e, 'bottom')}
-            />
-            {/* Bottom-right corner resize handle */}
-            <div
-              className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-[#0060FA]/30 transition-colors z-30"
-              onMouseDown={(e) => handleResizeStart(e, 'corner')}
-            >
-              <svg className="w-4 h-4 text-slate-400" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M14 14H10V12H12V10H14V14Z" />
-                <path d="M14 8H12V6H14V8Z" />
-                <path d="M8 14H6V12H8V14Z" />
-              </svg>
-            </div>
-          </>
-        )}
-        {/* Window Header - Draggable */}
-        <div 
-          className={`h-12 border-b border-slate-200 dark:border-border-black flex items-center justify-between px-4 bg-slate-50 dark:bg-element-active shrink-0 ${
-            !isMaximized ? 'cursor-grab' : ''
-          } ${isDragging ? 'cursor-grabbing' : ''}`}
-          onMouseDown={handleMouseDown}
-        >
-          <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <div className="p-1.5 bg-[#0060FA] rounded-lg text-white">
                 <LayoutGrid className="w-4 h-4" />
               </div>
               <h1 className="text-sm font-bold tracking-tight">
-                {t.urdfSquare}
+                {t.urdfGallery}
               </h1>
             </div>
-            
+
             {!isMinimized && (
               <div className="hidden md:flex ml-4 relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                <input 
+                <input
                   type="text"
                   placeholder={t.searchModels}
                   value={searchQuery}
@@ -580,32 +407,31 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
                 />
               </div>
             )}
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button 
-              onClick={toggleMinimize}
-              className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
-              title={t.minimize}
-            >
-              <Minus className="w-4 h-4 text-slate-500" />
-            </button>
-            <button 
-              onClick={toggleMaximize}
-              className="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
-              title={isMaximized ? t.restore : t.maximize}
-            >
-              {isMaximized ? <Minimize2 className="w-4 h-4 text-slate-500" /> : <Maximize2 className="w-4 h-4 text-slate-500" />}
-            </button>
-            <button 
-              onClick={onClose}
-              className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
-              title={t.close}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+          </>
+        }
+        className="z-[100] bg-white dark:bg-panel-bg flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-border-black"
+        headerClassName="h-12 border-b border-slate-200 dark:border-border-black flex items-center justify-between px-4 bg-slate-50 dark:bg-element-active shrink-0"
+        interactionClassName="select-none"
+        draggingClassName="cursor-grabbing"
+        headerDraggableClassName="cursor-grab"
+        headerDraggingClassName="cursor-grabbing"
+        minimizeTitle={t.minimize}
+        maximizeTitle={t.maximize}
+        restoreTitle={t.restore}
+        closeTitle={t.close}
+        controlButtonClassName="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
+        closeButtonClassName="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 transition-colors z-20"
+        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 transition-colors z-20"
+        cornerResizeHandleClassName="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-[#0060FA]/30 transition-colors z-30"
+        cornerResizeHandle={
+          <svg className="w-4 h-4 text-slate-400" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14 14H10V12H12V10H14V14Z" />
+            <path d="M14 8H12V6H14V8Z" />
+            <path d="M8 14H6V12H8V14Z" />
+          </svg>
+        }
+      >
 
         {/* Content - Hidden when minimized */}
         {!isMinimized && (
@@ -756,9 +582,9 @@ export const URDFSquare: React.FC<URDFSquareProps> = ({ onClose, lang, onImport 
             {size.width} × {size.height}
           </div>
         )}
-      </div>
+      </DraggableWindow>
     </>
   );
 };
 
-export default URDFSquare;
+export default URDFGallery;

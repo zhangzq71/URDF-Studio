@@ -1,10 +1,9 @@
 import React, { useCallback, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { RobotState, Theme } from '@/types';
 import { translations, Language } from '@/shared/i18n';
 import { useSelectionStore } from '@/store/selectionStore';
+import { useUIStore } from '@/store';
 
 // Hooks
 import {
@@ -17,6 +16,7 @@ import {
 
 // Components
 import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
+import { UsageGuide } from '@/shared/components/3d';
 import { RobotNode } from './nodes';
 import { JointTransformControls } from './controls';
 import { VisualizerCanvas } from './VisualizerCanvas';
@@ -36,40 +36,11 @@ function traverseRobotMeshes(obj: THREE.Object3D, callback: (mesh: THREE.Mesh) =
 }
 
 /**
- * GroundedGroup - Offsets child robot so its bottom sits at ground level (Z=0).
- * Uses Z-up convention matching the Visualizer's camera and grid setup.
- * Only considers actual robot geometry meshes (skips helper visualizations like
- * joint axes, coordinate frames, inertia boxes, etc.) so that scaling up helpers
- * does not shift the ground plane.
+ * GroundedGroup - Ground plane is fixed at Z=0 (XY plane).
+ * Robot is rendered at its URDF-defined position without auto-offset.
  */
 function GroundedGroup({ children }: { children: React.ReactNode }) {
-  const groupRef = useRef<THREE.Group>(null);
-
-  useFrame(() => {
-    const group = groupRef.current;
-    if (!group) return;
-
-    group.updateMatrixWorld(true);
-
-    const box = new THREE.Box3();
-    traverseRobotMeshes(group, (mesh) => {
-      if (mesh.geometry) {
-        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-        const geomBox = mesh.geometry.boundingBox!.clone();
-        geomBox.applyMatrix4(mesh.matrixWorld);
-        box.union(geomBox);
-      }
-    });
-
-    if (!box.isEmpty()) {
-      const minZ = box.min.z;
-      if (isFinite(minZ) && Math.abs(minZ) > 0.001) {
-        group.position.z -= minZ;
-      }
-    }
-  });
-
-  return <group ref={groupRef}>{children}</group>;
+  return <group>{children}</group>;
 }
 
 // Props interface
@@ -113,6 +84,29 @@ export const Visualizer = ({
 }: VisualizerProps) => {
   const t = translations[lang];
   const clearSelection = useSelectionStore((s) => s.clearSelection);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+
+  const handleAutoFitGround = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const box = new THREE.Box3();
+    scene.traverse((obj) => {
+      if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
+      if (obj.name === 'ReferenceGrid') return;
+      if ((obj as THREE.Mesh).isMesh) {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.geometry) {
+          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+          const geomBox = mesh.geometry.boundingBox!.clone();
+          geomBox.applyMatrix4(mesh.matrixWorld);
+          box.union(geomBox);
+        }
+      }
+    });
+    if (!box.isEmpty() && isFinite(box.min.z)) {
+      useUIStore.getState().setGroundPlaneOffset(box.min.z);
+    }
+  }, []);
 
   // Use custom hooks for state management
   const state = useVisualizerState({ propShowVisual, propSetShowVisual });
@@ -135,6 +129,12 @@ export const Visualizer = ({
     onUpdate,
     mode
   );
+
+  // Auto-fit ground plane when robot structure changes
+  React.useEffect(() => {
+    const timer = setTimeout(handleAutoFitGround, 100);
+    return () => clearTimeout(timer);
+  }, [robot.links, robot.joints]);
 
   // Reset transform mode when switching visualization modes to prevent ghost controls
   React.useEffect(() => {
@@ -173,7 +173,7 @@ export const Visualizer = ({
     >
       {/* Options Panel */}
       {showOptionsPanel && (
-        <div className="absolute inset-0 z-10 pointer-events-none">
+        <div className="absolute inset-0 z-40 pointer-events-none">
           {mode === 'skeleton' && (
             <SkeletonOptionsPanel
               key="skeleton"
@@ -201,6 +201,7 @@ export const Visualizer = ({
               onResetPosition={() => panel.setOptionsPanelPos(null)}
               onClose={setShowOptionsPanel ? () => setShowOptionsPanel(false) : undefined}
               optionsPanelPos={panel.optionsPanelPos}
+              onAutoFitGround={handleAutoFitGround}
             />
           )}
           {mode === 'detail' && (
@@ -251,10 +252,14 @@ export const Visualizer = ({
         </div>
       )}
 
+      {/* Usage Guide */}
+      <UsageGuide lang={lang} />
+
       {/* 3D Canvas */}
       <VisualizerCanvas
         theme={theme}
         snapshotAction={snapshotAction}
+        sceneRef={sceneRef}
         robotName={robot?.name || 'robot'}
         onPointerMissed={clearSelection}
       >

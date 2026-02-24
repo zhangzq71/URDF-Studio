@@ -7,11 +7,18 @@ import JSZip from 'jszip';
 import type { RobotState, UrdfLink } from '@/types';
 import { GeometryType } from '@/types';
 import { generateURDF, generateMujocoXML } from '@/core/parsers';
-import { useRobotStore, useAssetsStore, useUIStore } from '@/store';
+import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
+import { exportProject } from '@/features/file-io/utils';
 
 export function useFileExport() {
   const lang = useUIStore((state) => state.lang);
+  const theme = useUIStore((state) => state.theme);
+  const appMode = useUIStore((state) => state.appMode);
   const assets = useAssetsStore((state) => state.assets);
+  const availableFiles = useAssetsStore((state) => state.availableFiles);
+  const originalFileFormat = useAssetsStore((state) => state.originalFileFormat);
+  const assemblyState = useAssemblyStore((state) => state.assemblyState);
+  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
 
   // Get robot state from store
   const robotName = useRobotStore((state) => state.name);
@@ -47,13 +54,21 @@ export function useFileExport() {
   // Export handler
   const handleExport = useCallback(async () => {
     // Build robot state from store
-    const robot: RobotState = {
-      name: robotName,
-      links: robotLinks,
-      joints: robotJoints,
-      rootLinkId,
-      selection: { type: null, id: null },
-    };
+    let robot: RobotState;
+    if (assemblyState) {
+      const mergedData = getMergedRobotData();
+      robot = mergedData
+        ? { ...mergedData, selection: { type: null, id: null } }
+        : { name: robotName, links: robotLinks, joints: robotJoints, rootLinkId, selection: { type: null, id: null } };
+    } else {
+      robot = {
+        name: robotName,
+        links: robotLinks,
+        joints: robotJoints,
+        rootLinkId,
+        selection: { type: null, id: null },
+      };
+    }
 
     const zip = new JSZip();
     const urdfFolder = zip.folder("urdf");
@@ -116,10 +131,30 @@ export function useFileExport() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       });
-  }, [robotName, robotLinks, robotJoints, rootLinkId, assets, generateBOM]);
+  }, [robotName, robotLinks, robotJoints, rootLinkId, assets, generateBOM, assemblyState, getMergedRobotData]);
+
+  // Export project as .usp
+  const handleExportProject = useCallback(async () => {
+    const blob = await exportProject({
+      name: robotName || assemblyState?.name || 'my_project',
+      uiState: { appMode, lang, theme },
+      assetsState: { availableFiles, assets, originalFileFormat },
+      assemblyState,
+      getMergedRobotData,
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${robotName || assemblyState?.name || 'my_project'}.usp`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [robotName, assemblyState, appMode, lang, theme, availableFiles, assets, originalFileFormat, getMergedRobotData]);
 
   return {
     handleExport,
+    handleExportProject,
     generateBOM,
   };
 }

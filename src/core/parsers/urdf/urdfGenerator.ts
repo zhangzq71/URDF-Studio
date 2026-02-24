@@ -3,7 +3,8 @@
  * Generates URDF XML format from RobotState
  */
 
-import { RobotState, UrdfLink, UrdfJoint, GeometryType } from '@/types';
+import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState, RobotData } from '@/types';
+import { mergeAssembly } from '@/core/robot/assemblyMerger';
 
 // Helper to convert hex color to RGBA string
 const hexToRgba = (hex: string): string => {
@@ -15,6 +16,11 @@ const hexToRgba = (hex: string): string => {
     return `${r.toFixed(4)} ${g.toFixed(4)} ${b.toFixed(4)} 1.0`;
   }
   return '0.5 0.5 0.5 1.0'; // fallback gray
+};
+
+export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean = false): string => {
+  const mergedData = mergeAssembly(assembly);
+  return generateURDF(mergedData as unknown as RobotState, extended);
 };
 
 export const generateURDF = (robot: RobotState, extended: boolean = false): string => {

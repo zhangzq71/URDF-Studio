@@ -8,6 +8,7 @@ export {
   isRobotDefinitionFile,
   isAssetFile,
   isMotorLibraryFile,
+  isMeshFile,
   shouldSkipPath,
 } from './formatDetection';
 
@@ -21,3 +22,8 @@ export {
 } from './assetUtils';
 
 export { getDroppedFiles } from './fileTraverser';
+
+export { exportProject } from './projectExport';
+export { importProject } from './projectImport';
+export type { ImportResult } from './projectImport';
+export type { ProjectManifest } from './projectExport';

@@ -5,9 +5,9 @@
 import type { TranslationKeys } from '../types';
 
 export const en: TranslationKeys = {
-  // URDF Square
-  urdfSquare: "URDF Square",
-  square: "Square",
+  // URDF Gallery
+  urdfGallery: "URDF Gallery",
+  gallery: "Gallery",
   searchModels: "Search models...",
   featuredModels: "Featured Models",
   findNextProject: "Find Your Next Robot Project",
@@ -41,6 +41,8 @@ export const en: TranslationKeys = {
   import: "Import",
   importFolder: "Import Folder",
   export: "Export",
+  exportProject: "Export Project (.usp)",
+  importUsp: "Import Project (.usp)",
 
   // Tree Editor
   robotName: "Robot Name",
@@ -48,6 +50,18 @@ export const en: TranslationKeys = {
   addChildLink: "Add Child Link",
   addChildJoint: "Add Child Joint",
   deleteBranch: "Delete Branch",
+
+  // Assembly
+  components: "Components",
+  bridges: "Bridges",
+  addComponent: "Load to Workspace",
+  createBridge: "Create Bridge",
+  bridgeJoint: "Bridge Joint",
+  parentComponent: "Parent Component",
+  parentLink: "Parent Link",
+  childComponent: "Child Component",
+  childLink: "Child Link",
+  add: "Add",
 
   // Property Editor
   properties: "Properties",
@@ -225,8 +239,21 @@ export const en: TranslationKeys = {
   copyToClipboard: "Copy to Clipboard",
   copy: "Copy",
   copied: "Copied!",
-  fileBrowser: "File Browser",
+  fileBrowser: "Asset Library",
   dropOrImport: "Drop or import folder/ZIP",
+  simpleMode: "Simple",
+  proMode: "Pro",
+  structureTree: "Structure Tree",
+  assemblyTree: "Assembly View",
+  projectName: "Project Name",
+  enterProjectName: "Enter project name",
+  emptyAssemblyHint: "Click files in the asset library above to add components",
+  clickToAddComponent: "Click file to add as component",
+
+  // Ground Plane
+  groundPlane: "Ground Plane",
+  groundPlaneOffset: "Height Offset",
+  autoFitGround: "Auto Fit",
 
   // Measure Tool
   measureTool: "Measure Tool",

@@ -4,7 +4,7 @@
  */
 
 // Components
-export { TreeEditor } from './components/TreeEditor';
+export { TreeEditor } from './components';
 
 // Types
-export type { TreeEditorProps } from './components/TreeEditor';
+export type { TreeEditorProps } from './components';

@@ -8,6 +8,7 @@ import { useThree } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Theme } from '@/types';
+import { useUIStore } from '@/store';
 
 // Helper component to trigger re-render on pointer move for hover detection (frameloop="demand")
 // Optimized to reduce unnecessary invalidations and CPU usage
@@ -468,7 +469,8 @@ interface ReferenceGridProps {
 
 export function ReferenceGrid({ theme }: ReferenceGridProps) {
   const gridRef = useRef<THREE.Object3D>(null);
-  
+  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+
   const effectiveTheme = theme === 'system'
     ? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     : theme;
@@ -477,7 +479,7 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
     if (gridRef.current) {
       // Set low renderOrder so grid renders before collision meshes (renderOrder=999)
       gridRef.current.renderOrder = -100;
-      
+
       // Ensure all children also inherit this
       gridRef.current.traverse((child) => {
         child.renderOrder = -100;
@@ -498,7 +500,7 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
       cellColor={effectiveTheme === 'light' ? '#e2e8f0' : '#444444'}
       sectionColor={effectiveTheme === 'light' ? '#cbd5e1' : '#555555'}
       rotation={[Math.PI / 2, 0, 0]}
-      position={[0, 0, -0.001]}
+      position={[0, 0, groundPlaneOffset - 0.001]}
       receiveShadow={false}
     />
   );

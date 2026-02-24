@@ -338,6 +338,7 @@ interface OptionsPanelContainerProps {
   maxWidth?: number;
   minHeight?: number;
   maxHeight?: number;
+  isCollapsed?: boolean;
 }
 
 export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
@@ -350,6 +351,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   maxWidth = 600,
   minHeight = 150,
   maxHeight = 800,
+  isCollapsed = false,
 }) => {
   const [panelSize, setPanelSize] = useState<{ width: number | string; height: number | string }>({
     width,
@@ -417,13 +419,17 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     resizeDirection.current = null;
   };
 
+  const currentHeight = isCollapsed ? 'auto' : panelSize.height;
+  // Prevent panel from expanding beyond its set height when collapsing (if height is not auto)
+  const constrainedMaxHeight = (isCollapsed && panelSize.height !== 'auto') ? panelSize.height : undefined;
+
   return (
     <div
       className={`bg-white dark:bg-[#1E1E1E] rounded-xl border border-black/5 dark:border-white/10 flex flex-col shadow-xl overflow-hidden relative @container ${className}`}
-      style={{ width: panelSize.width, height: panelSize.height }}
+      style={{ width: panelSize.width, height: currentHeight, maxHeight: constrainedMaxHeight }}
     >
       {children}
-      {resizable && (
+      {resizable && !isCollapsed && (
         <>
             {/* Right Handle */}
             <div 
@@ -592,7 +598,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
       className={`absolute z-${zIndex} pointer-events-auto`}
       style={style as React.CSSProperties}
     >
-      <OptionsPanelContainer width={width} height={height} resizable={resizable}>
+      <OptionsPanelContainer width={width} height={height} resizable={resizable} isCollapsed={isCollapsed}>
         <OptionsPanelHeader
           title={title}
           isCollapsed={isCollapsed}

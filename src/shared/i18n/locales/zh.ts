@@ -5,9 +5,9 @@
 import type { TranslationKeys } from '../types';
 
 export const zh: TranslationKeys = {
-  // URDF Square
-  urdfSquare: "URDF 广场",
-  square: "广场",
+  // URDF Gallery
+  urdfGallery: "URDF 广场",
+  gallery: "广场",
   searchModels: "搜索模型...",
   featuredModels: "精选推荐",
   findNextProject: "发现您的下一个机器人项目",
@@ -41,6 +41,8 @@ export const zh: TranslationKeys = {
   import: "导入",
   importFolder: "导入文件夹",
   export: "导出",
+  exportProject: "导出工程 (.usp)",
+  importUsp: "导入工程 (.usp)",
 
   // Tree Editor
   robotName: "机器人名称",
@@ -48,6 +50,18 @@ export const zh: TranslationKeys = {
   addChildLink: "添加子连杆",
   addChildJoint: "添加子关节",
   deleteBranch: "删除分支",
+
+  // Assembly
+  components: "组件",
+  bridges: "拼接关系",
+  addComponent: "加载到工作空间",
+  createBridge: "创建拼接",
+  bridgeJoint: "桥接关节",
+  parentComponent: "父组件",
+  parentLink: "父连杆",
+  childComponent: "子组件",
+  childLink: "子连杆",
+  add: "添加",
 
   // Property Editor
   properties: "属性",
@@ -99,7 +113,7 @@ export const zh: TranslationKeys = {
   library: "库",
   custom: "自定义",
   autoAlign: "自动与子关节对齐",
-  box: "方块",
+  box: "长方体",
   cylinder: "圆柱体",
   sphere: "球体",
   capsule: "胶囊体",
@@ -227,8 +241,21 @@ export const zh: TranslationKeys = {
   copyToClipboard: "复制到剪贴板",
   copy: "复制",
   copied: "已复制!",
-  fileBrowser: "文件浏览",
+  fileBrowser: "素材库",
   dropOrImport: "拖放或导入文件夹/ZIP",
+  simpleMode: "简单模式",
+  proMode: "专业模式",
+  structureTree: "结构树",
+  assemblyTree: "组装视图",
+  projectName: "项目名称",
+  enterProjectName: "输入项目名称",
+  emptyAssemblyHint: "从上方素材库点击文件即可添加组件",
+  clickToAddComponent: "点击文件添加为组件",
+
+  // Ground Plane
+  groundPlane: "地平面",
+  groundPlaneOffset: "高度偏移",
+  autoFitGround: "自动适配",
 
   // Measure Tool
   measureTool: "测量工具",

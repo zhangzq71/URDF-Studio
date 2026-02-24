@@ -9,10 +9,11 @@ import { PropertyEditor } from '@/features/property-editor';
 import { Visualizer } from '@/features/visualizer';
 import { URDFViewer } from '@/features/urdf-viewer';
 import { SourceCodeEditor } from '@/features/code-editor';
-import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo } from '@/store';
+import { BridgeCreateModal } from '@/features/assembly';
+import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo, useAssemblyStore } from '@/store';
 import { parseURDF, generateURDF } from '@/core/parsers';
 import { getDroppedFiles } from '@/features/file-io/utils';
-import type { RobotState, UrdfLink, UrdfJoint, RobotFile } from '@/types';
+import type { RobotState, UrdfLink, UrdfJoint, RobotFile, AssemblyState } from '@/types';
 
 interface AppLayoutProps {
   // Import handlers (passed from App)
@@ -20,6 +21,7 @@ interface AppLayoutProps {
   importFolderInputRef: React.RefObject<HTMLInputElement>;
   onFileDrop: (files: File[]) => void;
   onExport: () => void;
+  onExportProject: () => void;
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
   // Modal handlers
@@ -28,7 +30,7 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFSquare: () => void;
+  onOpenURDFGallery: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -51,13 +53,14 @@ export function AppLayout({
   importFolderInputRef,
   onFileDrop,
   onExport,
+  onExportProject,
   showToast,
   onOpenAI,
   isCodeViewerOpen,
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFSquare,
+  onOpenURDFGallery,
   viewConfig,
   setViewConfig,
   onLoadRobot,
@@ -69,6 +72,7 @@ export function AppLayout({
   const os = useUIStore((state) => state.os);
   const sidebar = useUIStore((state) => state.sidebar);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
 
   // Selection Store
   const selection = useSelectionStore((state) => state.selection);
@@ -104,41 +108,88 @@ export function AppLayout({
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
 
+  // Assembly Store
+  const assemblyState = useAssemblyStore((state) => state.assemblyState);
+  const addComponent = useAssemblyStore((state) => state.addComponent);
+  const removeComponent = useAssemblyStore((state) => state.removeComponent);
+  const addBridge = useAssemblyStore((state) => state.addBridge);
+  const removeBridge = useAssemblyStore((state) => state.removeBridge);
+  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
+  const updateComponentName = useAssemblyStore((state) => state.updateComponentName);
+  const updateComponentRobot = useAssemblyStore((state) => state.updateComponentRobot);
+
   // Snapshot ref
   const snapshotActionRef = useRef<(() => void) | null>(null);
+  const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
+
+  // Merged robot data for assembly mode
+  const mergedRobotData = useMemo(() => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      return getMergedRobotData();
+    }
+    return null;
+  }, [assemblyState, sidebarTab, getMergedRobotData]);
 
   // Construct robot object for legacy components
-  const robot: RobotState = useMemo(() => ({
-    name: robotName,
-    links: robotLinks,
-    joints: robotJoints,
-    rootLinkId,
-    selection,
-  }), [robotName, robotLinks, robotJoints, rootLinkId, selection]);
+  // Pro mode: use merged assembly data, or empty robot if no components
+  // Simple mode: use robotStore data
+  const emptyRobot: RobotState = useMemo(() => ({
+    name: '',
+    links: { empty_root: { id: 'empty_root', name: 'base_link', visual: { type: 'none' as const }, collision: { type: 'none' as const }, inertial: { mass: 0, origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }, inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 } } } },
+    joints: {},
+    rootLinkId: 'empty_root',
+    selection: { type: null, id: null },
+  }), []);
+
+  const robot: RobotState = useMemo(() => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      if (mergedRobotData) {
+        return { ...mergedRobotData, selection };
+      }
+      return emptyRobot;
+    }
+    return {
+      name: robotName,
+      links: robotLinks,
+      joints: robotJoints,
+      rootLinkId,
+      selection,
+    };
+  }, [robotName, robotLinks, robotJoints, rootLinkId, selection, assemblyState, sidebarTab, mergedRobotData, emptyRobot]);
 
   // Joint angle state for URDFViewer
   const jointAngleState = useMemo(() => {
     const angles: Record<string, number> = {};
-    Object.values(robotJoints).forEach((joint) => {
+    Object.values(robot.joints).forEach((joint) => {
       const angle = (joint as { angle?: number }).angle;
       if (angle !== undefined) {
         angles[joint.name] = angle;
       }
     });
     return angles;
-  }, [robotJoints]);
+  }, [robot.joints]);
 
   // Show visual computed from links
   const showVisual = useMemo(() => {
-    return Object.values(robotLinks).some(l => l.visible !== false);
-  }, [robotLinks]);
+    return Object.values(robot.links).some(l => l.visible !== false);
+  }, [robot.links]);
 
   // URDF content for viewer
   // Always use generated URDF to reflect user modifications in real-time
   // This ensures collision geometry and other property changes are immediately visible
+  // NOTE: Depends on links/joints only (not name) to avoid re-rendering on name input
   const urdfContentForViewer = useMemo(() => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      const merged = getMergedRobotData();
+      if (merged) {
+        return generateURDF(merged as unknown as RobotState, false);
+      }
+      // Pro mode with no components: empty URDF
+      return generateURDF(emptyRobot, false);
+    }
     return generateURDF(robot, false);
-  }, [robot]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [robotLinks, robotJoints, rootLinkId, emptyRobot, assemblyState?.components, assemblyState?.bridges, sidebarTab, getMergedRobotData]);
 
   // Handlers
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
@@ -150,16 +201,54 @@ export function AppLayout({
   }, [focusOn]);
 
   const handleNameChange = useCallback((name: string) => {
-    setName(name);
-  }, [setName]);
+    if (assemblyState && sidebarTab === 'workspace') {
+      useAssemblyStore.getState().setAssembly({ ...assemblyState, name });
+    } else {
+      setName(name);
+    }
+  }, [setName, assemblyState, sidebarTab]);
 
   const handleUpdate = useCallback((type: 'link' | 'joint', id: string, data: UrdfLink | UrdfJoint) => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      // Find which component owns this link/joint
+      for (const comp of Object.values(assemblyState.components)) {
+        if (type === 'link' && comp.robot.links[id]) {
+          updateComponentRobot(comp.id, {
+            links: { ...comp.robot.links, [id]: data as UrdfLink },
+          });
+          return;
+        }
+        if (type === 'joint' && comp.robot.joints[id]) {
+          updateComponentRobot(comp.id, {
+            joints: { ...comp.robot.joints, [id]: data as UrdfJoint },
+          });
+          return;
+        }
+      }
+      // Check if it's a bridge joint
+      if (type === 'joint' && assemblyState.bridges[id]) {
+        const store = useAssemblyStore.getState();
+        store.updateBridge(id, { joint: data as UrdfJoint });
+        return;
+      }
+    }
     if (type === 'link') {
       updateLink(id, data as Partial<UrdfLink>);
     } else {
       updateJoint(id, data as Partial<UrdfJoint>);
     }
-  }, [updateLink, updateJoint]);
+  }, [updateLink, updateJoint, assemblyState, sidebarTab, updateComponentRobot]);
+
+  const handleAddComponent = useCallback((file: RobotFile) => {
+    const component = addComponent(file, { availableFiles, assets });
+    if (component) {
+      showToast(lang === 'zh' ? `已添加组件: ${component.name}` : `Added component: ${component.name}`, 'success');
+    }
+  }, [addComponent, availableFiles, assets, showToast, lang]);
+
+  const handleCreateBridge = useCallback(() => {
+    setIsBridgeModalOpen(true);
+  }, []);
 
   const handleAddChild = useCallback((parentId: string) => {
     const { jointId } = addChild(parentId);
@@ -167,10 +256,10 @@ export function AppLayout({
   }, [addChild, setSelection]);
 
   const handleDelete = useCallback((linkId: string) => {
-    if (linkId === rootLinkId) return;
+    if (linkId === robot.rootLinkId) return;
     deleteSubtree(linkId);
     setSelection({ type: null, id: null });
-  }, [deleteSubtree, rootLinkId, setSelection]);
+  }, [deleteSubtree, robot.rootLinkId, setSelection]);
 
   const handleSetShowVisual = useCallback((target: boolean) => {
     setAllLinksVisibility(target);
@@ -226,16 +315,17 @@ export function AppLayout({
   }, [undo, redo, canUndo, canRedo]);
 
   // Clean up selection if selected item no longer exists
+  // Use robot.links/joints (which includes merged assembly data in workspace mode)
   useEffect(() => {
     if (selection.id && selection.type) {
       const exists = selection.type === 'link'
-        ? robotLinks[selection.id]
-        : robotJoints[selection.id];
+        ? robot.links[selection.id]
+        : robot.joints[selection.id];
       if (!exists) {
         setSelection({ type: null, id: null });
       }
     }
-  }, [robotLinks, robotJoints, selection, setSelection]);
+  }, [robot.links, robot.joints, selection, setSelection]);
 
   // Drag and Drop handlers
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -269,7 +359,7 @@ export function AppLayout({
       {/* Hidden file inputs */}
       <input
         type="file"
-        accept=".zip,.urdf,.xml,.usda,.usd,.xacro"
+        accept=".zip,.urdf,.xml,.usda,.usd,.xacro,.usp"
         ref={importInputRef}
         className="hidden"
       />
@@ -285,11 +375,12 @@ export function AppLayout({
         onImportFile={() => importInputRef.current?.click()}
         onImportFolder={() => importFolderInputRef.current?.click()}
         onExport={onExport}
+        onExportProject={onExportProject}
         onOpenAI={onOpenAI}
         onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenURDFSquare={onOpenURDFSquare}
+        onOpenURDFGallery={onOpenURDFGallery}
         onSnapshot={handleSnapshot}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
@@ -315,6 +406,11 @@ export function AppLayout({
           availableFiles={availableFiles}
           onLoadRobot={onLoadRobot}
           currentFileName={selectedFile?.name}
+          assemblyState={assemblyState}
+          onAddComponent={handleAddComponent}
+          onCreateBridge={handleCreateBridge}
+          onRemoveComponent={removeComponent}
+          onRemoveBridge={removeBridge}
         />
 
         {/* Viewer Container */}
@@ -422,6 +518,17 @@ export function AppLayout({
           onClose={() => setIsCodeViewerOpen(false)}
           theme={theme}
           fileName={selectedFile ? selectedFile.name.split('/').pop() || `${robot.name}.urdf` : `${robot.name}.urdf`}
+          lang={lang}
+        />
+      )}
+
+      {/* Bridge Create Modal */}
+      {assemblyState && (
+        <BridgeCreateModal
+          isOpen={isBridgeModalOpen}
+          onClose={() => setIsBridgeModalOpen(false)}
+          onCreate={addBridge}
+          assemblyState={assemblyState}
           lang={lang}
         />
       )}
