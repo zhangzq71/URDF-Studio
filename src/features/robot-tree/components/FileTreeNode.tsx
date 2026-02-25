@@ -9,9 +9,11 @@ export interface FileTreeNodeComponentProps {
   depth: number;
   onLoadRobot?: (file: RobotFile) => void;
   onAddAsComponent?: (file: RobotFile) => void;
+  onFileContextMenu?: (event: React.MouseEvent, file: RobotFile) => void;
   expandedFolders: Set<string>;
   toggleFolder: (path: string) => void;
   showAddAsComponent?: boolean;
+  selectedFileName?: string;
   t: TranslationKeys;
 }
 
@@ -20,12 +22,15 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
   depth,
   onLoadRobot,
   onAddAsComponent,
+  onFileContextMenu,
   expandedFolders,
   toggleFolder,
   showAddAsComponent,
+  selectedFileName,
   t,
 }) => {
   const isExpanded = expandedFolders.has(node.path);
+  const isSelectedFile = Boolean(node.file && selectedFileName === node.file.name);
   const paddingLeft = depth * 12 + 8;
 
   const handleClick = () => {
@@ -46,12 +51,23 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
     }
   };
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (!node.file || !onFileContextMenu) return;
+    onFileContextMenu(e, node.file);
+  };
+
   return (
     <div>
       <div
-        className="flex items-center gap-1.5 py-1 pr-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors group rounded-sm"
+        className={`flex items-center gap-1.5 py-1 pr-2 cursor-pointer transition-colors group rounded-sm
+          ${
+            isSelectedFile
+              ? 'bg-blue-50 dark:bg-blue-900/20'
+              : 'hover:bg-slate-100 dark:hover:bg-[#3A3A3C]'
+          }`}
         style={{ paddingLeft: `${paddingLeft}px` }}
         onClick={handleClick}
+        onContextMenu={handleContextMenu}
       >
         {node.isFolder ? (
           <span className="w-3 h-3 flex items-center justify-center">
@@ -118,9 +134,11 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
               depth={depth + 1}
               onLoadRobot={onLoadRobot}
               onAddAsComponent={onAddAsComponent}
+              onFileContextMenu={onFileContextMenu}
               expandedFolders={expandedFolders}
               toggleFolder={toggleFolder}
               showAddAsComponent={showAddAsComponent}
+              selectedFileName={selectedFileName}
               t={t}
             />
           ))}
