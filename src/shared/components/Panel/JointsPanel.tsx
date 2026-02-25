@@ -52,9 +52,9 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
 
     const additionalControls = (
         <div className="flex items-center gap-1 mr-1">
-             <button
+            <button
                 onClick={(e) => { e.stopPropagation(); handleResetJoints(); }}
-                className="flex items-center gap-1.5 p-1 px-2 rounded bg-slate-200 dark:bg-google-dark-bg hover:bg-slate-300 dark:hover:bg-google-dark-border text-slate-700 dark:text-white transition-colors"
+                className="flex items-center gap-1.5 p-1 px-2 rounded bg-element-bg hover:bg-element-hover text-text-secondary dark:text-text-secondary transition-colors"
                 title={t.resetJoints}
             >
                 <RotateCcw className="w-3 h-3" />
@@ -62,7 +62,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             </button>
             <button
                 onClick={(e) => { e.stopPropagation(); setIsAdvanced(!isAdvanced); }}
-                className={`flex items-center gap-1.5 p-1 px-2 rounded transition-colors ${isAdvanced ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'bg-slate-200 dark:bg-google-dark-bg text-slate-700 dark:text-white hover:bg-slate-300 dark:hover:bg-google-dark-border'}`}
+                className={`flex items-center gap-1.5 p-1 px-2 rounded transition-colors ${isAdvanced ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-element-bg text-text-secondary dark:text-text-secondary hover:bg-element-hover'}`}
                 title={t.advanced || "Advanced"}
             >
                 <Settings className="w-3 h-3" />
@@ -70,7 +70,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             </button>
             <button
                 onClick={(e) => { e.stopPropagation(); setAngleUnit(angleUnit === 'rad' ? 'deg' : 'rad'); }}
-                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-google-dark-bg hover:bg-slate-300 dark:hover:bg-google-dark-border text-slate-700 dark:text-white font-mono transition-colors min-w-[32px]"
+                className="text-[10px] px-1.5 py-0.5 rounded bg-element-bg hover:bg-element-hover text-text-secondary dark:text-text-secondary font-mono transition-colors min-w-[32px]"
                 title={t.switchUnit}
             >
                 {angleUnit.toUpperCase()}

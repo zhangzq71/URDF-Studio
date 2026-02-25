@@ -53,7 +53,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             type="text"
             value={data.name}
             onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
-            className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
+            className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:border-system-blue focus:outline-none"
           />
         </InputGroup>
       )}
@@ -62,14 +62,14 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
       {mode === 'detail' && (
         <>
           {/* Tab Navigation - Folder Style */}
-          <div className="flex items-stretch gap-1 border-t border-x border-b border-slate-200 dark:border-[#000000] mb-0 bg-slate-100/50 dark:bg-[#000000] pt-1 px-1 rounded-t-lg">
+          <div className="flex items-stretch gap-1 border border-border-black mb-0 bg-element-bg pt-1 px-1 rounded-t-lg">
             <div className="w-px"></div>
             <button
               onClick={() => handleTabChange('visual')}
               className={`flex-1 py-2 text-xs font-bold rounded-t-lg transition-all flex items-center justify-center gap-2 relative border-t border-x ${
                 linkTab === 'visual'
-                  ? 'bg-white dark:bg-google-dark-surface text-blue-600 dark:text-blue-400 border-slate-200 dark:border-slate-700 -mb-px pb-2.5 z-10'
-                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
+                  ? 'bg-panel-bg dark:bg-segmented-active text-system-blue border-border-black -mb-px pb-2.5 z-10'
+                  : 'bg-transparent border-transparent text-text-tertiary hover:text-text-secondary hover:bg-element-hover'
               }`}
             >
               <Eye className="w-3.5 h-3.5" />
@@ -79,8 +79,8 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
               onClick={() => handleTabChange('collision')}
               className={`flex-1 py-2 text-xs font-bold rounded-t-lg transition-all flex items-center justify-center gap-2 relative border-t border-x ${
                 linkTab === 'collision'
-                  ? 'bg-white dark:bg-google-dark-surface text-blue-600 dark:text-blue-400 border-slate-200 dark:border-slate-700 -mb-px pb-2.5 z-10'
-                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
+                  ? 'bg-panel-bg dark:bg-segmented-active text-system-blue border-border-black -mb-px pb-2.5 z-10'
+                  : 'bg-transparent border-transparent text-text-tertiary hover:text-text-secondary hover:bg-element-hover'
               }`}
             >
               <Box className="w-3.5 h-3.5" />
@@ -90,13 +90,13 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
 
           {/* Visual Tab Content */}
           {linkTab === 'visual' && (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-white dark:bg-google-dark-surface border-x border-b border-slate-200 dark:border-slate-700 rounded-b-lg p-3 shadow-sm mb-4">
+            <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-panel-bg border-x border-b border-border-black rounded-b-lg p-3 shadow-sm mb-4">
               <InputGroup label={t.name}>
                 <input
                   type="text"
                   value={data.name}
                   onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
-                  className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
+                  className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:border-system-blue focus:outline-none"
                 />
               </InputGroup>
 
@@ -115,7 +115,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
 
           {/* Collision Tab Content */}
           {linkTab === 'collision' && (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-white dark:bg-google-dark-surface border-x border-b border-slate-200 dark:border-slate-700 rounded-b-lg p-3 shadow-sm mb-4">
+            <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-panel-bg border-x border-b border-border-black rounded-b-lg p-3 shadow-sm mb-4">
               <GeometryEditor
                 data={data}
                 robot={robot}
@@ -148,7 +148,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
           <InputGroup label={t.centerOfMass || "Center of Mass"}>
             <div className="space-y-2">
               <div>
-                <span className="text-[10px] text-slate-500 mb-0.5 block">{t.position}</span>
+                <span className="text-[10px] text-text-tertiary mb-0.5 block">{t.position}</span>
                 <Vec3Input
                   value={data.inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
                   onChange={(xyz) => onUpdate('link', selection.id!, {
@@ -165,7 +165,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
                 />
               </div>
               <div>
-                <span className="text-[10px] text-slate-500 mb-0.5 block">{t.rotation}</span>
+                <span className="text-[10px] text-text-tertiary mb-0.5 block">{t.rotation}</span>
                 <Vec3Input
                   value={data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
                   onChange={(rpy) => onUpdate('link', selection.id!, {
@@ -185,8 +185,8 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             </div>
           </InputGroup>
 
-          <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <h4 className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase">{t.inertiaTensor}</h4>
+          <div className="mt-3 pt-2 border-t border-border-black/60">
+            <h4 className="text-[10px] font-bold text-text-tertiary mb-2 uppercase">{t.inertiaTensor}</h4>
             <div className="grid grid-cols-3 gap-2">
               <NumberInput
                 label="ixx"

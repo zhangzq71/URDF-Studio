@@ -73,9 +73,9 @@ export function getFileIcon(filename: string, isFolder: boolean, isOpen: boolean
 
   switch (ext) {
     case 'urdf':
-      return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-blue-500' });
+      return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-system-blue' });
     case 'xacro':
-      return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-slate-500' });
+      return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-text-secondary' });
     case 'xml':
       return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-orange-500' });
     case 'dae':
@@ -83,6 +83,6 @@ export function getFileIcon(filename: string, isFolder: boolean, isOpen: boolean
     case 'obj':
       return React.createElement(Cuboid, { className: 'w-3.5 h-3.5 text-green-500' });
     default:
-      return React.createElement(File, { className: 'w-3.5 h-3.5 text-slate-400' });
+      return React.createElement(File, { className: 'w-3.5 h-3.5 text-text-tertiary' });
   }
 }

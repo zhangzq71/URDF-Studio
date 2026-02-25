@@ -36,6 +36,76 @@ interface InspectionReportProps {
   onSelectItem: (type: 'link' | 'joint', id: string) => void
 }
 
+const ISSUE_PRIORITY: Record<string, number> = {
+  error: 0,
+  warning: 1,
+  suggestion: 2,
+  pass: 3
+}
+
+function getCategoryIcon(categoryId: string) {
+  if (categoryId === 'physical') return Box
+  if (categoryId === 'kinematics') return RefreshCw
+  if (categoryId === 'naming') return FileText
+  if (categoryId === 'symmetry') return LayoutGrid
+  return Sparkles
+}
+
+function getIssueMeta(issueType: string, lang: Language) {
+  if (issueType === 'error') {
+    return {
+      Icon: AlertCircle,
+      label: lang === 'zh' ? '错误' : 'Error',
+      rowClass: 'border-red-200/80 dark:border-red-900/60',
+      stripeClass: 'bg-red-500',
+      iconClass: 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/60 border-red-200/80 dark:border-red-900/60',
+      badgeClass: 'text-red-700 dark:text-red-300 bg-red-50/80 dark:bg-red-950/50 border-red-200 dark:border-red-900/70'
+    }
+  }
+
+  if (issueType === 'warning') {
+    return {
+      Icon: AlertTriangle,
+      label: lang === 'zh' ? '警告' : 'Warning',
+      rowClass: 'border-amber-200/80 dark:border-amber-900/60',
+      stripeClass: 'bg-amber-500',
+      iconClass: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border-amber-200/80 dark:border-amber-900/60',
+      badgeClass: 'text-amber-700 dark:text-amber-300 bg-amber-50/80 dark:bg-amber-950/50 border-amber-200 dark:border-amber-900/70'
+    }
+  }
+
+  if (issueType === 'suggestion') {
+    return {
+      Icon: Sparkles,
+      label: lang === 'zh' ? '建议' : 'Suggestion',
+      rowClass: 'border-system-blue/30 dark:border-system-blue/35',
+      stripeClass: 'bg-system-blue',
+      iconClass: 'text-system-blue bg-system-blue/10 dark:bg-system-blue/20 border-system-blue/30 dark:border-system-blue/35',
+      badgeClass: 'text-system-blue bg-system-blue/10 dark:bg-system-blue/20 border-system-blue/30 dark:border-system-blue/35'
+    }
+  }
+
+  if (issueType === 'pass') {
+    return {
+      Icon: Check,
+      label: lang === 'zh' ? '通过' : 'Pass',
+      rowClass: 'border-emerald-200/80 dark:border-emerald-900/60',
+      stripeClass: 'bg-emerald-500',
+      iconClass: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200/80 dark:border-emerald-900/60',
+      badgeClass: 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/80 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-900/70'
+    }
+  }
+
+  return {
+    Icon: Info,
+    label: lang === 'zh' ? '信息' : 'Info',
+    rowClass: 'border-border-black',
+    stripeClass: 'bg-border-strong',
+    iconClass: 'text-text-tertiary bg-element-bg border-border-black',
+    badgeClass: 'text-text-secondary bg-element-bg border-border-black'
+  }
+}
+
 export function InspectionReportView({
   report,
   robot,
@@ -51,7 +121,7 @@ export function InspectionReportView({
 }: InspectionReportProps) {
   const overallScore = report.overallScore ?? 0
   const maxScore = report.maxScore ?? 100
-  const scorePercentage = (overallScore / maxScore) * 100
+  const scorePercentage = maxScore > 0 ? (overallScore / maxScore) * 100 : 0
 
   const issuesByCategory: Record<string, typeof report.issues> = {}
   INSPECTION_CRITERIA.forEach(category => {
@@ -66,46 +136,101 @@ export function InspectionReportView({
     issuesByCategory[categoryId].push(issue)
   })
 
+  const issueStats = report.issues.reduce(
+    (acc, issue) => {
+      if (issue.type === 'error') acc.error += 1
+      else if (issue.type === 'warning') acc.warning += 1
+      else if (issue.type === 'suggestion') acc.suggestion += 1
+      else if (issue.type === 'pass') acc.pass += 1
+      return acc
+    },
+    { error: 0, warning: 0, suggestion: 0, pass: 0 }
+  )
+
+  const scoreBand =
+    scorePercentage >= 90
+      ? {
+          label: lang === 'zh' ? '稳定' : 'Stable',
+          className:
+            'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/60'
+        }
+      : scorePercentage >= 70
+        ? {
+            label: lang === 'zh' ? '需关注' : 'Attention',
+            className:
+              'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200/80 dark:border-amber-900/60'
+          }
+        : {
+            label: lang === 'zh' ? '高风险' : 'High Risk',
+            className:
+              'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-200/80 dark:border-red-900/60'
+          }
+
+  const summaryMetrics = [
+    {
+      key: 'error',
+      label: lang === 'zh' ? '错误' : 'Errors',
+      value: issueStats.error,
+      className: 'text-red-600 dark:text-red-300 border-red-200/80 dark:border-red-900/60'
+    },
+    {
+      key: 'warning',
+      label: lang === 'zh' ? '警告' : 'Warnings',
+      value: issueStats.warning,
+      className: 'text-amber-600 dark:text-amber-300 border-amber-200/80 dark:border-amber-900/60'
+    },
+    {
+      key: 'suggestion',
+      label: lang === 'zh' ? '建议' : 'Suggestions',
+      value: issueStats.suggestion,
+      className: 'text-system-blue border-system-blue/30 dark:border-system-blue/35'
+    },
+    {
+      key: 'pass',
+      label: lang === 'zh' ? '通过' : 'Passed',
+      value: issueStats.pass,
+      className: 'text-emerald-600 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/60'
+    }
+  ]
+
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden bg-slate-900 dark:bg-[#1C1C1E] rounded-2xl p-6 text-white shadow-xl border border-transparent dark:border-white/10">
-        <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12">
-          <Sparkles className="w-32 h-32" />
-        </div>
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="overflow-hidden bg-panel-bg rounded-xl p-5 border border-border-black shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-5">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-blue-400">
-              <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-              <span className="text-[10px] font-bold uppercase tracking-[0.2em]">{t.inspectorSummary}</span>
+            <div className="flex items-center gap-2 text-text-secondary">
+              <div className="w-1.5 h-1.5 rounded-full bg-system-blue" />
+              <span className="text-[10px] font-medium tracking-wide">{t.inspectorSummary}</span>
             </div>
-            <h2 className="text-3xl font-black tracking-tight leading-tight">
-              {lang === 'zh' ? 'URDF 模型健康度' : 'URDF Model Health'}
+            <h2 className="text-xl font-semibold tracking-tight text-text-primary">
+              {lang === 'zh' ? 'URDF 审阅结论' : 'URDF Inspection Result'}
             </h2>
-            <p className="text-sm text-slate-400 max-w-md font-medium leading-relaxed">{report.summary}</p>
+            <p className="text-sm text-text-secondary max-w-xl leading-relaxed">{report.summary}</p>
           </div>
 
-          <div className="flex items-center gap-6 shrink-0">
-            <div className="text-right">
-              <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{t.overallScore}</div>
-              <div className="flex items-baseline gap-1">
-                <span className={`text-5xl font-black tracking-tighter ${getScoreColor(overallScore, maxScore)}`}>
-                  {Math.round(scorePercentage)}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="rounded-lg border border-border-black bg-element-bg px-3 py-2 min-w-[110px] text-right">
+              <div className="text-[10px] text-text-tertiary font-medium tracking-wide mb-1">{t.overallScore}</div>
+              <div className="flex items-baseline justify-end gap-1">
+                <span className={`text-3xl font-semibold tracking-tight ${getScoreColor(overallScore, maxScore)}`}>
+                  {Math.round(scorePercentage)}%
                 </span>
-                <span className="text-xl text-slate-600 font-bold">%</span>
+              </div>
+              <div className={`inline-flex mt-1 px-1.5 py-0.5 rounded border text-[10px] font-medium ${scoreBand.className}`}>
+                {scoreBand.label}
               </div>
             </div>
             <button
               onClick={onDownloadPDF}
-              className="p-3 bg-black dark:bg-[#48484A] hover:bg-slate-700 text-white rounded-xl transition-all border border-white/10 group shadow-lg"
+              className="w-9 h-9 flex items-center justify-center bg-element-bg hover:bg-element-hover text-text-secondary rounded-lg transition-colors border border-border-black"
               title={t.downloadReport}
             >
-              <FileText className="w-6 h-6 group-hover:scale-110 transition-transform" />
+              <FileText className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        <div className="mt-8 relative h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+        <div className="mt-6 relative h-1.5 w-full bg-element-bg rounded-full overflow-hidden">
           <div
             className={`absolute top-0 left-0 h-full transition-all duration-1000 ease-out rounded-full ${getScoreBgColor(
               overallScore,
@@ -113,6 +238,18 @@ export function InspectionReportView({
             )}`}
             style={{ width: `${scorePercentage}%` }}
           />
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2.5">
+          {summaryMetrics.map(metric => (
+            <div
+              key={metric.key}
+              className={`rounded-lg border bg-element-bg dark:bg-element-bg px-2.5 py-2 ${metric.className}`}
+            >
+              <div className="text-[10px] font-medium tracking-wide text-text-tertiary">{metric.label}</div>
+              <div className="text-base font-semibold leading-tight mt-1">{metric.value}</div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -123,54 +260,58 @@ export function InspectionReportView({
           const isExpanded = expandedCategories.has(category.id)
           const categoryName = lang === 'zh' ? category.nameZh : category.name
           const hasProblems = categoryIssues.some(issue => issue.type !== 'pass')
+          const nonPassCount = categoryIssues.filter(issue => issue.type !== 'pass').length
+          const orderedIssues = [...categoryIssues].sort(
+            (a, b) => (ISSUE_PRIORITY[a.type] ?? 99) - (ISSUE_PRIORITY[b.type] ?? 99)
+          )
+          const CategoryIcon = getCategoryIcon(category.id)
 
           return (
             <div
               key={category.id}
-              className={`group border rounded-2xl overflow-hidden transition-all duration-300 ${
+              className={`group border rounded-xl overflow-hidden transition-colors duration-200 ${
                 isExpanded
-                  ? 'bg-white dark:bg-[#1C1C1E] border-slate-200 dark:border-white/10 shadow-xl shadow-slate-200/50 dark:shadow-black/50'
-                  : 'bg-slate-50 dark:bg-[#1C1C1E]/50 border-transparent hover:border-slate-200 dark:hover:border-white/10'
+                  ? 'bg-panel-bg border-border-black shadow-sm'
+                  : 'bg-element-bg border-transparent hover:border-border-black'
               }`}
             >
-              <button onClick={() => onToggleCategory(category.id)} className="w-full flex items-center justify-between p-4">
-                <div className="flex items-center gap-4">
+              <button onClick={() => onToggleCategory(category.id)} className="w-full flex items-center justify-between p-3.5 text-left">
+                <div className="flex items-center gap-3.5 min-w-0">
                   <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center border transition-colors ${
                       hasProblems
-                        ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600'
-                        : 'bg-green-100 dark:bg-green-900/30 text-green-600'
+                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-300 border-amber-200/80 dark:border-amber-900/60'
+                        : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/60'
                     }`}
                   >
-                    {category.id === 'physical' ? (
-                      <Box className="w-5 h-5" />
-                    ) : category.id === 'kinematics' ? (
-                      <RefreshCw className="w-5 h-5" />
-                    ) : category.id === 'naming' ? (
-                      <FileText className="w-5 h-5" />
-                    ) : category.id === 'symmetry' ? (
-                      <LayoutGrid className="w-5 h-5" />
-                    ) : (
-                      <Sparkles className="w-5 h-5" />
-                    )}
+                    <CategoryIcon className="w-[18px] h-[18px]" />
                   </div>
-                  <div className="text-left">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-black text-slate-800 dark:text-slate-100 tracking-tight">{categoryName}</span>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                        {category.weight * 100}%
+                      <span className="text-sm font-semibold text-text-primary truncate">{categoryName}</span>
+                      <span className="text-[10px] font-medium text-text-tertiary tracking-wide">
+                        {lang === 'zh' ? '权重' : 'Weight'} {category.weight * 100}%
                       </span>
                     </div>
-                    <div className="text-[10px] text-slate-500 font-medium">
+                    <div className="text-[10px] text-text-tertiary font-medium flex items-center gap-2">
                       {categoryIssues.length} {lang === 'zh' ? '项检查' : 'checks'}
+                      {hasProblems ? (
+                        <span className="px-1.5 py-0.5 rounded border border-amber-200/80 dark:border-amber-900/60 text-amber-700 dark:text-amber-300">
+                          {lang === 'zh' ? `${nonPassCount} 项待处理` : `${nonPassCount} attention`}
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded border border-emerald-200/80 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300">
+                          {lang === 'zh' ? '全部通过' : 'all passed'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-6">
-                  <div className="hidden sm:flex flex-col items-end gap-1">
-                    <div className={`text-sm font-black ${getScoreColor(categoryScore)}`}>{categoryScore.toFixed(1)}/10</div>
-                    <div className="w-24 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div className="flex items-center gap-4 pl-3 shrink-0">
+                  <div className="hidden sm:flex flex-col items-end gap-1 min-w-[84px]">
+                    <div className={`text-sm font-medium ${getScoreColor(categoryScore)}`}>{categoryScore.toFixed(1)}/10</div>
+                    <div className="w-20 h-1 bg-element-bg rounded-full overflow-hidden">
                       <div
                         className={`h-full ${getScoreBgColor(categoryScore)}`}
                         style={{ width: `${(categoryScore / 10) * 100}%` }}
@@ -178,10 +319,10 @@ export function InspectionReportView({
                     </div>
                   </div>
                   <div
-                    className={`p-1.5 rounded-lg transition-colors ${
+                    className={`p-1.5 rounded-md transition-colors ${
                       isExpanded
-                        ? 'bg-slate-100 dark:bg-slate-700 text-slate-600'
-                        : 'text-slate-400 group-hover:text-slate-600'
+                        ? 'bg-element-hover text-text-secondary'
+                        : 'text-text-tertiary group-hover:text-text-secondary'
                     }`}
                   >
                     {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
@@ -192,100 +333,93 @@ export function InspectionReportView({
               {isExpanded && (
                 <div className="p-4 pt-0 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                   {categoryIssues.length === 0 ? (
-                    <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 rounded-xl text-green-600 dark:text-green-400">
-                      <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                    <div className="flex items-center gap-3 p-4 rounded-lg border border-emerald-200/80 dark:border-emerald-900/60 bg-element-bg dark:bg-element-bg text-emerald-700 dark:text-emerald-300">
+                      <div className="p-2 rounded-md border border-emerald-200/80 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/60">
                         <Check className="w-4 h-4" />
                       </div>
-                      <div className="text-xs font-bold">
+                      <div className="text-xs font-semibold">
                         {lang === 'zh' ? '该章节所有检查项均通过' : 'All checks in this category passed'}
                       </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-3">
-                      {categoryIssues.map((issue, idx) => {
+                      {orderedIssues.map((issue, idx) => {
                         const issueScore = issue.score ?? 10
                         const isRetesting =
                           retestingItem?.categoryId === issue.category && retestingItem?.itemId === issue.itemId
 
-                        let bgClass = 'bg-white dark:bg-[#2C2C2E] border-slate-100 dark:border-white/5'
-                        let iconColor = 'text-slate-400'
-                        let Icon = Info
-
-                        if (issue.type === 'error') {
-                          bgClass = 'bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30'
-                          iconColor = 'text-red-500'
-                          Icon = AlertCircle
-                        } else if (issue.type === 'warning') {
-                          bgClass = 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-900/30'
-                          iconColor = 'text-amber-500'
-                          Icon = AlertTriangle
-                        } else if (issue.type === 'suggestion') {
-                          bgClass = 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30'
-                          iconColor = 'text-blue-500'
-                          Icon = Sparkles
-                        } else if (issue.type === 'pass') {
-                          bgClass = 'bg-green-50/50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30'
-                          iconColor = 'text-green-500'
-                          Icon = Check
-                        }
+                        const meta = getIssueMeta(issue.type, lang)
+                        const Icon = meta.Icon
 
                         return (
                           <div
                             key={`${issue.category || 'unknown'}-${issue.itemId || idx}-${idx}`}
-                            className={`p-4 rounded-xl border transition-all hover:shadow-md ${bgClass} group/issue`}
+                            className={`rounded-lg border bg-white dark:bg-panel-bg transition-colors ${meta.rowClass}`}
                           >
-                            <div className="flex gap-4">
-                              <div className={`shrink-0 p-2 rounded-lg bg-white dark:bg-[#000000] shadow-sm ${iconColor}`}>
-                                <Icon className="w-4 h-4" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center justify-between mb-1 gap-4">
-                                  <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
-                                    {issue.title}
-                                  </h4>
-                                  <div className="flex items-center gap-3 shrink-0">
-                                    <div className={`text-xs font-black font-mono ${getScoreColor(issueScore)}`}>
-                                      {issueScore.toFixed(1)}
-                                    </div>
-                                    {issue.category && issue.itemId && issue.type !== 'pass' && (
-                                      <button
-                                        onClick={() => onRetestItem(issue.category!, issue.itemId!)}
-                                        disabled={isRetesting || isGeneratingAI}
-                                        className="p-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-[#0060FA] hover:text-white rounded-lg transition-all disabled:opacity-30"
-                                        title={lang === 'zh' ? '重新检查该项' : 'Retest this item'}
-                                      >
-                                        {isRetesting ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <RefreshCw className="w-3.5 h-3.5" />
-                                        )}
-                                      </button>
-                                    )}
-                                  </div>
+                            <div className={`h-0.5 ${meta.stripeClass}`} />
+                            <div className="p-4">
+                              <div className="flex gap-3">
+                                <div className={`shrink-0 p-2 rounded-lg border ${meta.iconClass}`}>
+                                  <Icon className="w-4 h-4" />
                                 </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium mb-3">
-                                  {issue.description}
-                                </p>
-
-                                {issue.relatedIds && issue.relatedIds.length > 0 && (
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {issue.relatedIds.map(id => {
-                                      const name = robot.links[id]?.name || robot.joints[id]?.name || id
-                                      return (
-                                        <button
-                                          key={id}
-                                          onClick={() => {
-                                            const type = robot.links[id] ? 'link' : 'joint'
-                                            onSelectItem(type, id)
-                                          }}
-                                          className="text-[9px] font-bold bg-slate-100 dark:bg-[#000000] hover:bg-[#0060FA] hover:text-white px-2 py-1 rounded-md text-slate-500 dark:text-slate-400 transition-all border border-transparent hover:border-[#0060FA]"
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between mb-1 gap-4">
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <h4 className="text-sm font-semibold text-text-primary truncate">
+                                          {issue.title}
+                                        </h4>
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded border text-[10px] font-medium shrink-0 ${meta.badgeClass}`}
                                         >
-                                          {name}
+                                          {meta.label}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <div className={`text-xs font-semibold ${getScoreColor(issueScore)}`}>
+                                        {issueScore.toFixed(1)}
+                                      </div>
+                                      {issue.category && issue.itemId && issue.type !== 'pass' && (
+                                        <button
+                                          onClick={() => onRetestItem(issue.category!, issue.itemId!)}
+                                          disabled={isRetesting || isGeneratingAI}
+                                          className="p-1.5 bg-element-bg border border-border-black hover:bg-element-hover hover:text-system-blue rounded-lg transition-colors disabled:opacity-30"
+                                          title={lang === 'zh' ? '重新检查该项' : 'Retest this item'}
+                                        >
+                                          {isRetesting ? (
+                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                          )}
                                         </button>
-                                      )
-                                    })}
+                                      )}
+                                    </div>
                                   </div>
-                                )}
+                                  <p className="text-xs text-text-secondary leading-relaxed font-medium mb-3">
+                                    {issue.description}
+                                  </p>
+
+                                  {issue.relatedIds && issue.relatedIds.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {issue.relatedIds.map(id => {
+                                        const name = robot.links[id]?.name || robot.joints[id]?.name || id
+                                        return (
+                                          <button
+                                            key={id}
+                                            onClick={() => {
+                                              const type = robot.links[id] ? 'link' : 'joint'
+                                              onSelectItem(type, id)
+                                            }}
+                                            className="text-[10px] font-medium bg-element-bg hover:bg-element-hover hover:text-system-blue px-2 py-1 rounded-md text-text-secondary transition-colors border border-border-black"
+                                          >
+                                            {name}
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </div>

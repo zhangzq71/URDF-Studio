@@ -36,6 +36,10 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 }) => {
   const t = translations[lang];
   const comps = Object.values(assemblyState.components);
+  const fieldClassName =
+    'w-full px-3 py-2 text-sm bg-input-bg border border-border-black rounded-lg text-text-primary focus:outline-none focus:ring-2 focus:ring-system-blue/20 focus:border-system-blue';
+  const compactFieldClassName =
+    'w-full px-2 py-1.5 text-sm bg-input-bg border border-border-black rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-system-blue/20 focus:border-system-blue';
 
   const [name, setName] = useState('');
   const [parentCompId, setParentCompId] = useState('');
@@ -124,15 +128,15 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={handleClose}>
       <div
-        className="bg-white dark:bg-google-dark-bg rounded-xl shadow-xl border border-slate-200 dark:border-google-dark-border w-full max-w-md max-h-[90vh] overflow-y-auto"
+        className="bg-panel-bg rounded-2xl shadow-xl border border-border-black w-full max-w-md max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3 border-b border-slate-200 dark:border-google-dark-border">
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-white">{t.createBridge}</h3>
+        <div className="px-4 py-3 border-b border-border-black bg-element-bg">
+          <h3 className="text-sm font-semibold text-text-primary">{t.createBridge}</h3>
         </div>
         <div className="p-4 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+            <label className="block text-xs font-medium text-text-secondary mb-1">
               {t.bridgeJoint} {t.name}
             </label>
             <input
@@ -140,19 +144,19 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Arm_to_Hand_Joint"
-              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded-lg"
+              className={fieldClassName}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.parentComponent}</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1">{t.parentComponent}</label>
             <select
               value={parentCompId}
               onChange={(e) => {
                 setParentCompId(e.target.value);
                 setParentLinkId('');
               }}
-              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded-lg"
+              className={fieldClassName}
             >
               <option value="">--</option>
               {comps.map((c) => (
@@ -164,11 +168,11 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.parentLink}</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1">{t.parentLink}</label>
             <select
               value={parentLinkId}
               onChange={(e) => setParentLinkId(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded-lg"
+              className={fieldClassName}
             >
               <option value="">--</option>
               {parentLinks.map((l) => (
@@ -180,14 +184,14 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.childComponent}</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1">{t.childComponent}</label>
             <select
               value={childCompId}
               onChange={(e) => {
                 setChildCompId(e.target.value);
                 setChildLinkId('');
               }}
-              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded-lg"
+              className={fieldClassName}
             >
               <option value="">--</option>
               {comps.map((c) => (
@@ -199,11 +203,11 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.childLink}</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1">{t.childLink}</label>
             <select
               value={childLinkId}
               onChange={(e) => setChildLinkId(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded-lg"
+              className={fieldClassName}
             >
               <option value="">--</option>
               {childLinks.map((l) => (
@@ -215,11 +219,11 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.type}</label>
+            <label className="block text-xs font-medium text-text-secondary mb-1">{t.type}</label>
             <select
               value={jointType}
               onChange={(e) => setJointType(e.target.value as JointType)}
-              className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded-lg"
+              className={fieldClassName}
             >
               <option value={JointType.FIXED}>fixed</option>
               <option value={JointType.REVOLUTE}>revolute</option>
@@ -230,33 +234,33 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Origin X</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Origin X</label>
               <input
                 type="number"
                 step={0.01}
                 value={originX}
                 onChange={(e) => setOriginX(Number(e.target.value))}
-                className="w-full px-2 py-1.5 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded"
+                className={compactFieldClassName}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Origin Y</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Origin Y</label>
               <input
                 type="number"
                 step={0.01}
                 value={originY}
                 onChange={(e) => setOriginY(Number(e.target.value))}
-                className="w-full px-2 py-1.5 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded"
+                className={compactFieldClassName}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Origin Z</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Origin Z</label>
               <input
                 type="number"
                 step={0.01}
                 value={originZ}
                 onChange={(e) => setOriginZ(Number(e.target.value))}
-                className="w-full px-2 py-1.5 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded"
+                className={compactFieldClassName}
               />
             </div>
           </div>
@@ -264,39 +268,39 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
           {jointType !== JointType.FIXED && (
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.lower}</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1">{t.lower}</label>
                 <input
                   type="number"
                   step={0.01}
                   value={limitLower}
                   onChange={(e) => setLimitLower(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded"
+                  className={compactFieldClassName}
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{t.upper}</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1">{t.upper}</label>
                 <input
                   type="number"
                   step={0.01}
                   value={limitUpper}
                   onChange={(e) => setLimitUpper(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 text-sm bg-slate-50 dark:bg-[#1C1C1E] border border-slate-300 dark:border-google-dark-border rounded"
+                  className={compactFieldClassName}
                 />
               </div>
             </div>
           )}
         </div>
-        <div className="px-4 py-3 border-t border-slate-200 dark:border-google-dark-border flex justify-end gap-2">
+        <div className="px-4 py-3 border-t border-border-black bg-element-bg flex justify-end gap-2">
           <button
             onClick={handleClose}
-            className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+            className="px-4 py-2 text-sm font-medium text-text-secondary hover:bg-element-hover rounded-lg"
           >
             {t.cancel}
           </button>
           <button
             onClick={handleSubmit}
             disabled={!name.trim() || !parentCompId || !parentLinkId || !childCompId || !childLinkId}
-            className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm font-medium bg-system-blue-solid text-white rounded-lg hover:bg-system-blue-hover disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {t.confirm}
           </button>

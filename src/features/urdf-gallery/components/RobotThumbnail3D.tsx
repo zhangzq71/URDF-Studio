@@ -250,7 +250,7 @@ function RobotPreviewModel({
   }
 
   if (loading || !robot || !fullyLoaded) {
-    return <LoadingIndicator />;
+    return <LoadingIndicator theme={theme} />;
   }
 
   return (
@@ -264,23 +264,30 @@ function RobotPreviewModel({
 }
 
 /**
- * Loading indicator - rotating wireframe cube
+ * Loading indicator - minimal single arc spinner
  */
-function LoadingIndicator() {
-  const meshRef = useRef<THREE.Mesh>(null);
+function LoadingIndicator({ theme }: { theme: 'light' | 'dark' }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const arcColor = theme === 'light' ? '#334155' : '#cbd5e1';
+  const hubColor = theme === 'light' ? '#94a3b8' : '#64748b';
   
   useFrame((_, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.x += delta * 0.5;
-      meshRef.current.rotation.y += delta * 0.7;
+    if (groupRef.current) {
+      groupRef.current.rotation.z -= delta * 1.8;
     }
   });
 
   return (
-    <mesh ref={meshRef}>
-      <boxGeometry args={[0.4, 0.4, 0.4]} />
-      <meshBasicMaterial color="#6366f1" wireframe />
-    </mesh>
+    <group ref={groupRef}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.24, 0.03, 18, 72, Math.PI * 1.45]} />
+        <meshBasicMaterial color={arcColor} transparent opacity={0.95} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[0.045, 18, 18]} />
+        <meshBasicMaterial color={hubColor} transparent opacity={0.65} />
+      </mesh>
+    </group>
   );
 }
 
@@ -343,7 +350,7 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, ur
           <SceneLighting />
           <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
 
-          <Suspense fallback={<LoadingIndicator />}>
+          <Suspense fallback={<LoadingIndicator theme={theme} />}>
             <RobotPreviewModel 
               urdfPath={urdfPath}
               urdfFile={urdfFile}

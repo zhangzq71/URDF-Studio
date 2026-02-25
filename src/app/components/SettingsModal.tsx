@@ -67,22 +67,22 @@ export function SettingsModal() {
   return (
     <div
       style={{ left: settingsPos.x, top: settingsPos.y }}
-      className="fixed z-[100] w-[320px] bg-white dark:bg-[#2C2C2E] rounded-[16px] shadow-[0_12px_32px_rgba(0,0,0,0.25)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.5)] border border-slate-200 dark:border-black/50 overflow-hidden"
+      className="fixed z-[100] w-[320px] bg-panel-bg rounded-2xl shadow-xl border border-border-black overflow-hidden"
     >
       {/* Header */}
       <div
         onMouseDown={handleDragStart}
-        className="bg-slate-50 dark:bg-[#2C2C2E] px-4 py-3 border-b border-slate-200 dark:border-black/50 flex items-center justify-between cursor-move select-none"
+        className="bg-element-bg px-4 py-3 border-b border-border-black flex items-center justify-between cursor-move select-none"
       >
         <div className="flex items-center gap-2">
-          <Settings className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-          <h2 className="text-sm font-bold text-slate-800 dark:text-white">
+          <Settings className="w-4 h-4 text-text-tertiary" />
+          <h2 className="text-sm font-semibold text-text-primary">
             {lang === 'zh' ? '设置' : 'Settings'}
           </h2>
         </div>
         <button
           onClick={closeSettings}
-          className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+          className="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
         >
           <X className="w-4 h-4" />
         </button>
@@ -155,7 +155,7 @@ export function SettingsModal() {
             showValue={true}
             formatValue={(val) => `${(val * 100).toFixed(0)}%`}
           />
-          <div className="relative h-4 text-[10px] text-slate-400 select-none px-1">
+          <div className="relative h-4 text-[10px] text-text-tertiary select-none px-1">
             <span className="absolute left-0">80%</span>
             <span className="absolute left-[28.57%] -translate-x-1/2">100%</span>
             <span className="absolute right-0">150%</span>

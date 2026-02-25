@@ -40,7 +40,7 @@ export const Switch: React.FC<SwitchProps> = ({
   return (
     <div className={`flex items-center justify-between ${className}`}>
       {label && (
-        <span className="text-xs font-medium text-slate-700 dark:text-slate-300 select-none cursor-pointer" onClick={handleToggle}>
+        <span className="text-xs font-medium text-text-secondary select-none cursor-pointer" onClick={handleToggle}>
           {label}
         </span>
       )}
@@ -51,8 +51,8 @@ export const Switch: React.FC<SwitchProps> = ({
         onClick={handleToggle}
         disabled={disabled}
         className={`
-          relative inline-flex items-center shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none p-0.5
-          ${checked ? 'bg-[#007AFF] dark:bg-[#0A84FF]' : 'bg-[#E9E9EA] dark:bg-[#1C1C1E]'}
+          relative inline-flex items-center shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 p-0.5
+          ${checked ? 'bg-system-blue-solid' : 'bg-switch-off'}
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           ${desktopSizes[size].switch}
         `}

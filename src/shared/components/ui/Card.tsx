@@ -13,7 +13,7 @@ export const Card: React.FC<CardProps> = ({
   className = '',
   padding = 'md',
   bordered = true,
-  glass = false, // Kept for API compatibility but implementation will ignore blur
+  glass = false,
 }) => {
   const paddings = {
     none: '',
@@ -22,15 +22,15 @@ export const Card: React.FC<CardProps> = ({
     lg: 'p-6',
   };
 
-  // Enforce solid backgrounds
-  const bgClass = 'bg-white dark:bg-[#1C1C1E]';
+  void glass;
+  const bgClass = 'bg-panel-bg';
     
   const borderClass = bordered 
-    ? 'border border-[#E5E5E5] dark:border-[#38383A]' 
+    ? 'border border-border-black' 
     : '';
 
   return (
-    <div className={`rounded-[12px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] ${bgClass} ${borderClass} ${paddings[padding]} ${className}`}>
+    <div className={`rounded-xl shadow-sm ${bgClass} ${borderClass} ${paddings[padding]} ${className}`}>
       {children}
     </div>
   );

@@ -60,14 +60,14 @@ interface ModelHeaderBadgeProps {
 
 export const ModelHeaderBadge: React.FC<ModelHeaderBadgeProps> = ({ fileName }) => {
   return (
-    <div className="px-3 py-2 bg-slate-50 dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border">
+    <div className="px-3 py-2 bg-element-bg border-b border-border-black">
       <div className="flex items-center gap-2">
         <FileIcon />
         <div className="flex-1 min-w-0">
-          <div className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-0.5 whitespace-nowrap">
+          <div className="text-[10px] text-text-tertiary uppercase tracking-wide mb-0.5 whitespace-nowrap">
             Loaded Model
           </div>
-          <div className="text-[10px] text-slate-700 dark:text-slate-300 font-medium truncate" title={fileName}>
+          <div className="text-[10px] text-text-secondary font-medium truncate" title={fileName}>
             {fileName}
           </div>
         </div>
@@ -157,7 +157,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         showValue={true}
         formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
         className={compact ? "scale-95 origin-left" : ""}
-        labelClassName="text-[10px] text-slate-500 mb-1" // Smaller label
+        labelClassName="text-[10px] text-text-tertiary mb-1" // Smaller label
       />
     </div>
   );
@@ -195,7 +195,7 @@ export const ToggleButtonGroup = SegmentedControl;
 
 // ============== Section Divider ==============
 export const SectionDivider = () => (
-  <div className="border-t border-slate-200 dark:border-white/10 my-1" />
+  <div className="border-t border-border-black my-1" />
 );
 
 // ============== Collapsible Section ==============
@@ -213,10 +213,10 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   children,
 }) => {
   return (
-    <div className="border-t border-black/5 dark:border-white/5 first:border-t-0">
+    <div className="border-t border-border-black/60 first:border-t-0">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
+        className="w-full flex items-center justify-between px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary hover:bg-element-hover transition-colors text-left"
       >
         <span>{title}</span>
         <span className={`transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`}>
@@ -263,7 +263,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
 }) => {
   return (
     <div
-      className="text-[10px] text-slate-500 uppercase font-bold tracking-wider px-3 py-2 cursor-move bg-slate-100 dark:bg-google-dark-bg hover:bg-slate-100 dark:hover:bg-google-dark-bg select-none flex items-center justify-between shrink-0"
+      className="text-[10px] text-text-tertiary uppercase font-bold tracking-wider px-3 py-2 cursor-move bg-element-bg hover:bg-element-hover select-none flex items-center justify-between shrink-0 border-b border-border-black/60 transition-colors"
       onMouseDown={onMouseDown}
     >
       <div className="flex items-center gap-2">
@@ -278,7 +278,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
             e.stopPropagation();
             onToggleCollapse();
           }}
-          className="p-1 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
+          className="p-1 hover:bg-element-hover rounded-md transition-colors"
           title={isCollapsed ? expandText : collapseText}
         >
           {isCollapsed ? <ChevronDown /> : <ChevronUp />}
@@ -290,7 +290,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               e.stopPropagation();
               onClose();
             }}
-            className="p-1 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+            className="p-1 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
             title={closeText}
           >
             <CloseIcon />
@@ -425,7 +425,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
 
   return (
     <div
-      className={`bg-white dark:bg-[#1E1E1E] rounded-xl border border-black/5 dark:border-white/10 flex flex-col shadow-xl overflow-hidden relative @container ${className}`}
+      className={`bg-panel-bg rounded-xl border border-border-black flex flex-col shadow-xl overflow-hidden relative @container ${className}`}
       style={{ width: panelSize.width, height: currentHeight, maxHeight: constrainedMaxHeight }}
     >
       {children}
@@ -433,12 +433,12 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
         <>
             {/* Right Handle */}
             <div 
-                className="absolute top-0 right-0 w-1.5 h-full cursor-ew-resize z-40 hover:bg-blue-500/20 transition-colors"
+                className="absolute top-0 right-0 w-1.5 h-full cursor-ew-resize z-40 hover:bg-system-blue/20 transition-colors"
                 onMouseDown={(e) => handleResizeStart(e, 'right')}
             />
             {/* Bottom Handle */}
             <div 
-                className="absolute bottom-0 left-0 w-full h-1.5 cursor-ns-resize z-40 hover:bg-blue-500/20 transition-colors"
+                className="absolute bottom-0 left-0 w-full h-1.5 cursor-ns-resize z-40 hover:bg-system-blue/20 transition-colors"
                 onMouseDown={(e) => handleResizeStart(e, 'bottom')}
             />
             {/* Corner Handle */}
@@ -447,7 +447,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
                 onMouseDown={(e) => handleResizeStart(e, 'corner')}
                 title="Resize"
             >
-                <svg viewBox="0 0 6 6" className="w-2 h-2 text-slate-400 fill-current transform rotate-45 pointer-events-none">
+                <svg viewBox="0 0 6 6" className="w-2 h-2 text-text-tertiary fill-current transform rotate-45 pointer-events-none">
                     <path d="M4 4 L6 6 M2 2 L6 2 L6 6 L2 6 Z" />
                 </svg>
             </div>

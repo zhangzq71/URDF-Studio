@@ -80,14 +80,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     };
 
     return (
-        <div className={isTabbed ? "pt-2" : "border-t border-slate-200 dark:border-slate-700 pt-4"}>
+        <div className={isTabbed ? "pt-2" : "border-t border-border-black pt-4"}>
             <div className={`flex items-center justify-between ${isTabbed ? 'mb-2' : 'mb-3'}`}>
-                {!isTabbed && <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>}
+                {!isTabbed && <h3 className="text-sm font-bold text-text-primary capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>}
                 {isTabbed && <div />} {/* Spacer */}
                 {geomData.type === GeometryType.CYLINDER && (
                     <button
                         onClick={handleAutoAlign}
-                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
+                        className="p-1 hover:bg-element-hover rounded text-system-blue hover:text-system-blue-hover transition-colors"
                         title={t.autoAlign}
                     >
                         <Wand className="w-4 h-4" />
@@ -99,7 +99,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                 <select
                     value={geomData.type || GeometryType.CYLINDER}
                     onChange={handleTypeChange}
-                    className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
+                    className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:outline-none focus:border-system-blue"
                 >
                     <option value={GeometryType.BOX}>{t.box}</option>
                     <option value={GeometryType.CYLINDER}>{t.cylinder}</option>
@@ -112,7 +112,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
             {/* Mesh Selection UI */}
             {geomData.type === GeometryType.MESH && (
-                <div className="mb-4 bg-slate-100 dark:bg-google-dark-surface p-2 rounded-lg border border-slate-200 dark:border-google-dark-border">
+                <div className="mb-4 bg-element-bg p-2 rounded-lg border border-border-black">
                     <InputGroup label={t.meshLibrary}>
                         <div className="flex flex-col gap-2">
                              <div className="flex items-center gap-2">
@@ -125,7 +125,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                 />
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
-                                    className="flex items-center gap-1 bg-google-blue hover:bg-blue-600 text-white text-xs px-2 py-1 rounded transition-colors"
+                                    className="flex items-center gap-1 bg-system-blue-solid hover:bg-system-blue-hover text-white text-xs px-2 py-1 rounded transition-colors"
                                 >
                                     <Upload className="w-3 h-3" />
                                     {t.upload}
@@ -134,7 +134,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
                              <div className="max-h-32 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-1">
                                 {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).length === 0 && (
-                                    <div className="text-[10px] text-slate-500 italic"></div>
+                                    <div className="text-[10px] text-text-tertiary italic"></div>
                                 )}
                                 {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).map(filename => {
                                     const isApplied = geomData.meshPath === filename && !previewMeshPath;
@@ -150,10 +150,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                             className={`
                                                 flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors
                                                 ${isApplied
-                                                    ? 'bg-blue-100 dark:bg-[#0060FA] text-google-blue dark:text-white border border-blue-200 dark:border-transparent'
+                                                    ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue border border-system-blue/30 dark:border-system-blue/35'
                                                     : isPreviewing
                                                         ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
-                                                        : 'hover:bg-slate-200 dark:hover:bg-google-dark-bg text-slate-700 dark:text-slate-300'
+                                                        : 'hover:bg-element-hover text-text-secondary dark:text-text-secondary'
                                                 }
                                             `}
                                         >
@@ -172,14 +172,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                      <div className="flex items-center gap-2">
                                          <button
                                              onClick={handleApplyMesh}
-                                             className="flex-1 flex items-center justify-center gap-1 bg-google-blue hover:bg-blue-600 text-white text-xs px-2 py-1.5 rounded transition-colors"
+                                             className="flex-1 flex items-center justify-center gap-1 bg-system-blue-solid hover:bg-system-blue-hover text-white text-xs px-2 py-1.5 rounded transition-colors"
                                          >
                                              <Check className="w-3 h-3" />
                                              {t.applyMesh}
                                          </button>
                                          <button
                                              onClick={() => setPreviewMeshPath(null)}
-                                             className="flex-1 text-xs px-2 py-1.5 rounded border border-slate-300 dark:border-google-dark-border text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-google-dark-bg transition-colors"
+                                             className="flex-1 text-xs px-2 py-1.5 rounded border border-border-strong text-text-secondary hover:bg-element-hover transition-colors"
                                          >
                                              {t.cancel}
                                          </button>
@@ -188,14 +188,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                              )}
 
                              {geomData.meshPath && !previewMeshPath && (
-                                 <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-1">
-                                     {t.selected}: <span className="text-google-blue dark:text-blue-400">{geomData.meshPath}</span>
+                                 <div className="text-[10px] text-text-tertiary truncate mt-1">
+                                     {t.selected}: <span className="text-system-blue">{geomData.meshPath}</span>
                                  </div>
                              )}
 
                              {/* Hint for double-click */}
                              {!previewMeshPath && Object.keys(assets).length > 0 && (
-                                 <div className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5">
+                                 <div className="text-[9px] text-text-tertiary mt-0.5">
                                      {t.meshHint}
                                  </div>
                              )}
@@ -285,7 +285,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             {geomData.type !== GeometryType.NONE && (
                 <InputGroup label={t.originRelativeLink}>
                     <div className="space-y-2">
-                    <div className="text-[10px] text-slate-400">{t.position}</div>
+                    <div className="text-[10px] text-text-tertiary">{t.position}</div>
                     <Vec3Input
                         value={geomData.origin?.xyz || {x:0, y:0, z:0}}
                         onChange={(v) => update({
@@ -293,7 +293,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         })}
                         labels={['X', 'Y', 'Z']}
                     />
-                    <div className="text-[10px] text-slate-400 mt-2">{t.rotation}</div>
+                    <div className="text-[10px] text-text-tertiary mt-2">{t.rotation}</div>
                     <Vec3Input
                         value={geomData.origin?.rpy || {r:0, p:0, y:0}}
                         onChange={(v) => update({
@@ -319,7 +319,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                             type="text"
                             value={geomData.color || '#ffffff'}
                             onChange={(e) => update({ color: e.target.value })}
-                            className="bg-white dark:bg-google-dark-surface border border-slate-300 dark:border-google-dark-border rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white flex-1"
+                            className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary flex-1 focus:outline-none focus:border-system-blue"
                         />
                     </div>
                 </InputGroup>
