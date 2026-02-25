@@ -82,6 +82,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const assets = useAssetsStore((state) => state.assets);
 
   const isProMode = sidebarTab === 'workspace';
+  const isAssemblyView = sidebarTab === 'workspace' && Boolean(assemblyState);
 
   // Switch to Pro mode: auto-init assembly if not yet created
   const handleSwitchToProMode = useCallback(() => {
@@ -262,6 +263,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, []);
 
   const actualWidth = collapsed ? 0 : width;
+  const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;
 
   return (
     <div
@@ -344,8 +346,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           </div>
 
           <div
-            className={`flex flex-col shrink-0 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border ${isDragging ? '' : 'transition-all duration-200'}`}
-            style={{ height: isFileBrowserOpen ? `${fileBrowserHeight}px` : 'auto' }}
+            className={`flex flex-col bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border ${shouldFileBrowserFillSpace ? 'flex-1 min-h-0' : 'shrink-0'} ${isDragging ? '' : 'transition-all duration-200'}`}
+            style={
+              shouldFileBrowserFillSpace
+                ? undefined
+                : { height: isFileBrowserOpen ? `${fileBrowserHeight}px` : 'auto' }
+            }
           >
             <div
               className="flex items-center justify-between px-3 py-2 bg-slate-100 dark:bg-[#2C2C2E] cursor-pointer select-none"
@@ -415,7 +421,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                   <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
                 )}
                 <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
-                  {sidebarTab === 'workspace' && assemblyState ? t.assemblyTree : t.structureTree}
+                  {isAssemblyView ? t.assemblyTree : t.structureTree}
                 </span>
               </div>
 
@@ -442,16 +448,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                   </button>
                 )}
 
-                <div
-                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer text-slate-500 dark:text-slate-400"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowVisual(!showVisual);
-                  }}
-                  title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
-                >
-                  {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
-                </div>
+                {!isAssemblyView && (
+                  <div
+                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer text-slate-500 dark:text-slate-400"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowVisual(!showVisual);
+                    }}
+                    title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
+                  >
+                    {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
+                  </div>
+                )}
               </div>
             </div>
 
