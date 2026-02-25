@@ -16,9 +16,11 @@ import {
 } from 'lucide-react';
 import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
-import { useAssemblyStore, useUIStore, type Language } from '@/store';
+import { useAssemblyStore, useAssetsStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
 import { AssemblyTreeView } from './AssemblyTreeView';
+import { FilePreviewWindow } from './FilePreviewWindow';
+import { FileTreeContextMenu } from './FileTreeContextMenu';
 import { FileTreeNodeComponent } from './FileTreeNode';
 import { TreeNode } from './TreeNode';
 
@@ -77,8 +79,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const setSidebarTab = useUIStore((state) => state.setSidebarTab);
   const toggleComponentVisibility = useAssemblyStore((state) => state.toggleComponentVisibility);
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
+  const assets = useAssetsStore((state) => state.assets);
 
   const isProMode = sidebarTab === 'workspace';
+  const isAssemblyView = sidebarTab === 'workspace' && Boolean(assemblyState);
 
   // Switch to Pro mode: auto-init assembly if not yet created
   const handleSwitchToProMode = useCallback(() => {
@@ -102,6 +106,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const startHeight = useRef(0);
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [previewFile, setPreviewFile] = useState<RobotFile | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [fileContextMenu, setFileContextMenu] = useState<{
+    x: number;
+    y: number;
+    file: RobotFile;
+  } | null>(null);
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
 
@@ -129,6 +140,70 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       setExpandedFolders(firstLevel);
     }
   }, [availableFiles]);
+
+  useEffect(() => {
+    if (!previewFile) return;
+    const exists = availableFiles.some((file) => file.name === previewFile.name);
+    if (!exists) {
+      setPreviewFile(null);
+      setIsPreviewOpen(false);
+    }
+  }, [availableFiles, previewFile]);
+
+  useEffect(() => {
+    if (!isProMode) {
+      setIsPreviewOpen(false);
+      setFileContextMenu(null);
+    }
+  }, [isProMode]);
+
+  useEffect(() => {
+    if (!fileContextMenu) return;
+
+    const closeMenu = () => setFileContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [fileContextMenu]);
+
+  const handlePreviewFile = useCallback((file: RobotFile) => {
+    setPreviewFile(file);
+    setIsPreviewOpen(true);
+  }, []);
+
+  const handleFileContextMenu = useCallback((event: React.MouseEvent, file: RobotFile) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const menuWidth = 180;
+    const menuHeight = 44;
+    const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
+    const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
+
+    setFileContextMenu({
+      file,
+      x: Math.min(event.clientX, maxX),
+      y: Math.min(event.clientY, maxY),
+    });
+  }, []);
+
+  const handleAddFileToAssembly = useCallback(() => {
+    if (!fileContextMenu?.file || !onAddComponent) return;
+    onAddComponent(fileContextMenu.file);
+    setFileContextMenu(null);
+  }, [fileContextMenu, onAddComponent]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -188,6 +263,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, []);
 
   const actualWidth = collapsed ? 0 : width;
+  const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;
 
   return (
     <div
@@ -270,8 +346,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           </div>
 
           <div
-            className={`flex flex-col shrink-0 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black ${isDragging ? '' : 'transition-all duration-200'}`}
-            style={{ height: isFileBrowserOpen ? `${fileBrowserHeight}px` : 'auto' }}
+            className={`flex flex-col bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black ${shouldFileBrowserFillSpace ? 'flex-1 min-h-0' : 'shrink-0'} ${isDragging ? '' : 'transition-all duration-200'}`}
+            style={
+              shouldFileBrowserFillSpace
+                ? undefined
+                : { height: isFileBrowserOpen ? `${fileBrowserHeight}px` : 'auto' }
+            }
           >
             <div
               className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
@@ -306,17 +386,20 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       key={node.path}
                       node={node}
                       depth={0}
-                      onLoadRobot={isProMode ? onAddComponent : onLoadRobot}
-                      onAddAsComponent={onAddComponent}
+                      onLoadRobot={isProMode ? handlePreviewFile : onLoadRobot}
+                      onAddAsComponent={isProMode ? onAddComponent : undefined}
+                      onFileContextMenu={isProMode ? handleFileContextMenu : undefined}
                       expandedFolders={expandedFolders}
                       toggleFolder={toggleFolder}
-                      showAddAsComponent={false}
+                      showAddAsComponent={isProMode}
+                      selectedFileName={isProMode ? previewFile?.name : undefined}
                       t={t}
                     />
                   ))
                 )}
               </div>
             )}
+
           </div>
 
           {isFileBrowserOpen && isStructureOpen && (
@@ -338,7 +421,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                   <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
                 )}
                 <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">
-                  {sidebarTab === 'workspace' && assemblyState ? t.assemblyTree : t.structureTree}
+                  {isAssemblyView ? t.assemblyTree : t.structureTree}
                 </span>
               </div>
 
@@ -365,16 +448,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                   </button>
                 )}
 
-                <div
-                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-element-hover cursor-pointer text-text-tertiary transition-colors"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowVisual(!showVisual);
-                  }}
-                  title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
-                >
-                  {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
-                </div>
+                {!isAssemblyView && (
+                  <div
+                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-element-hover cursor-pointer text-text-tertiary transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowVisual(!showVisual);
+                    }}
+                    title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
+                  >
+                    {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -421,6 +506,22 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           />
         </div>
       )}
+
+      <FileTreeContextMenu
+        position={fileContextMenu ? { x: fileContextMenu.x, y: fileContextMenu.y } : null}
+        addLabel={t.addComponent}
+        onAdd={handleAddFileToAssembly}
+      />
+
+      <FilePreviewWindow
+        isOpen={isPreviewOpen && isProMode}
+        file={previewFile}
+        availableFiles={availableFiles}
+        assets={assets}
+        lang={lang}
+        theme={_theme}
+        onClose={() => setIsPreviewOpen(false)}
+      />
     </div>
   );
 };

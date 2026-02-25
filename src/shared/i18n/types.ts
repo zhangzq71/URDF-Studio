@@ -242,6 +242,8 @@ export interface TranslationKeys {
   assemblyTree: string;
   projectName: string;
   enterProjectName: string;
+  filePreview: string;
+  noPreviewImage: string;
   emptyAssemblyHint: string;
   clickToAddComponent: string;
 

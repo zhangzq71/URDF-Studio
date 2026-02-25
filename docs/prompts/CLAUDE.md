@@ -102,6 +102,7 @@ urdf-studio/
     │   │   ├── Slider/        # 滑动条
     │   │   ├── Tabs/          # 标签页
     │   │   ├── Tooltip/       # 提示框
+    │   │   ├── FilePreviewCard.tsx # 文件预览卡片 (可复用模板)
     │   │   └── ui/            # 底层 UI 原语
     │   ├── hooks/             # 通用 Hooks (useHistory)
     │   ├── utils/             # 工具函数 (math, throttle)
@@ -111,7 +112,9 @@ urdf-studio/
     │       └── locales/       # en.ts, zh.ts
     │
     ├── features/              # 功能模块 (独立可组合)
-    │   ├── robot-tree/        # 机器人结构树编辑器
+    │   ├── robot-tree/        # 左侧树编辑器 (Simple / Pro Workspace)
+    │   │   └── components/    # TreeEditor, FileTreeNode, AssemblyTreeView,
+    │   │                      # FilePreviewWindow, FileTreeContextMenu
     │   ├── property-editor/   # 属性编辑面板
     │   ├── visualizer/        # 3D 可视化 (Skeleton / Hardware 模式)
     │   ├── urdf-viewer/       # URDF 查看器 (Detail 模式，完整渲染 + 交互)
@@ -189,7 +192,50 @@ app/ → features/ → store/ → shared/ → core/ → types/
 - 自动为 Link/Joint 添加命名空间前缀，避免冲突
 - 通过桥接关节 (BridgeJoint) 连接不同组件
 - 合并渲染与导出 (assemblyMerger)
+- Workspace（专业模式）文件树交互:
+  - 左键文件: 打开独立 3D 预览窗口 (不直接加入组装)
+  - 右键文件: 弹出菜单并执行“添加”
+  - 文件行右侧绿色按钮: 一键“添加”到组装
 - 项目文件格式: `.usp` (ZIP 压缩包，含 project.json + robot/ + meshes/)
+
+## 左侧栏专业模式 (Workspace) 交互要点
+
+### 当前交互流程
+
+1. 切换到 `workspace` 标签（专业模式）后，左侧上半部分显示素材库文件树，下半部分显示组装树。
+2. 单击文件节点会打开“独立可拖拽预览窗口”，使用真实 3D 画布渲染预览（非静态图）。
+3. 将文件加入组装有两种入口:
+   - 右键文件节点 → 菜单“添加”
+   - 文件行最右侧绿色“添加”按钮
+4. 简单模式 (`structure`) 保持原有文件树行为，不展示专业模式添加入口。
+
+### 关键文件与职责
+
+- `src/features/robot-tree/components/TreeEditor.tsx`
+  - 专业/简单模式切换
+  - 文件树、组装树、右键菜单、预览窗口状态编排
+- `src/features/robot-tree/components/FileTreeNode.tsx`
+  - 文件节点渲染
+  - 左键预览、右键菜单触发、专业模式绿色添加按钮
+- `src/features/robot-tree/components/FileTreeContextMenu.tsx`
+  - 文件节点右键菜单 UI
+- `src/features/robot-tree/components/FilePreviewWindow.tsx`
+  - 独立预览窗口
+  - 预览格式转换: URDF 直出，Xacro 展开，MJCF/USD 转 URDF，mesh 构造单 link 预览
+- `src/app/AppLayout.tsx`
+  - `handleAddComponent` 对接 `assemblyStore.addComponent`
+- `src/store/assemblyStore.ts`
+  - 组件添加、命名空间前缀、组装合并
+- `src/store/uiStore.ts`
+  - `sidebarTab: 'structure' | 'workspace'` 为模式切换状态源
+
+### i18n 相关
+
+- 专业模式文案位于:
+  - `src/shared/i18n/locales/zh.ts`
+  - `src/shared/i18n/locales/en.ts`
+- 文案类型定义位于:
+  - `src/shared/i18n/types.ts`
 
 ## 文件格式支持
 

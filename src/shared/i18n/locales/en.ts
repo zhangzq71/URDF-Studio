@@ -247,8 +247,10 @@ export const en: TranslationKeys = {
   assemblyTree: "Assembly View",
   projectName: "Project Name",
   enterProjectName: "Enter project name",
-  emptyAssemblyHint: "Click files in the asset library above to add components",
-  clickToAddComponent: "Click file to add as component",
+  filePreview: "File Preview",
+  noPreviewImage: "No preview image available",
+  emptyAssemblyHint: "Right-click files in the asset library above and choose Add to include components",
+  clickToAddComponent: "Click file to preview, right-click to add as component",
 
   // Ground Plane
   groundPlane: "Ground Plane",
