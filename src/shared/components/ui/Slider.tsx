@@ -52,15 +52,15 @@ export const Slider: React.FC<SliderProps> = ({
       {(label || showValue) && (
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            {icon && <span className="text-slate-500 dark:text-slate-400">{icon}</span>}
+            {icon && <span className="text-text-tertiary">{icon}</span>}
             {label && (
-              <span className="text-xs font-medium text-[#1C1C1E] dark:text-[#EBEBF5]">
+              <span className="text-xs font-medium text-text-primary">
                 {label}
               </span>
             )}
           </div>
           {showValue && (
-            <span className="text-xs font-mono text-[#86868B] tabular-nums bg-[#F2F2F7] dark:bg-[#2C2C2E] px-1.5 py-0.5 rounded">
+            <span className="text-xs font-mono text-text-tertiary tabular-nums bg-element-bg px-1.5 py-0.5 rounded-md">
               {displayValue}
             </span>
           )}
@@ -69,10 +69,10 @@ export const Slider: React.FC<SliderProps> = ({
       
       <div className="relative flex items-center h-5 select-none group">
         {/* Track Background */}
-        <div className="absolute w-full h-[4px] bg-[rgba(120,120,128,0.2)] dark:bg-[rgba(120,120,128,0.3)] rounded-full overflow-hidden">
+        <div className="absolute w-full h-[4px] bg-border-black rounded-full overflow-hidden">
           {/* Filled Track */}
           <div 
-            className="h-full bg-[#007AFF] transition-colors duration-200"
+            className="h-full bg-slider-accent transition-colors duration-200"
             style={{ width: `${clampedPercentage}%` }}
           />
         </div>
@@ -92,13 +92,10 @@ export const Slider: React.FC<SliderProps> = ({
         />
         {/* Thumb */}
         <div 
-          className={`pointer-events-none absolute h-5 w-5 rounded-full bg-white transition-transform duration-150 ease-out top-1/2 -translate-y-1/2 border-[0.5px] border-black/5 ${
+          className={`pointer-events-none absolute h-5 w-5 rounded-full bg-white transition-transform duration-150 ease-out top-1/2 -translate-y-1/2 border border-border-strong shadow-sm ${
             isDragging ? 'scale-110' : 'scale-100 group-hover:scale-105'
           }`}
-          style={{ 
-            left: `calc(${clampedPercentage}% - 10px)`,
-            boxShadow: '0 3px 6px rgba(0,0,0,0.15), 0 0 1px rgba(0,0,0,0.2), 0 4px 8px rgba(0,0,0,0.1)'
-          }}
+          style={{ left: `calc(${clampedPercentage}% - 10px)` }}
         />
       </div>
     </div>

@@ -358,29 +358,29 @@ export function AIModal({
         title={
           <>
             <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-[#0060FA] rounded-lg text-white shadow-lg shadow-black/20">
+              <div className="p-1.5 bg-panel-bg text-system-blue rounded-lg border border-border-black dark:bg-element-bg dark:text-system-blue">
                 <ScanSearch className="w-4 h-4" />
               </div>
-              <h1 className="text-sm font-bold tracking-tight">{t.aiTitle}</h1>
+              <h1 className="text-sm font-semibold text-text-primary">{t.aiTitle}</h1>
             </div>
 
             {inspectionReport && !isMinimized && (
-              <div className="hidden md:flex ml-4 items-center gap-2 px-2 py-1 bg-white dark:bg-element-bg/50 border border-slate-200 dark:border-element-hover rounded-lg">
+              <div className="hidden md:flex ml-4 items-center gap-2 px-2 py-1 bg-panel-bg dark:bg-panel-bg border border-border-black rounded-lg shadow-sm">
                 <div
                   className={`w-2 h-2 rounded-full ${getScoreBgColor(
                     inspectionReport.overallScore || 0,
                     inspectionReport.maxScore || 100
-                  )} animation-pulse`}
+                  )}`}
                 />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                <span className="text-[10px] font-medium tracking-wide text-text-secondary">
                   {t.overallScore}: {inspectionReport.overallScore?.toFixed(1)}
                 </span>
               </div>
             )}
           </>
         }
-        className="z-[100] bg-white dark:bg-[#1C1C1E] flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-white/10 select-none"
-        headerClassName="h-12 border-b border-slate-200 dark:border-white/10 flex items-center justify-between px-4 bg-slate-50 dark:bg-[#1C1C1E] shrink-0"
+        className="z-[100] bg-panel-bg dark:bg-panel-bg flex flex-col text-text-primary overflow-hidden rounded-2xl shadow-xl border border-border-black select-none"
+        headerClassName="h-12 border-b border-border-black flex items-center justify-between px-4 bg-element-bg shrink-0"
         interactionClassName="select-none"
         headerDraggableClassName="cursor-grab"
         headerDraggingClassName="!cursor-grabbing"
@@ -388,12 +388,12 @@ export function AIModal({
         maximizeTitle={t.maximize}
         restoreTitle={t.restore}
         closeTitle={t.close}
-        controlButtonClassName="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
-        closeButtonClassName="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
-        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 active:bg-[#0060FA]/30 transition-colors z-20"
-        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 active:bg-[#0060FA]/30 transition-colors z-20"
-        cornerResizeHandleClassName="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize hover:bg-[#0060FA]/30 active:bg-[#0060FA]/40 transition-colors z-30 flex items-center justify-center"
-        cornerResizeHandle={<div className="w-2 h-2 border-r-2 border-b-2 border-slate-400" />}
+        controlButtonClassName="p-1.5 hover:bg-element-hover rounded-md transition-colors"
+        closeButtonClassName="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
+        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-system-blue/15 active:bg-system-blue/25 transition-colors z-20"
+        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-system-blue/15 active:bg-system-blue/25 transition-colors z-20"
+        cornerResizeHandleClassName="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize hover:bg-system-blue/20 active:bg-system-blue/30 transition-colors z-30 flex items-center justify-center"
+        cornerResizeHandle={<div className="w-2 h-2 border-r-2 border-b-2 border-border-strong" />}
       >
         {!isMinimized && (
           <div className="flex-1 flex overflow-hidden relative">
@@ -408,7 +408,7 @@ export function AIModal({
               onRunInspection={handleRunInspection}
             />
 
-            <div className="flex-1 overflow-y-auto bg-white dark:bg-app-bg flex flex-col min-w-0">
+            <div className="flex-1 overflow-y-auto bg-white dark:bg-panel-bg flex flex-col min-w-0">
               <div className="flex-1 p-6">
                 {inspectionProgress ? (
                   <InspectionProgress
@@ -420,43 +420,43 @@ export function AIModal({
                 ) : !aiResponse && !inspectionReport ? (
                   <div className="h-full flex flex-col">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                      <div className="p-4 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-white/10">
-                        <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 mb-2">
+                      <div className="p-4 bg-system-blue/10 dark:bg-element-bg rounded-xl border border-system-blue/20 dark:border-border-black shadow-sm">
+                        <div className="flex items-center gap-2 text-text-secondary dark:text-system-blue mb-2">
                           <Sparkles className="w-4 h-4" />
-                          <h3 className="text-sm font-bold uppercase tracking-tight">
+                          <h3 className="text-sm font-semibold">
                             {lang === 'zh' ? '智能分析' : 'AI Analysis'}
                           </h3>
                         </div>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed italic">
+                        <p className="text-xs text-text-secondary leading-relaxed">
                           "{t.aiIntro}"
                         </p>
                       </div>
-                      <div className="p-4 bg-slate-50 dark:bg-element-active/50 rounded-xl border border-slate-100 dark:border-white/10">
-                        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400 mb-2">
+                      <div className="p-4 bg-panel-bg dark:bg-element-bg rounded-xl border border-border-black shadow-sm">
+                        <div className="flex items-center gap-2 text-text-secondary mb-2">
                           <Info className="w-4 h-4" />
-                          <h3 className="text-sm font-bold uppercase tracking-tight">
+                          <h3 className="text-sm font-semibold">
                             {lang === 'zh' ? '常用示例' : 'Examples'}
                           </h3>
                         </div>
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">{t.aiExamples}</p>
+                        <p className="text-[11px] text-text-tertiary leading-relaxed">{t.aiExamples}</p>
                       </div>
                     </div>
 
-                    <div className="flex-1 flex flex-col bg-white dark:bg-black rounded-xl border border-slate-200 dark:border-white/10 shadow-sm p-4">
+                    <div className="flex-1 flex flex-col bg-panel-bg dark:bg-panel-bg rounded-xl border border-border-black shadow-sm p-4">
                       <textarea
                         value={aiPrompt}
                         onChange={e => setAiPrompt(e.target.value)}
-                        className="flex-1 bg-transparent border-none p-0 text-slate-900 dark:text-slate-200 text-sm focus:ring-0 focus:outline-none resize-none custom-scrollbar placeholder:text-slate-400"
+                        className="flex-1 bg-transparent border-none p-0 text-text-primary text-sm focus:ring-0 focus:outline-none resize-none custom-scrollbar placeholder:text-text-tertiary"
                         placeholder={t.aiPlaceholder}
                       />
                       <div className="mt-4 flex justify-between items-center">
-                        <span className="text-[10px] text-slate-400 font-medium">
+                        <span className="text-[10px] text-text-tertiary font-medium">
                           {lang === 'zh' ? '按 Enter 发送，Shift+Enter 换行' : 'Press Enter to send, Shift+Enter for newline'}
                         </span>
                         <button
                           onClick={handleGenerateAI}
                           disabled={isGeneratingAI || !aiPrompt.trim()}
-                          className="px-4 py-1.5 bg-black dark:bg-white dark:text-slate-900 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:opacity-90 transition-all shadow-lg dark:shadow-black active:scale-95 disabled:opacity-30 disabled:active:scale-100"
+                          className="h-8 px-4 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors disabled:opacity-30"
                         >
                           {isGeneratingAI ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -489,7 +489,7 @@ export function AIModal({
                         <div className="flex justify-center">
                           <button
                             onClick={() => setIsReportChatOpen(true)}
-                            className="flex items-center gap-2 px-6 py-2 bg-[#0060FA] hover:bg-blue-600 text-white rounded-full text-xs font-bold transition-all shadow-lg shadow-black/20 hover:scale-105 active:scale-95"
+                            className="h-8 flex items-center gap-2 px-4 bg-panel-bg dark:bg-element-bg border border-border-black text-system-blue rounded-lg text-xs font-medium hover:bg-element-bg transition-colors shadow-sm"
                           >
                             <MessageCircle className="w-4 h-4" />
                             {lang === 'zh' ? '针对报告进行对话' : 'Discuss Report with AI'}
@@ -500,45 +500,44 @@ export function AIModal({
 
                     {aiResponse && (
                       <div className="space-y-6">
-                        <div className="p-4 bg-slate-50 dark:bg-[#1C1C1E] rounded-xl border border-slate-200 dark:border-white/10">
+                        <div className="p-4 bg-system-blue/10 dark:bg-element-bg rounded-xl border border-system-blue/20 dark:border-border-black shadow-sm">
                           <div className="flex items-center gap-2 mb-3">
-                            <div className="w-1 h-3 bg-[#0060FA] rounded-full" />
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t.yourRequest}</span>
+                            <div className="w-1 h-3 bg-system-blue rounded-full" />
+                            <span className="text-[10px] font-medium text-text-tertiary tracking-wide">{t.yourRequest}</span>
                           </div>
-                          <p className="text-sm text-slate-700 dark:text-slate-300 font-medium italic">{aiPrompt}</p>
+                          <p className="text-sm text-text-secondary">{aiPrompt}</p>
                         </div>
 
-                        <div className="p-5 bg-white dark:bg-[#1C1C1E] rounded-xl border border-slate-200 dark:border-white/10 shadow-xl shadow-slate-200/50 dark:shadow-black/50 relative overflow-hidden group">
-                          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#0060FA] to-blue-400" />
+                        <div className="p-5 bg-panel-bg dark:bg-panel-bg rounded-xl border border-border-black shadow-sm">
                           <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-2">
-                              <Sparkles className="w-4 h-4 text-[#0060FA]" />
-                              <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-tight">
-                                {t.aiResponse} <span className="text-blue-400 font-normal ml-1">[{aiResponse.type}]</span>
+                              <Sparkles className="w-4 h-4 text-text-secondary dark:text-system-blue" />
+                              <h3 className="text-sm font-semibold text-text-primary">
+                                {t.aiResponse} <span className="text-text-tertiary font-normal ml-1">[{aiResponse.type}]</span>
                               </h3>
                             </div>
                             {aiResponse.data && (
-                              <div className="flex items-center gap-1.5 px-2 py-1 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 rounded-md text-[10px] font-bold">
+                              <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded-lg text-[10px] font-medium border border-emerald-100 dark:border-emerald-800">
                                 <Check className="w-3 h-3" />
                                 {lang === 'zh' ? '建议可应用' : 'Actionable'}
                               </div>
                             )}
                           </div>
-                          <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
+                          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
                             {aiResponse.explanation}
                           </p>
                         </div>
 
                         {aiResponse.data && (
-                          <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl flex gap-3 items-start">
-                            <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg shrink-0">
+                        <div className="p-4 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-xl flex gap-3 items-start shadow-sm">
+                            <div className="p-2 bg-amber-100 dark:bg-amber-900 rounded-lg shrink-0">
                               <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                             </div>
                             <div className="space-y-1">
-                              <p className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                              <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
                                 {lang === 'zh' ? '应用更改提示' : 'Apply Changes'}
                               </p>
-                              <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80 leading-relaxed">
+                              <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">
                                 {t.actionWarning}
                               </p>
                             </div>
@@ -563,7 +562,7 @@ export function AIModal({
           </div>
         )}
 
-        <div className="h-14 px-4 border-t border-slate-200 dark:border-white/10 flex items-center justify-between shrink-0 bg-slate-50 dark:bg-[#1C1C1E]">
+        <div className="h-14 px-4 border-t border-border-black flex items-center justify-between shrink-0 bg-element-bg">
           <div className="flex items-center gap-2">
             {(aiResponse || inspectionReport) && !inspectionProgress && (
               <button
@@ -574,7 +573,7 @@ export function AIModal({
                   setInspectionProgress(null)
                   setReportGenerationTimer(null)
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-element-hover rounded-lg transition-colors"
+                className="h-8 flex items-center gap-1.5 px-3 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-element-hover rounded-lg transition-colors"
               >
                 <ArrowRight className="w-3.5 h-3.5 rotate-180" />
                 {t.back}
@@ -587,14 +586,14 @@ export function AIModal({
               <>
                 <button
                   onClick={handleClose}
-                  className="px-4 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-white rounded-lg transition-colors"
+                  className="h-8 px-4 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-element-hover rounded-lg transition-colors"
                 >
                   {t.cancel}
                 </button>
                 <button
                   onClick={handleGenerateAI}
                   disabled={isGeneratingAI || !aiPrompt.trim()}
-                  className="px-6 py-1.5 bg-black dark:bg-white dark:text-slate-900 text-white rounded-lg text-xs font-bold transition-all shadow-lg dark:shadow-black hover:opacity-90 active:scale-95 disabled:opacity-30"
+                  className="h-8 px-5 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-lg text-xs font-semibold transition-colors disabled:opacity-30"
                 >
                   {isGeneratingAI ? t.thinking : t.send}
                 </button>
@@ -602,7 +601,7 @@ export function AIModal({
             ) : aiResponse?.data ? (
               <button
                 onClick={applyAIChanges}
-                className="px-6 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold transition-all shadow-lg shadow-green-500/20 active:scale-95 flex items-center gap-2"
+                className="h-8 px-5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-2"
               >
                 <Check className="w-4 h-4" />
                 {t.applyChanges}
@@ -612,7 +611,7 @@ export function AIModal({
         </div>
 
         {isResizing && (
-          <div className="absolute bottom-2 right-12 z-50 px-2 py-1 bg-[#0060FA] text-white text-[10px] rounded font-mono shadow-lg">
+          <div className="absolute bottom-2 right-12 z-50 px-2 py-1 bg-system-blue-solid text-white text-[10px] rounded-lg font-medium shadow-sm">
             {size.width} × {size.height}
           </div>
         )}

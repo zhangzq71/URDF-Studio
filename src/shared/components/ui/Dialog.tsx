@@ -1,6 +1,5 @@
 import React from 'react';
 import { X } from 'lucide-react';
-import { Button } from './Button';
 
 interface DialogProps {
   isOpen: boolean;
@@ -31,38 +30,35 @@ export const Dialog: React.FC<DialogProps> = ({
         onClick={onClose}
       />
       
-      {/* Modal - Solid colors, Strong shadow, larger radius */}
       <div 
         className={`
-          relative bg-white dark:bg-[#2C2C2E] 
-          rounded-[16px]
-          shadow-[0_12px_32px_rgba(0,0,0,0.25)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.5)]
+          relative bg-panel-bg
+          rounded-2xl
+          shadow-xl
+          border border-border-black
           overflow-hidden flex flex-col
           transform transition-all duration-200 scale-100 opacity-100
           ${width} ${className}
         `}
       >
-        {/* Header */}
-        <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E] px-4 py-3 border-b border-[#E5E5E5] dark:border-black/50 flex items-center justify-between shrink-0">
-          <h2 className="text-[13px] font-semibold text-black dark:text-white truncate">
+        <div className="bg-element-bg px-4 py-3 border-b border-border-black flex items-center justify-between shrink-0">
+          <h2 className="text-[13px] font-semibold text-text-primary truncate">
             {title}
           </h2>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+            className="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-4 overflow-y-auto max-h-[70vh] bg-white dark:bg-[#2C2C2E]">
+        <div className="p-4 overflow-y-auto max-h-[70vh] bg-panel-bg">
           {children}
         </div>
 
-        {/* Footer */}
         {footer && (
-          <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E] px-4 py-3 border-t border-[#E5E5E5] dark:border-black/50 shrink-0">
+          <div className="bg-element-bg px-4 py-3 border-t border-border-black shrink-0">
             {footer}
           </div>
         )}

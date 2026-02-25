@@ -61,20 +61,20 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-4xl h-[80vh] bg-white dark:bg-[#2C2C2E] rounded-lg shadow-2xl dark:shadow-black/50 flex flex-col overflow-hidden border border-slate-200 dark:border-[#000000] animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-4xl h-[80vh] bg-panel-bg rounded-xl shadow-2xl flex flex-col overflow-hidden border border-border-black animate-in zoom-in-95 duration-200">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#000000] bg-slate-50 dark:bg-[#2C2C2E]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border-black bg-element-bg">
           <div className="flex items-center gap-2">
-            <FileCode className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <span className="font-mono text-sm font-bold text-slate-700 dark:text-slate-200">{fileName}</span>
-            <span className="text-xs text-slate-400 dark:text-slate-500 ml-2">({(code.length / 1024).toFixed(1)} KB)</span>
+            <FileCode className="w-5 h-5 text-system-blue" />
+            <span className="font-mono text-sm font-bold text-text-primary">{fileName}</span>
+            <span className="text-xs text-text-tertiary ml-2">({(code.length / 1024).toFixed(1)} KB)</span>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#333333] rounded transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-element-hover rounded transition-colors"
               title="Download File"
             >
               <Download className="w-4 h-4" />
@@ -85,8 +85,8 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
               onClick={handleCopy}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                 copied
-                  ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#333333]'
+                  ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue'
+                  : 'text-text-secondary hover:bg-element-hover'
               }`}
               title={t.copyToClipboard}
             >
@@ -94,11 +94,11 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
               <span className="hidden sm:inline">{copied ? t.copied : t.copy}</span>
             </button>
 
-            <div className="w-px h-4 bg-slate-300 dark:bg-google-dark-border mx-1" />
+            <div className="w-px h-4 bg-border-black mx-1" />
 
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
+              className="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -118,7 +118,7 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
               height: '100%',
               fontSize: '13px',
               lineHeight: '1.5',
-              backgroundColor: theme === 'dark' ? '#000000' : '#ffffff',
+              backgroundColor: theme === 'dark' ? 'var(--ui-bg)' : 'var(--ui-panel-bg)',
             }}
             codeTagProps={{
                 style: { fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace" }
@@ -129,11 +129,11 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 py-2 bg-slate-50 dark:bg-blue-600 border-t border-slate-200 dark:border-blue-700 flex justify-between items-center">
-             <div className="text-[10px] text-slate-500 dark:text-blue-100">
+        <div className="px-4 py-2 bg-element-bg border-t border-border-black flex justify-between items-center">
+             <div className="text-[10px] text-text-tertiary">
                  Read-only View
              </div>
-             <div className="text-[10px] text-slate-500 dark:text-blue-100 font-mono">
+             <div className="text-[10px] text-text-tertiary font-mono">
                  XML / URDF
              </div>
         </div>

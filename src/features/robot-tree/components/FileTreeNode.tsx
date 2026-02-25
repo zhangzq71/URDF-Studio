@@ -49,16 +49,16 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
   return (
     <div>
       <div
-        className="flex items-center gap-1.5 py-1 pr-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors group rounded-sm"
+        className="flex items-center gap-1.5 py-1 pr-2 cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover transition-colors group rounded-sm"
         style={{ paddingLeft: `${paddingLeft}px` }}
         onClick={handleClick}
       >
         {node.isFolder ? (
           <span className="w-3 h-3 flex items-center justify-center">
             {isExpanded ? (
-              <ChevronDown className="w-3 h-3 text-slate-400" />
+              <ChevronDown className="w-3 h-3 text-text-tertiary" />
             ) : (
-              <ChevronRight className="w-3 h-3 text-slate-400" />
+              <ChevronRight className="w-3 h-3 text-text-tertiary" />
             )}
           </span>
         ) : (
@@ -70,8 +70,8 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
         <span
           className={`text-xs truncate flex-1 ${
             node.isFolder
-              ? 'text-slate-700 dark:text-slate-300 font-medium'
-              : 'text-slate-600 dark:text-slate-400'
+              ? 'text-text-primary font-medium'
+              : 'text-text-secondary dark:text-text-secondary'
           }`}
         >
           {node.name}
@@ -81,14 +81,14 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
           <span
             className={`text-[9px] px-1 rounded font-medium ${
               node.file.format === 'urdf'
-                ? 'bg-blue-100 dark:bg-slate-700 text-blue-600 dark:text-slate-300'
+                ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue'
                 : node.file.format === 'xacro'
-                  ? 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                  ? 'bg-element-bg dark:bg-element-hover text-text-secondary'
                   : node.file.format === 'mjcf'
-                    ? 'bg-orange-100 dark:bg-slate-700 text-orange-600 dark:text-slate-300'
+                    ? 'bg-orange-100 dark:bg-orange-900/25 text-orange-600 dark:text-orange-300'
                     : node.file.format === 'mesh'
                       ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-500'
+                      : 'bg-element-bg dark:bg-element-hover text-text-tertiary'
             }`}
           >
             {node.file.format === 'mesh'

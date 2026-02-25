@@ -63,7 +63,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
             type="text"
             value={data.name}
             onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
-            className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:border-google-blue focus:outline-none"
+            className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:border-system-blue focus:outline-none"
           />
         </InputGroup>
       )}
@@ -75,7 +75,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
             <select
               value={data.type || JOINT_TYPE_REVOLUTE}
               onChange={(e) => onUpdate('joint', selection.id!, { ...data, type: e.target.value })}
-              className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
+              className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
             >
               <option value={JOINT_TYPE_REVOLUTE}>Revolute</option>
               <option value={JOINT_TYPE_CONTINUOUS}>Continuous</option>
@@ -129,7 +129,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
               <select
                 value={motorSource}
                 onChange={(e) => handleSourceChange(e.target.value)}
-                className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
+                className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
               >
                 <option value="None">{t.none}</option>
                 <option value="Library">{t.library}</option>
@@ -138,12 +138,12 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
             </InputGroup>
 
             {motorSource === 'Library' && (
-              <div className="space-y-3 pl-2 border-l-2 border-slate-200 dark:border-google-dark-border mb-3">
+              <div className="space-y-3 pl-2 border-l-2 border-border-black mb-3">
                 <InputGroup label={t.brand}>
                   <select
                     value={motorBrand}
                     onChange={(e) => handleBrandChange(e.target.value)}
-                    className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
+                    className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
                   >
                     {Object.keys(motorLibrary).map(brand => (
                       <option key={brand} value={brand}>{brand}</option>
@@ -154,7 +154,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   <select
                     value={currentMotorType}
                     onChange={(e) => handleLibraryMotorChange(e.target.value)}
-                    className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
+                    className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
                   >
                     {motorLibrary[motorBrand]?.map(m => (
                       <option key={m.name} value={m.name}>{m.name}</option>
@@ -168,7 +168,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                       href={currentLibMotor.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300 transition-colors"
+                      className="flex items-center gap-1.5 text-xs text-system-blue hover:text-system-blue-hover transition-colors"
                     >
                       {t.viewMotor}
                       <ExternalLink className="w-3 h-3" />
@@ -187,7 +187,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   onChange={(e) => onUpdate('joint', selection.id!, {
                     ...data, hardware: { ...data.hardware, motorType: e.target.value }
                   })}
-                  className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:outline-none focus:border-google-blue"
+                  className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:outline-none focus:border-system-blue"
                 />
               </InputGroup>
             )}
@@ -202,7 +202,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                       onChange={(e) => onUpdate('joint', selection.id!, {
                         ...data, hardware: { ...data.hardware, motorId: e.target.value }
                       })}
-                      className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full focus:outline-none focus:border-google-blue"
+                      className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:outline-none focus:border-system-blue"
                     />
                   </InputGroup>
                   <InputGroup label={t.direction}>
@@ -211,7 +211,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                       onChange={(e) => onUpdate('joint', selection.id!, {
                         ...data, hardware: { ...data.hardware, motorDirection: parseInt(e.target.value) }
                       })}
-                      className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white w-full"
+                      className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
                     >
                       <option value={1}>1 ({t.normal})</option>
                       <option value={-1}>-1 ({t.inverted})</option>

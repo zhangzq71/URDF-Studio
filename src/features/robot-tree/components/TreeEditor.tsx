@@ -191,7 +191,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
   return (
     <div
-      className={`bg-slate-50 dark:bg-google-dark-bg border-r border-slate-200 dark:border-google-dark-border flex flex-col h-full shrink-0 relative ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
+      className={`bg-element-bg dark:bg-panel-bg border-r border-border-black flex flex-col h-full shrink-0 relative ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
       style={{
         width: `${actualWidth}px`,
         minWidth: `${actualWidth}px`,
@@ -201,27 +201,27 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     >
       <button
         onClick={onToggle}
-        className="absolute -right-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-white dark:bg-[#2C2C2E] hover:bg-blue-500 dark:hover:bg-blue-600 hover:text-white border border-slate-300 dark:border-[#000000] rounded-r-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-slate-400 hover:text-white transition-all group"
+        className="absolute -right-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-panel-bg hover:bg-system-blue-solid hover:text-white border border-border-strong rounded-r-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-text-tertiary transition-all group"
         title={collapsed ? t.structure : t.collapseSidebar}
       >
         <div className="flex flex-col gap-0.5 items-center">
-          <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 group-hover:bg-blue-200" />
+          <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
           {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
-          <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 group-hover:bg-blue-200" />
+          <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
         </div>
       </button>
 
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
-          <div className="px-3 py-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
-            <div className="flex bg-slate-100 dark:bg-[#1C1C1E] p-1 rounded-lg">
+          <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
+            <div className="flex bg-element-bg p-1 rounded-lg">
               <button
                 onClick={() => setSidebarTab('structure')}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
                 ${
                   sidebarTab === 'structure'
-                    ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                    ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
+                    : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
                 }`}
               >
                 <Trees size={14} />
@@ -232,8 +232,8 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
                 ${
                   sidebarTab === 'workspace'
-                    ? 'bg-white dark:bg-[#3A3A3C] text-blue-600 dark:text-blue-400 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                    ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
+                    : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
                 }`}
               >
                 <LayoutGrid size={14} />
@@ -242,15 +242,15 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             </div>
           </div>
 
-          <div className="px-4 pt-3 pb-2 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border shrink-0">
-            <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1 block">
+          <div className="px-4 pt-3 pb-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
+            <label className="text-[10px] text-text-tertiary uppercase font-bold tracking-wider mb-1 block">
               {sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName}
             </label>
             <input
               type="text"
               value={sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name}
               onChange={(e) => onNameChange(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-[#000000] focus:bg-white dark:focus:bg-[#000000] text-sm text-slate-900 dark:text-white px-3 py-2 rounded-lg border border-slate-300 dark:border-[#48484A] focus:border-google-blue outline-none transition-colors"
+              className="w-full bg-input-bg focus:bg-panel-bg text-sm text-text-primary px-3 py-2 rounded-lg border border-border-strong focus:border-system-blue outline-none transition-colors"
               placeholder={
                 sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName
               }
@@ -258,9 +258,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
             {currentFileName && sidebarTab === 'structure' && !assemblyState && (
               <div className="mt-2 flex items-center gap-1.5">
-                <FileCode className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <FileCode className="w-3.5 h-3.5 text-system-blue shrink-0" />
                 <span
-                  className="text-[11px] text-slate-600 dark:text-slate-400 truncate"
+                  className="text-[11px] text-text-secondary dark:text-text-tertiary truncate"
                   title={currentFileName}
                 >
                   {currentFileName}
@@ -270,36 +270,36 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           </div>
 
           <div
-            className={`flex flex-col shrink-0 bg-white dark:bg-google-dark-bg border-b border-slate-200 dark:border-google-dark-border ${isDragging ? '' : 'transition-all duration-200'}`}
+            className={`flex flex-col shrink-0 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black ${isDragging ? '' : 'transition-all duration-200'}`}
             style={{ height: isFileBrowserOpen ? `${fileBrowserHeight}px` : 'auto' }}
           >
             <div
-              className="flex items-center justify-between px-3 py-2 bg-slate-100 dark:bg-[#2C2C2E] cursor-pointer select-none"
+              className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
               onClick={() => setIsFileBrowserOpen(!isFileBrowserOpen)}
             >
               <div className="flex items-center gap-2">
                 {isFileBrowserOpen ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                  <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
                 ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                  <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
                 )}
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">
                   {t.fileBrowser}
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400">{availableFiles.length}</span>
+              <span className="text-[10px] text-text-tertiary">{availableFiles.length}</span>
             </div>
 
             {isFileBrowserOpen && isProMode && availableFiles.length > 0 && (
-              <div className="px-3 py-1 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-100 dark:border-blue-900/30">
-                <span className="text-[10px] text-blue-600 dark:text-blue-400">{t.clickToAddComponent}</span>
+              <div className="px-3 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
+                <span className="text-[10px] text-system-blue">{t.clickToAddComponent}</span>
               </div>
             )}
 
             {isFileBrowserOpen && (
               <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1">
                 {availableFiles.length === 0 ? (
-                  <div className="text-xs text-slate-400 text-center py-4 italic">{t.dropOrImport}</div>
+                  <div className="text-xs text-text-tertiary text-center py-4 italic">{t.dropOrImport}</div>
                 ) : (
                   fileTree.map((node) => (
                     <FileTreeNodeComponent
@@ -321,23 +321,23 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
           {isFileBrowserOpen && isStructureOpen && (
             <div
-              className="h-1 bg-slate-200 dark:bg-google-dark-border cursor-row-resize hover:bg-blue-400 transition-colors shrink-0 z-10"
+              className="h-1 bg-border-black cursor-row-resize hover:bg-system-blue transition-colors shrink-0 z-10"
               onMouseDown={handleVerticalMouseDown}
             />
           )}
 
           <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isStructureOpen ? '1 1 0%' : '0 0 auto' }}>
             <div
-              className="flex items-center justify-between px-3 py-2 bg-slate-100 dark:bg-[#2C2C2E] cursor-pointer select-none border-b border-slate-200 dark:border-google-dark-border"
+              className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none border-b border-border-black dark:border-border-black"
               onClick={() => setIsStructureOpen(!isStructureOpen)}
             >
               <div className="flex items-center gap-2">
                 {isStructureOpen ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                  <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
                 ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-500" />
+                  <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
                 )}
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">
                   {sidebarTab === 'workspace' && assemblyState ? t.assemblyTree : t.structureTree}
                 </span>
               </div>
@@ -345,7 +345,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
               <div className="flex items-center gap-1">
                 {mode === 'skeleton' && sidebarTab === 'structure' && !assemblyState && (
                   <button
-                    className="p-1 hover:bg-blue-600 bg-blue-700 text-white rounded-md transition-colors shadow-sm"
+                    className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
                     onClick={(e) => {
                       e.stopPropagation();
                       let targetId = robot.rootLinkId;
@@ -366,7 +366,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 )}
 
                 <div
-                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer text-slate-500 dark:text-slate-400"
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-element-hover cursor-pointer text-text-tertiary transition-colors"
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowVisual(!showVisual);
@@ -380,7 +380,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
             {isStructureOpen && (
               <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-                <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-google-dark-bg">
+                <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-panel-bg">
                   {sidebarTab === 'workspace' && assemblyState ? (
                     <AssemblyTreeView
                       assemblyState={assemblyState}
@@ -416,7 +416,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           </div>
 
           <div
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-20"
+            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue-solid/50 transition-colors z-20"
             onMouseDown={handleMouseDown}
           />
         </div>

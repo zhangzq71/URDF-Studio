@@ -136,14 +136,14 @@ export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({ meshPath, a
 
   if (!assetUrl) {
     return (
-      <div className="h-[140px] flex items-center justify-center bg-slate-50 dark:bg-google-dark-bg rounded border border-slate-200 dark:border-google-dark-border">
-        <span className="text-[10px] text-slate-400">Mesh not found</span>
+      <div className="h-[140px] flex items-center justify-center bg-element-bg rounded border border-border-black">
+        <span className="text-[10px] text-text-tertiary">Mesh not found</span>
       </div>
     );
   }
 
   return (
-    <div className="h-[140px] rounded border border-slate-200 dark:border-google-dark-border overflow-hidden bg-gradient-to-b from-slate-50 to-slate-100 dark:from-[#1a1a1c] dark:to-[#222224]">
+    <div className="h-[140px] rounded border border-border-black overflow-hidden bg-gradient-to-b from-element-bg to-panel-bg">
       <Canvas
         camera={{ fov: 45, near: 0.001, far: 100, position: [0.5, 0.3, 0.5] }}
         gl={{ antialias: true, alpha: true }}

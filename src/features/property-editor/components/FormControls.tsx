@@ -7,7 +7,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 
 export const InputGroup = ({ label, children, className = "" }: { label: string, children?: React.ReactNode, className?: string }) => (
   <div className={`mb-3 ${className}`}>
-    <label className="block text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 font-semibold">{label}</label>
+    <label className="block text-[10px] uppercase tracking-wider text-text-tertiary mb-1 font-semibold">{label}</label>
     {children}
   </div>
 );
@@ -30,15 +30,15 @@ export const CollapsibleSection = ({ title, children, defaultOpen = true, classN
   };
 
   return (
-    <div className={`border border-slate-200 dark:border-[#000000] rounded-lg overflow-hidden ${className}`}>
+    <div className={`border border-border-black rounded-lg overflow-hidden ${className}`}>
       <button
-        className="w-full flex items-center justify-between p-2 bg-slate-50 dark:bg-[#2C2C2E] hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors text-xs font-bold text-slate-700 dark:text-slate-300"
+        className="w-full flex items-center justify-between p-2 bg-element-bg hover:bg-element-hover transition-colors text-xs font-bold text-text-secondary"
         onClick={toggle}
       >
         <span>{title}</span>
         {isOpen ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
       </button>
-      {isOpen && <div className="p-3 bg-white dark:bg-[#000000] border-t border-slate-200 dark:border-[#000000]">{children}</div>}
+      {isOpen && <div className="p-3 bg-panel-bg border-t border-border-black">{children}</div>}
     </div>
   );
 };
@@ -74,7 +74,7 @@ export const NumberInput = ({ value, onChange, label, step = 0.1 }: { value: num
 
   return (
     <div className="flex flex-col">
-      {label && <span className="text-[10px] text-slate-500 mb-0.5">{label}</span>}
+      {label && <span className="text-[10px] text-text-tertiary mb-0.5">{label}</span>}
       <input
         type="number"
         step={step}
@@ -83,7 +83,7 @@ export const NumberInput = ({ value, onChange, label, step = 0.1 }: { value: num
         onBlur={handleBlur}
         onFocus={(e) => e.target.select()}
         onKeyDown={handleKeyDown}
-        className="bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded-lg px-2 py-1 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-google-blue w-full"
+        className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-system-blue w-full"
       />
     </div>
   );

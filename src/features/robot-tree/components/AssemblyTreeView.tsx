@@ -60,32 +60,32 @@ export const AssemblyTreeView = memo(({
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center py-1 px-2 mx-1 my-0.5 rounded-md bg-slate-100 dark:bg-[#2C2C2E] text-slate-700 dark:text-slate-200">
-        <Cuboid size={14} className="mr-1.5 text-blue-500" />
+      <div className="flex items-center py-1 px-2 mx-1 my-0.5 rounded-md bg-element-bg text-text-primary">
+        <Cuboid size={14} className="mr-1.5 text-system-blue" />
         <span className="text-xs font-bold uppercase tracking-wider truncate">{assemblyState.name}</span>
       </div>
 
       <div className="mt-2">
         <div
-          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors group"
+          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover transition-colors group"
           onClick={() => setIsComponentsExpanded(!isComponentsExpanded)}
         >
           {isComponentsExpanded ? (
-            <ChevronDown size={12} className="text-slate-400" />
+            <ChevronDown size={12} className="text-text-tertiary" />
           ) : (
-            <ChevronRight size={12} className="text-slate-400" />
+            <ChevronRight size={12} className="text-text-tertiary" />
           )}
           <Folder size={12} className="text-amber-500" />
-          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+          <span className="text-[11px] font-bold text-text-tertiary dark:text-text-tertiary uppercase tracking-wider">
             {t.components}
           </span>
-          <span className="text-[10px] text-slate-400 ml-auto">{components.length}</span>
+          <span className="text-[10px] text-text-tertiary ml-auto">{components.length}</span>
         </div>
 
         {isComponentsExpanded && (
-          <div className="ml-2 border-l border-slate-200 dark:border-slate-700 space-y-0.5 mt-0.5">
+          <div className="ml-2 border-l border-border-black space-y-0.5 mt-0.5">
             {components.length === 0 && (
-              <div className="px-4 py-3 text-[11px] text-slate-400 italic text-center">{t.emptyAssemblyHint}</div>
+              <div className="px-4 py-3 text-[11px] text-text-tertiary italic text-center">{t.emptyAssemblyHint}</div>
             )}
 
             {components.map((component) => {
@@ -95,7 +95,7 @@ export const AssemblyTreeView = memo(({
               return (
                 <div key={component.id}>
                   <div
-                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group hover:bg-slate-100 dark:hover:bg-[#3A3A3C]
+                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group hover:bg-element-bg dark:hover:bg-element-hover transition-colors
                       ${!isVisible ? 'opacity-60' : ''}`}
                     onClick={() => {
                       toggleComponent(component.id);
@@ -105,12 +105,12 @@ export const AssemblyTreeView = memo(({
                     }}
                   >
                     {isExpanded ? (
-                      <ChevronDown size={12} className="text-slate-400" />
+                      <ChevronDown size={12} className="text-text-tertiary" />
                     ) : (
-                      <ChevronRight size={12} className="text-slate-400" />
+                      <ChevronRight size={12} className="text-text-tertiary" />
                     )}
-                    <Box size={12} className="text-blue-500" />
-                    <span className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate flex-1">
+                    <Box size={12} className="text-system-blue" />
+                    <span className="text-xs font-medium text-text-primary truncate flex-1">
                       {component.name}
                     </span>
 
@@ -120,7 +120,7 @@ export const AssemblyTreeView = memo(({
                           e.stopPropagation();
                           onToggleComponentVisibility?.(component.id);
                         }}
-                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500"
+                        className="p-1 rounded hover:bg-element-hover text-text-tertiary transition-colors"
                         title={isVisible ? t.hide : t.show}
                       >
                         {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
@@ -130,7 +130,7 @@ export const AssemblyTreeView = memo(({
                           e.stopPropagation();
                           onRemoveComponent?.(component.id);
                         }}
-                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500"
+                        className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-colors"
                         title={t.deleteBranch}
                       >
                         <Trash2 size={12} />
@@ -163,25 +163,25 @@ export const AssemblyTreeView = memo(({
 
       <div className="mt-2">
         <div
-          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] transition-colors group"
+          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover transition-colors group"
           onClick={() => setIsBridgesExpanded(!isBridgesExpanded)}
         >
           {isBridgesExpanded ? (
-            <ChevronDown size={12} className="text-slate-400" />
+            <ChevronDown size={12} className="text-text-tertiary" />
           ) : (
-            <ChevronRight size={12} className="text-slate-400" />
+            <ChevronRight size={12} className="text-text-tertiary" />
           )}
           <Link2 size={12} className="text-green-500" />
-          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+          <span className="text-[11px] font-bold text-text-tertiary dark:text-text-tertiary uppercase tracking-wider">
             {t.bridges}
           </span>
-          <span className="text-[10px] text-slate-400 ml-auto mr-1">{bridges.length}</span>
+          <span className="text-[10px] text-text-tertiary ml-auto mr-1">{bridges.length}</span>
           <button
             onClick={(e) => {
               e.stopPropagation();
               onCreateBridge?.();
             }}
-            className="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/50 flex items-center gap-1 transition-colors group/btn"
+            className="px-1.5 py-0.5 rounded bg-system-blue/10 dark:bg-system-blue/20 hover:bg-system-blue/15 dark:hover:bg-system-blue/25 text-system-blue border border-system-blue/25 dark:border-system-blue/35 flex items-center gap-1 transition-colors group/btn"
             title={t.createBridge}
           >
             <Plus size={10} strokeWidth={3} className="group-hover/btn:scale-110 transition-transform" />
@@ -190,14 +190,14 @@ export const AssemblyTreeView = memo(({
         </div>
 
         {isBridgesExpanded && (
-          <div className="ml-2 border-l border-slate-200 dark:border-slate-700 space-y-0.5 mt-0.5">
+          <div className="ml-2 border-l border-border-black space-y-0.5 mt-0.5">
             {bridges.length === 0 ? (
-              <div className="px-4 py-2 text-[10px] italic text-slate-400">{t.none}</div>
+              <div className="px-4 py-2 text-[10px] italic text-text-tertiary">{t.none}</div>
             ) : (
               bridges.map((bridge) => (
                 <div
                   key={bridge.id}
-                  className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer hover:bg-slate-100 dark:hover:bg-[#3A3A3C] group
+                  className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover group transition-colors
                     ${
                       robot.selection.type === 'joint' && robot.selection.id === bridge.id
                         ? 'bg-orange-100 dark:bg-orange-900/20 text-orange-600'

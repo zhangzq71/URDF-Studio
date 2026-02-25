@@ -61,23 +61,23 @@ export const TreeNode = memo(({
   return (
     <div className="relative">
       <div
-        className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group
+        className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-colors
           ${
             isLinkSelected
-              ? 'bg-blue-500 text-white shadow-sm dark:bg-[#3A3A3C]'
-              : 'hover:bg-slate-100 dark:hover:bg-[#3A3A3C] text-slate-700 dark:text-slate-300'
+              ? 'bg-system-blue-solid text-white shadow-sm dark:bg-system-blue-solid'
+              : 'hover:bg-element-hover text-text-primary dark:text-text-secondary dark:hover:bg-element-hover'
           }`}
         onClick={() => onSelect('link', linkId)}
         onDoubleClick={() => onFocus && onFocus(linkId)}
         style={{ marginLeft: depth > 0 ? '8px' : '0' }}
       >
         {depth > 0 && (
-          <div className="absolute -left-2 top-1/2 w-2 h-px bg-slate-300 dark:bg-slate-600" />
+          <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
         )}
 
         <div
           className={`w-4 h-4 flex items-center justify-center shrink-0 mr-1 rounded
-            ${hasChildren ? 'hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer' : ''}`}
+            ${hasChildren ? 'hover:bg-element-hover cursor-pointer transition-colors' : ''}`}
           onClick={(e) => {
             e.stopPropagation();
             if (hasChildren) {
@@ -87,17 +87,17 @@ export const TreeNode = memo(({
         >
           {hasChildren
             && (isExpanded ? (
-              <ChevronDown size={12} className={isLinkSelected ? 'text-blue-200' : 'text-slate-400'} />
+              <ChevronDown size={12} className={isLinkSelected ? 'text-white/90' : 'text-text-tertiary'} />
             ) : (
-              <ChevronRight size={12} className={isLinkSelected ? 'text-blue-200' : 'text-slate-400'} />
+              <ChevronRight size={12} className={isLinkSelected ? 'text-white/90' : 'text-text-tertiary'} />
             ))}
         </div>
 
         <div
           className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0
-            ${isLinkSelected ? 'bg-blue-400 dark:bg-slate-500' : 'bg-blue-100 dark:bg-slate-700'}`}
+            ${isLinkSelected ? 'bg-white/25' : 'bg-system-blue/10 dark:bg-element-bg'}`}
         >
-          <Box size={12} className={isLinkSelected ? 'text-white' : 'text-blue-500 dark:text-slate-300'} />
+          <Box size={12} className={isLinkSelected ? 'text-white' : 'text-system-blue'} />
         </div>
 
         <SelectableText className="text-xs font-medium truncate flex-1">{link.name}</SelectableText>
@@ -112,11 +112,11 @@ export const TreeNode = memo(({
               className={`p-1 rounded transition-colors ${
                 isGeomExpanded
                   ? isLinkSelected
-                    ? 'bg-blue-400 text-white'
-                    : 'bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20'
                   : isLinkSelected
-                    ? 'text-blue-200 hover:bg-blue-400'
-                    : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-blue-500'
+                    ? 'text-white/85 hover:bg-white/20'
+                    : 'text-text-tertiary hover:bg-element-hover hover:text-system-blue'
               }`}
               title={isGeomExpanded ? t.hideVisualCollision : t.showVisualCollision}
             >
@@ -125,11 +125,11 @@ export const TreeNode = memo(({
           )}
 
           <button
-            className={`p-1 rounded hover:bg-black/10 dark:hover:bg-[#48484A] cursor-pointer
+            className={`p-1 rounded hover:bg-element-hover cursor-pointer transition-colors
               ${
                 isLinkSelected
                   ? 'text-white'
-                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                  : 'text-text-tertiary hover:text-text-primary'
               }`}
             onClick={(e) => {
               e.stopPropagation();
@@ -147,10 +147,10 @@ export const TreeNode = memo(({
                 onAddChild(linkId);
                 setIsExpanded(true);
               }}
-              className={`p-1 rounded transition-opacity ${
+              className={`p-1 rounded transition-all ${
                 isLinkSelected
-                  ? 'opacity-100 hover:bg-blue-400'
-                  : 'opacity-0 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  ? 'opacity-100 hover:bg-white/20'
+                  : 'opacity-0 group-hover:opacity-100 hover:bg-element-hover'
               }`}
               title={t.addChildJoint}
             >
@@ -162,7 +162,7 @@ export const TreeNode = memo(({
 
       {(hasChildren || ((hasVisual || hasCollision) && isGeomExpanded)) && isExpanded && (
         <div className="relative ml-3">
-          <div className="absolute left-0 top-0 bottom-2 w-px bg-slate-200 dark:bg-slate-700" />
+          <div className="absolute left-0 top-0 bottom-2 w-px bg-border-black" />
 
           {(hasVisual || hasCollision) && isGeomExpanded && (
             <div className="space-y-0.5 pb-0.5">
@@ -173,8 +173,8 @@ export const TreeNode = memo(({
                       robot.selection.type === 'link'
                       && robot.selection.id === linkId
                       && robot.selection.subType === 'visual'
-                        ? 'bg-blue-500 text-white shadow-sm dark:bg-[#3A3A3C]'
-                        : 'text-blue-600 dark:text-slate-400 hover:bg-blue-50 dark:hover:bg-[#3A3A3C]'
+                        ? 'bg-system-blue-solid text-white shadow-sm dark:bg-system-blue-solid'
+                        : 'text-system-blue hover:bg-system-blue/10 dark:hover:bg-system-blue/15'
                     }
                   `}
                   title={`Visual: ${link.visual.type}`}
@@ -183,7 +183,7 @@ export const TreeNode = memo(({
                     onSelect('link', linkId, 'visual');
                   }}
                 >
-                  <div className="absolute -left-3 top-1/2 w-3 h-px bg-slate-200 dark:bg-slate-700" />
+                  <div className="absolute -left-3 top-1/2 w-3 h-px bg-border-black" />
                   <Shapes size={12} />
                   <SelectableText className="font-medium">{t.visual}</SelectableText>
                   <SelectableText className="text-[10px] opacity-70 ml-auto">
@@ -199,8 +199,8 @@ export const TreeNode = memo(({
                       robot.selection.type === 'link'
                       && robot.selection.id === linkId
                       && robot.selection.subType === 'collision'
-                        ? 'bg-[#0060FA] text-white shadow-sm dark:bg-[#3A3A3C]'
-                        : 'text-[#0060FA] dark:text-slate-400 hover:bg-[#0060FA]/10 dark:hover:bg-[#3A3A3C]'
+                        ? 'bg-system-blue-solid text-white shadow-sm dark:bg-system-blue-solid'
+                        : 'text-system-blue hover:bg-system-blue/10 dark:hover:bg-system-blue/15'
                     }
                   `}
                   title={`Collision: ${link.collision.type}`}
@@ -209,7 +209,7 @@ export const TreeNode = memo(({
                     onSelect('link', linkId, 'collision');
                   }}
                 >
-                  <div className="absolute -left-3 top-1/2 w-3 h-px bg-slate-200 dark:bg-slate-700" />
+                  <div className="absolute -left-3 top-1/2 w-3 h-px bg-border-black" />
                   <Shield size={12} />
                   <SelectableText className="font-medium">{t.collision}</SelectableText>
                   <SelectableText className="text-[10px] opacity-70 ml-auto">
@@ -226,24 +226,24 @@ export const TreeNode = memo(({
             return (
               <div key={joint.id} className="relative">
                 <div
-                  className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group
+                  className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-colors
                     ${
                       isJointSelected
-                        ? 'bg-orange-500 text-white shadow-sm dark:bg-[#3A3A3C]'
-                        : 'hover:bg-slate-100 dark:hover:bg-[#3A3A3C] text-slate-600 dark:text-slate-400'
+                        ? 'bg-orange-500 text-white shadow-sm dark:bg-orange-500'
+                        : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
                     }`}
                   onClick={() => onSelect('joint', joint.id)}
                   style={{ marginLeft: '8px' }}
                 >
-                  <div className="absolute -left-2 top-1/2 w-2 h-px bg-slate-300 dark:bg-slate-600" />
+                  <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
 
                   <div
                     className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0
-                      ${isJointSelected ? 'bg-orange-400 dark:bg-slate-500' : 'bg-orange-100 dark:bg-slate-700'}`}
+                      ${isJointSelected ? 'bg-white/25' : 'bg-orange-100 dark:bg-element-bg'}`}
                   >
                     <ArrowRightLeft
                       size={10}
-                      className={isJointSelected ? 'text-white' : 'text-orange-500 dark:text-slate-300'}
+                      className={isJointSelected ? 'text-white' : 'text-orange-600 dark:text-orange-300'}
                     />
                   </div>
 
@@ -262,10 +262,10 @@ export const TreeNode = memo(({
                           e.stopPropagation();
                           onDelete(joint.childLinkId);
                         }}
-                        className={`p-0.5 rounded ${
+                        className={`p-0.5 rounded transition-colors ${
                           isJointSelected
-                            ? 'hover:bg-orange-400'
-                            : 'hover:bg-slate-200 dark:hover:bg-slate-700'
+                            ? 'hover:bg-white/20'
+                            : 'hover:bg-element-hover'
                         }`}
                         title={t.deleteBranch}
                       >
