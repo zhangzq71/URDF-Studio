@@ -108,11 +108,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [previewFile, setPreviewFile] = useState<RobotFile | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
     file: RobotFile;
   } | null>(null);
+
+  const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
+  const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
+  const namePlaceholder = sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName;
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
 
@@ -156,6 +163,34 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       setFileContextMenu(null);
     }
   }, [isProMode]);
+
+  useEffect(() => {
+    if (!isEditingName) return;
+    const id = window.requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [isEditingName]);
+
+  const startNameEditing = useCallback(() => {
+    setNameDraft(currentName || '');
+    setIsEditingName(true);
+  }, [currentName]);
+
+  const cancelNameEditing = useCallback(() => {
+    setNameDraft('');
+    setIsEditingName(false);
+  }, []);
+
+  const commitNameEditing = useCallback(() => {
+    const nextName = nameDraft.trim();
+    if (nextName && nextName !== currentName) {
+      onNameChange(nextName);
+    }
+    setNameDraft('');
+    setIsEditingName(false);
+  }, [currentName, nameDraft, onNameChange]);
 
   useEffect(() => {
     if (!fileContextMenu) return;
@@ -319,18 +354,38 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           </div>
 
           <div className="px-4 pt-3 pb-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-            <label className="text-[10px] text-text-tertiary uppercase font-bold tracking-wider mb-1 block">
-              {sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName}
-            </label>
-            <input
-              type="text"
-              value={sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name}
-              onChange={(e) => onNameChange(e.target.value)}
-              className="w-full bg-input-bg focus:bg-panel-bg text-sm text-text-primary px-3 py-2 rounded-lg border border-border-strong focus:border-system-blue outline-none transition-colors"
-              placeholder={
-                sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName
-              }
-            />
+            <div className="flex items-center gap-2">
+              <label className="shrink-0 text-[10px] text-text-tertiary uppercase font-bold tracking-wider">
+                {nameLabel}
+              </label>
+              {isEditingName ? (
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onBlur={commitNameEditing}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      commitNameEditing();
+                    } else if (e.key === 'Escape') {
+                      cancelNameEditing();
+                    }
+                  }}
+                  className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-sm font-medium text-text-primary px-2 py-1 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
+                  placeholder={namePlaceholder}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={startNameEditing}
+                  className="flex-1 min-w-0 text-left text-sm font-medium text-text-primary hover:text-system-blue transition-colors truncate"
+                  title={currentName || namePlaceholder}
+                >
+                  {currentName || namePlaceholder}
+                </button>
+              )}
+            </div>
 
             {currentFileName && sidebarTab === 'structure' && !assemblyState && (
               <div className="mt-2 flex items-center gap-1.5">
