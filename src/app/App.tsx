@@ -151,7 +151,7 @@ function AppContent() {
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
-  const { handleExport, handleExportProject } = useFileExport();
+  const { handleExport, handleExportURDF, handleExportMJCF, handleExportProject } = useFileExport();
 
   // AI changes handler
   const handleApplyAIChanges = useCallback((data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => {
@@ -186,6 +186,8 @@ function AppContent() {
         importFolderInputRef={importFolderInputRef}
         onFileDrop={(files) => handleImport(files as any)}
         onExport={handleExport}
+        onExportURDF={handleExportURDF}
+        onExportMJCF={handleExportMJCF}
         onExportProject={handleExportProject}
         showToast={showToast}
         onOpenAI={() => setIsAIModalOpen(true)}

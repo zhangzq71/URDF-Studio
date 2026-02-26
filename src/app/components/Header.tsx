@@ -14,6 +14,7 @@ import {
   ScanSearch,
   Info,
   ChevronDown,
+  ChevronRight,
   FileText,
   RefreshCw,
   Sun,
@@ -71,6 +72,8 @@ interface HeaderProps {
   onImportFile: () => void;
   onImportFolder: () => void;
   onExport: () => void;
+  onExportURDF: () => void;
+  onExportMJCF: () => void;
   onExportProject: () => void;
   // Modal actions
   onOpenAI: () => void;
@@ -99,6 +102,8 @@ export function Header({
   onImportFile,
   onImportFolder,
   onExport,
+  onExportURDF,
+  onExportMJCF,
   onExportProject,
   onOpenAI,
   onOpenCodeViewer,
@@ -126,6 +131,13 @@ export function Header({
   const canRedo = useCanRedo();
 
   const t = translations[lang];
+  const [isExportSubmenuOpen, setIsExportSubmenuOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (activeMenu !== 'file') {
+      setIsExportSubmenuOpen(false);
+    }
+  }, [activeMenu]);
 
   return (
     <header className="h-12 border-b flex items-center px-3 shrink-0 relative bg-panel-bg dark:bg-panel-bg border-border-black">
@@ -142,7 +154,13 @@ export function Header({
           <div className="relative">
             <HeaderButton
               isActive={activeMenu === 'file'}
-              onClick={() => setActiveMenu(activeMenu === 'file' ? null : 'file')}
+              onClick={() => {
+                const nextMenu = activeMenu === 'file' ? null : 'file';
+                setActiveMenu(nextMenu);
+                if (nextMenu !== 'file') {
+                  setIsExportSubmenuOpen(false);
+                }
+              }}
             >
               <FileText className="w-3.5 h-3.5" />
               <span className="hidden md:inline">{t.file}</span>
@@ -151,33 +169,65 @@ export function Header({
 
             {activeMenu === 'file' && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-52 bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
+                <div className="fixed inset-0 z-40" onClick={() => { setActiveMenu(null); setIsExportSubmenuOpen(false); }} />
+                <div className="absolute top-full left-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
                   <button
                     onClick={() => { setActiveMenu(null); setTimeout(onImportFolder, 0); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
                     <Folder className="w-4 h-4 text-slate-400" />
                     {t.importFolder}
                   </button>
                   <button
                     onClick={() => { setActiveMenu(null); setTimeout(onImportFile, 0); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
                     <Download className="w-4 h-4 text-slate-400" />
                     {lang === 'zh' ? '导入 USP / ZIP / 文件' : 'Import USP / ZIP / File'}
                   </button>
                   <div className="h-px bg-element-bg dark:bg-border-black my-1" />
-                  <button
-                    onClick={() => { setActiveMenu(null); onExport(); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                  <div
+                    className="relative"
+                    onMouseEnter={() => setIsExportSubmenuOpen(true)}
+                    onMouseLeave={() => setIsExportSubmenuOpen(false)}
                   >
-                    <Upload className="w-4 h-4 text-slate-400" />
-                    {t.export}
-                  </button>
+                    <button
+                      onClick={() => setIsExportSubmenuOpen((prev) => !prev)}
+                      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center justify-between"
+                    >
+                      <span className="flex items-center gap-2.5">
+                        <Upload className="w-4 h-4 text-slate-400" />
+                        {t.export}
+                      </span>
+                      <ChevronRight className={`w-3 h-3 opacity-60 transition-transform ${isExportSubmenuOpen ? 'text-system-blue dark:text-system-blue-light' : ''}`} />
+                    </button>
+
+                    {isExportSubmenuOpen && (
+                      <div className="absolute top-0 left-full ml-1 w-auto min-w-[8.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-[60] py-1">
+                        <button
+                          onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExportURDF(); }}
+                          className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
+                        >
+                          {lang === 'zh' ? 'URDF 导出 (ZIP)' : 'Export URDF (ZIP)'}
+                        </button>
+                        <button
+                          onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExportMJCF(); }}
+                          className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
+                        >
+                          {lang === 'zh' ? 'MJCF 导出 (ZIP)' : 'Export MJCF (ZIP)'}
+                        </button>
+                        <button
+                          onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExport(); }}
+                          className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
+                        >
+                          {lang === 'zh' ? '全部导出' : 'Export All'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() => { setActiveMenu(null); onExportProject(); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
                     <Briefcase className="w-4 h-4 text-slate-400" />
                     {t.exportProject}
@@ -201,7 +251,7 @@ export function Header({
             {activeMenu === 'toolbox' && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-[280px] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 p-2">
+                <div className="absolute top-full left-0 mt-1 w-auto min-w-[14rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 p-2">
                   <div className="space-y-1">
                     <button
                       onClick={() => { setActiveMenu(null); onOpenAI(); }}
@@ -274,7 +324,7 @@ export function Header({
             {activeMenu === 'view' && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-48 bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
+                <div className="absolute top-full left-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
                   <ViewMenuItem
                     checked={viewConfig.showToolbar}
                     label={lang === 'zh' ? '工具栏' : 'Toolbar'}
@@ -446,7 +496,7 @@ function ViewMenuItem({ checked, label, onClick }: { checked: boolean; label: st
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center justify-between group"
+      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center justify-between group"
     >
       <div className="flex items-center gap-2">
         <div className={`w-4 h-4 flex items-center justify-center rounded border ${
@@ -578,7 +628,7 @@ function MobileMoreMenu({
       {activeMenu === 'more' && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-          <div className="absolute top-full right-0 mt-1 w-48 bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
+          <div className="absolute top-full right-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
             {/* Mode Switcher for Mobile */}
             <div className="px-3 py-2 border-b border-border-black dark:border-border-black md:hidden">
               <div className="text-[10px] uppercase text-text-tertiary font-bold mb-1">{t.modeLabel}</div>
@@ -606,21 +656,21 @@ function MobileMoreMenu({
 
             <button
               onClick={() => { onOpenCodeViewer(); setActiveMenu(null); }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               <Code className="w-4 h-4" /> {lang === 'zh' ? '源代码' : 'Source Code'}
             </button>
             <button
               onClick={() => { undo(); setActiveMenu(null); }}
               disabled={!canUndo}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
             >
               <Undo className="w-4 h-4" /> {lang === 'zh' ? '撤销' : 'Undo'}
             </button>
             <button
               onClick={() => { redo(); setActiveMenu(null); }}
               disabled={!canRedo}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
             >
               <Redo className="w-4 h-4" /> {lang === 'zh' ? '重做' : 'Redo'}
             </button>
@@ -629,19 +679,19 @@ function MobileMoreMenu({
 
             <button
               onClick={() => { onSnapshot(); setActiveMenu(null); }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               <Camera className="w-4 h-4" /> {lang === 'zh' ? '快照' : 'Snapshot'}
             </button>
             <button
               onClick={() => { onOpenSettings(); setActiveMenu(null); }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               <Settings className="w-4 h-4" /> {lang === 'zh' ? '设置' : 'Settings'}
             </button>
             <button
               onClick={() => { setLang(lang === 'en' ? 'zh' : 'en'); setActiveMenu(null); }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               <Globe className="w-4 h-4" /> {lang === 'zh' ? '切换语言' : 'Switch Language'}
             </button>
@@ -655,13 +705,13 @@ function MobileMoreMenu({
                 }
                 setActiveMenu(null); 
               }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {lang === 'zh' ? '切换主题' : 'Toggle Theme'}
             </button>
             <button
               onClick={() => { onOpenAbout(); setActiveMenu(null); }}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
+              className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               <Info className="w-4 h-4" /> {lang === 'zh' ? '关于' : 'About'}
             </button>

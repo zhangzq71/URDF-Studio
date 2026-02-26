@@ -21,6 +21,8 @@ interface AppLayoutProps {
   importFolderInputRef: React.RefObject<HTMLInputElement>;
   onFileDrop: (files: File[]) => void;
   onExport: () => void;
+  onExportURDF: () => void;
+  onExportMJCF: () => void;
   onExportProject: () => void;
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
@@ -53,6 +55,8 @@ export function AppLayout({
   importFolderInputRef,
   onFileDrop,
   onExport,
+  onExportURDF,
+  onExportMJCF,
   onExportProject,
   showToast,
   onOpenAI,
@@ -195,6 +199,14 @@ export function AppLayout({
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
     setSelection({ type, id, subType });
   }, [setSelection]);
+
+  const handleHover = useCallback((type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
+    const current = useSelectionStore.getState().hoveredSelection;
+    if (current.type === type && current.id === id && current.subType === subType) {
+      return;
+    }
+    setHoveredSelection({ type, id, subType });
+  }, [setHoveredSelection]);
 
   const handleFocus = useCallback((id: string) => {
     focusOn(id);
@@ -375,6 +387,8 @@ export function AppLayout({
         onImportFile={() => importInputRef.current?.click()}
         onImportFolder={() => importFolderInputRef.current?.click()}
         onExport={onExport}
+        onExportURDF={onExportURDF}
+        onExportMJCF={onExportMJCF}
         onExportProject={onExportProject}
         onOpenAI={onOpenAI}
         onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
@@ -431,6 +445,7 @@ export function AppLayout({
               lang={lang}
               mode={appMode as 'detail' | 'hardware'}
               onSelect={handleSelect}
+              onHover={handleHover}
               selection={robot.selection}
               hoveredSelection={hoveredSelection}
               focusTarget={focusTarget}
@@ -498,7 +513,7 @@ export function AppLayout({
           robot={robot}
           onUpdate={handleUpdate}
           onSelect={handleSelect}
-          onHover={(type, id, subType) => setHoveredSelection({ type, id, subType })}
+          onHover={handleHover}
           mode={appMode}
           assets={assets}
           onUploadAsset={handleUploadAsset}

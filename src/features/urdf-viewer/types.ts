@@ -19,6 +19,7 @@ export interface URDFViewerProps {
     lang: Language;
     mode?: 'detail' | 'hardware';
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
     theme: Theme;
     selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
     hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
@@ -98,6 +99,7 @@ export interface JointControlItemProps {
     handleJointAngleChange: (name: string, val: number) => void;
     handleJointChangeCommit: (name: string, val: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
     isAdvanced?: boolean;
 }
 
