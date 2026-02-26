@@ -39,31 +39,31 @@ code, pre, kbd, samp {
   --font-scale: 1;
 
   /* Surfaces (light) */
-  --ui-bg: #f5f5f7;
+  --ui-bg: #f8f9fa;
   --ui-panel-bg: #ffffff;
-  --ui-surface: #f7f7fa;
+  --ui-surface: #f8f9fa;
   --ui-surface-elevated: #ffffff;
   --ui-input-bg: #ffffff;
 
   /* Borders (light) */
-  --ui-border: #d9d9df;
-  --ui-border-strong: #c9c9d2;
+  --ui-border: #e2e8f0;
+  --ui-border-strong: #cbd5e1;
 
   /* Text (light) */
-  --ui-text-primary: #1c1c1e;
-  --ui-text-secondary: #3a3a3c;
-  --ui-text-tertiary: #636366;
+  --ui-text-primary: #0f172a;
+  --ui-text-secondary: #334155;
+  --ui-text-tertiary: #64748b;
 
   /* Accent (light) */
-  --ui-accent: #007aff;
-  --ui-accent-solid: #007aff;
-  --ui-accent-solid-hover: #006be6;
-  --ui-accent-solid-active: #005ed1;
+  --ui-accent: #0060fa;
+  --ui-accent-solid: #0060fa;
+  --ui-accent-solid-hover: #0052d6;
+  --ui-accent-solid-active: #0048bd;
 
   /* Segmented controls */
-  --ui-segmented-bg: #ebebf0;
+  --ui-segmented-bg: #f1f5f9;
   --ui-segmented-active: #ffffff;
-  --ui-switch-off: #d1d1d6;
+  --ui-switch-off: #cbd5e1;
   --ui-slider-accent: #0088ff;
 
   color-scheme: light;
@@ -93,7 +93,7 @@ code, pre, kbd, samp {
   --ui-accent-solid-active: #0077ed;
 
   /* Segmented controls */
-  --ui-segmented-bg: #1c1c1e;
+  --ui-segmented-bg: #151518;
   --ui-segmented-active: #3a3a3c;
   --ui-switch-off: #3a3a3c;
   --ui-slider-accent: #0088ff;
@@ -121,6 +121,7 @@ code, pre, kbd, samp {
     --ui-accent-solid: #0068d1;
     --ui-accent-solid-hover: #005bb8;
     --ui-accent-solid-active: #004c99;
+    --ui-segmented-bg: #0f0f11;
   }
 }
 

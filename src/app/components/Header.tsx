@@ -57,7 +57,7 @@ function HeaderButton({
       className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
         isActive
           ? 'bg-element-bg dark:bg-element-active text-text-primary dark:text-white'
-          : 'text-text-secondary dark:text-text-secondary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-white'
+          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
       } ${className}`}
       title={title}
     >
@@ -155,31 +155,31 @@ export function Header({
                 <div className="absolute top-full left-0 mt-1 w-52 bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
                   <button
                     onClick={() => { setActiveMenu(null); setTimeout(onImportFolder, 0); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
-                    <Folder className="w-4 h-4 text-text-tertiary" />
+                    <Folder className="w-4 h-4 text-slate-400" />
                     {t.importFolder}
                   </button>
                   <button
                     onClick={() => { setActiveMenu(null); setTimeout(onImportFile, 0); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
-                    <Download className="w-4 h-4 text-text-tertiary" />
+                    <Download className="w-4 h-4 text-slate-400" />
                     {lang === 'zh' ? '导入 USP / ZIP / 文件' : 'Import USP / ZIP / File'}
                   </button>
                   <div className="h-px bg-element-bg dark:bg-border-black my-1" />
                   <button
                     onClick={() => { setActiveMenu(null); onExport(); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
-                    <Upload className="w-4 h-4 text-text-tertiary" />
+                    <Upload className="w-4 h-4 text-slate-400" />
                     {t.export}
                   </button>
                   <button
                     onClick={() => { setActiveMenu(null); onExportProject(); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-2.5"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
-                    <Briefcase className="w-4 h-4 text-text-tertiary" />
+                    <Briefcase className="w-4 h-4 text-slate-400" />
                     {t.exportProject}
                   </button>
                 </div>
@@ -306,7 +306,7 @@ export function Header({
           <div className="relative hidden md:block">
             <button
               onClick={onOpenCodeViewer}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all text-text-secondary dark:text-text-secondary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-white"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white"
             >
               <Code className="w-3.5 h-3.5" />
               <span className="hidden lg:inline">{lang === 'zh' ? '源代码' : 'Source Code'}</span>
@@ -322,8 +322,8 @@ export function Header({
               disabled={!canUndo}
               className={`p-1.5 rounded-md transition-all ${
                 !canUndo
-                  ? 'text-text-tertiary dark:text-text-tertiary/60 cursor-not-allowed'
-                  : 'text-text-secondary dark:text-text-secondary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-white'
+                  ? 'text-slate-300 dark:text-element-hover cursor-not-allowed'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
               }`}
               title={lang === 'zh' ? '撤销 (Ctrl+Z)' : 'Undo (Ctrl+Z)'}
             >
@@ -334,8 +334,8 @@ export function Header({
               disabled={!canRedo}
               className={`p-1.5 rounded-md transition-all ${
                 !canRedo
-                  ? 'text-text-tertiary dark:text-text-tertiary/60 cursor-not-allowed'
-                  : 'text-text-secondary dark:text-text-secondary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-white'
+                  ? 'text-slate-300 dark:text-element-hover cursor-not-allowed'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
               }`}
               title={lang === 'zh' ? '重做 (Ctrl+Shift+Z)' : 'Redo (Ctrl+Shift+Z)'}
             >
@@ -368,7 +368,7 @@ export function Header({
 
         <button
           onClick={onSnapshot}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-text-tertiary dark:text-text-tertiary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-text-primary transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
           title={lang === 'zh' ? '快照' : 'Snapshot'}
         >
           <Camera className="w-4 h-4" />
@@ -376,7 +376,7 @@ export function Header({
 
         <button
           onClick={onOpenSettings}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-text-tertiary dark:text-text-tertiary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-text-primary transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
           title={lang === 'zh' ? '设置' : 'Settings'}
         >
           <Settings className="w-4 h-4" />
@@ -384,7 +384,7 @@ export function Header({
 
         <button
           onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
-          className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-text-tertiary dark:text-text-tertiary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-text-primary transition-all hidden sm:flex"
+          className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
           title={lang === 'zh' ? '切换语言' : 'Switch Language'}
         >
           <Globe className="w-3.5 h-3.5" />
@@ -400,7 +400,7 @@ export function Header({
               setTheme(theme === 'dark' ? 'light' : 'dark');
             }
           }}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-text-tertiary dark:text-text-tertiary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-text-primary transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
           title={lang === 'zh' ? '切换主题' : 'Toggle Theme'}
         >
           {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -410,7 +410,7 @@ export function Header({
 
         <button
           onClick={onOpenAbout}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-text-tertiary dark:text-text-tertiary hover:bg-element-bg dark:hover:bg-element-bg hover:text-text-primary dark:hover:text-text-primary transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
           title={lang === 'zh' ? '关于' : 'About'}
         >
           <Info className="w-4 h-4" />
@@ -515,7 +515,7 @@ function ModeButton({
       className={`flex items-center ${label ? 'gap-1.5 px-3' : 'justify-center'} p-1.5 rounded-md text-xs font-medium transition-all ${
         isActive
           ? 'bg-white dark:bg-segmented-active text-text-primary dark:text-white shadow-sm dark:shadow-md'
-          : 'text-text-tertiary dark:text-text-tertiary hover:text-text-primary dark:hover:text-white'
+          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white'
       }`}
       title={title}
     >
@@ -570,7 +570,7 @@ function MobileMoreMenu({
         className={`relative z-50 flex items-center justify-center w-8 h-8 rounded-md transition-all ${
           activeMenu === 'more'
             ? 'bg-element-bg dark:bg-element-active text-text-primary dark:text-white'
-            : 'text-text-tertiary dark:text-text-tertiary hover:bg-element-bg dark:hover:bg-element-bg'
+            : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg'
         }`}
       >
         <MoreHorizontal className="w-5 h-5" />
