@@ -79,6 +79,30 @@ export function useVisualizationEffects({
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
 
+    const resolveHighlightTarget = (
+        candidate?: URDFViewerProps['selection']
+    ): { id: string | null; subType: 'visual' | 'collision' | undefined } => {
+        if (!robot || !candidate?.id || !candidate.type) {
+            return { id: null, subType: undefined };
+        }
+
+        if (candidate.type === 'link') {
+            return { id: candidate.id, subType: candidate.subType };
+        }
+
+        const jointObj = robot.getObjectByName(candidate.id);
+        if (!jointObj) {
+            return { id: null, subType: candidate.subType };
+        }
+
+        const childLink = jointObj.children.find((c: any) => c.isURDFLink);
+        if (!childLink) {
+            return { id: null, subType: candidate.subType };
+        }
+
+        return { id: childLink.name, subType: candidate.subType };
+    };
+
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
 
@@ -525,20 +549,7 @@ export function useVisualizationEffects({
             highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any);
         }
 
-        let targetId: string | null = null;
-        let targetSubType = selection?.subType;
-
-        if (selection?.type === 'link' && selection.id) {
-            targetId = selection.id;
-        } else if (selection?.type === 'joint' && selection.id) {
-            const jointObj = robot.getObjectByName(selection.id);
-            if (jointObj) {
-                const childLink = jointObj.children.find((c: any) => c.isURDFLink);
-                if (childLink) {
-                    targetId = childLink.name;
-                }
-            }
-        }
+        const { id: targetId, subType: targetSubType } = resolveHighlightTarget(selection);
 
         if (targetId) {
             highlightGeometry(targetId, false, targetSubType);
@@ -560,17 +571,23 @@ export function useVisualizationEffects({
             return;
         }
 
+        const { id: selectionHighlightId, subType: selectionHighlightSubType } = resolveHighlightTarget(selection);
+
         if (currentHoverRef.current.id) {
-            if (currentHoverRef.current.id !== selection?.id || currentHoverRef.current.subType !== selection?.subType) {
+            if (currentHoverRef.current.id !== selectionHighlightId || currentHoverRef.current.subType !== selectionHighlightSubType) {
                 highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any);
+                if (selectionHighlightId) {
+                    highlightGeometry(selectionHighlightId, false, selectionHighlightSubType);
+                }
             }
         }
 
-        if (hoveredSelection?.type === 'link' && hoveredSelection.id) {
-            highlightGeometry(hoveredSelection.id, false, hoveredSelection.subType);
-            currentHoverRef.current = { id: hoveredSelection.id, subType: hoveredSelection.subType || null };
+        const { id: hoverTargetId, subType: hoverTargetSubType } = resolveHighlightTarget(hoveredSelection);
+        if (hoverTargetId) {
+            highlightGeometry(hoverTargetId, false, hoverTargetSubType);
+            currentHoverRef.current = { id: hoverTargetId, subType: hoverTargetSubType || null };
         } else {
             currentHoverRef.current = { id: null, subType: null };
         }
-    }, [robot, hoveredSelection?.id, hoveredSelection?.subType, selection?.id, selection?.subType, highlightGeometry, robotVersion, toolMode, highlightMode, showVisual, showCollision]);
+    }, [robot, hoveredSelection?.type, hoveredSelection?.id, hoveredSelection?.subType, selection?.type, selection?.id, selection?.subType, highlightGeometry, robotVersion, toolMode, highlightMode, showVisual, showCollision]);
 }

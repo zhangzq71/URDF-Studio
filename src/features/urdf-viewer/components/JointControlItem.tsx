@@ -13,6 +13,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
     handleJointAngleChange,
     handleJointChangeCommit,
     onSelect,
+    onHover,
     isAdvanced = false
 }) => {
     const limit = joint.limit || { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 };
@@ -204,20 +205,20 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                             }
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-[4.5rem] bg-white dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded px-1.5 py-0.5 text-right text-[10px] text-slate-900 dark:text-slate-200 focus:border-google-blue outline-none transition-colors"
+                        className="w-10 h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-right text-[10px] leading-none font-mono text-text-primary outline-none"
                     />
                 ) : (
-                    <div className="text-[10px] text-slate-900 dark:text-slate-200 hover:text-google-blue dark:hover:text-google-blue-light cursor-text px-1.5 py-0.5 border border-transparent hover:border-slate-200 dark:hover:border-white/10 rounded transition-colors whitespace-nowrap min-w-[3rem] text-right">
+                    <div className="w-10 h-4 flex items-center justify-end text-[10px] text-slate-900 dark:text-slate-200 hover:text-google-blue dark:hover:text-google-blue-light cursor-text px-0.5 py-0 border border-transparent hover:border-slate-200 dark:hover:border-white/10 rounded transition-colors whitespace-nowrap text-right leading-none font-mono">
                         {displayValue.toFixed(2)}
                     </div>
                 )}
             </div>
-            <span className="text-[10px] text-slate-400 w-5 text-right">{angleUnit === 'deg' ? 'deg' : 'rad'}</span>
+            <span className="text-[9px] text-slate-400 w-4 text-right leading-none">{angleUnit === 'deg' ? 'deg' : 'rad'}</span>
         </div>
     );
 
     const renderAdvancedInputs = () => (
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
              {/* Max Effort */}
             <div 
                 className="flex items-center gap-1.5 cursor-text group"
@@ -233,10 +234,10 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                         onBlur={() => handleAdvancedCommit('effort', effortInput)}
                         onKeyDown={(e) => e.key === 'Enter' && handleAdvancedCommit('effort', effortInput)}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-12 bg-white dark:bg-black/20 border border-blue-400 rounded px-0.5 py-0 text-center text-[10px] outline-none h-4 leading-none"
+                        className="w-10 h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[10px] leading-none font-mono outline-none"
                     />
                 ) : (
-                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-12 text-center h-4 flex items-center justify-center leading-none">
+                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-10 text-center h-4 flex items-center justify-center leading-none">
                         {localLimits.effort.toFixed(2)}
                     </span>
                 )}
@@ -256,10 +257,10 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                         onBlur={() => handleAdvancedCommit('velocity', velocityInput)}
                         onKeyDown={(e) => e.key === 'Enter' && handleAdvancedCommit('velocity', velocityInput)}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-12 bg-white dark:bg-black/20 border border-blue-400 rounded px-0.5 py-0 text-center text-[10px] outline-none h-4 leading-none"
+                        className="w-10 h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[10px] leading-none font-mono outline-none"
                     />
                 ) : (
-                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-12 text-center h-4 flex items-center justify-center">
+                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-10 text-center h-4 flex items-center justify-center">
                         {localLimits.velocity.toFixed(2)}
                     </span>
                 )}
@@ -274,6 +275,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                 setActiveJoint(name);
                 onSelect?.('joint', name);
             }}
+            onMouseEnter={() => onHover?.('joint', name, 'visual')}
             className={`space-y-1.5 p-2 rounded-lg transition-colors cursor-pointer border ${
                 activeJoint === name
                     ? 'bg-blue-50 dark:bg-google-blue/10 border-blue-200 dark:border-google-blue/30'
@@ -321,7 +323,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleLimitCommit('lower', lowerInput);
                             }}
-                            className="w-full bg-white dark:bg-black/20 border border-blue-400 rounded px-0.5 py-0 text-center text-[9px] outline-none"
+                            className="w-full h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[9px] leading-none font-mono outline-none"
                         />
                     ) : (
                         <div className="text-[9px] text-slate-400 text-right font-mono hover:text-blue-500 cursor-text truncate">
@@ -360,7 +362,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleLimitCommit('upper', upperInput);
                             }}
-                            className="w-full bg-white dark:bg-black/20 border border-blue-400 rounded px-0.5 py-0 text-center text-[9px] outline-none"
+                            className="w-full h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[9px] leading-none font-mono outline-none"
                         />
                     ) : (
                         <div className="text-[9px] text-slate-400 font-mono hover:text-blue-500 cursor-text truncate">

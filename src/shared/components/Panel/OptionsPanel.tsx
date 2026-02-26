@@ -3,7 +3,7 @@
  * Extracted common patterns from Visualizer.tsx and URDFViewer.tsx
  */
 
-import React, { useRef, useState, useCallback, ReactNode } from 'react';
+import React, { useRef, useState, useCallback, useEffect, ReactNode } from 'react';
 import { 
   Checkbox, 
   Slider as UiSlider, 
@@ -361,63 +361,92 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   const startSize = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   const startPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const resizeDirection = useRef<'right' | 'bottom' | 'corner' | null>(null);
+  const activePointerId = useRef<number | null>(null);
 
-  const handleResizeStart = (e: React.MouseEvent, direction: 'right' | 'bottom' | 'corner') => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const currentElement = e.currentTarget.parentElement;
-    if (currentElement) {
-        startSize.current = {
-            width: currentElement.offsetWidth,
-            height: currentElement.offsetHeight
-        };
-        startPos.current = { x: e.clientX, y: e.clientY };
-        resizeDirection.current = direction;
-        
-        document.addEventListener('mousemove', handleResizeMove);
-        document.addEventListener('mouseup', handleResizeEnd);
-        
-        const cursor = direction === 'right' ? 'ew-resize' : direction === 'bottom' ? 'ns-resize' : 'nwse-resize';
-        document.body.style.cursor = cursor;
-        document.body.style.userSelect = 'none';
-    }
-  };
-
-  const handleResizeMove = (e: MouseEvent) => {
+  const handleResizeMove = useCallback((e: PointerEvent) => {
     if (!resizeDirection.current) return;
+    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+
+    e.preventDefault();
 
     const deltaX = e.clientX - startPos.current.x;
     const deltaY = e.clientY - startPos.current.y;
-    
+
     let newWidth = startSize.current.width;
     let newHeight = startSize.current.height;
 
     if (resizeDirection.current === 'right' || resizeDirection.current === 'corner') {
-        newWidth += deltaX;
-        if (newWidth < minWidth) newWidth = minWidth;
-        if (newWidth > maxWidth) newWidth = maxWidth;
+      newWidth += deltaX;
+      if (newWidth < minWidth) newWidth = minWidth;
+      if (newWidth > maxWidth) newWidth = maxWidth;
     }
 
     if (resizeDirection.current === 'bottom' || resizeDirection.current === 'corner') {
-        newHeight += deltaY;
-        if (newHeight < minHeight) newHeight = minHeight;
-        if (newHeight > maxHeight) newHeight = maxHeight;
+      newHeight += deltaY;
+      if (newHeight < minHeight) newHeight = minHeight;
+      if (newHeight > maxHeight) newHeight = maxHeight;
     }
-    
-    setPanelSize(prev => ({
-        width: (resizeDirection.current === 'right' || resizeDirection.current === 'corner') ? newWidth : prev.width,
-        height: (resizeDirection.current === 'bottom' || resizeDirection.current === 'corner') ? newHeight : prev.height
-    }));
-  };
 
-  const handleResizeEnd = () => {
-    document.removeEventListener('mousemove', handleResizeMove);
-    document.removeEventListener('mouseup', handleResizeEnd);
+    setPanelSize((prev) => ({
+      width: resizeDirection.current === 'right' || resizeDirection.current === 'corner' ? newWidth : prev.width,
+      height: resizeDirection.current === 'bottom' || resizeDirection.current === 'corner' ? newHeight : prev.height
+    }));
+  }, [maxHeight, maxWidth, minHeight, minWidth]);
+
+  const handleResizeEnd = useCallback((e?: PointerEvent | Event) => {
+    if (e && 'pointerId' in e && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
+      return;
+    }
+
+    document.removeEventListener('pointermove', handleResizeMove);
+    document.removeEventListener('pointerup', handleResizeEnd);
+    document.removeEventListener('pointercancel', handleResizeEnd);
+    window.removeEventListener('blur', handleResizeEnd);
+
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     resizeDirection.current = null;
-  };
+    activePointerId.current = null;
+  }, [handleResizeMove]);
+
+  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>, direction: 'right' | 'bottom' | 'corner') => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const currentElement = e.currentTarget.parentElement;
+    if (!currentElement) return;
+
+    startSize.current = {
+      width: currentElement.offsetWidth,
+      height: currentElement.offsetHeight
+    };
+    startPos.current = { x: e.clientX, y: e.clientY };
+    resizeDirection.current = direction;
+    activePointerId.current = e.pointerId;
+
+    if (e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore if pointer capture is not available for current environment.
+      }
+    }
+
+    document.addEventListener('pointermove', handleResizeMove);
+    document.addEventListener('pointerup', handleResizeEnd);
+    document.addEventListener('pointercancel', handleResizeEnd);
+    window.addEventListener('blur', handleResizeEnd);
+
+    const cursor = direction === 'right' ? 'ew-resize' : direction === 'bottom' ? 'ns-resize' : 'nwse-resize';
+    document.body.style.cursor = cursor;
+    document.body.style.userSelect = 'none';
+  }, [handleResizeEnd, handleResizeMove]);
+
+  useEffect(() => {
+    return () => {
+      handleResizeEnd();
+    };
+  }, [handleResizeEnd]);
 
   const currentHeight = isCollapsed ? 'auto' : panelSize.height;
   // Prevent panel from expanding beyond its set height when collapsing (if height is not auto)
@@ -434,17 +463,17 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
             {/* Right Handle */}
             <div 
                 className="absolute top-0 right-0 w-1.5 h-full cursor-ew-resize z-40 hover:bg-system-blue/20 transition-colors"
-                onMouseDown={(e) => handleResizeStart(e, 'right')}
+                onPointerDown={(e) => handleResizeStart(e, 'right')}
             />
             {/* Bottom Handle */}
             <div 
                 className="absolute bottom-0 left-0 w-full h-1.5 cursor-ns-resize z-40 hover:bg-system-blue/20 transition-colors"
-                onMouseDown={(e) => handleResizeStart(e, 'bottom')}
+                onPointerDown={(e) => handleResizeStart(e, 'bottom')}
             />
             {/* Corner Handle */}
             <div 
                 className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-transparent"
-                onMouseDown={(e) => handleResizeStart(e, 'corner')}
+                onPointerDown={(e) => handleResizeStart(e, 'corner')}
                 title="Resize"
             >
                 <svg viewBox="0 0 6 6" className="w-2 h-2 text-text-tertiary fill-current transform rotate-45 pointer-events-none">
@@ -455,7 +484,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
       )}
     </div>
   );
-};;
+};
 
 // ============== Draggable Options Panel Hook ==============
 interface DraggablePanelState {

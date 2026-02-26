@@ -27,6 +27,7 @@ export function URDFViewer({
     lang,
     mode = 'detail',
     onSelect,
+    onHover,
     theme,
     selection,
     hoveredSelection,
@@ -260,6 +261,10 @@ export function URDFViewer({
         }
     }, [onSelect, robot, selection?.subType]);
 
+    const handleHoverWrapper = useCallback((type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
+        onHover?.(type, id, subType);
+    }, [onHover]);
+
     const handleAutoFitGround = useCallback(() => {
         const scene = sceneRef.current;
         if (!scene) return;
@@ -434,6 +439,7 @@ export function URDFViewer({
                 handleJointAngleChange={handleJointAngleChange}
                 handleJointChangeCommit={handleJointChangeCommit}
                 onSelect={handleSelectWrapper}
+                onHover={handleHoverWrapper}
             />
 
             {/* Toolbar */}

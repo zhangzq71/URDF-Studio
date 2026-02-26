@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from '@/features/urdf-viewer/components/JointControlItem';
@@ -23,6 +23,7 @@ interface JointsPanelProps {
     handleJointAngleChange: (name: string, angle: number) => void;
     handleJointChangeCommit: (name: string, angle: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
 }
 
 export const JointsPanel: React.FC<JointsPanelProps> = ({
@@ -45,16 +46,28 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     handleJointAngleChange,
     handleJointChangeCommit,
     onSelect,
+    onHover,
 }) => {
     // Condition to show
     const shouldShow = showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
     const [isAdvanced, setIsAdvanced] = useState(false);
+    const onHoverRef = useRef(onHover);
+
+    useEffect(() => {
+        onHoverRef.current = onHover;
+    }, [onHover]);
+
+    useEffect(() => {
+        return () => {
+            onHoverRef.current?.(null, null);
+        };
+    }, []);
 
     const additionalControls = (
         <div className="flex items-center gap-1 mr-1">
             <button
                 onClick={(e) => { e.stopPropagation(); handleResetJoints(); }}
-                className="flex items-center gap-1.5 p-1 px-2 rounded bg-element-bg hover:bg-element-hover text-text-secondary dark:text-text-secondary transition-colors"
+                className="flex items-center gap-1.5 p-1 px-2 rounded border border-border-black/60 bg-panel-bg text-text-secondary hover:bg-system-blue/10 hover:text-system-blue transition-colors"
                 title={t.resetJoints}
             >
                 <RotateCcw className="w-3 h-3" />
@@ -62,7 +75,11 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             </button>
             <button
                 onClick={(e) => { e.stopPropagation(); setIsAdvanced(!isAdvanced); }}
-                className={`flex items-center gap-1.5 p-1 px-2 rounded transition-colors ${isAdvanced ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-element-bg text-text-secondary dark:text-text-secondary hover:bg-element-hover'}`}
+                className={`flex items-center gap-1.5 p-1 px-2 rounded border border-border-black/60 transition-colors ${
+                    isAdvanced
+                        ? 'bg-system-blue-solid text-white border-system-blue-solid'
+                        : 'bg-panel-bg text-text-secondary hover:bg-system-blue/10 hover:text-system-blue'
+                }`}
                 title={t.advanced || "Advanced"}
             >
                 <Settings className="w-3 h-3" />
@@ -93,7 +110,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             additionalControls={additionalControls}
             zIndex={40}
         >
-            <div className="p-2 space-y-2">
+            <div className="p-2 space-y-2" onMouseLeave={() => onHover?.(null, null)}>
                 {robot?.joints && Object.entries(robot.joints)
                     .filter(([_, joint]: [string, any]) => joint.jointType !== 'fixed')
                     .map(([name, joint]: [string, any]) => (
@@ -108,6 +125,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             handleJointAngleChange={handleJointAngleChange}
                             handleJointChangeCommit={handleJointChangeCommit}
                             onSelect={onSelect}
+                            onHover={onHover}
                             isAdvanced={isAdvanced}
                         />
                     ))}

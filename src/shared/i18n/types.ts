@@ -139,6 +139,8 @@ export interface TranslationKeys {
   instruction: string;
   instructionWin: string;
   instructionMac: string;
+  instructionLinux: string;
+  instructionOther: string;
   clickToSelect: string;
   enableLabels: string;
   clickLabels: string;
