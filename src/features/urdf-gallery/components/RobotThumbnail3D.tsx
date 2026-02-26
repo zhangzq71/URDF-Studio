@@ -70,7 +70,6 @@ function RobotPreviewModel({
 
         // 3. Fetch all files and create blob URLs (asset map)
         const assets: Record<string, string> = {};
-        
         await Promise.all(files.map(async (filePath) => {
           try {
             const res = await fetch(`${urdfPath}/${filePath}`);
@@ -79,8 +78,8 @@ function RobotPreviewModel({
               const blobUrl = URL.createObjectURL(blob);
               assets[filePath] = blobUrl;
               // Also map filename only
-              const fileName = filePath.split('/').pop()!;
-              if (!assets[fileName]) {
+              const fileName = filePath.split('/').pop();
+              if (fileName && !assets[fileName]) {
                 assets[fileName] = blobUrl;
               }
             }

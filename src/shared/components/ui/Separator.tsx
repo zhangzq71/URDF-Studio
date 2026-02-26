@@ -12,7 +12,7 @@ export const Separator: React.FC<SeparatorProps> = ({
   return (
     <div
       className={`
-        bg-border-black
+        bg-[#E5E5E5] dark:bg-[#38383A]
         ${orientation === 'horizontal' ? 'h-[1px] w-full' : 'h-full w-[1px]'}
         ${className}
       `}
