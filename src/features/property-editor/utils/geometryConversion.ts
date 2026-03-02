@@ -30,13 +30,13 @@ export function computeAutoAlign(robot: RobotState, linkId: string) {
   _tempVec3C.copy(_tempVec3A).normalize(); // direction
 
   // Calculate rotation to align Z-axis with the vector
-  if (_tempVec3C.y === 0 && _tempVec3C.x === 0 && _tempVec3C.z === -1) {
+  if (Math.abs(_tempVec3C.x) < 1e-8 && Math.abs(_tempVec3C.y) < 1e-8 && Math.abs(_tempVec3C.z + 1) < 1e-8) {
     _tempQuat.setFromAxisAngle(_tempVec3A.set(1, 0, 0), Math.PI);
   } else {
     _tempQuat.setFromUnitVectors(_zAxis, _tempVec3C);
   }
 
-  _tempEuler.setFromQuaternion(_tempQuat);
+  _tempEuler.setFromQuaternion(_tempQuat, 'ZYX');
 
   return {
     dimensions: { y: length },
@@ -65,77 +65,103 @@ interface ConversionResult {
   };
 }
 
+const DEFAULT_DIMENSIONS = { x: 0.1, y: 0.5, z: 0.1 };
+const DEFAULT_ORIGIN = {
+  xyz: { x: 0, y: 0, z: 0 },
+  rpy: { r: 0, p: 0, y: 0 },
+};
+
+function toPositive(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return value;
+}
+
+function normalizeOrigin(origin: GeomData['origin']): ConversionResult['origin'] {
+  return {
+    xyz: {
+      x: origin?.xyz?.x ?? DEFAULT_ORIGIN.xyz.x,
+      y: origin?.xyz?.y ?? DEFAULT_ORIGIN.xyz.y,
+      z: origin?.xyz?.z ?? DEFAULT_ORIGIN.xyz.z,
+    },
+    rpy: {
+      r: origin?.rpy?.r ?? DEFAULT_ORIGIN.rpy.r,
+      p: origin?.rpy?.p ?? DEFAULT_ORIGIN.rpy.p,
+      y: origin?.rpy?.y ?? DEFAULT_ORIGIN.rpy.y,
+    },
+  };
+}
+
+function normalizeDimensions(dimensions: GeomData['dimensions']): { x: number; y: number; z: number } {
+  return {
+    x: toPositive(dimensions?.x, DEFAULT_DIMENSIONS.x),
+    y: toPositive(dimensions?.y, DEFAULT_DIMENSIONS.y),
+    z: toPositive(dimensions?.z, DEFAULT_DIMENSIONS.z),
+  };
+}
+
 /**
  * Convert geometry dimensions when switching between geometry types.
- * Performs smart conversion (e.g. rotating cylinder to match dominant axis).
+ * Uses stable, deterministic mapping and preserves origin rotation.
  */
 export function convertGeometryType(geomData: GeomData, newType: GeometryType): ConversionResult {
-  const currentDims = geomData.dimensions || { x: 0.1, y: 0.5, z: 0.1 };
-  const defaultOrigin = geomData.origin || { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
+  const currentType = geomData.type;
+  const currentDims = normalizeDimensions(geomData.dimensions);
+  const origin = normalizeOrigin(geomData.origin);
 
   if (newType === GeometryType.CYLINDER || newType === GeometryType.CAPSULE) {
-    const { x, y, z } = currentDims;
-    const maxDim = Math.max(x, y, z);
+    let radius = 0.05;
+    let length = 0.5;
 
-    let length = maxDim;
-    let radius = 0.1;
-
-    const currentRpy = geomData.origin?.rpy || { r: 0, p: 0, y: 0 };
-    const currentQuat = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(currentRpy.r, currentRpy.p, currentRpy.y, 'XYZ')
-    );
-
-    const zAxis = new THREE.Vector3(0, 0, 1);
-    const targetAxis = new THREE.Vector3(0, 0, 1);
-
-    if (x === maxDim) {
-      length = x;
-      radius = Math.max(y, z) / 2;
-      targetAxis.set(1, 0, 0);
-    } else if (y === maxDim) {
-      length = y;
-      radius = Math.max(x, z) / 2;
-      targetAxis.set(0, 1, 0);
-    } else {
-      length = z;
-      radius = Math.max(x, y) / 2;
-      targetAxis.set(0, 0, 1);
+    if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
+      radius = toPositive(currentDims.x, 0.05);
+      length = toPositive(currentDims.y, 0.5);
+    } else if (currentType === GeometryType.BOX) {
+      radius = toPositive(Math.max(currentDims.x, currentDims.y) / 2, 0.05);
+      length = toPositive(currentDims.z, 0.5);
+    } else if (currentType === GeometryType.SPHERE) {
+      radius = toPositive(currentDims.x, 0.05);
+      length = radius * 2;
     }
-
-    const alignQuat = new THREE.Quaternion().setFromUnitVectors(zAxis, targetAxis);
-    currentQuat.multiply(alignQuat);
-
-    const newEuler = new THREE.Euler().setFromQuaternion(currentQuat, 'XYZ');
-    const newRpy = { r: newEuler.x, p: newEuler.y, y: newEuler.z };
 
     return {
       type: newType,
       dimensions: { x: radius, y: length, z: radius },
-      origin: { ...(geomData.origin || { xyz: { x: 0, y: 0, z: 0 } }), rpy: newRpy } as ConversionResult['origin']
+      origin,
     };
   }
 
   if (newType === GeometryType.SPHERE) {
-    const sphereRadius = Math.max(0.05, (currentDims.x + currentDims.y + currentDims.z) / 3);
+    let sphereRadius = 0.1;
+    if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
+      sphereRadius = Math.max(currentDims.x, currentDims.y / 2);
+    } else if (currentType === GeometryType.BOX) {
+      sphereRadius = Math.max(currentDims.x, currentDims.y, currentDims.z) / 2;
+    } else {
+      sphereRadius = currentDims.x;
+    }
+    sphereRadius = toPositive(sphereRadius, 0.1);
+
     return {
       type: newType,
       dimensions: { x: sphereRadius, y: sphereRadius, z: sphereRadius },
-      origin: defaultOrigin
+      origin,
     };
   }
 
   if (newType === GeometryType.BOX) {
     let newDims = { ...currentDims };
-    if (geomData.type === GeometryType.CYLINDER || geomData.type === GeometryType.CAPSULE) {
+    if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
       newDims = { x: currentDims.x * 2, y: currentDims.x * 2, z: currentDims.y };
-    } else if (geomData.type === GeometryType.SPHERE) {
+    } else if (currentType === GeometryType.SPHERE) {
       const diameter = currentDims.x * 2;
       newDims = { x: diameter, y: diameter, z: diameter };
     }
     return {
       type: newType,
       dimensions: newDims,
-      origin: defaultOrigin
+      origin,
     };
   }
 
@@ -143,6 +169,6 @@ export function convertGeometryType(geomData: GeomData, newType: GeometryType): 
   return {
     type: newType,
     dimensions: currentDims,
-    origin: defaultOrigin
+    origin,
   };
 }

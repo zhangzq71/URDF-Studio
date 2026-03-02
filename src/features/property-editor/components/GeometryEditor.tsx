@@ -3,7 +3,7 @@
  * Handles geometry type selection, dimension editing, mesh selection,
  * origin/rotation, color, and auto-align.
  */
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Upload, File, Wand, Check } from 'lucide-react';
 import type { RobotState, UrdfLink } from '@/types';
 import { GeometryType } from '@/types';
@@ -37,10 +37,51 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const geomData = data[category] || {} as any;
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
+    const geometrySnapshotCacheRef = useRef<Record<string, Partial<Record<GeometryType, {
+      dimensions?: { x: number; y: number; z: number };
+      origin?: { xyz: { x: number; y: number; z: number }; rpy: { r: number; p: number; y: number } };
+      meshPath?: string;
+      color?: string;
+    }>>>>({});
+    const snapshotKey = `${data.id}:${category}`;
+
+    const createSnapshot = (source: typeof geomData) => ({
+      dimensions: source?.dimensions
+        ? {
+            x: source.dimensions.x,
+            y: source.dimensions.y,
+            z: source.dimensions.z,
+          }
+        : undefined,
+      origin: source?.origin
+        ? {
+            xyz: {
+              x: source.origin.xyz.x,
+              y: source.origin.xyz.y,
+              z: source.origin.xyz.z,
+            },
+            rpy: {
+              r: source.origin.rpy.r,
+              p: source.origin.rpy.p,
+              y: source.origin.rpy.y,
+            },
+          }
+        : undefined,
+      meshPath: source?.meshPath,
+      color: source?.color,
+    });
 
     const update = (newData: Partial<typeof geomData>) => {
         onUpdate({ ...data, [category]: { ...geomData, ...newData } });
     };
+
+    useEffect(() => {
+      const currentType = geomData.type || GeometryType.CYLINDER;
+      if (!geometrySnapshotCacheRef.current[snapshotKey]) {
+        geometrySnapshotCacheRef.current[snapshotKey] = {};
+      }
+      geometrySnapshotCacheRef.current[snapshotKey][currentType] = createSnapshot(geomData);
+    }, [geomData, snapshotKey]);
 
     const handleApplyMesh = () => {
         if (previewMeshPath) {
@@ -75,8 +116,35 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
     const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newType = e.target.value as GeometryType;
-        const result = convertGeometryType(geomData, newType);
-        update(result);
+        const currentType = geomData.type || GeometryType.CYLINDER;
+        if (newType === currentType) return;
+
+        if (!geometrySnapshotCacheRef.current[snapshotKey]) {
+          geometrySnapshotCacheRef.current[snapshotKey] = {};
+        }
+        const cacheByType = geometrySnapshotCacheRef.current[snapshotKey];
+        cacheByType[currentType] = createSnapshot(geomData);
+
+        const cachedTarget = cacheByType[newType];
+        if (cachedTarget) {
+          update({
+            type: newType,
+            dimensions: cachedTarget.dimensions || geomData.dimensions,
+            origin: cachedTarget.origin || geomData.origin,
+            meshPath: newType === GeometryType.MESH ? cachedTarget.meshPath : undefined,
+            color: cachedTarget.color || geomData.color,
+          });
+          return;
+        }
+
+        const converted = convertGeometryType(geomData, newType);
+        const nextGeom = {
+          ...converted,
+          meshPath: newType === GeometryType.MESH ? geomData.meshPath : undefined,
+          color: geomData.color,
+        };
+        cacheByType[newType] = createSnapshot(nextGeom);
+        update(nextGeom);
     };
 
     return (
