@@ -2,7 +2,7 @@
  * Main App Component
  * Root component that assembles all pieces together
  */
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
@@ -10,7 +10,7 @@ import { AboutModal } from './components/AboutModal';
 import { AIModal } from '@/features/ai-assistant';
 import { URDFGallery } from '@/features/urdf-gallery';
 import { useFileImport, useFileExport } from './hooks';
-import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore } from '@/store';
+import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { GeometryType } from '@/types';
@@ -25,9 +25,12 @@ function AppContent() {
   const lang = useUIStore((state) => state.lang);
   const setAppMode = useUIStore((state) => state.setAppMode);
   const openSettings = useUIStore((state) => state.openSettings);
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
 
   // Selection Store
   const setSelection = useSelectionStore((state) => state.setSelection);
+  const selection = useSelectionStore((state) => state.selection);
+  const focusOn = useSelectionStore((state) => state.focusOn);
 
   // Assets Store
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
@@ -43,6 +46,10 @@ function AppContent() {
   const robotJoints = useRobotStore((state) => state.joints);
   const rootLinkId = useRobotStore((state) => state.rootLinkId);
   const setRobot = useRobotStore((state) => state.setRobot);
+
+  // Assembly Store
+  const assemblyState = useAssemblyStore((state) => state.assemblyState);
+  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
 
   // Local UI state
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'info' | 'success' }>({
@@ -65,14 +72,36 @@ function AppContent() {
     setTimeout(() => setToast(prev => ({ ...prev, show: false })), 5000);
   }, []);
 
-  // Build robot state for components
-  const robot: RobotState = {
-    name: robotName,
-    links: robotLinks,
-    joints: robotJoints,
+  // Build robot state for AI modal
+  // In workspace mode, AI inspection/select should target merged assembly ids.
+  const robot: RobotState = useMemo(() => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      const mergedRobot = getMergedRobotData();
+      if (mergedRobot) {
+        return {
+          ...mergedRobot,
+          selection,
+        };
+      }
+    }
+
+    return {
+      name: robotName,
+      links: robotLinks,
+      joints: robotJoints,
+      rootLinkId,
+      selection,
+    };
+  }, [
+    robotName,
+    robotLinks,
+    robotJoints,
     rootLinkId,
-    selection: useSelectionStore.getState().selection,
-  };
+    selection,
+    assemblyState,
+    sidebarTab,
+    getMergedRobotData,
+  ]);
 
   // Load robot file handler
   const handleLoadRobot = useCallback((file: RobotFile) => {
@@ -211,7 +240,10 @@ function AppContent() {
         motorLibrary={motorLibrary}
         lang={lang}
         onApplyChanges={handleApplyAIChanges}
-        onSelectItem={(type, id) => setSelection({ type, id })}
+        onSelectItem={(type, id) => {
+          setSelection({ type, id });
+          focusOn(id);
+        }}
       />
 
       {/* URDF Gallery */}
