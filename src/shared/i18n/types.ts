@@ -50,6 +50,9 @@ export interface TranslationKeys {
   addChildLink: string;
   addChildJoint: string;
   deleteBranch: string;
+  rename: string;
+  deleteMesh: string;
+  addCollisionBody: string;
 
   // Assembly
   components: string;
@@ -248,6 +251,9 @@ export interface TranslationKeys {
   noPreviewImage: string;
   emptyAssemblyHint: string;
   clickToAddComponent: string;
+  removeFromLibrary: string;
+  rightClickToRename: string;
+  rightClickForActions: string;
 
   // Ground Plane
   groundPlane: string;

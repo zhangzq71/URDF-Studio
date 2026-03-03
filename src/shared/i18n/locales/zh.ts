@@ -50,6 +50,9 @@ export const zh: TranslationKeys = {
   addChildLink: "添加子连杆",
   addChildJoint: "添加子关节",
   deleteBranch: "删除分支",
+  rename: "重命名",
+  deleteMesh: "删除 Mesh",
+  addCollisionBody: "添加碰撞体",
 
   // Assembly
   components: "组件",
@@ -253,8 +256,11 @@ export const zh: TranslationKeys = {
   enterProjectName: "输入项目名称",
   filePreview: "文件预览",
   noPreviewImage: "暂无预览图",
-  emptyAssemblyHint: "在上方素材库右键文件并选择“添加”来加入组件",
-  clickToAddComponent: "点击文件查看预览，右键添加到组装视图",
+  emptyAssemblyHint: "在上方素材库右键文件并选择“添加”或“删除”",
+  clickToAddComponent: "点击文件查看预览，右键可添加/删除",
+  removeFromLibrary: "从素材库删除",
+  rightClickToRename: "右键重命名",
+  rightClickForActions: "右键更多操作",
 
   // Ground Plane
   groundPlane: "地平面",

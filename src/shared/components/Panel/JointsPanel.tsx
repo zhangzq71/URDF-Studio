@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from '@/features/urdf-viewer/components/JointControlItem';
+import { isSingleDofJoint } from '@/features/urdf-viewer/utils/jointTypes';
 
 interface JointsPanelProps {
     showJointControls: boolean;
@@ -112,7 +113,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
         >
             <div className="p-2 space-y-2" onMouseLeave={() => onHover?.(null, null)}>
                 {robot?.joints && Object.entries(robot.joints)
-                    .filter(([_, joint]: [string, any]) => joint.jointType !== 'fixed')
+                    .filter(([_, joint]: [string, any]) => isSingleDofJoint(joint))
                     .map(([name, joint]: [string, any]) => (
                         <JointControlItem
                             key={name}

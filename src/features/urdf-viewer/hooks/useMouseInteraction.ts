@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { throttle } from '@/shared/utils';
 import { MOUSE_MOVE_THRESHOLD, THROTTLE_INTERVAL } from '../constants';
 import type { ToolMode } from '../types';
+import { isSingleDofJoint } from '../utils/jointTypes';
 
 export interface UseMouseInteractionOptions {
     robot: THREE.Object3D | null;
@@ -114,10 +115,8 @@ export function useMouseInteraction({
 
             while (current && current !== robot) {
                 if ((current as any).isURDFJoint || (current as any).type === 'URDFJoint') {
-                    const jointType = (current as any).jointType;
-
-                    // Skip fixed joints
-                    if (jointType === 'fixed') {
+                    // Skip non-interactive joints (fixed, floating, planar, etc.)
+                    if (!isSingleDofJoint(current)) {
                         let parentLink: THREE.Object3D | null = current.parent;
                         while (parentLink && parentLink !== robot) {
                             if ((parentLink as any).isURDFLink || (parentLink as any).type === 'URDFLink') {

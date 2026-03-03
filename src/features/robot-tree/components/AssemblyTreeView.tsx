@@ -1,10 +1,11 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   ArrowRightLeft,
   Box,
   ChevronDown,
   ChevronRight,
   Cuboid,
+  Edit3,
   Eye,
   EyeOff,
   Folder,
@@ -22,10 +23,12 @@ export interface AssemblyTreeViewProps {
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
+  onAddCollisionBody: (parentId: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
+  onRenameComponent?: (id: string, name: string) => void;
   onCreateBridge?: () => void;
   onToggleComponentVisibility?: (id: string) => void;
   mode: AppMode;
@@ -38,10 +41,12 @@ export const AssemblyTreeView = memo(({
   onSelect,
   onFocus,
   onAddChild,
+  onAddCollisionBody,
   onDelete,
   onUpdate,
   onRemoveComponent,
   onRemoveBridge,
+  onRenameComponent,
   onCreateBridge,
   onToggleComponentVisibility,
   mode,
@@ -50,9 +55,92 @@ export const AssemblyTreeView = memo(({
   const [isComponentsExpanded, setIsComponentsExpanded] = useState(true);
   const [isBridgesExpanded, setIsBridgesExpanded] = useState(true);
   const [expandedComponents, setExpandedComponents] = useState<Record<string, boolean>>({});
+  const [editingComponent, setEditingComponent] = useState<{ id: string; draft: string } | null>(null);
+  const [componentContextMenu, setComponentContextMenu] = useState<{
+    x: number;
+    y: number;
+    componentId: string;
+  } | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const toggleComponent = (id: string) => {
     setExpandedComponents((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  useEffect(() => {
+    if (!editingComponent) return;
+    const id = window.requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [editingComponent]);
+
+  useEffect(() => {
+    if (!componentContextMenu) return;
+    const closeMenu = () => setComponentContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('contextmenu', closeMenu);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('contextmenu', closeMenu);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [componentContextMenu]);
+
+  const beginComponentRename = (componentId: string, currentName: string) => {
+    setEditingComponent({ id: componentId, draft: currentName });
+  };
+
+  const commitComponentRename = () => {
+    if (!editingComponent) return;
+    const nextName = editingComponent.draft.trim();
+    if (nextName) {
+      onRenameComponent?.(editingComponent.id, nextName);
+    }
+    setEditingComponent(null);
+  };
+
+  const cancelComponentRename = () => {
+    setEditingComponent(null);
+  };
+
+  const openComponentContextMenu = (event: React.MouseEvent, componentId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const menuWidth = 170;
+    const menuHeight = 88;
+    const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
+    const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
+    setComponentContextMenu({
+      componentId,
+      x: Math.min(event.clientX, maxX),
+      y: Math.min(event.clientY, maxY),
+    });
+  };
+
+  const handleComponentRenameFromMenu = () => {
+    if (!componentContextMenu) return;
+    const component = assemblyState.components[componentContextMenu.componentId];
+    if (!component) return;
+    beginComponentRename(component.id, component.name);
+    setComponentContextMenu(null);
+  };
+
+  const handleComponentDeleteFromMenu = () => {
+    if (!componentContextMenu) return;
+    onRemoveComponent?.(componentContextMenu.componentId);
+    setComponentContextMenu(null);
   };
 
   const components = Object.values(assemblyState.components);
@@ -91,6 +179,7 @@ export const AssemblyTreeView = memo(({
             {components.map((component) => {
               const isExpanded = expandedComponents[component.id] ?? false;
               const isVisible = component.visible !== false;
+              const isEditingComponent = editingComponent?.id === component.id;
 
               return (
                 <div key={component.id}>
@@ -103,6 +192,7 @@ export const AssemblyTreeView = memo(({
                         onToggleComponentVisibility(component.id);
                       }
                     }}
+                    onContextMenu={(event) => openComponentContextMenu(event, component.id)}
                   >
                     {isExpanded ? (
                       <ChevronDown size={12} className="text-text-tertiary" />
@@ -110,9 +200,30 @@ export const AssemblyTreeView = memo(({
                       <ChevronRight size={12} className="text-text-tertiary" />
                     )}
                     <Box size={12} className="text-system-blue" />
-                    <span className="text-xs font-medium text-text-primary truncate flex-1">
-                      {component.name}
-                    </span>
+
+                    {isEditingComponent ? (
+                      <input
+                        ref={renameInputRef}
+                        value={editingComponent?.draft ?? ''}
+                        onChange={(event) => {
+                          setEditingComponent((prev) => (prev ? { ...prev, draft: event.target.value } : prev));
+                        }}
+                        onClick={(event) => event.stopPropagation()}
+                        onBlur={commitComponentRename}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            commitComponentRename();
+                          } else if (event.key === 'Escape') {
+                            cancelComponentRename();
+                          }
+                        }}
+                        className="text-xs font-medium flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors bg-input-bg border-border-strong text-text-primary focus:border-system-blue"
+                      />
+                    ) : (
+                      <span className="text-xs font-medium text-text-primary truncate flex-1">
+                        {component.name}
+                      </span>
+                    )}
 
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
@@ -146,6 +257,7 @@ export const AssemblyTreeView = memo(({
                         onSelect={onSelect}
                         onFocus={onFocus}
                         onAddChild={onAddChild}
+                        onAddCollisionBody={onAddCollisionBody}
                         onDelete={onDelete}
                         onUpdate={onUpdate}
                         mode={mode}
@@ -223,6 +335,29 @@ export const AssemblyTreeView = memo(({
           </div>
         )}
       </div>
+
+      {componentContextMenu && (
+        <div
+          className="fixed z-[120] w-[170px] rounded-md border border-border-strong bg-panel-bg shadow-xl p-1"
+          style={{ left: `${componentContextMenu.x}px`, top: `${componentContextMenu.y}px` }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-primary hover:bg-element-bg transition-colors"
+            onClick={handleComponentRenameFromMenu}
+          >
+            <Edit3 size={12} className="text-system-blue" />
+            <span>{t.rename}</span>
+          </button>
+          <button
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            onClick={handleComponentDeleteFromMenu}
+          >
+            <Trash2 size={12} />
+            <span>{t.deleteBranch}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 });

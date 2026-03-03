@@ -64,7 +64,10 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
         <OrbitControls makeDefault enableDamping={false} />
         {/* Pass effective theme to SceneLighting and ReferenceGrid */}
         <SceneLighting theme={effectiveTheme} />
-        <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
+        <Environment
+          files="/potsdamer_platz_1k.hdr"
+          environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0}
+        />
         <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
 
         {/* Render robot and controls passed as children */}
