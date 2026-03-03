@@ -59,6 +59,7 @@ code, pre, kbd, samp {
   --ui-accent-solid: #0060fa;
   --ui-accent-solid-hover: #0052d6;
   --ui-accent-solid-active: #0048bd;
+  --ui-on-accent-hover: rgba(15, 23, 42, 0.16);
 
   /* Segmented controls */
   --ui-segmented-bg: #f1f5f9;
@@ -91,6 +92,7 @@ code, pre, kbd, samp {
   --ui-accent-solid: #0a84ff;
   --ui-accent-solid-hover: #409cff;
   --ui-accent-solid-active: #0077ed;
+  --ui-on-accent-hover: rgba(255, 255, 255, 0.2);
 
   /* Segmented controls */
   --ui-segmented-bg: #151518;
@@ -111,6 +113,7 @@ code, pre, kbd, samp {
     --ui-accent-solid: #0050a8;
     --ui-accent-solid-hover: #00458f;
     --ui-accent-solid-active: #003a78;
+    --ui-on-accent-hover: rgba(15, 23, 42, 0.24);
   }
 
   .dark {
@@ -121,6 +124,7 @@ code, pre, kbd, samp {
     --ui-accent-solid: #0068d1;
     --ui-accent-solid-hover: #005bb8;
     --ui-accent-solid-active: #004c99;
+    --ui-on-accent-hover: rgba(255, 255, 255, 0.28);
     --ui-segmented-bg: #0f0f11;
   }
 }
@@ -136,6 +140,7 @@ code, pre, kbd, samp {
   --color-system-blue-solid: var(--ui-accent-solid);
   --color-system-blue-hover: var(--ui-accent-solid-hover);
   --color-system-blue-active: var(--ui-accent-solid-active);
+  --color-on-accent-hover: var(--ui-on-accent-hover);
   --color-segmented-active: var(--ui-segmented-active);
   --color-border-black: var(--ui-border);
   --color-border-strong: var(--ui-border-strong);

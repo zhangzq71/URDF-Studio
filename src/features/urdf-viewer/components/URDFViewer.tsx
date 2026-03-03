@@ -1,11 +1,14 @@
 import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react';
 import { Canvas, RootState } from '@react-three/fiber';
-import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { SnapshotManager, SceneLighting, ReferenceGrid, CanvasResizeSync, UsageGuide } from '@/shared/components/3d';
+import { SnapshotManager, NeutralStudioEnvironment, SceneLighting, ReferenceGrid, CanvasResizeSync, UsageGuide } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 import { useUIStore } from '@/store';
+import { getLowestMeshZ } from '@/shared/utils';
+import { isSingleDofJoint } from '../utils/jointTypes';
+import { offsetRobotToGround } from '../utils/robotPositioning';
 
 import type { URDFViewerProps, ToolMode, MeasureState } from '../types';
 import { RobotModel } from './RobotModel';
@@ -107,10 +110,11 @@ export function URDFViewer({
     useEffect(() => {
         if (selection?.subType === 'collision') {
             setHighlightMode('collision');
+            setShowCollision(true);
         } else if (selection?.subType === 'visual') {
             setHighlightMode('link');
         }
-    }, [selection?.subType]);
+    }, [selection?.subType, setHighlightMode, setShowCollision]);
 
 
     const [jointAngles, setJointAngles] = useState<Record<string, number>>({});
@@ -140,15 +144,18 @@ export function URDFViewer({
             const previousAngles = jointAnglesRef.current;
 
             Object.keys(loadedRobot.joints).forEach(name => {
-                const defaultAngle = loadedRobot.joints[name].angle || 0;
+                const loadedJoint = loadedRobot.joints[name];
+                if (!isSingleDofJoint(loadedJoint)) return;
+
+                const defaultAngle = loadedJoint.angle || 0;
                 defaultAngles[name] = defaultAngle;
 
                 // Preserve previous angle if it exists, otherwise use default
                 if (previousAngles && previousAngles[name] !== undefined) {
                     currentAngles[name] = previousAngles[name];
                     // Apply to the new robot instance immediately to prevent visual jump
-                    if (loadedRobot.joints[name].setJointValue) {
-                        loadedRobot.joints[name].setJointValue(previousAngles[name]);
+                    if (loadedJoint.setJointValue) {
+                        loadedJoint.setJointValue(previousAngles[name]);
                     }
                 } else {
                     currentAngles[name] = defaultAngle;
@@ -158,6 +165,9 @@ export function URDFViewer({
             setJointAngles(currentAngles);
             setInitialJointAngles(defaultAngles);
         }
+
+        // Re-fit after initial joint values are applied (including preserved angles).
+        offsetRobotToGround(loadedRobot);
     }, []);
 
     const handleTransformPending = useCallback((pending: boolean) => {
@@ -174,7 +184,7 @@ export function URDFViewer({
 
         Object.entries(jointAngleState).forEach(([name, angle]) => {
             const joint = robot.joints?.[name];
-            if (joint?.setJointValue) {
+            if (isSingleDofJoint(joint) && joint?.setJointValue) {
                 joint.setJointValue(angle);
             }
         });
@@ -186,12 +196,15 @@ export function URDFViewer({
                 const next = { ...prev };
                 let changed = false;
                 Object.keys(robot.joints).forEach(name => {
-                    const newAngle = robot.joints[name].angle;
+                    const joint = robot.joints[name];
+                    if (!isSingleDofJoint(joint)) return;
+
+                    const newAngle = joint.angle;
                     if (newAngle !== undefined && newAngle !== prev[name]) {
                         next[name] = newAngle;
                         changed = true;
-                        if (robot.joints[name].setJointValue) {
-                            robot.joints[name].setJointValue(newAngle);
+                        if (joint.setJointValue) {
+                            joint.setJointValue(newAngle);
                         }
                     }
                 });
@@ -204,6 +217,8 @@ export function URDFViewer({
         if (!robot?.joints?.[jointName]) return;
 
         const joint = robot.joints[jointName];
+        if (!isSingleDofJoint(joint)) return;
+
         if (joint.setJointValue) {
             joint.setJointValue(angle);
         }
@@ -247,7 +262,7 @@ export function URDFViewer({
         if (type === 'link' && robot) {
             const jointName = Object.keys(robot.joints).find(name => {
                 const joint = robot.joints[name];
-                return joint?.child?.name === id && joint?.jointType !== 'fixed';
+                return joint?.child?.name === id && isSingleDofJoint(joint);
             });
             if (jointName) {
                 setActiveJoint(jointName);
@@ -255,7 +270,8 @@ export function URDFViewer({
                 setActiveJoint(null);
             }
         } else if (type === 'joint') {
-            setActiveJoint(id);
+            const joint = robot?.joints?.[id];
+            setActiveJoint(isSingleDofJoint(joint) ? id : null);
         } else {
             setActiveJoint(null);
         }
@@ -266,26 +282,15 @@ export function URDFViewer({
     }, [onHover]);
 
     const handleAutoFitGround = useCallback(() => {
-        const scene = sceneRef.current;
-        if (!scene) return;
-        const box = new THREE.Box3();
-        scene.traverse((obj) => {
-            if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
-            if (obj.name === 'ReferenceGrid') return;
-            if ((obj as THREE.Mesh).isMesh) {
-                const mesh = obj as THREE.Mesh;
-                if (mesh.geometry) {
-                    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-                    const geomBox = mesh.geometry.boundingBox!.clone();
-                    geomBox.applyMatrix4(mesh.matrixWorld);
-                    box.union(geomBox);
-                }
-            }
-        });
-        if (!box.isEmpty() && isFinite(box.min.z)) {
-            useUIStore.getState().setGroundPlaneOffset(box.min.z);
+        if (!robot) return;
+        let minZ = getLowestMeshZ(robot, { includeInvisible: false });
+        if (minZ === null) {
+            minZ = getLowestMeshZ(robot, { includeInvisible: true });
         }
-    }, []);
+        if (minZ !== null) {
+            useUIStore.getState().setGroundPlaneOffset(minZ);
+        }
+    }, [robot]);
 
     // Handle WebGL context creation and context lost/restored events
     const handleCanvasCreated = useCallback((state: RootState) => {
@@ -336,11 +341,12 @@ export function URDFViewer({
         if (!robot) return;
 
         if (selection?.type === 'joint' && selection.id) {
-            setActiveJoint(selection.id);
+            const joint = robot.joints[selection.id];
+            setActiveJoint(isSingleDofJoint(joint) ? selection.id : null);
         } else if (selection?.type === 'link' && selection.id) {
             const jointName = Object.keys(robot.joints).find(name => {
                 const joint = robot.joints[name];
-                return joint?.child?.name === selection.id && joint?.jointType !== 'fixed';
+                return joint?.child?.name === selection.id && isSingleDofJoint(joint);
             });
             if (jointName) {
                 setActiveJoint(jointName);
@@ -498,8 +504,8 @@ export function URDFViewer({
             >
                 <CanvasResizeSync />
                 <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
-                <SceneLighting theme={effectiveTheme} />
-                <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
+                <NeutralStudioEnvironment intensity={0.36} />
+                <SceneLighting theme={effectiveTheme} cameraFollowPrimary />
                 <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />
 
                 <MeasureTool

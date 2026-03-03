@@ -1,18 +1,27 @@
 import React from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 export interface FileTreeContextMenuProps {
   position: { x: number; y: number } | null;
-  addLabel: string;
-  onAdd: () => void;
+  addLabel?: string;
+  deleteLabel: string;
+  onAdd?: () => void;
+  onDelete: () => void;
+  showAddAction?: boolean;
+  showDeleteAction?: boolean;
 }
 
 export const FileTreeContextMenu: React.FC<FileTreeContextMenuProps> = ({
   position,
   addLabel,
+  deleteLabel,
   onAdd,
+  onDelete,
+  showAddAction = true,
+  showDeleteAction = true,
 }) => {
   if (!position) return null;
+  if (!showAddAction && !showDeleteAction) return null;
 
   return (
     <div
@@ -20,13 +29,24 @@ export const FileTreeContextMenu: React.FC<FileTreeContextMenuProps> = ({
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
       onClick={(event) => event.stopPropagation()}
     >
-      <button
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-slate-700 dark:text-slate-200 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
-        onClick={onAdd}
-      >
-        <Plus size={12} className="text-green-600 dark:text-green-400" />
-        <span>{addLabel}</span>
-      </button>
+      {showAddAction && addLabel && onAdd && (
+        <button
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-slate-700 dark:text-slate-200 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+          onClick={onAdd}
+        >
+          <Plus size={12} className="text-green-600 dark:text-green-400" />
+          <span>{addLabel}</span>
+        </button>
+      )}
+      {showDeleteAction && (
+        <button
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+          onClick={onDelete}
+        >
+          <Trash2 size={12} />
+          <span>{deleteLabel}</span>
+        </button>
+      )}
     </div>
   );
 };

@@ -21,7 +21,7 @@ import { buildFileTree } from '../utils';
 import { AssemblyTreeView } from './AssemblyTreeView';
 import { FilePreviewWindow } from './FilePreviewWindow';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
-import { FileTreeNodeComponent } from './FileTreeNode';
+import { FileTreeNodeComponent, type LibraryDeleteTarget } from './FileTreeNode';
 import { TreeNode } from './TreeNode';
 
 export interface TreeEditorProps {
@@ -29,6 +29,7 @@ export interface TreeEditorProps {
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
+  onAddCollisionBody: (parentId: string) => void;
   onDelete: (id: string) => void;
   onNameChange: (name: string) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
@@ -45,9 +46,12 @@ export interface TreeEditorProps {
   // Assembly mode
   assemblyState?: AssemblyState | null;
   onAddComponent?: (file: RobotFile) => void;
+  onDeleteLibraryFile?: (file: RobotFile) => void;
+  onDeleteLibraryFolder?: (folderPath: string) => void;
   onCreateBridge?: () => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
+  onRenameComponent?: (id: string, name: string) => void;
 }
 
 export const TreeEditor: React.FC<TreeEditorProps> = ({
@@ -55,6 +59,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onSelect,
   onFocus,
   onAddChild,
+  onAddCollisionBody,
   onDelete,
   onNameChange,
   onUpdate,
@@ -70,9 +75,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   currentFileName,
   assemblyState,
   onAddComponent,
+  onDeleteLibraryFile,
+  onDeleteLibraryFolder,
   onCreateBridge,
   onRemoveComponent,
   onRemoveBridge,
+  onRenameComponent,
 }) => {
   const t = translations[lang];
   const sidebarTab = useUIStore((state) => state.sidebarTab);
@@ -114,7 +122,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
-    file: RobotFile;
+    target: LibraryDeleteTarget;
   } | null>(null);
 
   const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
@@ -228,17 +236,59 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
 
     setFileContextMenu({
-      file,
+      target: { type: 'file', file },
+      x: Math.min(event.clientX, maxX),
+      y: Math.min(event.clientY, maxY),
+    });
+  }, [isProMode]);
+
+  const handleFolderContextMenu = useCallback((event: React.MouseEvent, folderPath: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const menuWidth = 180;
+    const menuHeight = 44;
+    const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
+    const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
+
+    setFileContextMenu({
+      target: { type: 'folder', path: folderPath },
       x: Math.min(event.clientX, maxX),
       y: Math.min(event.clientY, maxY),
     });
   }, []);
 
   const handleAddFileToAssembly = useCallback(() => {
-    if (!fileContextMenu?.file || !onAddComponent) return;
-    onAddComponent(fileContextMenu.file);
+    if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onAddComponent) return;
+    onAddComponent(fileContextMenu.target.file);
     setFileContextMenu(null);
   }, [fileContextMenu, onAddComponent]);
+
+  const handleDeleteFromLibrary = useCallback(
+    (target: LibraryDeleteTarget) => {
+      if (target.type === 'file') {
+        if (!onDeleteLibraryFile) return;
+        onDeleteLibraryFile(target.file);
+        if (previewFile?.name === target.file.name) {
+          setPreviewFile(null);
+          setIsPreviewOpen(false);
+        }
+      } else {
+        if (!onDeleteLibraryFolder) return;
+        onDeleteLibraryFolder(target.path);
+        if (
+          previewFile &&
+          (previewFile.name === target.path || previewFile.name.startsWith(`${target.path}/`))
+        ) {
+          setPreviewFile(null);
+          setIsPreviewOpen(false);
+        }
+      }
+
+      setFileContextMenu(null);
+    },
+    [onDeleteLibraryFile, onDeleteLibraryFolder, previewFile],
+  );
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -372,14 +422,14 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       cancelNameEditing();
                     }
                   }}
-                  className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-sm font-medium text-text-primary px-2 py-1 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
+                  className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-[13px] font-medium text-text-primary px-2 py-1 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
                   placeholder={namePlaceholder}
                 />
               ) : (
                 <button
                   type="button"
                   onClick={startNameEditing}
-                  className="flex-1 min-w-0 text-left text-sm font-medium text-text-primary hover:text-system-blue transition-colors truncate"
+                  className="flex-1 min-w-0 text-left text-[13px] font-medium text-text-primary hover:text-system-blue transition-colors truncate"
                   title={currentName || namePlaceholder}
                 >
                   {currentName || namePlaceholder}
@@ -432,7 +482,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             )}
 
             {isFileBrowserOpen && (
-              <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1">
+              <div
+                className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1"
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                }}
+              >
                 {availableFiles.length === 0 ? (
                   <div className="text-xs text-text-tertiary text-center py-4 italic">{t.dropOrImport}</div>
                 ) : (
@@ -443,7 +498,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       depth={0}
                       onLoadRobot={isProMode ? handlePreviewFile : onLoadRobot}
                       onAddAsComponent={isProMode ? onAddComponent : undefined}
+                      onDeleteFromLibrary={
+                        onDeleteLibraryFile || onDeleteLibraryFolder
+                          ? handleDeleteFromLibrary
+                          : undefined
+                      }
                       onFileContextMenu={isProMode ? handleFileContextMenu : undefined}
+                      onFolderContextMenu={handleFolderContextMenu}
                       expandedFolders={expandedFolders}
                       toggleFolder={toggleFolder}
                       showAddAsComponent={isProMode}
@@ -528,10 +589,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       onSelect={onSelect}
                       onFocus={onFocus}
                       onAddChild={onAddChild}
+                      onAddCollisionBody={onAddCollisionBody}
                       onDelete={onDelete}
                       onUpdate={onUpdate}
                       onRemoveComponent={onRemoveComponent}
                       onRemoveBridge={onRemoveBridge}
+                      onRenameComponent={onRenameComponent}
                       onCreateBridge={onCreateBridge}
                       onToggleComponentVisibility={toggleComponentVisibility}
                       mode={mode}
@@ -544,6 +607,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       onSelect={onSelect}
                       onFocus={onFocus}
                       onAddChild={onAddChild}
+                      onAddCollisionBody={onAddCollisionBody}
                       onDelete={onDelete}
                       onUpdate={onUpdate}
                       mode={mode}
@@ -565,7 +629,15 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       <FileTreeContextMenu
         position={fileContextMenu ? { x: fileContextMenu.x, y: fileContextMenu.y } : null}
         addLabel={t.addComponent}
+        deleteLabel={t.removeFromLibrary}
         onAdd={handleAddFileToAssembly}
+        showAddAction={isProMode && fileContextMenu?.target.type === 'file'}
+        showDeleteAction={fileContextMenu?.target.type === 'folder'}
+        onDelete={() => {
+          if (fileContextMenu?.target) {
+            handleDeleteFromLibrary(fileContextMenu.target);
+          }
+        }}
       />
 
       <FilePreviewWindow

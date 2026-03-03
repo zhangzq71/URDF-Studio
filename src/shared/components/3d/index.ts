@@ -16,6 +16,7 @@ export {
   HoverInvalidator,
   CanvasResizeSync,
   SnapshotManager,
+  NeutralStudioEnvironment,
   SceneLighting,
   ReferenceGrid,
   LIGHTING_CONFIG
@@ -25,4 +26,3 @@ export {
 export * from './helpers';
 
 export { UsageGuide } from './UsageGuide';
-

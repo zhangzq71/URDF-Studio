@@ -30,7 +30,7 @@ export function useSnapshot(options: UseSnapshotOptions = {}): UseSnapshotReturn
         snapshotActionRef.current();
         // Show progress toast
         showToast?.(
-          lang === 'zh' ? '正在生成高清快照...' : 'Generating High-Res Snapshot...',
+          lang === 'zh' ? '正在生成快照...' : 'Generating Snapshot...',
           'info'
         );
         onSuccess?.();

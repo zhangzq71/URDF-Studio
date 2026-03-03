@@ -7,6 +7,7 @@ import JSZip from 'jszip';
 import type { RobotState, UrdfLink } from '@/types';
 import { GeometryType } from '@/types';
 import { generateURDF, generateMujocoXML } from '@/core/parsers';
+import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
 import { exportProject } from '@/features/file-io/utils';
 
@@ -99,16 +100,25 @@ export function useFileExport() {
     });
 
     const promises: Promise<void>[] = [];
-    referencedFiles.forEach(fileName => {
-      const blobUrl = assets[fileName];
-      if (!blobUrl) return;
+    const exportedMeshPaths = new Set<string>();
+
+    referencedFiles.forEach((meshPath) => {
+      const exportPath = normalizeMeshPathForExport(meshPath);
+      if (!exportPath || exportedMeshPaths.has(exportPath)) return;
+      exportedMeshPaths.add(exportPath);
+
+      const blobUrl = resolveMeshAssetUrl(meshPath, assets);
+      if (!blobUrl) {
+        console.warn(`[Export] Mesh asset not found for: ${meshPath}`);
+        return;
+      }
 
       const p = fetch(blobUrl)
         .then(res => res.blob())
         .then(blob => {
-          meshFolder?.file(fileName, blob);
+          meshFolder?.file(exportPath, blob);
         })
-        .catch((err: any) => console.error(`Failed to load mesh ${fileName}`, err));
+        .catch((err: any) => console.error(`Failed to load mesh ${meshPath}`, err));
 
       promises.push(p);
     });
@@ -145,9 +155,8 @@ export function useFileExport() {
     const robot = buildRobotForExport();
     const exportName = getRobotExportName(robot);
     const zip = new JSZip();
-    const urdfFolder = zip.folder("urdf");
 
-    urdfFolder?.file(`${exportName}.urdf`, generateURDF(robot, false));
+    zip.file(`${exportName}.urdf`, generateURDF(robot, false));
     await addMeshesToZip(robot, zip);
 
     const content = await zip.generateAsync({ type: "blob" });
@@ -158,9 +167,8 @@ export function useFileExport() {
     const robot = buildRobotForExport();
     const exportName = getRobotExportName(robot);
     const zip = new JSZip();
-    const mujocoFolder = zip.folder("mujoco");
 
-    mujocoFolder?.file(`${exportName}.xml`, generateMujocoXML(robot));
+    zip.file(`${exportName}.xml`, generateMujocoXML(robot, { meshdir: 'meshes/' }));
     await addMeshesToZip(robot, zip);
 
     const content = await zip.generateAsync({ type: "blob" });
@@ -173,25 +181,23 @@ export function useFileExport() {
     const exportName = getRobotExportName(robot);
 
     const zip = new JSZip();
-    const urdfFolder = zip.folder("urdf");
     const hardwareFolder = zip.folder("hardware");
-    const mujocoFolder = zip.folder("mujoco");
 
     // 1. Generate Standard URDF
     const xml = generateURDF(robot, false);
-    urdfFolder?.file(`${exportName}.urdf`, xml);
+    zip.file(`${exportName}.urdf`, xml);
 
     // 2. Generate Extended URDF (with hardware info)
     const extendedXml = generateURDF(robot, true);
-    urdfFolder?.file(`${exportName}_extended.urdf`, extendedXml);
+    zip.file(`${exportName}_extended.urdf`, extendedXml);
 
     // 3. Generate BOM
     const bomCsv = generateBOM(robot);
     hardwareFolder?.file("bom_list.csv", bomCsv);
 
     // 4. Generate MuJoCo XML
-    const mujocoXml = generateMujocoXML(robot);
-    mujocoFolder?.file(`${exportName}.xml`, mujocoXml);
+    const mujocoXml = generateMujocoXML(robot, { meshdir: 'meshes/' });
+    zip.file(`${exportName}.xml`, mujocoXml);
 
     // 5. Add Meshes
     await addMeshesToZip(robot, zip);

@@ -5,6 +5,7 @@
 
 import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState, RobotData } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import { normalizeMeshPathForExport } from '../meshPathUtils';
 
 // Helper to convert hex color to RGBA string
 const hexToRgba = (hex: string): string => {
@@ -25,6 +26,7 @@ export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean 
 
 export const generateURDF = (robot: RobotState, extended: boolean = false): string => {
   const { name, links, joints, rootLinkId } = robot;
+  const exportRobotName = name?.trim() ? name : 'robot';
 
   let xml = `<?xml version="1.0"?>\n<robot name="${name}">\n\n`;
 
@@ -54,7 +56,8 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         } else if (link.visual.type === GeometryType.CAPSULE) {
           xml += `        <capsule radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
-           const filename = link.visual.meshPath ? `package://${name}/meshes/${link.visual.meshPath}` : 'package://robot/meshes/part.stl';
+           const meshPath = link.visual.meshPath ? normalizeMeshPathForExport(link.visual.meshPath) : 'part.stl';
+           const filename = `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
            xml += `        <mesh filename="${filename}" />\n`;
         }
         xml += `      </geometry>\n`;
@@ -80,7 +83,8 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         } else if (link.collision.type === GeometryType.CAPSULE) {
           xml += `        <capsule radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
         } else if (link.collision.type === GeometryType.MESH) {
-           const filename = link.collision.meshPath ? `package://${name}/meshes/${link.collision.meshPath}` : 'package://robot/meshes/part_collision.stl';
+           const meshPath = link.collision.meshPath ? normalizeMeshPathForExport(link.collision.meshPath) : 'part_collision.stl';
+           const filename = `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
            xml += `        <mesh filename="${filename}" />\n`;
         }
         xml += `      </geometry>\n`;

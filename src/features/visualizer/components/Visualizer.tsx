@@ -4,6 +4,7 @@ import { RobotState, Theme } from '@/types';
 import { translations, Language } from '@/shared/i18n';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
+import { getLowestMeshZ } from '@/shared/utils';
 
 // Hooks
 import {
@@ -22,26 +23,14 @@ import { JointTransformControls } from './controls';
 import { VisualizerCanvas } from './VisualizerCanvas';
 
 /**
- * Traverse the scene graph, skipping subtrees marked as helpers or gizmos.
- * This ensures only actual robot geometry is considered for bounding box calculations.
- */
-function traverseRobotMeshes(obj: THREE.Object3D, callback: (mesh: THREE.Mesh) => void) {
-  if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
-  if ((obj as THREE.Mesh).isMesh) {
-    callback(obj as THREE.Mesh);
-  }
-  for (const child of obj.children) {
-    traverseRobotMeshes(child, callback);
-  }
-}
-
-/**
  * GroundedGroup - Ground plane is fixed at Z=0 (XY plane).
  * Robot is rendered at its URDF-defined position without auto-offset.
  */
-function GroundedGroup({ children }: { children: React.ReactNode }) {
-  return <group>{children}</group>;
-}
+const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode }>(
+  function GroundedGroup({ children }, ref) {
+    return <group ref={ref}>{children}</group>;
+  }
+);
 
 // Props interface
 interface VisualizerProps {
@@ -85,26 +74,17 @@ export const Visualizer = ({
   const t = translations[lang];
   const clearSelection = useSelectionStore((s) => s.clearSelection);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const robotRootRef = useRef<THREE.Group | null>(null);
 
   const handleAutoFitGround = useCallback(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    const box = new THREE.Box3();
-    scene.traverse((obj) => {
-      if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
-      if (obj.name === 'ReferenceGrid') return;
-      if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        if (mesh.geometry) {
-          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-          const geomBox = mesh.geometry.boundingBox!.clone();
-          geomBox.applyMatrix4(mesh.matrixWorld);
-          box.union(geomBox);
-        }
-      }
-    });
-    if (!box.isEmpty() && isFinite(box.min.z)) {
-      useUIStore.getState().setGroundPlaneOffset(box.min.z);
+    const robotRoot = robotRootRef.current;
+    if (!robotRoot) return;
+    let minZ = getLowestMeshZ(robotRoot, { includeInvisible: false });
+    if (minZ === null) {
+      minZ = getLowestMeshZ(robotRoot, { includeInvisible: true });
+    }
+    if (minZ !== null) {
+      useUIStore.getState().setGroundPlaneOffset(minZ);
     }
   }, []);
 
@@ -264,7 +244,7 @@ export const Visualizer = ({
         onPointerMissed={clearSelection}
       >
         {/* Robot Hierarchy - GroundedGroup offsets robot so bottom sits at Z=0 */}
-        <GroundedGroup>
+        <GroundedGroup ref={robotRootRef}>
           <RobotNode
             linkId={robot.rootLinkId}
             robot={robot}

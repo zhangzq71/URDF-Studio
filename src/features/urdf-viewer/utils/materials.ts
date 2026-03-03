@@ -8,10 +8,10 @@ export const MATERIAL_CONFIG = {
     // PBR properties for realistic matte finish
     roughness: 0.7,         // 0.6-0.8 range for matte plastic/metal look
     metalness: 0.1,         // Low metalness for plastic-like appearance
-    envMapIntensity: 0.8,   // Environment reflection intensity
+    envMapIntensity: 1.0,   // Environment reflection intensity
 
     // Color adjustment: slightly reduce white reflectivity to prevent overexposure
-    whiteColorMultiplier: 0.9, // Apply to pure white colors (1,1,1 -> 0.9,0.9,0.9)
+    whiteColorMultiplier: 0.95, // Apply to pure white colors (1,1,1 -> 0.95,0.95,0.95)
 } as const;
 
 // ============================================================

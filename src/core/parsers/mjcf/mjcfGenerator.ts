@@ -4,9 +4,15 @@
  */
 
 import { RobotState, GeometryType, JointType, UrdfLink } from '@/types';
+import { normalizeMeshPathForExport } from '../meshPathUtils';
 
-export const generateMujocoXML = (robot: RobotState): string => {
+interface MujocoExportOptions {
+  meshdir?: string;
+}
+
+export const generateMujocoXML = (robot: RobotState, options: MujocoExportOptions = {}): string => {
   const { name, links, joints, rootLinkId } = robot;
+  const meshdir = options.meshdir ?? '../meshes/';
 
   // Helper to format numbers
   const f = (n: number) => n.toFixed(4);
@@ -23,26 +29,56 @@ export const generateMujocoXML = (robot: RobotState): string => {
     return `${f(r)} ${f(g)} ${f(b)} 1.0`;
   };
 
-  // Collect all mesh assets
+  // Collect all mesh assets and create stable MJCF mesh names.
   const meshAssets = new Set<string>();
   Object.values(links).forEach(link => {
     if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      meshAssets.add(link.visual.meshPath);
+      const meshPath = normalizeMeshPathForExport(link.visual.meshPath);
+      if (meshPath) meshAssets.add(meshPath);
     }
     if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
-      meshAssets.add(link.collision.meshPath);
+      const meshPath = normalizeMeshPathForExport(link.collision.meshPath);
+      if (meshPath) meshAssets.add(meshPath);
     }
   });
 
+  const meshAssetNameMap = new Map<string, string>();
+  const usedAssetNames = new Set<string>();
+  const buildMeshAssetName = (meshPath: string): string => {
+    const base = meshPath
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .replace(/^_+|_+$/g, '') || 'mesh';
+
+    let candidate = base;
+    let i = 2;
+    while (usedAssetNames.has(candidate)) {
+      candidate = `${base}_${i}`;
+      i += 1;
+    }
+    usedAssetNames.add(candidate);
+    return candidate;
+  };
+
+  Array.from(meshAssets).forEach((meshPath) => {
+    meshAssetNameMap.set(meshPath, buildMeshAssetName(meshPath));
+  });
+
+  const resolveMeshAssetName = (meshPath?: string): string | null => {
+    if (!meshPath) return null;
+    const normalized = normalizeMeshPathForExport(meshPath);
+    if (!normalized) return null;
+    return meshAssetNameMap.get(normalized) || null;
+  };
+
   let xml = `<mujoco model="${name}">\n`;
-  xml += `  <compiler angle="radian" meshdir="../meshes/" />\n`;
+  xml += `  <compiler angle="radian" meshdir="${meshdir}" />\n`;
 
   // Assets Section
   xml += `  <asset>\n`;
   meshAssets.forEach(mesh => {
-    // Assuming mesh files are .stl/.obj. MuJoCo needs unique names.
-    // We use the filename as the mesh name.
-    xml += `    <mesh name="${mesh}" file="${mesh}" />\n`;
+    const meshName = meshAssetNameMap.get(mesh) || 'mesh';
+    xml += `    <mesh name="${meshName}" file="${mesh}" />\n`;
   });
   xml += `  </asset>\n\n`;
 
@@ -123,7 +159,13 @@ export const generateMujocoXML = (robot: RobotState): string => {
             // MuJoCo capsule size is radius half-height
             vGeomAttrs += ` type="capsule" size="${f(v.dimensions.x)} ${f(v.dimensions.y/2)}"`;
         } else if (v.type === GeometryType.MESH && v.meshPath) {
-            vGeomAttrs += ` type="mesh" mesh="${v.meshPath}"`;
+            const meshAssetName = resolveMeshAssetName(v.meshPath);
+            if (meshAssetName) {
+                vGeomAttrs += ` type="mesh" mesh="${meshAssetName}"`;
+            } else {
+                const fallback = normalizeMeshPathForExport(v.meshPath);
+                if (fallback) vGeomAttrs += ` type="mesh" mesh="${fallback}"`;
+            }
         }
 
         bodyXml += `${indent}  <geom ${vGeomAttrs} />\n`;
@@ -151,7 +193,13 @@ export const generateMujocoXML = (robot: RobotState): string => {
         } else if (c.type === GeometryType.CAPSULE) {
             cGeomAttrs += ` type="capsule" size="${f(c.dimensions.x)} ${f(c.dimensions.y/2)}"`;
         } else if (c.type === GeometryType.MESH && c.meshPath) {
-            cGeomAttrs += ` type="mesh" mesh="${c.meshPath}"`;
+            const meshAssetName = resolveMeshAssetName(c.meshPath);
+            if (meshAssetName) {
+                cGeomAttrs += ` type="mesh" mesh="${meshAssetName}"`;
+            } else {
+                const fallback = normalizeMeshPathForExport(c.meshPath);
+                if (fallback) cGeomAttrs += ` type="mesh" mesh="${fallback}"`;
+            }
         }
         bodyXml += `${indent}  <geom ${cGeomAttrs} />\n`;
     }

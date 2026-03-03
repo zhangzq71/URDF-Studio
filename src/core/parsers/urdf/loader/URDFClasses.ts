@@ -188,19 +188,28 @@ export class URDFJoint extends URDFBase {
             }
 
             case 'floating': {
+                const isUnchanged = (incoming: number | null | undefined, current: number) =>
+                    incoming == null || Number.isNaN(incoming) || incoming === current;
+
                 if (
                     currentValues.length === 6 &&
-                    currentValues.every((value, index) => values[index] === value || values[index] === null)
+                    currentValues.every((value, index) => isUnchanged(values[index], value))
                 ) {
                     return didUpdate;
                 }
 
-                currentValues[0] = values[0] !== null ? values[0]! : currentValues[0];
-                currentValues[1] = values[1] !== null ? values[1]! : currentValues[1];
-                currentValues[2] = values[2] !== null ? values[2]! : currentValues[2];
-                currentValues[3] = values[3] !== null ? values[3]! : currentValues[3];
-                currentValues[4] = values[4] !== null ? values[4]! : currentValues[4];
-                currentValues[5] = values[5] !== null ? values[5]! : currentValues[5];
+                const applyIfFinite = (index: number) => {
+                    const next = values[index];
+                    if (typeof next === 'number' && Number.isFinite(next)) {
+                        currentValues[index] = next;
+                    }
+                };
+                applyIfFinite(0);
+                applyIfFinite(1);
+                applyIfFinite(2);
+                applyIfFinite(3);
+                applyIfFinite(4);
+                applyIfFinite(5);
                 this.jointValue = currentValues;
 
                 _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
@@ -217,16 +226,25 @@ export class URDFJoint extends URDFBase {
             }
 
             case 'planar': {
+                const isUnchanged = (incoming: number | null | undefined, current: number) =>
+                    incoming == null || Number.isNaN(incoming) || incoming === current;
+
                 if (
                     currentValues.length === 3 &&
-                    currentValues.every((value, index) => values[index] === value || values[index] === null)
+                    currentValues.every((value, index) => isUnchanged(values[index], value))
                 ) {
                     return didUpdate;
                 }
 
-                currentValues[0] = values[0] !== null ? values[0]! : currentValues[0];
-                currentValues[1] = values[1] !== null ? values[1]! : currentValues[1];
-                currentValues[2] = values[2] !== null ? values[2]! : currentValues[2];
+                const applyIfFinite = (index: number) => {
+                    const next = values[index];
+                    if (typeof next === 'number' && Number.isFinite(next)) {
+                        currentValues[index] = next;
+                    }
+                };
+                applyIfFinite(0);
+                applyIfFinite(1);
+                applyIfFinite(2);
                 this.jointValue = currentValues;
 
                 _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);

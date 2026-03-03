@@ -658,7 +658,7 @@ export function useRobotLoader({
                         processCapsuleGeometries(robotModel, urdfContent);
                     }
 
-                    // Offset robot so bottom is at ground level (Y=0)
+                    // Initial ground fit before visibility/userData tagging.
                     offsetRobotToGround(robotModel);
 
                     enhanceMaterials(robotModel);
@@ -729,6 +729,9 @@ export function useRobotLoader({
                             child.visible = showVisualRef.current;
                         }
                     });
+
+                    // Re-fit using final visibility state so hidden meshes don't affect ground alignment.
+                    offsetRobotToGround(robotModel);
 
                     // Cleanup previous robot NOW, before replacing it
                     if (robotRef.current) {

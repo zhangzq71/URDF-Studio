@@ -254,7 +254,7 @@ function RobotPreviewModel({
 
   return (
     <>
-      <ReferenceGrid theme={theme} />
+      <ReferenceGrid theme={theme} groundOffset={0} />
       <group ref={groupRef}>
         <primitive object={robot} />
       </group>
@@ -347,7 +347,10 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, ur
         >
           <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#000000']} />
           <SceneLighting />
-          <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
+          <Environment
+            files="/potsdamer_platz_1k.hdr"
+            environmentIntensity={theme === 'light' ? 0.8 : 1.0}
+          />
 
           <Suspense fallback={<LoadingIndicator theme={theme} />}>
             <RobotPreviewModel 

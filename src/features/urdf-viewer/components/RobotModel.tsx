@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { translations } from '@/shared/i18n';
 import type { RobotModelProps } from '../types';
+import { isSingleDofJoint } from '../utils/jointTypes';
 
 // Import hooks
 import {
@@ -190,7 +191,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
         Object.entries(jointAngles).forEach(([jointName, angle]) => {
             const joint = joints[jointName];
-            if (joint && typeof joint.setJointValue === 'function') {
+            if (isSingleDofJoint(joint) && typeof joint.setJointValue === 'function') {
                 joint.setJointValue(angle);
             }
         });

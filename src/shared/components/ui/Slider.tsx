@@ -36,6 +36,24 @@ export const Slider: React.FC<SliderProps> = ({
     }
   }, [value, isDragging]);
 
+  React.useEffect(() => {
+    if (!isDragging) return;
+
+    const stopDragging = () => setIsDragging(false);
+
+    window.addEventListener('pointerup', stopDragging);
+    window.addEventListener('pointercancel', stopDragging);
+    window.addEventListener('mouseup', stopDragging);
+    window.addEventListener('touchend', stopDragging);
+
+    return () => {
+      window.removeEventListener('pointerup', stopDragging);
+      window.removeEventListener('pointercancel', stopDragging);
+      window.removeEventListener('mouseup', stopDragging);
+      window.removeEventListener('touchend', stopDragging);
+    };
+  }, [isDragging]);
+
   const handleChange = (newValue: number) => {
     setLocalValue(newValue);
     onChange(newValue);
@@ -82,20 +100,17 @@ export const Slider: React.FC<SliderProps> = ({
           max={max}
           step={step}
           value={localValue}
-          onInput={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
-          onMouseDown={() => setIsDragging(true)}
-          onMouseUp={() => setIsDragging(false)}
-          onTouchStart={() => setIsDragging(true)}
-          onTouchEnd={() => setIsDragging(false)}
+          onChange={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
+          onPointerDown={() => setIsDragging(true)}
           disabled={disabled}
-          className="absolute w-full h-10 -top-2.5 opacity-0 cursor-pointer disabled:cursor-not-allowed z-10"
+          className="absolute w-full h-10 -top-2.5 opacity-0 cursor-default disabled:cursor-default z-10 appearance-none bg-transparent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[14px] [&::-webkit-slider-thumb]:w-[24px] [&::-webkit-slider-thumb]:rounded-[999px] [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent [&::-moz-range-thumb]:h-[14px] [&::-moz-range-thumb]:w-[24px] [&::-moz-range-thumb]:rounded-[999px] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent"
         />
         {/* Thumb */}
         <div 
-          className={`pointer-events-none absolute h-5 w-5 rounded-full bg-white transition-transform duration-150 ease-out top-1/2 -translate-y-1/2 border border-border-strong shadow-sm ${
-            isDragging ? 'scale-110' : 'scale-100 group-hover:scale-105'
+          className={`pointer-events-none absolute h-3.5 w-6 rounded-[999px] bg-white transition-transform duration-150 ease-out top-1/2 -translate-y-1/2 border border-border-strong shadow-sm ${
+            isDragging ? 'scale-105' : 'scale-100 group-hover:scale-[1.02]'
           }`}
-          style={{ left: `calc(${clampedPercentage}% - 10px)` }}
+          style={{ left: `calc(${clampedPercentage}% - 12px)` }}
         />
       </div>
     </div>

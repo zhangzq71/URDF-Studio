@@ -24,8 +24,9 @@ interface AssemblyContext {
 
 function applyPrefix(
   data: RobotData,
-  prefix: string
+  options: { idPrefix: string; rootName: string }
 ): RobotData {
+  const { idPrefix, rootName } = options;
   const linkIdMap: Record<string, string> = {};
   const links: Record<string, UrdfLink> = {};
   const joints: Record<string, UrdfJoint> = {};
@@ -35,31 +36,34 @@ function applyPrefix(
   // that matches what we do in useFileImport or ensures the visualization can find it.
 
   for (const [id, link] of Object.entries(data.links)) {
-    const newId = prefix + id;
+    const newId = idPrefix + id;
     linkIdMap[id] = newId;
+    const originalName = link.name?.trim() || id;
+    const isRootLink = id === data.rootLinkId;
     
     // Create namespaced link
     links[newId] = {
       ...link,
       id: newId,
-      name: prefix + link.name,
+      name: isRootLink ? rootName : `${rootName}_${originalName}`,
     };
   }
 
   for (const [id, joint] of Object.entries(data.joints)) {
-    const newId = prefix + id;
-    const parentId = linkIdMap[joint.parentLinkId] ?? prefix + joint.parentLinkId;
-    const childId = linkIdMap[joint.childLinkId] ?? prefix + joint.childLinkId;
+    const newId = idPrefix + id;
+    const parentId = linkIdMap[joint.parentLinkId] ?? idPrefix + joint.parentLinkId;
+    const childId = linkIdMap[joint.childLinkId] ?? idPrefix + joint.childLinkId;
+    const originalName = joint.name?.trim() || id;
     joints[newId] = {
       ...joint,
       id: newId,
-      name: prefix + joint.name,
+      name: `${rootName}_${originalName}`,
       parentLinkId: parentId,
       childLinkId: childId,
     };
   }
 
-  const rootLinkId = linkIdMap[data.rootLinkId] ?? prefix + data.rootLinkId;
+  const rootLinkId = linkIdMap[data.rootLinkId] ?? idPrefix + data.rootLinkId;
 
   return {
     name: data.name,
@@ -71,8 +75,23 @@ function applyPrefix(
 }
 
 export function sanitizeComponentId(filename: string): string {
-  const base = filename.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'component';
-  return base.replace(/[^a-zA-Z0-9_]/g, '_');
+  const base = filename.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'robot';
+  const sanitized = base.replace(/[^a-zA-Z0-9_]/g, '_');
+  return sanitized || 'robot';
+}
+
+function createUniqueComponentName(baseName: string, existingNames: Set<string>): string {
+  if (!existingNames.has(baseName)) {
+    return baseName;
+  }
+
+  let suffix = 1;
+  let candidate = `${baseName}_${suffix}`;
+  while (existingNames.has(candidate)) {
+    suffix += 1;
+    candidate = `${baseName}_${suffix}`;
+  }
+  return candidate;
 }
 
 interface AssemblyActions {
@@ -196,19 +215,24 @@ export const useAssemblyStore = create<
       if (!robotData) return null;
 
       const baseId = sanitizeComponentId(file.name);
-      let compId = `comp_${baseId}`;
-      let suffix = 0;
       const state = get().assemblyState;
+      const existingNames = new Set(
+        state ? Object.values(state.components).map((component) => component.name) : []
+      );
+      const displayName = createUniqueComponentName(baseId, existingNames);
+
+      let compId = `comp_${displayName}`;
+      let suffix = 1;
       if (state) {
         while (state.components[compId]) {
-          compId = `comp_${baseId}_${++suffix}`;
+          compId = `comp_${displayName}_${suffix++}`;
         }
       }
 
-      const displayName =
-        baseId.charAt(0).toUpperCase() + baseId.slice(1) + '_Component';
-      const prefix = compId + '_';
-      const namespacedRobot = applyPrefix(robotData, prefix);
+      const namespacedRobot = applyPrefix(robotData, {
+        idPrefix: `${compId}_`,
+        rootName: displayName,
+      });
 
       const component: AssemblyComponent = {
         id: compId,

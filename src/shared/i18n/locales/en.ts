@@ -50,6 +50,9 @@ export const en: TranslationKeys = {
   addChildLink: "Add Child Link",
   addChildJoint: "Add Child Joint",
   deleteBranch: "Delete Branch",
+  rename: "Rename",
+  deleteMesh: "Delete Mesh",
+  addCollisionBody: "Add Collision Body",
 
   // Assembly
   components: "Components",
@@ -251,8 +254,11 @@ export const en: TranslationKeys = {
   enterProjectName: "Enter project name",
   filePreview: "File Preview",
   noPreviewImage: "No preview image available",
-  emptyAssemblyHint: "Right-click files in the asset library above and choose Add to include components",
-  clickToAddComponent: "Click file to preview, right-click to add as component",
+  emptyAssemblyHint: "Right-click files in the asset library above and choose Add or Delete",
+  clickToAddComponent: "Click file to preview, right-click to add/delete",
+  removeFromLibrary: "Remove from Library",
+  rightClickToRename: "Right-click to rename",
+  rightClickForActions: "Right-click for actions",
 
   // Ground Plane
   groundPlane: "Ground Plane",
