@@ -19,7 +19,16 @@ export function useCollisionRefs(
   const [collisionRefs, setCollisionRefs] = useState<Record<string, THREE.Group | null>>({});
 
   const handleRegisterCollisionRef = useCallback((linkId: string, ref: THREE.Group | null) => {
-    setCollisionRefs((prev) => ({ ...prev, [linkId]: ref }));
+    setCollisionRefs((prev) => {
+      if (ref) {
+        return { ...prev, [linkId]: ref };
+      }
+
+      if (!(linkId in prev)) return prev;
+      const next = { ...prev };
+      delete next[linkId];
+      return next;
+    });
   }, []);
 
   const selectedCollisionRef =

@@ -14,8 +14,32 @@ import { useDraggableWindow } from '@/shared/hooks';
 loader.config({
   paths: {
     vs: '/monaco-editor/min/vs'
-  }
+  },
+  // Force English UI strings for Monaco internals to avoid locale-pack load failures
+  // when we only ship a minimal Monaco asset set.
+  'vs/nls': {
+    availableLanguages: {
+      '*': 'en'
+    }
+  },
 });
+
+type MonacoInstance = Awaited<ReturnType<typeof loader.init>>;
+let monacoPreloadPromise: Promise<MonacoInstance | null> | null = null;
+
+export const preloadSourceCodeEditor = (): Promise<MonacoInstance | null> => {
+  if (!monacoPreloadPromise) {
+    monacoPreloadPromise = loader.init().catch((error) => {
+      if (error?.type !== 'cancelation') {
+        console.error('Monaco preload failed:', error);
+      }
+      monacoPreloadPromise = null;
+      return null;
+    });
+  }
+
+  return monacoPreloadPromise;
+};
 
 export interface SourceCodeEditorProps {
   code: string;
@@ -221,8 +245,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [monacoInstance, setMonacoInstance] = useState<any>(null);
+  const [monacoInstance, setMonacoInstance] = useState<MonacoInstance | null>(null);
 
   const windowState = useDraggableWindow({
     defaultPosition: { x: 100, y: 100 },
@@ -246,18 +269,11 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   // Initialize Monaco (avoid unhandled cancellation errors)
   useEffect(() => {
     let isMounted = true;
-    loader
-      .init()
-      .then((monaco) => {
-        if (isMounted) {
-          setMonacoInstance(monaco);
-        }
-      })
-      .catch((error) => {
-        if (error?.type !== 'cancelation') {
-          console.error('Monaco init failed:', error);
-        }
-      });
+    preloadSourceCodeEditor().then((monaco) => {
+      if (isMounted && monaco) {
+        setMonacoInstance(monaco);
+      }
+    });
 
     return () => {
       isMounted = false;

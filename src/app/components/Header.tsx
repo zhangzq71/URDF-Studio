@@ -78,6 +78,7 @@ interface HeaderProps {
   // Modal actions
   onOpenAI: () => void;
   onOpenCodeViewer: () => void;
+  onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
   onOpenURDFGallery: () => void;
@@ -107,6 +108,7 @@ export function Header({
   onExportProject,
   onOpenAI,
   onOpenCodeViewer,
+  onPrefetchCodeViewer,
   onOpenSettings,
   onOpenAbout,
   onOpenURDFGallery,
@@ -356,6 +358,9 @@ export function Header({
           <div className="relative hidden md:block">
             <button
               onClick={onOpenCodeViewer}
+              onMouseEnter={onPrefetchCodeViewer}
+              onFocus={onPrefetchCodeViewer}
+              onPointerDown={onPrefetchCodeViewer}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white"
             >
               <Code className="w-3.5 h-3.5" />
@@ -481,6 +486,7 @@ export function Header({
           undo={undo}
           redo={redo}
           onOpenCodeViewer={onOpenCodeViewer}
+          onPrefetchCodeViewer={onPrefetchCodeViewer}
           onSnapshot={onSnapshot}
           onOpenSettings={onOpenSettings}
           onOpenAbout={onOpenAbout}
@@ -590,6 +596,7 @@ function MobileMoreMenu({
   undo,
   redo,
   onOpenCodeViewer,
+  onPrefetchCodeViewer,
   onSnapshot,
   onOpenSettings,
   onOpenAbout,
@@ -608,6 +615,7 @@ function MobileMoreMenu({
   undo: () => void;
   redo: () => void;
   onOpenCodeViewer: () => void;
+  onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
@@ -656,6 +664,9 @@ function MobileMoreMenu({
 
             <button
               onClick={() => { onOpenCodeViewer(); setActiveMenu(null); }}
+              onMouseEnter={onPrefetchCodeViewer}
+              onFocus={onPrefetchCodeViewer}
+              onTouchStart={onPrefetchCodeViewer}
               className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
             >
               <Code className="w-4 h-4" /> {lang === 'zh' ? '源代码' : 'Source Code'}

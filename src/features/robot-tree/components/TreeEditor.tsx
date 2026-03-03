@@ -48,6 +48,7 @@ export interface TreeEditorProps {
   onAddComponent?: (file: RobotFile) => void;
   onDeleteLibraryFile?: (file: RobotFile) => void;
   onDeleteLibraryFolder?: (folderPath: string) => void;
+  onExportLibraryFile?: (file: RobotFile, format: 'urdf' | 'mjcf') => void | Promise<void>;
   onCreateBridge?: () => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
@@ -77,6 +78,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onAddComponent,
   onDeleteLibraryFile,
   onDeleteLibraryFolder,
+  onExportLibraryFile,
   onCreateBridge,
   onRemoveComponent,
   onRemoveBridge,
@@ -230,8 +232,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     event.preventDefault();
     event.stopPropagation();
 
+    const supportsExport = file.format === 'urdf' || file.format === 'mjcf';
+    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 2 : 0);
+    if (actionCount === 0) return;
+
     const menuWidth = 180;
-    const menuHeight = 44;
+    const menuHeight = actionCount * 32 + 8;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
 
@@ -263,6 +269,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     onAddComponent(fileContextMenu.target.file);
     setFileContextMenu(null);
   }, [fileContextMenu, onAddComponent]);
+
+  const handleExportLibraryFile = useCallback((format: 'urdf' | 'mjcf') => {
+    if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onExportLibraryFile) return;
+    void onExportLibraryFile(fileContextMenu.target.file, format);
+    setFileContextMenu(null);
+  }, [fileContextMenu, onExportLibraryFile]);
 
   const handleDeleteFromLibrary = useCallback(
     (target: LibraryDeleteTarget) => {
@@ -375,29 +387,29 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
           <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-            <div className="flex bg-element-bg p-1 rounded-lg">
+            <div className="flex bg-element-bg p-0.5 rounded-lg">
               <button
                 onClick={() => setSidebarTab('structure')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
+                className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all
                 ${
                   sidebarTab === 'structure'
                     ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
                     : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
                 }`}
               >
-                <Trees size={14} />
+                <Trees size={13} />
                 {t.simpleMode}
               </button>
               <button
                 onClick={handleSwitchToProMode}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-bold uppercase tracking-wider transition-all
+                className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all
                 ${
                   sidebarTab === 'workspace'
                     ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
                     : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
                 }`}
               >
-                <LayoutGrid size={14} />
+                <LayoutGrid size={13} />
                 {t.proMode}
               </button>
             </div>
@@ -437,7 +449,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
               )}
             </div>
 
-            {currentFileName && sidebarTab === 'structure' && !assemblyState && (
+            {currentFileName && sidebarTab === 'structure' && (
               <div className="mt-2 flex items-center gap-1.5">
                 <FileCode className="w-3.5 h-3.5 text-system-blue shrink-0" />
                 <span
@@ -503,7 +515,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                           ? handleDeleteFromLibrary
                           : undefined
                       }
-                      onFileContextMenu={isProMode ? handleFileContextMenu : undefined}
+                      onFileContextMenu={handleFileContextMenu}
                       onFolderContextMenu={handleFolderContextMenu}
                       expandedFolders={expandedFolders}
                       toggleFolder={toggleFolder}
@@ -542,7 +554,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
               </div>
 
               <div className="flex items-center gap-1">
-                {mode === 'skeleton' && sidebarTab === 'structure' && !assemblyState && (
+                {mode === 'skeleton' && sidebarTab === 'structure' && (
                   <button
                     className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
                     onClick={(e) => {
@@ -582,7 +594,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             {isStructureOpen && (
               <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
                 <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-panel-bg">
-                  {sidebarTab === 'workspace' && assemblyState ? (
+                  {isAssemblyView && assemblyState ? (
                     <AssemblyTreeView
                       assemblyState={assemblyState}
                       robot={robot}
@@ -629,9 +641,21 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       <FileTreeContextMenu
         position={fileContextMenu ? { x: fileContextMenu.x, y: fileContextMenu.y } : null}
         addLabel={t.addComponent}
+        exportAsURDFLabel={`${t.export} URDF`}
+        exportAsMJCFLabel={`${t.export} MJCF`}
         deleteLabel={t.removeFromLibrary}
         onAdd={handleAddFileToAssembly}
+        onExportAsURDF={() => handleExportLibraryFile('urdf')}
+        onExportAsMJCF={() => handleExportLibraryFile('mjcf')}
         showAddAction={isProMode && fileContextMenu?.target.type === 'file'}
+        showExportAsURDFAction={
+          fileContextMenu?.target.type === 'file'
+          && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
+        }
+        showExportAsMJCFAction={
+          fileContextMenu?.target.type === 'file'
+          && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
+        }
         showDeleteAction={fileContextMenu?.target.type === 'folder'}
         onDelete={() => {
           if (fileContextMenu?.target) {

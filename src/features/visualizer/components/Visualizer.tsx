@@ -14,6 +14,7 @@ import {
   useCollisionRefs,
   useTransformControls,
 } from '../hooks';
+import { clearMaterialCache } from '../utils';
 
 // Components
 import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
@@ -115,6 +116,13 @@ export const Visualizer = ({
     const timer = setTimeout(handleAutoFitGround, 100);
     return () => clearTimeout(timer);
   }, [robot.links, robot.joints]);
+
+  // Prevent material cache from keeping GPU resources after Visualizer unmount.
+  React.useEffect(() => {
+    return () => {
+      clearMaterialCache();
+    };
+  }, []);
 
   // Reset transform mode when switching visualization modes to prevent ghost controls
   React.useEffect(() => {

@@ -21,6 +21,15 @@ export {
   downloadBlob,
 } from './assetUtils';
 
+export {
+  exportLibraryRobotFile,
+} from './libraryFileExport';
+export type {
+  LibraryExportFormat,
+  ExportLibraryRobotFileOptions,
+  ExportLibraryRobotFileResult,
+} from './libraryFileExport';
+
 export { getDroppedFiles } from './fileTraverser';
 
 export { exportProject } from './projectExport';

@@ -52,6 +52,8 @@ export const zh: TranslationKeys = {
   deleteBranch: "删除分支",
   rename: "重命名",
   deleteMesh: "删除 Mesh",
+  deleteVisualGeometry: "删除可视化几何",
+  deleteCollisionGeometry: "删除碰撞体",
   addCollisionBody: "添加碰撞体",
 
   // Assembly
@@ -73,6 +75,12 @@ export const zh: TranslationKeys = {
   visualGeometry: "可视化几何",
   collisionGeometry: "碰撞几何",
   type: "类型",
+  jointTypeFixed: "固定关节",
+  jointTypeRevolute: "旋转关节",
+  jointTypeContinuous: "连续旋转关节",
+  jointTypePrismatic: "移动关节",
+  jointTypePlanar: "平面关节",
+  jointTypeFloating: "浮动关节",
   dimensions: "尺寸 / 半径 / 长度",
   originRelativeLink: "原点 (相对于连杆)",
   originRelativeParent: "原点 (相对于父级)",

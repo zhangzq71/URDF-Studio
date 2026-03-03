@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { disposeMaterial } from './dispose';
 
 // ============================================================
 // UNIFIED MATERIAL CONFIGURATION
@@ -112,10 +113,22 @@ export function applyMatteMaterialToMesh(
         });
     };
 
+    const originalMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mesh.material)) {
         mesh.material = mesh.material.map(processMaterial);
     } else if (mesh.material) {
         mesh.material = processMaterial(mesh.material);
+    }
+
+    if (originalMaterial) {
+        // New materials reuse texture references; dispose only material programs/state.
+        // Skip shared singleton materials for safety.
+        const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
+        mats.forEach((mat) => {
+            if (!mat) return;
+            if ((mat as any).userData?.isSharedMaterial || (mat as any).userData?.isCollisionMaterial) return;
+            disposeMaterial(mat, false);
+        });
     }
 }
 
@@ -188,21 +201,41 @@ export const emptyRaycast = () => { };
 export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Texture | null) => {
     let enhancedCount = 0;
     let totalMeshes = 0;
+    const disposedMaterials = new Set<THREE.Material>();
 
     robotObject.traverse((child: any) => {
         if (child.isMesh && child.material) {
             totalMeshes++;
 
+            const originalMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
+            const shouldSkipEnhance = (mat: THREE.Material): boolean =>
+                Boolean((mat as any).userData?.isSharedMaterial) ||
+                Boolean((mat as any).userData?.isCollisionMaterial);
+
             if (Array.isArray(child.material)) {
                 child.material = child.material.map((mat: THREE.Material) => {
+                    if (shouldSkipEnhance(mat)) return mat;
                     const enhanced = enhanceSingleMaterial(mat, envMap);
                     if (enhanced !== mat) enhancedCount++;
                     return enhanced;
                 });
             } else {
-                const enhanced = enhanceSingleMaterial(child.material, envMap);
-                if (enhanced !== child.material) enhancedCount++;
-                child.material = enhanced;
+                if (!shouldSkipEnhance(child.material)) {
+                    const enhanced = enhanceSingleMaterial(child.material, envMap);
+                    if (enhanced !== child.material) enhancedCount++;
+                    child.material = enhanced;
+                }
+            }
+
+            if (originalMaterial) {
+                const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
+                for (const mat of mats) {
+                    if (!mat || disposedMaterials.has(mat)) continue;
+                    if (shouldSkipEnhance(mat)) continue;
+                    // Preserve textures because enhanced materials may share same maps.
+                    disposeMaterial(mat, false);
+                    disposedMaterials.add(mat);
+                }
             }
 
             // Enable shadows for better depth perception

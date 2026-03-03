@@ -52,6 +52,8 @@ export interface TranslationKeys {
   deleteBranch: string;
   rename: string;
   deleteMesh: string;
+  deleteVisualGeometry: string;
+  deleteCollisionGeometry: string;
   addCollisionBody: string;
 
   // Assembly
@@ -73,6 +75,12 @@ export interface TranslationKeys {
   visualGeometry: string;
   collisionGeometry: string;
   type: string;
+  jointTypeFixed: string;
+  jointTypeRevolute: string;
+  jointTypeContinuous: string;
+  jointTypePrismatic: string;
+  jointTypePlanar: string;
+  jointTypeFloating: string;
   dimensions: string;
   originRelativeLink: string;
   originRelativeParent: string;

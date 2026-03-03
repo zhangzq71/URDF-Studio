@@ -5,6 +5,7 @@ import * as THREE from 'three';
  * Caches materials based on their properties to improve performance
  */
 const materialCache = new Map<string, THREE.Material>();
+const MAX_MATERIAL_CACHE_SIZE = 512;
 
 interface MaterialOptions {
   key: string;
@@ -65,6 +66,15 @@ export function getCachedMaterial({
         polygonOffsetFactor: -1,
         polygonOffsetUnits: -1,
       });
+    }
+    // Keep cache bounded to avoid unbounded GPU memory growth in long sessions.
+    if (materialCache.size >= MAX_MATERIAL_CACHE_SIZE) {
+      const oldestKey = materialCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        const oldestMaterial = materialCache.get(oldestKey);
+        oldestMaterial?.dispose();
+        materialCache.delete(oldestKey);
+      }
     }
     materialCache.set(cacheKey, material);
   }

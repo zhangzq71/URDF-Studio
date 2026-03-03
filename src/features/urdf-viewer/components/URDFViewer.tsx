@@ -257,7 +257,7 @@ export function URDFViewer({
     const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
         if (transformPendingRef.current) return; // Prevent selection change if transform is pending
 
-        if (onSelect) onSelect(type, id, subType || selection?.subType);
+        if (onSelect) onSelect(type, id, subType);
 
         if (type === 'link' && robot) {
             const jointName = Object.keys(robot.joints).find(name => {
@@ -275,7 +275,7 @@ export function URDFViewer({
         } else {
             setActiveJoint(null);
         }
-    }, [onSelect, robot, selection?.subType]);
+    }, [onSelect, robot]);
 
     const handleHoverWrapper = useCallback((type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
         onHover?.(type, id, subType);

@@ -8,11 +8,11 @@ import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor';
 import { Visualizer } from '@/features/visualizer';
 import { URDFViewer } from '@/features/urdf-viewer';
-import { SourceCodeEditor } from '@/features/code-editor';
+import { SourceCodeEditor, preloadSourceCodeEditor } from '@/features/code-editor';
 import { BridgeCreateModal } from '@/features/assembly';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo, useAssemblyStore } from '@/store';
 import { parseURDF, generateURDF } from '@/core/parsers';
-import { getDroppedFiles } from '@/features/file-io/utils';
+import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io/utils';
 import {
   DEFAULT_JOINT,
   DEFAULT_LINK,
@@ -685,6 +685,51 @@ export function AppLayout({
     showToast,
   ]);
 
+  const handleExportLibraryFile = useCallback(async (file: RobotFile, format: 'urdf' | 'mjcf') => {
+    const result = await exportLibraryRobotFile({
+      file,
+      targetFormat: format,
+      assets,
+    });
+
+    if (!result.success) {
+      if (result.reason === 'unsupported-file-format') {
+        showToast(
+          lang === 'zh'
+            ? '仅支持从 URDF/MJCF 文件导出'
+            : 'Only URDF/MJCF files support export',
+          'info',
+        );
+        return;
+      }
+
+      showToast(
+        lang === 'zh'
+          ? '导出失败：文件解析失败'
+          : 'Export failed: file parse error',
+        'info',
+      );
+      return;
+    }
+
+    if (result.missingMeshPaths.length > 0) {
+      showToast(
+        lang === 'zh'
+          ? `导出完成，但有 ${result.missingMeshPaths.length} 个 mesh 未找到`
+          : `Exported with ${result.missingMeshPaths.length} missing mesh file(s)`,
+        'info',
+      );
+      return;
+    }
+
+    showToast(
+      lang === 'zh'
+        ? `导出成功: ${result.zipFileName ?? ''}`
+        : `Exported: ${result.zipFileName ?? ''}`,
+      'success',
+    );
+  }, [assets, lang, showToast]);
+
   const handleJointChange = useCallback((jointName: string, angle: number) => {
     setJointAngle(jointName, angle);
   }, [setJointAngle]);
@@ -709,6 +754,15 @@ export function AppLayout({
     }
   }, [lang, showToast]);
 
+  const handleOpenCodeViewer = useCallback(() => {
+    void preloadSourceCodeEditor();
+    setIsCodeViewerOpen(true);
+  }, [setIsCodeViewerOpen]);
+
+  const handlePrefetchCodeViewer = useCallback(() => {
+    void preloadSourceCodeEditor();
+  }, []);
+
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -729,6 +783,21 @@ export function AppLayout({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo, canUndo, canRedo]);
+
+  // Warm up Monaco in the background so the first Source Code open is faster.
+  useEffect(() => {
+    const warmup = () => {
+      void preloadSourceCodeEditor();
+    };
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(warmup, { timeout: 1800 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timer = window.setTimeout(warmup, 800);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // Clean up selection if selected item no longer exists
   // Use robot.links/joints (which includes merged assembly data in workspace mode)
@@ -795,7 +864,8 @@ export function AppLayout({
         onExportMJCF={onExportMJCF}
         onExportProject={onExportProject}
         onOpenAI={onOpenAI}
-        onOpenCodeViewer={() => setIsCodeViewerOpen(true)}
+        onOpenCodeViewer={handleOpenCodeViewer}
+        onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
         onOpenURDFGallery={onOpenURDFGallery}
@@ -829,6 +899,7 @@ export function AppLayout({
           onAddComponent={handleAddComponent}
           onDeleteLibraryFile={handleDeleteLibraryFile}
           onDeleteLibraryFolder={handleDeleteLibraryFolder}
+          onExportLibraryFile={handleExportLibraryFile}
           onCreateBridge={handleCreateBridge}
           onRemoveComponent={removeComponent}
           onRemoveBridge={removeBridge}

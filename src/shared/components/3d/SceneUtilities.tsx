@@ -8,8 +8,8 @@ import { useThree, useFrame } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import type { Theme } from '@/types';
 import { useUIStore } from '@/store';
+import type { Theme } from '@/types';
 
 // Helper component to trigger re-render on pointer move for hover detection (frameloop="demand")
 // Optimized to reduce unnecessary invalidations and CPU usage
@@ -175,10 +175,11 @@ export const SnapshotManager = ({
   robotName: string;
 }) => {
   const SNAPSHOT_MIN_LONG_EDGE = 3840;
+  const SNAPSHOT_GROUND_SIZE = 400;
+  const SNAPSHOT_GRID_OBJECT_NAME = 'ReferenceGrid';
   const { gl, get, invalidate } = useThree();
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const pendingCaptureRef = useRef<number | null>(null);
-  const restoreSnapshotStateRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!actionRef) return;
@@ -188,58 +189,6 @@ export const SnapshotManager = ({
         cancelAnimationFrame(pendingCaptureRef.current);
         pendingCaptureRef.current = null;
       }
-    };
-
-    const restoreSnapshotState = () => {
-      if (!restoreSnapshotStateRef.current) return;
-      restoreSnapshotStateRef.current();
-      restoreSnapshotStateRef.current = null;
-    };
-
-    const shouldHideInSnapshot = (node: THREE.Object3D) => (
-      node.name === 'ReferenceGrid'
-      || node.type === 'GridHelper'
-    );
-
-    const applySnapshotState = (scene: THREE.Scene) => {
-      const hiddenNodes: THREE.Object3D[] = [];
-      scene.traverse((node) => {
-        if (shouldHideInSnapshot(node) && node.visible) {
-          hiddenNodes.push(node);
-          node.visible = false;
-        }
-      });
-
-      const hasGround = !!scene.getObjectByName('ReferenceGround');
-      let floorGeometry: THREE.PlaneGeometry | null = null;
-      let floorMaterial: THREE.MeshStandardMaterial | null = null;
-      let floorMesh: THREE.Mesh | null = null;
-
-      if (!hasGround) {
-        floorGeometry = new THREE.PlaneGeometry(400, 400);
-        floorMaterial = new THREE.MeshStandardMaterial({
-          color: '#f4f6f8',
-          roughness: 0.97,
-          metalness: 0,
-          envMapIntensity: 0.2,
-        });
-        floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
-        floorMesh.name = 'SnapshotGround';
-        floorMesh.rotation.set(Math.PI / 2, 0, 0);
-        floorMesh.position.set(0, 0, groundPlaneOffset - 0.002);
-        floorMesh.receiveShadow = true;
-        floorMesh.renderOrder = -120;
-        scene.add(floorMesh);
-      }
-
-      return () => {
-        hiddenNodes.forEach((node) => { node.visible = true; });
-        if (floorMesh && floorGeometry && floorMaterial) {
-          scene.remove(floorMesh);
-          floorGeometry.dispose();
-          floorMaterial.dispose();
-        }
-      };
     };
 
     const resolveSnapshotSize = (canvas: HTMLCanvasElement) => {
@@ -309,20 +258,82 @@ export const SnapshotManager = ({
       const originalPixelRatio = gl.getPixelRatio();
       const originalAutoClear = gl.autoClear;
       const originalXREnabled = gl.xr.enabled;
+      const originalScissorTest = gl.getScissorTest();
+      const originalViewport = gl.getViewport(new THREE.Vector4());
+      const originalScissor = gl.getScissor(new THREE.Vector4());
+
+      const applySnapshotSceneOverrides = () => {
+        const hiddenObjects: Array<{ object: THREE.Object3D; visible: boolean }> = [];
+        scene.traverse((object) => {
+          if (object.name !== SNAPSHOT_GRID_OBJECT_NAME) return;
+          hiddenObjects.push({ object, visible: object.visible });
+          object.visible = false;
+        });
+
+        const floorColor = new THREE.Color('#e5e7eb');
+        if (scene.background instanceof THREE.Color) {
+          floorColor.copy(scene.background);
+          const floorHsl = { h: 0, s: 0, l: 0 };
+          floorColor.getHSL(floorHsl);
+          floorHsl.s *= 0.35;
+          floorHsl.l = Math.min(
+            0.92,
+            Math.max(0.16, floorHsl.l + (floorHsl.l > 0.5 ? -0.06 : 0.08))
+          );
+          floorColor.setHSL(floorHsl.h, floorHsl.s, floorHsl.l);
+        }
+
+        const floorGeometry = new THREE.PlaneGeometry(SNAPSHOT_GROUND_SIZE, SNAPSHOT_GROUND_SIZE);
+        // Use an unlit floor to avoid altering perceived robot material response in snapshot output.
+        const floorMaterial = new THREE.MeshBasicMaterial({
+          color: floorColor,
+          toneMapped: false,
+          dithering: true,
+          depthWrite: true,
+        });
+        const snapshotGround = new THREE.Mesh(floorGeometry, floorMaterial);
+        snapshotGround.name = '__snapshot_ground__';
+        snapshotGround.position.set(0, 0, (Number.isFinite(groundPlaneOffset) ? groundPlaneOffset : 0) - 0.002);
+        snapshotGround.receiveShadow = false;
+        snapshotGround.castShadow = false;
+        snapshotGround.renderOrder = -95;
+        scene.add(snapshotGround);
+
+        return () => {
+          scene.remove(snapshotGround);
+          floorGeometry.dispose();
+          floorMaterial.dispose();
+          hiddenObjects.forEach(({ object, visible }) => {
+            object.visible = visible;
+          });
+        };
+      };
 
       const restoreRendererState = () => {
         gl.xr.enabled = originalXREnabled;
         gl.autoClear = originalAutoClear;
+        gl.setViewport(originalViewport);
+        gl.setScissor(originalScissor);
+        gl.setScissorTest(originalScissorTest);
         gl.setPixelRatio(originalPixelRatio);
         gl.setSize(baseWidth, baseHeight, false);
       };
 
+      let restoreSceneOverrides: (() => void) | null = null;
       try {
-        // Render with the exact same live scene/camera/renderer settings, only with higher buffer resolution.
+        restoreSceneOverrides = applySnapshotSceneOverrides();
+
+        // Render a single clean pass from the live scene/camera pipeline at higher buffer resolution.
         gl.xr.enabled = false;
         gl.autoClear = true;
         gl.setPixelRatio(1);
         gl.setSize(targetWidth, targetHeight, false);
+        gl.setViewport(0, 0, targetWidth, targetHeight);
+        gl.setScissor(0, 0, targetWidth, targetHeight);
+        gl.setScissorTest(false);
+        camera.updateProjectionMatrix();
+        camera.updateMatrixWorld(true);
+        scene.updateMatrixWorld(true);
         gl.clear(true, true, true);
         gl.render(scene, camera);
 
@@ -333,6 +344,10 @@ export const SnapshotManager = ({
       } catch (e) {
         restoreRendererState();
         throw e;
+      } finally {
+        if (restoreSceneOverrides) {
+          restoreSceneOverrides();
+        }
       }
     };
 
@@ -354,29 +369,22 @@ export const SnapshotManager = ({
         invalidate();
         waitFrames(2, () => {
           try {
-            const { scene } = get();
-            restoreSnapshotState();
-            restoreSnapshotStateRef.current = applySnapshotState(scene);
             renderAndDownloadHighRes(() => {
-              restoreSnapshotState();
               invalidate();
             });
           } catch (e) {
             console.error('[Snapshot] Failed:', e);
-            restoreSnapshotState();
             invalidate();
           }
         });
       } catch (e) {
         console.error('[Snapshot] Failed:', e);
-        restoreSnapshotState();
         invalidate();
       }
     };
 
     return () => {
       clearPendingFrames();
-      restoreSnapshotState();
       if (actionRef) actionRef.current = null;
     };
   }, [gl, get, robotName, actionRef, invalidate, groundPlaneOffset]);

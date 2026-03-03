@@ -338,22 +338,22 @@ export const AssemblyTreeView = memo(({
 
       {componentContextMenu && (
         <div
-          className="fixed z-[120] w-[170px] rounded-md border border-border-strong bg-panel-bg shadow-xl p-1"
+          className="fixed z-[120] w-[170px] rounded-md border border-border-black bg-panel-bg shadow-xl p-1"
           style={{ left: `${componentContextMenu.x}px`, top: `${componentContextMenu.y}px` }}
           onClick={(event) => event.stopPropagation()}
         >
           <button
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-primary hover:bg-element-bg transition-colors"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
             onClick={handleComponentRenameFromMenu}
           >
-            <Edit3 size={12} className="text-system-blue" />
+            <Edit3 size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
             <span>{t.rename}</span>
           </button>
           <button
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
             onClick={handleComponentDeleteFromMenu}
           >
-            <Trash2 size={12} />
+            <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
             <span>{t.deleteBranch}</span>
           </button>
         </div>

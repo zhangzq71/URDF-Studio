@@ -219,7 +219,12 @@ export const GeometryRenderer = memo(function GeometryRenderer({
         geometryNode = <DAERenderer url={url} material={material} assets={assets} scale={dimensions} />;
       } else {
         // Fallback for unknown extension
-        geometryNode = <mesh geometry={new THREE.BoxGeometry(0.1, 0.1, 0.1)} material={material} />;
+        geometryNode = (
+          <mesh>
+            <boxGeometry args={[0.1, 0.1, 0.1]} />
+            <primitive object={material} attach="material" />
+          </mesh>
+        );
       }
     } else {
       // Placeholder if no mesh loaded

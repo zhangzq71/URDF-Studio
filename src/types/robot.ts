@@ -9,6 +9,8 @@ export enum JointType {
   REVOLUTE = 'revolute',
   CONTINUOUS = 'continuous',
   PRISMATIC = 'prismatic',
+  PLANAR = 'planar',
+  FLOATING = 'floating',
 }
 
 export interface UrdfInertial {

@@ -68,6 +68,7 @@ export function useMouseInteraction({
     const dragJoint = useRef<any>(null);
     const dragHitDistance = useRef(0);
     const lastRayRef = useRef(new THREE.Ray());
+    const selectionResetTimerRef = useRef<number | null>(null);
 
     // Keep refs up to date
     const onJointChangeRef = useRef(onJointChange);
@@ -86,6 +87,17 @@ export function useMouseInteraction({
 
     // Mouse tracking for hover detection AND joint dragging
     useEffect(() => {
+        const tempWorldQuat = new THREE.Quaternion();
+        const tempAxisWorld = new THREE.Vector3();
+        const tempPivotPoint = new THREE.Vector3();
+        const tempPlane = new THREE.Plane();
+        const tempProjStart = new THREE.Vector3();
+        const tempProjEnd = new THREE.Vector3();
+        const tempCross = new THREE.Vector3();
+        const tempDelta = new THREE.Vector3();
+        const tempPrevHitPoint = new THREE.Vector3();
+        const tempNewHitPoint = new THREE.Vector3();
+
         /**
          * Find the parent link of the clicked object
          */
@@ -139,65 +151,58 @@ export function useMouseInteraction({
         const getRevoluteDelta = (joint: any, startPt: THREE.Vector3, endPt: THREE.Vector3): number => {
             const axis = joint.axis || new THREE.Vector3(0, 0, 1);
 
-            const worldQuat = new THREE.Quaternion();
             if (joint.bodyOffsetGroup) {
-                joint.bodyOffsetGroup.getWorldQuaternion(worldQuat);
+                joint.bodyOffsetGroup.getWorldQuaternion(tempWorldQuat);
             } else if (joint.parent) {
-                joint.parent.getWorldQuaternion(worldQuat);
+                joint.parent.getWorldQuaternion(tempWorldQuat);
             } else {
-                joint.getWorldQuaternion(worldQuat);
+                joint.getWorldQuaternion(tempWorldQuat);
             }
 
-            const axisWorld = axis.clone().applyQuaternion(worldQuat).normalize();
-            const pivotPoint = new THREE.Vector3().setFromMatrixPosition(joint.matrixWorld);
-            const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axisWorld, pivotPoint);
+            tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
+            tempPivotPoint.setFromMatrixPosition(joint.matrixWorld);
+            tempPlane.setFromNormalAndCoplanarPoint(tempAxisWorld, tempPivotPoint);
 
-            const projStart = new THREE.Vector3();
-            const projEnd = new THREE.Vector3();
-            plane.projectPoint(startPt, projStart);
-            plane.projectPoint(endPt, projEnd);
+            tempPlane.projectPoint(startPt, tempProjStart);
+            tempPlane.projectPoint(endPt, tempProjEnd);
 
-            projStart.sub(pivotPoint);
-            projEnd.sub(pivotPoint);
+            tempProjStart.sub(tempPivotPoint);
+            tempProjEnd.sub(tempPivotPoint);
 
-            const cross = new THREE.Vector3().crossVectors(projStart, projEnd);
-            const direction = Math.sign(cross.dot(axisWorld));
-            return direction * projStart.angleTo(projEnd);
+            tempCross.crossVectors(tempProjStart, tempProjEnd);
+            const direction = Math.sign(tempCross.dot(tempAxisWorld));
+            return direction * tempProjStart.angleTo(tempProjEnd);
         };
 
         const getPrismaticDelta = (joint: any, startPt: THREE.Vector3, endPt: THREE.Vector3): number => {
             const axis = joint.axis || new THREE.Vector3(0, 0, 1);
 
-            const worldQuat = new THREE.Quaternion();
             if (joint.bodyOffsetGroup) {
-                joint.bodyOffsetGroup.getWorldQuaternion(worldQuat);
+                joint.bodyOffsetGroup.getWorldQuaternion(tempWorldQuat);
             } else if (joint.parent) {
-                joint.parent.getWorldQuaternion(worldQuat);
+                joint.parent.getWorldQuaternion(tempWorldQuat);
             } else {
-                joint.getWorldQuaternion(worldQuat);
+                joint.getWorldQuaternion(tempWorldQuat);
             }
 
-            const axisWorld = axis.clone().applyQuaternion(worldQuat).normalize();
-            const delta = new THREE.Vector3().subVectors(endPt, startPt);
-            return delta.dot(axisWorld);
+            tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
+            tempDelta.subVectors(endPt, startPt);
+            return tempDelta.dot(tempAxisWorld);
         };
 
         const moveRay = (toRay: THREE.Ray) => {
             if (!isDraggingJoint.current || !dragJoint.current) return;
 
-            const prevHitPoint = new THREE.Vector3();
-            const newHitPoint = new THREE.Vector3();
-
-            lastRayRef.current.at(dragHitDistance.current, prevHitPoint);
-            toRay.at(dragHitDistance.current, newHitPoint);
+            lastRayRef.current.at(dragHitDistance.current, tempPrevHitPoint);
+            toRay.at(dragHitDistance.current, tempNewHitPoint);
 
             let delta = 0;
             const jt = dragJoint.current.jointType;
 
             if (jt === 'revolute' || jt === 'continuous') {
-                delta = getRevoluteDelta(dragJoint.current, prevHitPoint, newHitPoint);
+                delta = getRevoluteDelta(dragJoint.current, tempPrevHitPoint, tempNewHitPoint);
             } else if (jt === 'prismatic') {
-                delta = getPrismaticDelta(dragJoint.current, prevHitPoint, newHitPoint);
+                delta = getPrismaticDelta(dragJoint.current, tempPrevHitPoint, tempNewHitPoint);
             }
 
             if (delta !== 0) {
@@ -284,12 +289,9 @@ export function useMouseInteraction({
             }
 
             const rect = gl.domElement.getBoundingClientRect();
-            const mouse = new THREE.Vector2(
-                ((e.clientX - rect.left) / rect.width) * 2 - 1,
-                -((e.clientY - rect.top) / rect.height) * 2 + 1
-            );
-
-            raycasterRef.current.setFromCamera(mouse, camera);
+            mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            raycasterRef.current.setFromCamera(mouseRef.current, camera);
 
             const intersections = raycasterRef.current.intersectObject(robot, true);
 
@@ -387,8 +389,12 @@ export function useMouseInteraction({
             }
 
             if (justSelectedRef) {
-                setTimeout(() => {
+                if (selectionResetTimerRef.current !== null) {
+                    clearTimeout(selectionResetTimerRef.current);
+                }
+                selectionResetTimerRef.current = window.setTimeout(() => {
                     justSelectedRef.current = false;
+                    selectionResetTimerRef.current = null;
                 }, 100);
             }
         };
@@ -414,6 +420,10 @@ export function useMouseInteraction({
         return () => {
             // Cancel throttled handler to prevent pending callbacks
             throttledMouseMove.cancel();
+            if (selectionResetTimerRef.current !== null) {
+                clearTimeout(selectionResetTimerRef.current);
+                selectionResetTimerRef.current = null;
+            }
             gl.domElement.removeEventListener('mousemove', handleMouseMove);
             gl.domElement.removeEventListener('mousedown', handleMouseDown);
             gl.domElement.removeEventListener('mouseup', handleMouseUp);
