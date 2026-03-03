@@ -75,7 +75,9 @@ export const TreeNode = memo(({
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
   const isVisualSelected = isLinkSelected && robot.selection.subType === 'visual';
   const isCollisionSelected = isLinkSelected && robot.selection.subType === 'collision';
-  const showGeometryDetails = isLinkSelected && (hasVisual || hasCollision);
+  const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
+  const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
+  const contextMenuHasCollision = Boolean(contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE);
 
   useEffect(() => {
     if (!editingTarget) return;
@@ -168,7 +170,7 @@ export const TreeNode = memo(({
     event.stopPropagation();
 
     const menuWidth = 170;
-    const menuHeight = target.type === 'mesh' ? 44 : target.type === 'link' ? 128 : 88;
+    const menuHeight = target.type === 'mesh' ? 44 : target.type === 'link' ? 220 : 88;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
     setContextMenu({
@@ -224,6 +226,31 @@ export const TreeNode = memo(({
     onUpdate('link', contextMenu.target.linkId, {
       ...targetLink,
       [contextMenu.target.subType]: {
+        ...geometry,
+        type: GeometryType.NONE,
+        meshPath: undefined,
+      },
+    });
+    setContextMenu(null);
+  };
+
+  const handleDeleteLinkGeometry = (subType: 'visual' | 'collision') => {
+    if (!contextMenu || contextMenu.target.type !== 'link') return;
+    const targetLink = robot.links[contextMenu.target.id];
+    if (!targetLink) {
+      setContextMenu(null);
+      return;
+    }
+
+    const geometry = targetLink[subType];
+    if (!geometry || geometry.type === GeometryType.NONE) {
+      setContextMenu(null);
+      return;
+    }
+
+    onUpdate('link', contextMenu.target.id, {
+      ...targetLink,
+      [subType]: {
         ...geometry,
         type: GeometryType.NONE,
         meshPath: undefined,
@@ -401,62 +428,6 @@ export const TreeNode = memo(({
         </div>
       </div>
 
-      {showGeometryDetails && (
-        <div className="relative ml-9 mr-2 mt-1 mb-1 rounded-md border border-border-black bg-element-bg/70 dark:bg-element-bg/60 overflow-hidden">
-          {hasVisual && (
-            <button
-              className={`w-full flex items-center gap-2 px-2 py-1 text-[11px] text-left transition-colors ${
-                isVisualSelected
-                  ? 'bg-system-blue/15 text-system-blue'
-                  : 'text-text-secondary hover:bg-element-hover'
-              }`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onSelect('link', linkId, 'visual');
-              }}
-              onContextMenu={(event) => {
-                if (link.visual.type !== GeometryType.MESH) return;
-                openContextMenu(event, { type: 'mesh', linkId, subType: 'visual' });
-              }}
-              title={`${t.visual}: ${link.visual.type}`}
-            >
-              <Shapes size={11} className={isVisualSelected ? 'text-system-blue' : 'text-text-tertiary'} />
-              <span className="font-medium">{t.visual}</span>
-              <span className="ml-auto text-[10px] uppercase tracking-wide text-text-tertiary">
-                {link.visual.type}
-              </span>
-            </button>
-          )}
-
-          {hasVisual && hasCollision && <div className="h-px bg-border-black" />}
-
-          {hasCollision && (
-            <button
-              className={`w-full flex items-center gap-2 px-2 py-1 text-[11px] text-left transition-colors ${
-                isCollisionSelected
-                  ? 'bg-system-blue/15 text-system-blue'
-                  : 'text-text-secondary hover:bg-element-hover'
-              }`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onSelect('link', linkId, 'collision');
-              }}
-              onContextMenu={(event) => {
-                if (link.collision.type !== GeometryType.MESH) return;
-                openContextMenu(event, { type: 'mesh', linkId, subType: 'collision' });
-              }}
-              title={`${t.collision}: ${link.collision.type}`}
-            >
-              <Shield size={11} className={isCollisionSelected ? 'text-system-blue' : 'text-text-tertiary'} />
-              <span className="font-medium">{t.collision}</span>
-              <span className="ml-auto text-[10px] uppercase tracking-wide text-text-tertiary">
-                {link.collision.type}
-              </span>
-            </button>
-          )}
-        </div>
-      )}
-
       {hasChildren && isExpanded && (
         <div className="relative ml-3">
           <div className="absolute left-0 top-0 bottom-2 w-px bg-border-black" />
@@ -567,35 +538,55 @@ export const TreeNode = memo(({
 
       {contextMenu && (
         <div
-          className="fixed z-[120] w-[170px] rounded-md border border-border-strong bg-panel-bg shadow-xl p-1"
+          className="fixed z-[120] w-[170px] rounded-md border border-border-black bg-panel-bg shadow-xl p-1"
           style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
           onClick={(event) => event.stopPropagation()}
         >
           {(contextMenu.target.type === 'link' || contextMenu.target.type === 'joint') && (
             <>
               <button
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-primary hover:bg-element-bg transition-colors"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
                 onClick={handleRenameMenuAction}
               >
-                <Edit3 size={12} className="text-system-blue" />
+                <Edit3 size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
                 <span>{t.rename}</span>
               </button>
 
+              {contextMenu.target.type === 'link' && contextMenuHasVisual && (
+                <button
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
+                  onClick={() => handleDeleteLinkGeometry('visual')}
+                >
+                  <Shapes size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
+                  <span>{t.deleteVisualGeometry}</span>
+                </button>
+              )}
+
+              {contextMenu.target.type === 'link' && contextMenuHasCollision && (
+                <button
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
+                  onClick={() => handleDeleteLinkGeometry('collision')}
+                >
+                  <Shield size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
+                  <span>{t.deleteCollisionGeometry}</span>
+                </button>
+              )}
+
               {contextMenu.target.type === 'link' && (
                 <button
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-primary hover:bg-element-bg transition-colors"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
                   onClick={handleAddCollisionMenuAction}
                 >
-                  <Shield size={12} className="text-system-blue" />
+                  <Shield size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
                   <span>{t.addCollisionBody}</span>
                 </button>
               )}
 
               <button
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
                 onClick={handleDeleteMenuAction}
               >
-                <Trash2 size={12} />
+                <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
                 <span>{t.deleteBranch}</span>
               </button>
             </>
@@ -603,10 +594,10 @@ export const TreeNode = memo(({
 
           {contextMenu.target.type === 'mesh' && (
             <button
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
               onClick={handleDeleteMesh}
             >
-              <Trash2 size={12} />
+              <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
               <span>{t.deleteMesh}</span>
             </button>
           )}

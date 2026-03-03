@@ -1,9 +1,13 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useThree, useFrame } from '@react-three/fiber';
 import { TransformControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { CollisionTransformControlsProps } from '../types';
 import { translations } from '@/shared/i18n';
+import { enhanceTransformControlsGizmo } from '../utils/transformGizmo';
+
+const COLLISION_TRANSLATE_GIZMO_SIZE = 1.08;
+const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.22;
 
 export const CollisionTransformControls: React.FC<CollisionTransformControlsProps> = ({
     robot,
@@ -17,6 +21,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 }) => {
     const t = translations[lang];
     const transformRef = useRef<any>(null);
+    const rotateTransformRef = useRef<any>(null);
     const { invalidate } = useThree();
     const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
 
@@ -38,143 +43,249 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     // Track if currently dragging
     const isDraggingRef = useRef(false);
     const currentAxisRef = useRef<string | null>(null);
+    const currentIsRotateRef = useRef(false);
     const startValueRef = useRef<number>(0);
 
     // Local input value state to prevent cursor jumping/formatting issues
     const [inputValue, setInputValue] = useState('');
 
-    // Update axis opacity based on active axis and dragging state
-    const updateAxisOpacity = useCallback((gizmo: any, axis: string | null, isDragging: boolean) => {
-        gizmo.traverse((child: any) => {
-            if (child.material && child.material.color) {
-                // Check axis by material color (R=X, G=Y, B=Z)
-                const color = child.material.color;
-                const isXAxis = color.r > 0.5 && color.g < 0.4 && color.b < 0.4;
-                const isYAxis = color.g > 0.5 && color.r < 0.4 && color.b < 0.4;
-                const isZAxis = color.b > 0.5 && color.r < 0.4 && color.g < 0.4;
+    const getAxisTransformValue = useCallback((object: THREE.Object3D, axis: string, isRotate: boolean) => {
+        if (axis === 'X') return isRotate ? object.rotation.x : object.position.x;
+        if (axis === 'Y') return isRotate ? object.rotation.y : object.position.y;
+        if (axis === 'Z') return isRotate ? object.rotation.z : object.position.z;
+        return 0;
+    }, []);
 
-                const isActiveAxis = !axis ||
-                    (axis === 'X' && isXAxis) ||
-                    (axis === 'Y' && isYAxis) ||
-                    (axis === 'Z' && isZAxis);
+    const applyAxisTransformValue = useCallback((object: THREE.Object3D, axis: string, value: number, isRotate: boolean) => {
+        if (axis === 'X') {
+            if (isRotate) object.rotation.x = value;
+            else object.position.x = value;
+            return;
+        }
+        if (axis === 'Y') {
+            if (isRotate) object.rotation.y = value;
+            else object.position.y = value;
+            return;
+        }
+        if (axis === 'Z') {
+            if (isRotate) object.rotation.z = value;
+            else object.position.z = value;
+        }
+    }, []);
 
-                // When dragging: active axis stays full opacity, others become very transparent
-                // When hovering: active axis stays full opacity, others become slightly transparent
-                if (axis && !isActiveAxis) {
-                    child.material.opacity = isDragging ? 0.15 : 0.3;
-                    child.material.transparent = true;
-                } else {
-                    child.material.opacity = 1.0;
-                    child.material.transparent = false;
-                }
-                child.material.needsUpdate = true;
-            }
+    const markRotateKnobDragStart = useCallback((controls: any, axis: string) => {
+        const rotateGizmo = controls?.children?.[0]?.gizmo?.rotate;
+        if (!rotateGizmo) return;
+        const startAngle = typeof controls?.rotationAngle === 'number' ? controls.rotationAngle : 0;
+
+        rotateGizmo.traverse((child: any) => {
+            if (!child.userData?.urdfRotateKnob || child.name !== axis) return;
+            child.userData.urdfDragStartAnchor = child.position.clone();
+            child.userData.urdfDragStartAngle = startAngle;
         });
     }, []);
 
-    // Track hovered/dragged axis for single-axis highlight effect
-    const [currentAxis, setCurrentAxis] = useState<string | null>(null);
-    const [isDraggingAxis, setIsDraggingAxis] = useState(false);
+    const persistRotateKnobAnchor = useCallback((controls: any, axis: string) => {
+        const rotateGizmo = controls?.children?.[0]?.gizmo?.rotate;
+        if (!rotateGizmo) return;
+
+        rotateGizmo.traverse((child: any) => {
+            if (!child.userData?.urdfRotateKnob || child.name !== axis) return;
+            child.userData.urdfKnobAnchor = child.position.clone();
+            delete child.userData.urdfDragStartAnchor;
+            delete child.userData.urdfDragStartAngle;
+        });
+    }, []);
+
+    const syncRotateKnobPickers = useCallback((controls: any) => {
+        const root = controls?.children?.[0];
+        const rotateGizmo = root?.gizmo?.rotate;
+        const rotatePicker = root?.picker?.rotate;
+        if (!rotateGizmo || !rotatePicker) return;
+
+        rotateGizmo.updateWorldMatrix(true, true);
+        rotatePicker.updateWorldMatrix(true, false);
+
+        const knobCenters = new Map<string, THREE.Vector3>();
+        rotateGizmo.traverse((child: any) => {
+            if (!child.userData?.urdfRotateKnob || typeof child.name !== 'string') return;
+            knobCenters.set(child.name, child.getWorldPosition(new THREE.Vector3()));
+        });
+
+        rotatePicker.traverse((child: any) => {
+            if (!child.userData?.urdfRotateKnobPicker || typeof child.name !== 'string') return;
+            const geometry = child.geometry as THREE.BufferGeometry | undefined;
+
+            // Backward compatible for already-mounted gizmos whose picker geometry
+            // was translated instead of positioned.
+            if (geometry && !child.userData?.urdfPickerCentered) {
+                geometry.computeBoundingBox();
+                const center = geometry.boundingBox?.getCenter(new THREE.Vector3());
+                if (center && center.lengthSq() > 1e-10) {
+                    geometry.translate(-center.x, -center.y, -center.z);
+                    geometry.computeBoundingSphere();
+                }
+                child.userData.urdfPickerCentered = true;
+            }
+
+            const knobWorld = knobCenters.get(child.name);
+            if (!knobWorld) return;
+            const pickerLocal = rotatePicker.worldToLocal(knobWorld.clone());
+            child.position.copy(pickerLocal);
+        });
+    }, []);
+
+    const syncTranslateTipPickers = useCallback((controls: any) => {
+        const root = controls?.children?.[0];
+        const translateGizmo = root?.gizmo?.translate;
+        const translatePicker = root?.picker?.translate;
+        if (!translateGizmo || !translatePicker) return;
+
+        translateGizmo.updateWorldMatrix(true, true);
+        translatePicker.updateWorldMatrix(true, false);
+
+        const tipCenters = new Map<string, THREE.Vector3>();
+        translateGizmo.traverse((child: any) => {
+            if (!child?.isLine || typeof child.name !== 'string') return;
+            if (child.name !== 'X' && child.name !== 'Y' && child.name !== 'Z') return;
+
+            const position = child.geometry?.getAttribute?.('position');
+            if (!position || position.count < 2) return;
+
+            let farthestIdx = 0;
+            let farthestLenSq = -1;
+            for (let i = 0; i < position.count; i++) {
+                const x = position.getX(i);
+                const y = position.getY(i);
+                const z = position.getZ(i);
+                const lenSq = x * x + y * y + z * z;
+                if (lenSq > farthestLenSq) {
+                    farthestLenSq = lenSq;
+                    farthestIdx = i;
+                }
+            }
+
+            const key = `${child.name}_fwd`;
+            const tipWorld = child.localToWorld(new THREE.Vector3(
+                position.getX(farthestIdx),
+                position.getY(farthestIdx),
+                position.getZ(farthestIdx)
+            ));
+            tipCenters.set(key, tipWorld);
+        });
+
+        translatePicker.traverse((child: any) => {
+            const key = child.userData?.urdfTranslateTipPickerKey;
+            if (typeof key !== 'string') return;
+
+            const tipWorld = tipCenters.get(key);
+            if (!tipWorld) return;
+            const pickerLocal = translatePicker.worldToLocal(tipWorld.clone());
+            child.position.copy(pickerLocal);
+        });
+
+        const activeAxis = typeof controls?.axis === 'string' ? controls.axis : null;
+        const isDragging = Boolean(controls?.dragging);
+        translateGizmo.traverse((child: any) => {
+            const key = child.userData?.urdfTranslateTipKnobKey;
+            if (typeof key !== 'string') return;
+
+            const tipWorld = tipCenters.get(key);
+            if (tipWorld) {
+                const gizmoLocal = translateGizmo.worldToLocal(tipWorld.clone());
+                child.position.copy(gizmoLocal);
+            }
+
+            const targetScale = activeAxis === child.name ? (isDragging ? 1.16 : 1.09) : 1;
+            child.scale.setScalar(targetScale);
+        });
+    }, []);
+
+    const syncAllGizmoPickers = useCallback(() => {
+        syncTranslateTipPickers(transformRef.current);
+        syncTranslateTipPickers(rotateTransformRef.current);
+        syncRotateKnobPickers(transformRef.current);
+        syncRotateKnobPickers(rotateTransformRef.current);
+    }, [syncTranslateTipPickers, syncRotateKnobPickers]);
 
     // Setup event listeners for TransformControls
     useEffect(() => {
-        const controls = transformRef.current;
-        if (!controls || !targetObject) return;
+        const controlsList = [transformRef.current, rotateTransformRef.current].filter(Boolean) as any[];
+        if (!targetObject || controlsList.length === 0) return;
 
-        const handleDraggingChange = (event: any) => {
-            const dragging = event.value;
+        const cleanups: Array<() => void> = [];
+        for (const controls of controlsList) {
+            const handleDraggingChange = (event: any) => {
+                const dragging = event.value;
 
-            if (dragging) {
-                // Start dragging
-                isDraggingRef.current = true;
-                setIsDragging(true);
-                setIsDraggingAxis(true);
+                if (dragging) {
+                    const axis = controls.axis as string | null;
+                    if (!axis || (axis !== 'X' && axis !== 'Y' && axis !== 'Z')) return;
 
-                // Store original position/rotation
-                originalPositionRef.current.copy(targetObject.position);
-                originalRotationRef.current.copy(targetObject.rotation);
+                    isDraggingRef.current = true;
+                    setIsDragging(true);
 
-                // Get current axis from controls
-                const axis = controls.axis;
-                currentAxisRef.current = axis;
+                    originalPositionRef.current.copy(targetObject.position);
+                    originalRotationRef.current.copy(targetObject.rotation);
 
-                // Update axis opacity for dragging state
-                const gizmo = (controls as any).children?.[0];
-                if (gizmo && axis) {
-                    updateAxisOpacity(gizmo, axis, true);
-                }
+                    currentAxisRef.current = axis;
+                    currentIsRotateRef.current = controls.mode === 'rotate';
+                    startValueRef.current = getAxisTransformValue(targetObject, axis, currentIsRotateRef.current);
 
-                // Get start value
-                const isRotate = transformMode === 'rotate';
-                if (isRotate) {
-                    const val = axis === 'X' ? targetObject.rotation.x :
-                        axis === 'Y' ? targetObject.rotation.y :
-                            axis === 'Z' ? targetObject.rotation.z : 0;
-                    startValueRef.current = val;
-                } else {
-                    const val = axis === 'X' ? targetObject.position.x :
-                        axis === 'Y' ? targetObject.position.y :
-                            axis === 'Z' ? targetObject.position.z : 0;
-                    startValueRef.current = val;
-                }
-            } else if (isDraggingRef.current) {
-                // End dragging
-                isDraggingRef.current = false;
-                setIsDragging(false);
-                setIsDraggingAxis(false);
+                    if (currentIsRotateRef.current) {
+                        syncRotateKnobPickers(controls);
+                        markRotateKnobDragStart(controls, axis);
+                    }
+                } else if (isDraggingRef.current) {
+                    isDraggingRef.current = false;
+                    setIsDragging(false);
 
-                const axis = currentAxisRef.current;
-                const isRotate = transformMode === 'rotate';
+                    const axis = currentAxisRef.current;
+                    const isRotate = currentIsRotateRef.current;
+                    if (!axis) return;
 
-                // Reset axis opacity to hover state
-                const gizmo = (controls as any).children?.[0];
-                if (gizmo && axis) {
-                    updateAxisOpacity(gizmo, axis, false);
-                }
+                    if (isRotate) {
+                        persistRotateKnobAnchor(controls, axis);
+                        syncRotateKnobPickers(controls);
+                    }
 
-                // Get current value after drag
-                let currentVal = 0;
-                if (isRotate) {
-                    currentVal = axis === 'X' ? targetObject.rotation.x :
-                        axis === 'Y' ? targetObject.rotation.y :
-                            axis === 'Z' ? targetObject.rotation.z : 0;
-                } else {
-                    currentVal = axis === 'X' ? targetObject.position.x :
-                        axis === 'Y' ? targetObject.position.y :
-                            axis === 'Z' ? targetObject.position.z : 0;
-                }
+                    const currentVal = getAxisTransformValue(targetObject, axis, isRotate);
+                    const delta = currentVal - startValueRef.current;
+                    if (Math.abs(delta) <= 0.0001) return;
 
-                const delta = currentVal - startValueRef.current;
-
-                // Show confirm UI if value changed (check for any change, positive or negative)
-                if (Math.abs(delta) > 0.0001 && axis) {
                     const radToDeg = (rad: number) => rad * (180 / Math.PI);
-                    
                     setPendingEdit({
                         axis,
                         value: currentVal,
                         startValue: startValueRef.current,
                         isRotate
                     });
-                    
-                    // Initialize input value
-                    const displayVal = isRotate 
-                        ? radToDeg(currentVal).toFixed(2)
-                        : currentVal.toFixed(4);
-                    setInputValue(displayVal);
-                    
-                    forceUpdate(n => n + 1);
+                    setInputValue(isRotate ? radToDeg(currentVal).toFixed(2) : currentVal.toFixed(4));
+                    forceUpdate((n) => n + 1);
                 }
-            }
-            invalidate();
-        };
 
-        controls.addEventListener('dragging-changed', handleDraggingChange);
+                invalidate();
+            };
+
+            controls.addEventListener('dragging-changed', handleDraggingChange);
+            cleanups.push(() => {
+                controls.removeEventListener('dragging-changed', handleDraggingChange);
+            });
+        }
 
         return () => {
-            controls.removeEventListener('dragging-changed', handleDraggingChange);
+            for (const cleanup of cleanups) cleanup();
         };
-    }, [targetObject, transformMode, setIsDragging, invalidate, pendingEdit, updateAxisOpacity]);
+    }, [
+        targetObject,
+        transformMode,
+        setIsDragging,
+        invalidate,
+        getAxisTransformValue,
+        syncRotateKnobPickers,
+        markRotateKnobDragStart,
+        persistRotateKnobAnchor
+    ]);
 
     // Find the selected collision mesh
     useEffect(() => {
@@ -243,62 +354,145 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         };
     }, [targetObject]);
 
-    // Customize TransformControls appearance - thicker axes and single-axis highlight
+    // Customize TransformControls appearance:
+    // - Fusion360-like sphere knobs on rotate arcs
+    // - larger axis hit regions for easier drag
+    // - remove free-rotate ring to reduce accidental trigger
     useEffect(() => {
-        const controls = transformRef.current;
-        if (!controls) return;
-
-        // Access the gizmo to customize axis appearance
-        const gizmo = (controls as any).children?.[0];
-        if (!gizmo) return;
-
-        // Make axes thicker by scaling line width
-        const updateAxisAppearance = () => {
-            gizmo.traverse((child: any) => {
-                if (child.isMesh || child.isLine) {
-                    // Make lines thicker
-                    if (child.material) {
-                        if (child.material.linewidth !== undefined) {
-                            child.material.linewidth = 3;
-                        }
-                        // Scale up the geometry for thicker appearance
-                        if (!child.userData.scaled) {
-                            if (child.isLine) {
-                                child.scale.multiplyScalar(1.5);
-                            }
-                            child.userData.scaled = true;
-                        }
-                    }
-                }
+        if (transformRef.current) {
+            enhanceTransformControlsGizmo(transformRef.current);
+        }
+        if (rotateTransformRef.current) {
+            enhanceTransformControlsGizmo(rotateTransformRef.current);
+        }
+        // In frameloop=\"demand\", gizmo internals can update one frame later.
+        // Run a few sync passes so custom tip/knob pickers never stay at origin.
+        syncAllGizmoPickers();
+        const rafIds: number[] = [];
+        for (let i = 0; i < 3; i++) {
+            const id = window.requestAnimationFrame(() => {
+                syncAllGizmoPickers();
+                invalidate();
             });
-        };
-
-        updateAxisAppearance();
-
-        // Listen for axis changes to update transparency
-        const handleAxisChanged = (event: any) => {
-            // Don't allow axis changes if pending edit exists
-            if (pendingEdit) return;
-
-            const axis = event.value;
-            setCurrentAxis(axis);
-
-            // Update opacity based on current axis and dragging state
-            updateAxisOpacity(gizmo, axis, isDraggingAxis);
-            invalidate();
-        };
-
-        controls.addEventListener('axis-changed', handleAxisChanged);
+            rafIds.push(id);
+        }
+        invalidate();
 
         return () => {
-            controls.removeEventListener('axis-changed', handleAxisChanged);
+            for (const id of rafIds) {
+                window.cancelAnimationFrame(id);
+            }
         };
-    }, [targetObject, transformMode, invalidate, pendingEdit, isDraggingAxis, updateAxisOpacity]);
+    }, [targetObject, transformMode, invalidate, syncAllGizmoPickers]);
 
     // Handle transform change (live update during drag)
     const handleObjectChange = useCallback(() => {
+        syncAllGizmoPickers();
         invalidate();
-    }, [invalidate]);
+    }, [invalidate, syncAllGizmoPickers]);
+
+    const normalizeGizmoMaterials = useCallback((controls: any) => {
+        const root = controls?.children?.[0];
+        if (!root?.gizmo) return;
+
+        const groups = [root.gizmo.translate, root.gizmo.rotate].filter(Boolean);
+        for (const group of groups) {
+            group.traverse((child: any) => {
+                child.renderOrder = typeof child.userData?.urdfRenderOrder === 'number'
+                    ? child.userData.urdfRenderOrder
+                    : 10000;
+                if (child.userData?.urdfRotateKnobOutline) return;
+                if (!child.material) return;
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                for (const mat of mats) {
+                    if (!mat) continue;
+                    (mat as any).tempOpacity = 1;
+                    const baseColor = mat.userData?.urdfBaseColor;
+                    if (baseColor && mat.color && !mat.color.equals(baseColor)) {
+                        mat.color.copy(baseColor);
+                        mat.needsUpdate = true;
+                    }
+                    const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false;
+                    if (mat.opacity !== 1 || mat.transparent !== false || needsDepthReset) {
+                        mat.opacity = 1;
+                        mat.transparent = false;
+                        mat.depthTest = false;
+                        mat.depthWrite = false;
+                        mat.needsUpdate = true;
+                    }
+                }
+            });
+        }
+    }, []);
+
+    const updateRotateKnobFeedback = useCallback((controls: any, elapsedTime: number) => {
+        const root = controls?.children?.[0];
+        const rotateGizmo = root?.gizmo?.rotate;
+        if (!rotateGizmo) return;
+
+        const axis = typeof controls?.axis === 'string' ? controls.axis : null;
+        const isDragging = Boolean(controls?.dragging);
+        const axisPhase: Record<string, number> = { X: 0, Y: 2.1, Z: 4.2 };
+        const axisVectorMap: Record<string, THREE.Vector3> = {
+            X: new THREE.Vector3(1, 0, 0),
+            Y: new THREE.Vector3(0, 1, 0),
+            Z: new THREE.Vector3(0, 0, 1)
+        };
+        const rotationAngle = typeof controls?.rotationAngle === 'number' ? controls.rotationAngle : 0;
+
+        rotateGizmo.traverse((child: any) => {
+            if (child.userData?.urdfRotateKnob) {
+                const base = (child.userData.urdfKnobAnchor as THREE.Vector3 | undefined)?.clone?.() || child.position.clone();
+                const phase = axisPhase[child.name] ?? 0;
+                let targetPos = base.clone();
+
+                if (isDragging && axis === child.name) {
+                    const dragStart = (child.userData.urdfDragStartAnchor as THREE.Vector3 | undefined)?.clone?.() || base.clone();
+                    const dragStartAngle = typeof child.userData?.urdfDragStartAngle === 'number' ? child.userData.urdfDragStartAngle : 0;
+                    const relativeAngle = rotationAngle - dragStartAngle;
+                    const axisVector = axisVectorMap[child.name];
+                    if (axisVector) {
+                        const rotation = new THREE.Quaternion().setFromAxisAngle(axisVector, relativeAngle);
+                        targetPos = dragStart.applyQuaternion(rotation);
+                    }
+
+                    child.position.copy(targetPos);
+                } else {
+                    child.position.lerp(targetPos, 0.24);
+                }
+
+                const hoverPulse = 1 + 0.015 * (0.5 + 0.5 * Math.sin(elapsedTime * 6 + phase));
+                const targetScale = axis === child.name ? (isDragging ? 1.16 : 1.08) : hoverPulse;
+                const nextScale = THREE.MathUtils.lerp(child.scale.x, targetScale, 0.32);
+                child.scale.setScalar(nextScale);
+                return;
+            }
+
+            if (child.userData?.urdfRotateKnobOutline && child.material) {
+                const mat = child.material;
+                const active = axis === child.name;
+                const pulse = 0.45 + 0.35 * (0.5 + 0.5 * Math.sin(elapsedTime * 11));
+                const nextOpacity = active ? pulse : 0;
+
+                if (Math.abs((mat.opacity ?? 0) - nextOpacity) > 0.005) {
+                    mat.opacity = nextOpacity;
+                    mat.needsUpdate = true;
+                }
+            }
+        });
+    }, []);
+
+    // Keep gizmo opacity stable (no auto fade on hover)
+    useFrame((state) => {
+        normalizeGizmoMaterials(transformRef.current);
+        normalizeGizmoMaterials(rotateTransformRef.current);
+        updateRotateKnobFeedback(transformRef.current, state.clock.getElapsedTime());
+        updateRotateKnobFeedback(rotateTransformRef.current, state.clock.getElapsedTime());
+        syncTranslateTipPickers(transformRef.current);
+        syncTranslateTipPickers(rotateTransformRef.current);
+        syncRotateKnobPickers(transformRef.current);
+        syncRotateKnobPickers(rotateTransformRef.current);
+    }, 1000);
 
     // Handle confirm - save to history
     const handleConfirm = useCallback(() => {
@@ -306,15 +500,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
         // Apply the edited value (in case user modified in text field)
         const axis = pendingEdit.axis;
-        if (pendingEdit.isRotate) {
-            if (axis === 'X') targetObject.rotation.x = pendingEdit.value;
-            else if (axis === 'Y') targetObject.rotation.y = pendingEdit.value;
-            else if (axis === 'Z') targetObject.rotation.z = pendingEdit.value;
-        } else {
-            if (axis === 'X') targetObject.position.x = pendingEdit.value;
-            else if (axis === 'Y') targetObject.position.y = pendingEdit.value;
-            else if (axis === 'Z') targetObject.position.z = pendingEdit.value;
-        }
+        applyAxisTransformValue(targetObject, axis, pendingEdit.value, pendingEdit.isRotate);
 
         // Call onTransformEnd to save to history
         const pos = targetObject.position;
@@ -332,7 +518,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
         setPendingEdit(null);
         invalidate();
-    }, [targetObject, selection?.id, onTransformEnd, pendingEdit, invalidate]);
+    }, [targetObject, selection?.id, onTransformEnd, pendingEdit, invalidate, applyAxisTransformValue]);
 
     // Handle cancel - restore original transform
     const handleCancel = useCallback(() => {
@@ -347,16 +533,6 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     // Convert radians to degrees for display
     const radToDeg = (rad: number) => rad * (180 / Math.PI);
     const degToRad = (deg: number) => deg * (Math.PI / 180);
-
-    // Get display value (degrees for rotation, meters for translation)
-    // NOTE: This is now only used for initial value, subsequent updates use inputValue state
-    const getDisplayValue = useCallback(() => {
-        if (!pendingEdit) return '0';
-        if (pendingEdit.isRotate) {
-            return radToDeg(pendingEdit.value).toFixed(2);
-        }
-        return pendingEdit.value.toFixed(4);
-    }, [pendingEdit]);
 
     // Get delta display value
     const getDeltaDisplay = useCallback(() => {
@@ -382,20 +558,11 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
             // Live preview
             if (targetObject) {
-                const axis = pendingEdit.axis;
-                if (pendingEdit.isRotate) {
-                    if (axis === 'X') targetObject.rotation.x = val;
-                    else if (axis === 'Y') targetObject.rotation.y = val;
-                    else if (axis === 'Z') targetObject.rotation.z = val;
-                } else {
-                    if (axis === 'X') targetObject.position.x = val;
-                    else if (axis === 'Y') targetObject.position.y = val;
-                    else if (axis === 'Z') targetObject.position.z = val;
-                }
+                applyAxisTransformValue(targetObject, pendingEdit.axis, val, pendingEdit.isRotate);
                 invalidate();
             }
         }
-    }, [pendingEdit, targetObject, invalidate]);
+    }, [pendingEdit, targetObject, invalidate, applyAxisTransformValue]);
 
     // Handle Enter key to confirm
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -437,7 +604,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                 ref={transformRef}
                 object={targetObject}
                 mode={getControlMode()}
-                size={0.8}
+                size={COLLISION_TRANSLATE_GIZMO_SIZE}
                 space="local"
                 enabled={!pendingEdit}
                 onChange={handleObjectChange}
@@ -446,9 +613,10 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
             {/* For universal mode, add rotation gizmo */}
             {transformMode === 'universal' && (
                 <TransformControls
+                    ref={rotateTransformRef}
                     object={targetObject}
                     mode="rotate"
-                    size={1.2}
+                    size={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
                     enabled={!pendingEdit}
                     onChange={handleObjectChange}
                 />

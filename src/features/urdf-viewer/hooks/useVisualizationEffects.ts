@@ -138,9 +138,8 @@ export function useVisualizationEffects({
                             innerChild.userData.isCollisionMesh = true;
                             if (innerChild.__origMaterial) {
                                 innerChild.__origMaterial = collisionBaseMaterial;
-                            } else {
-                                innerChild.material = collisionBaseMaterial;
                             }
+                            innerChild.material = collisionBaseMaterial;
                             innerChild.renderOrder = 999;
                         }
                     });
@@ -439,7 +438,10 @@ export function useVisualizationEffects({
                                 }
 
                                 const newAxes = createOriginAxes(currentSize);
-                                newAxes.children.forEach((c: any) => originAxes.add(c.clone()));
+                                // Re-parent generated children directly to avoid clone allocations/leaks.
+                                while (newAxes.children.length > 0) {
+                                    originAxes.add(newAxes.children[0]);
+                                }
                             }
                         }
 

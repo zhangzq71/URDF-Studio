@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { URDFLoader, URDFCollider, URDFVisual } from '@/core/parsers/urdf/loader';
-import { disposeObject3D } from '../utils/dispose';
+import { disposeObject3D, disposeMaterial } from '../utils/dispose';
 import { enhanceMaterials, collisionBaseMaterial, createMatteMaterial } from '../utils/materials';
 import { parseURDFMaterials, applyURDFMaterials } from '../utils/urdfMaterials';
 import { offsetRobotToGround } from '../utils/robotPositioning';
@@ -156,6 +156,28 @@ function clearGroupChildren(group: THREE.Object3D): void {
     }
 }
 
+function disposeReplacedMaterials(
+    material: THREE.Material | THREE.Material[] | undefined,
+    disposedMaterials: Set<THREE.Material>,
+    disposeTextures: boolean
+): void {
+    if (!material) return;
+    const mats = Array.isArray(material) ? material : [material];
+    for (const mat of mats) {
+        if (!mat || disposedMaterials.has(mat) || SHARED_MATERIALS.has(mat)) continue;
+        disposeMaterial(mat, disposeTextures, SHARED_MATERIALS);
+        disposedMaterials.add(mat);
+    }
+}
+
+function disposeTempMaterialMap(materials: Map<string, THREE.Material>): void {
+    materials.forEach((material) => {
+        if (!SHARED_MATERIALS.has(material)) {
+            disposeMaterial(material, true, SHARED_MATERIALS);
+        }
+    });
+}
+
 function findRobotLinkObject(robotModel: THREE.Object3D, linkName: string): THREE.Object3D | null {
     const links = (robotModel as any).links as Record<string, THREE.Object3D> | undefined;
     if (links?.[linkName]) return links[linkName];
@@ -169,7 +191,13 @@ function findRobotLinkObject(robotModel: THREE.Object3D, linkName: string): THRE
     return found;
 }
 
-function updateVisualMaterial(mesh: THREE.Mesh, color?: string): void {
+function updateVisualMaterial(
+    mesh: THREE.Mesh,
+    color: string | undefined,
+    disposedMaterials: Set<THREE.Material>
+): void {
+    const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
+
     const update = (mat: THREE.Material): THREE.Material => {
         const map = (mat as any).map || null;
         const next = createMatteMaterial({
@@ -190,25 +218,35 @@ function updateVisualMaterial(mesh: THREE.Mesh, color?: string): void {
     } else if (mesh.material) {
         mesh.material = update(mesh.material);
     }
+
+    // Preserve texture ownership when old map is reused by the new material.
+    disposeReplacedMaterials(previousMaterial, disposedMaterials, false);
 }
 
 function markVisualObject(obj: THREE.Object3D, linkName: string, color: string | undefined, showVisual: boolean): void {
+    const disposedMaterials = new Set<THREE.Material>();
+
     obj.traverse((child: any) => {
         if (!child.isMesh) return;
         child.userData.parentLinkName = linkName;
         child.userData.isVisualMesh = true;
         child.visible = showVisual;
-        updateVisualMaterial(child, color);
+        updateVisualMaterial(child, color, disposedMaterials);
     });
 }
 
 function markCollisionObject(obj: THREE.Object3D, linkName: string): void {
+    const disposedMaterials = new Set<THREE.Material>();
+
     obj.traverse((child: any) => {
         if (!child.isMesh) return;
+        const previousMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
         child.userData.parentLinkName = linkName;
         child.userData.isCollisionMesh = true;
         child.material = collisionBaseMaterial;
         child.renderOrder = 999;
+
+        disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
     });
 }
 
@@ -600,7 +638,11 @@ export function useRobotLoader({
                         if (!robotModel || abortController.aborted || !isMountedRef.current) return;
 
                         const materials = parseURDFMaterials(urdfContent);
-                        applyURDFMaterials(robotModel, materials);
+                        try {
+                            applyURDFMaterials(robotModel, materials);
+                        } finally {
+                            disposeTempMaterialMap(materials);
+                        }
                         processCapsuleGeometries(robotModel, urdfContent);
                         enhanceMaterials(robotModel);
                         offsetRobotToGround(robotModel);
@@ -652,7 +694,11 @@ export function useRobotLoader({
                     // Apply URDF materials from XML (urdf-loader doesn't handle inline rgba)
                     if (!isMJCFContent(urdfContent)) {
                         const materials = parseURDFMaterials(urdfContent);
-                        applyURDFMaterials(robotModel, materials);
+                        try {
+                            applyURDFMaterials(robotModel, materials);
+                        } finally {
+                            disposeTempMaterialMap(materials);
+                        }
 
                         // Process capsule geometries (urdf-loader doesn't support capsule natively)
                         processCapsuleGeometries(robotModel, urdfContent);

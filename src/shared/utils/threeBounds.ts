@@ -15,10 +15,9 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
 
   root.updateMatrixWorld(true);
 
-  root.traverse((obj) => {
+  const visitNode = (obj: THREE.Object3D) => {
     if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
     if (!(obj as THREE.Mesh).isMesh) return;
-    if (!includeInvisible && !obj.visible) return;
 
     const mesh = obj as THREE.Mesh;
     if (!mesh.geometry) return;
@@ -37,7 +36,16 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
     }
 
     lowestZ = Math.min(lowestZ, worldBox.min.z);
-  });
+  };
+
+  // NOTE:
+  // `obj.visible` only reflects local visibility. Using `traverseVisible` ensures
+  // meshes under hidden parents (e.g. hidden collision groups) are excluded.
+  if (includeInvisible) {
+    root.traverse(visitNode);
+  } else {
+    root.traverseVisible(visitNode);
+  }
 
   return Number.isFinite(lowestZ) ? lowestZ : null;
 }

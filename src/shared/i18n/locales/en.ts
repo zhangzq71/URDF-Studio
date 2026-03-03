@@ -52,6 +52,8 @@ export const en: TranslationKeys = {
   deleteBranch: "Delete Branch",
   rename: "Rename",
   deleteMesh: "Delete Mesh",
+  deleteVisualGeometry: "Delete Visual Geometry",
+  deleteCollisionGeometry: "Delete Collision Geometry",
   addCollisionBody: "Add Collision Body",
 
   // Assembly
@@ -73,6 +75,12 @@ export const en: TranslationKeys = {
   visualGeometry: "Visual Geometry",
   collisionGeometry: "Collision Geometry",
   type: "Type",
+  jointTypeFixed: "Fixed",
+  jointTypeRevolute: "Revolute",
+  jointTypeContinuous: "Continuous",
+  jointTypePrismatic: "Prismatic",
+  jointTypePlanar: "Planar",
+  jointTypeFloating: "Floating",
   dimensions: "Dimensions / Radius / Length",
   originRelativeLink: "Origin (Relative to Link)",
   originRelativeParent: "Origin (Relative to Parent)",

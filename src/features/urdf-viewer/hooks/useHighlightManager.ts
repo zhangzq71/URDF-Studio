@@ -71,6 +71,14 @@ export function useHighlightManager({
         }
     }, [robot, robotVersion]);
 
+    // Visibility mode changes alter which meshes participate in setFromObject().
+    // Mark bbox dirty so hover broad-phase remains accurate after toggles.
+    useEffect(() => {
+        if (robot) {
+            boundingBoxNeedsUpdateRef.current = true;
+        }
+    }, [robot, showCollision, showVisual, highlightMode]);
+
     // Helper to get/update robot bounding box (cached)
     const getRobotBoundingBox = useCallback(() => {
         if (!robot) return null;

@@ -225,10 +225,10 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
               onChange={(e) => setJointType(e.target.value as JointType)}
               className={fieldClassName}
             >
-              <option value={JointType.FIXED}>fixed</option>
-              <option value={JointType.REVOLUTE}>revolute</option>
-              <option value={JointType.CONTINUOUS}>continuous</option>
-              <option value={JointType.PRISMATIC}>prismatic</option>
+              <option value={JointType.FIXED}>{t.jointTypeFixed}</option>
+              <option value={JointType.REVOLUTE}>{t.jointTypeRevolute}</option>
+              <option value={JointType.CONTINUOUS}>{t.jointTypeContinuous}</option>
+              <option value={JointType.PRISMATIC}>{t.jointTypePrismatic}</option>
             </select>
           </div>
 

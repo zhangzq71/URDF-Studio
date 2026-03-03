@@ -7,6 +7,7 @@ interface SliderProps {
   step?: number;
   onChange: (value: number) => void;
   label?: string;
+  labelClassName?: string;
   showValue?: boolean;
   formatValue?: (val: number) => string;
   icon?: React.ReactNode;
@@ -21,45 +22,61 @@ export const Slider: React.FC<SliderProps> = ({
   step = 1,
   onChange,
   label,
+  labelClassName = '',
   showValue = true,
   formatValue,
   icon,
   className = '',
   disabled = false,
 }) => {
-  const [localValue, setLocalValue] = React.useState(value);
+  const safeMin = Math.min(min, max);
+  const safeMax = Math.max(min, max);
+  const thumbWidth = 24;
+  const halfThumb = thumbWidth / 2;
+  const clampToRange = React.useCallback((nextValue: number) => {
+    if (!Number.isFinite(nextValue)) return safeMin;
+    return Math.min(Math.max(nextValue, safeMin), safeMax);
+  }, [safeMin, safeMax]);
+
+  const [localValue, setLocalValue] = React.useState(() => clampToRange(value));
   const [isDragging, setIsDragging] = React.useState(false);
 
   React.useEffect(() => {
     if (!isDragging) {
-      setLocalValue(value);
+      setLocalValue(clampToRange(value));
     }
-  }, [value, isDragging]);
+  }, [value, isDragging, clampToRange]);
+
+  const stopDragging = React.useCallback(() => {
+    setIsDragging(false);
+  }, []);
 
   React.useEffect(() => {
     if (!isDragging) return;
-
-    const stopDragging = () => setIsDragging(false);
 
     window.addEventListener('pointerup', stopDragging);
     window.addEventListener('pointercancel', stopDragging);
     window.addEventListener('mouseup', stopDragging);
     window.addEventListener('touchend', stopDragging);
+    window.addEventListener('blur', stopDragging);
 
     return () => {
       window.removeEventListener('pointerup', stopDragging);
       window.removeEventListener('pointercancel', stopDragging);
       window.removeEventListener('mouseup', stopDragging);
       window.removeEventListener('touchend', stopDragging);
+      window.removeEventListener('blur', stopDragging);
     };
-  }, [isDragging]);
+  }, [isDragging, stopDragging]);
 
-  const handleChange = (newValue: number) => {
-    setLocalValue(newValue);
-    onChange(newValue);
-  };
+  const handleChange = React.useCallback((newValue: number) => {
+    const clampedValue = clampToRange(newValue);
+    setLocalValue(clampedValue);
+    onChange(clampedValue);
+  }, [clampToRange, onChange]);
 
-  const percentage = ((localValue - min) / (max - min)) * 100;
+  const range = safeMax - safeMin;
+  const percentage = range > 0 ? ((localValue - safeMin) / range) * 100 : 0;
   // Visual Clamping: Ensure the slider UI stays within bounds even if value is out of range
   const clampedPercentage = Math.min(Math.max(percentage, 0), 100);
   
@@ -72,7 +89,7 @@ export const Slider: React.FC<SliderProps> = ({
           <div className="flex items-center gap-2">
             {icon && <span className="text-text-tertiary">{icon}</span>}
             {label && (
-              <span className="text-xs font-medium text-text-primary">
+              <span className={`text-xs font-medium text-text-primary ${labelClassName}`}>
                 {label}
               </span>
             )}
@@ -96,21 +113,33 @@ export const Slider: React.FC<SliderProps> = ({
         </div>
         <input
           type="range"
-          min={min}
-          max={max}
+          min={safeMin}
+          max={safeMax}
           step={step}
           value={localValue}
+          onInput={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
           onChange={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
-          onPointerDown={() => setIsDragging(true)}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            setIsDragging(true);
+          }}
+          onPointerUp={stopDragging}
+          onPointerCancel={stopDragging}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
           disabled={disabled}
-          className="absolute w-full h-10 -top-2.5 opacity-0 cursor-default disabled:cursor-default z-10 appearance-none bg-transparent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[14px] [&::-webkit-slider-thumb]:w-[24px] [&::-webkit-slider-thumb]:rounded-[999px] [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent [&::-moz-range-thumb]:h-[14px] [&::-moz-range-thumb]:w-[24px] [&::-moz-range-thumb]:rounded-[999px] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent"
+          className="absolute h-10 -top-2.5 opacity-0 cursor-default disabled:cursor-default z-10 appearance-none bg-transparent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-[14px] [&::-webkit-slider-thumb]:w-[24px] [&::-webkit-slider-thumb]:rounded-[999px] [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent [&::-moz-range-thumb]:h-[14px] [&::-moz-range-thumb]:w-[24px] [&::-moz-range-thumb]:rounded-[999px] [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent"
+          style={{
+            left: `-${halfThumb}px`,
+            width: `calc(100% + ${thumbWidth}px)`,
+          }}
         />
         {/* Thumb */}
         <div 
           className={`pointer-events-none absolute h-3.5 w-6 rounded-[999px] bg-white transition-transform duration-150 ease-out top-1/2 -translate-y-1/2 border border-border-strong shadow-sm ${
             isDragging ? 'scale-105' : 'scale-100 group-hover:scale-[1.02]'
           }`}
-          style={{ left: `calc(${clampedPercentage}% - 12px)` }}
+          style={{ left: `calc(${clampedPercentage}% - ${halfThumb}px)` }}
         />
       </div>
     </div>

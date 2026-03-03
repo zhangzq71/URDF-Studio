@@ -7,6 +7,11 @@ import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState, RobotData
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 import { normalizeMeshPathForExport } from '../meshPathUtils';
 
+const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'planar']);
+const FULL_LIMIT_EXPORT_TYPES = new Set(['revolute', 'prismatic']);
+const EFFORT_VELOCITY_LIMIT_EXPORT_TYPES = new Set(['continuous']);
+const DYNAMICS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic']);
+
 // Helper to convert hex color to RGBA string
 const hexToRgba = (hex: string): string => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -17,6 +22,17 @@ const hexToRgba = (hex: string): string => {
     return `${r.toFixed(4)} ${g.toFixed(4)} ${b.toFixed(4)} 1.0`;
   }
   return '0.5 0.5 0.5 1.0'; // fallback gray
+};
+
+const generateLimitTag = (joint: UrdfJoint): string | null => {
+  const jointType = String(joint.type).toLowerCase();
+  if (FULL_LIMIT_EXPORT_TYPES.has(jointType)) {
+    return `    <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />`;
+  }
+  if (EFFORT_VELOCITY_LIMIT_EXPORT_TYPES.has(jointType)) {
+    return `    <limit effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />`;
+  }
+  return null;
 };
 
 export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean = false): string => {
@@ -107,18 +123,28 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
     const parent = links[joint.parentLinkId];
     const child = links[joint.childLinkId];
     if (!parent || !child) return;
+    const jointType = String(joint.type).toLowerCase();
 
     xml += `  <joint name="${joint.name}" type="${joint.type}">\n`;
     xml += `    <parent link="${parent.name}" />\n`;
     xml += `    <child link="${child.name}" />\n`;
     xml += `    <origin xyz="${vecStr(joint.origin.xyz)}" rpy="${rotStr(joint.origin.rpy)}" />\n`;
-    if (joint.type !== 'fixed') {
+    if (AXIS_EXPORT_TYPES.has(jointType)) {
         xml += `    <axis xyz="${vecStr(joint.axis)}" />\n`;
-        xml += `    <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
+    }
+
+    const limitTag = generateLimitTag(joint);
+    if (limitTag) {
+        xml += `${limitTag}\n`;
+    }
+
+    if (DYNAMICS_EXPORT_TYPES.has(jointType)) {
         if (joint.dynamics && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)) {
             xml += `    <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
         }
+    }
 
+    if (DYNAMICS_EXPORT_TYPES.has(jointType)) {
         // Extended Hardware Info
         if (extended && joint.hardware) {
             xml += `    <hardware>\n`;

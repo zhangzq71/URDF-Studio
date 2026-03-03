@@ -174,9 +174,32 @@ export function AIModal({
       let currentIndex = 0
       let reportReady = false
       let generatedReport: InspectionReport | null = null
-      let timerInterval: NodeJS.Timeout | null = null
+      let timerInterval: ReturnType<typeof setInterval> | null = null
+      let progressInterval: ReturnType<typeof setInterval> | null = null
+      let checkReportInterval: ReturnType<typeof setInterval> | null = null
 
-      const progressInterval = setInterval(() => {
+      const clearProgressInterval = () => {
+        if (progressInterval) {
+          clearInterval(progressInterval)
+          progressInterval = null
+        }
+      }
+
+      const clearTimerInterval = () => {
+        if (timerInterval) {
+          clearInterval(timerInterval)
+          timerInterval = null
+        }
+      }
+
+      const clearCheckReportInterval = () => {
+        if (checkReportInterval) {
+          clearInterval(checkReportInterval)
+          checkReportInterval = null
+        }
+      }
+
+      progressInterval = setInterval(() => {
         currentIndex++
         if (currentIndex <= totalItems) {
           const currentItem = selectedItemsList[currentIndex - 1]
@@ -187,7 +210,7 @@ export function AIModal({
             total: totalItems
           })
         } else {
-          clearInterval(progressInterval)
+          clearProgressInterval()
 
           setInspectionProgress({
             currentCategory: undefined,
@@ -200,10 +223,8 @@ export function AIModal({
           let timerCount = 1
 
           const showReport = () => {
-            if (timerInterval) {
-              clearInterval(timerInterval)
-              timerInterval = null
-            }
+            clearTimerInterval()
+            clearCheckReportInterval()
             setInspectionProgress(null)
             setReportGenerationTimer(null)
             if (generatedReport) {
@@ -216,15 +237,14 @@ export function AIModal({
             setReportGenerationTimer(timerCount)
 
             if (timerCount >= 30) {
-              clearInterval(timerInterval!)
-              timerInterval = null
+              clearTimerInterval()
               if (reportReady) {
                 showReport()
               } else {
                 setReportGenerationTimer(null)
-                const checkReport = setInterval(() => {
+                checkReportInterval = setInterval(() => {
                   if (reportReady) {
-                    clearInterval(checkReport)
+                    clearCheckReportInterval()
                     showReport()
                   }
                 }, 100)
@@ -237,8 +257,7 @@ export function AIModal({
               generatedReport = report
               reportReady = true
               if (timerCount < 30 && timerInterval) {
-                clearInterval(timerInterval)
-                timerInterval = null
+                clearTimerInterval()
                 showReport()
               } else if (timerCount >= 30) {
                 showReport()
@@ -246,9 +265,8 @@ export function AIModal({
             })
             .catch(error => {
               console.error('Inspection Error', error)
-              if (timerInterval) {
-                clearInterval(timerInterval)
-              }
+              clearTimerInterval()
+              clearCheckReportInterval()
               setInspectionProgress(null)
               setReportGenerationTimer(null)
             })

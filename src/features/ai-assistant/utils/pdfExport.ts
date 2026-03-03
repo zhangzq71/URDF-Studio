@@ -89,24 +89,27 @@ export function exportInspectionReportPdf({
       `
       document.head.appendChild(styleElement)
 
+      let restored = false
+
+      const restoreOriginalView = () => {
+        if (restored) return
+        restored = true
+        window.removeEventListener('afterprint', handleAfterPrint)
+        document.body.innerHTML = originalContent
+        document.title = originalTitle
+        styleElement.remove()
+      }
+
+      const handleAfterPrint = () => {
+        restoreOriginalView()
+      }
+
       setTimeout(() => {
+        window.addEventListener('afterprint', handleAfterPrint, { once: true })
         window.print()
 
-        window.addEventListener(
-          'afterprint',
-          () => {
-            document.body.innerHTML = originalContent
-            document.title = originalTitle
-            styleElement.remove()
-          },
-          { once: true }
-        )
-
         setTimeout(() => {
-          if (document.body.contains(reportClone)) {
-            document.body.innerHTML = originalContent
-            document.title = originalTitle
-          }
+          restoreOriginalView()
         }, 5000)
       }, 100)
     }
