@@ -77,10 +77,12 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
         <ReferenceGrid theme={effectiveTheme} />
 
         {/* Axis Gizmo */}
-        <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+        <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
           <GizmoViewport
             axisColors={['#ef4444', '#22c55e', '#3b82f6']}
             labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+            axisHeadScale={0.9}
+            scale={34}
           />
         </GizmoHelper>
       </Suspense>

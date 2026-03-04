@@ -12,9 +12,9 @@ const TRANSLATE_PICKER_REMOVE_NAMES = new Set(['X', 'Y', 'Z', 'XY', 'YZ', 'XZ', 
 const TRANSLATE_ARROW_RADIUS = 0.05;
 const TRANSLATE_ARROW_HEIGHT = 0.16;
 const TRANSLATE_TIP_KNOB_RADIUS = 0.055;
-const TRANSLATE_ARROW_HIT_RADIUS = 0.2;
+const TRANSLATE_ARROW_HIT_RADIUS = 0.14;
 const ROTATE_KNOB_RADIUS = 0.065;
-const ROTATE_KNOB_HIT_RADIUS = 0.36;
+const ROTATE_KNOB_HIT_RADIUS = 0.1;
 const THICK_TRANSLATE_SHAFT_RADIUS = 0.016;
 const THICK_ROTATE_ARC_RADIUS = 0.014;
 const TRANSLATE_AXIS_PICKER_SCALE = { x: 1.35, y: 1.8, z: 1.35 } as const;
@@ -61,9 +61,10 @@ const normalizeVisibleGizmoMaterials = (root?: TransformGizmoRoot) => {
 
                 (mat as any).tempOpacity = 1;
                 const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false;
-                if (mat.opacity !== 1 || mat.transparent !== false || needsDepthReset) {
+                // Keep gizmos in the transparent pass so they render after transparent collision meshes.
+                if (mat.opacity !== 1 || mat.transparent !== true || needsDepthReset) {
                     mat.opacity = 1;
-                    mat.transparent = false;
+                    mat.transparent = true;
                     mat.depthTest = false;
                     mat.depthWrite = false;
                     mat.needsUpdate = true;
@@ -146,7 +147,7 @@ const cloneAxisColorMaterial = (sourceMaterial: THREE.Material | null) => {
 
     const material = new THREE.MeshBasicMaterial({
         color,
-        transparent: false,
+        transparent: true,
         opacity: 1,
         depthTest: false,
         depthWrite: false,
@@ -173,7 +174,7 @@ const styleVisibleHandles = (group?: THREE.Object3D) => {
         for (const mat of materials) {
             if (!mat || mat.userData?.urdfHandleStyled) continue;
 
-            mat.transparent = false;
+            mat.transparent = true;
             mat.opacity = 1;
             mat.depthTest = false;
             mat.depthWrite = false;

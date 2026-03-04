@@ -1,6 +1,6 @@
 import React, { memo, useState } from 'react';
 import * as THREE from 'three';
-import { GeometryType, UrdfLink } from '@/types';
+import { GeometryType, UrdfLink, UrdfVisual } from '@/types';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
 import { getCachedMaterial } from '../../utils/materialCache';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
@@ -17,6 +17,8 @@ interface GeometryRendererProps {
   onLinkClick: (e: any, subType?: 'visual' | 'collision') => void;
   setVisualRef?: (ref: THREE.Group | null) => void;
   setCollisionRef?: (ref: THREE.Group | null) => void;
+  geometryData?: UrdfVisual;
+  geometryId?: string;
 }
 
 /**
@@ -35,8 +37,10 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   onLinkClick,
   setVisualRef,
   setCollisionRef,
+  geometryData,
+  geometryId,
 }: GeometryRendererProps) {
-  const data = isCollision ? link.collision : link.visual;
+  const data = geometryData || (isCollision ? link.collision : link.visual);
 
   // Fallback if collision data doesn't exist yet
   if (isCollision && !data) return null;
@@ -57,7 +61,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   if (type === GeometryType.NONE) return null;
 
   // Create a unique key based on geometry properties
-  const geometryKey = `${isCollision ? 'col' : 'vis'}-${type}-${dimensions.x}-${dimensions.y}-${dimensions.z}-${meshPath || 'none'}`;
+  const geometryKey = `${isCollision ? 'col' : 'vis'}-${geometryId || 'primary'}-${type}-${dimensions.x}-${dimensions.y}-${dimensions.z}-${meshPath || 'none'}`;
 
   const isSkeleton = mode === 'skeleton';
 

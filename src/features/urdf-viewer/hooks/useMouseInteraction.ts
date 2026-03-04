@@ -20,6 +20,7 @@ export interface UseMouseInteractionOptions {
     setActiveJoint?: (jointName: string | null) => void;
     justSelectedRef?: React.MutableRefObject<boolean>;
     isOrbitDragging?: React.MutableRefObject<boolean>;
+    isSelectionLockedRef?: React.MutableRefObject<boolean>;
     highlightGeometry: (
         linkName: string | null,
         revert: boolean,
@@ -51,9 +52,10 @@ export function useMouseInteraction({
     setActiveJoint,
     justSelectedRef,
     isOrbitDragging,
+    isSelectionLockedRef,
     highlightGeometry
 }: UseMouseInteractionOptions): UseMouseInteractionResult {
-    const { camera, gl, invalidate } = useThree();
+    const { camera, gl, scene, invalidate } = useThree();
 
     const mouseRef = useRef(new THREE.Vector2(-1000, -1000));
     const raycasterRef = useRef(new THREE.Raycaster());
@@ -277,6 +279,7 @@ export function useMouseInteraction({
 
         const handleMouseDown = (e: MouseEvent) => {
             if (!robot) return;
+            if (isSelectionLockedRef?.current) return;
 
             const isStandardSelectionMode = ['select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
 
@@ -292,6 +295,23 @@ export function useMouseInteraction({
             mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
             mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+            // IMPORTANT:
+            // TransformControls gizmo is not a child of `robot`.
+            // If we only raycast `robot`, clicking gizmo will "pass through" and select
+            // underlying collision/visual meshes by mistake.
+            const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
+            const hitGizmo = sceneHits.some((hit) => {
+                let current: THREE.Object3D | null = hit.object;
+                while (current) {
+                    if (current.userData?.isGizmo) return true;
+                    current = current.parent;
+                }
+                return false;
+            });
+            if (hitGizmo) {
+                return;
+            }
 
             const intersections = raycasterRef.current.intersectObject(robot, true);
 
@@ -399,6 +419,16 @@ export function useMouseInteraction({
             }
         };
 
+        const handleWindowBlur = () => {
+            handleMouseUp();
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                handleMouseUp();
+            }
+        };
+
         const handleMouseLeave = () => {
             mouseRef.current.set(-1000, -1000);
 
@@ -416,6 +446,10 @@ export function useMouseInteraction({
         gl.domElement.addEventListener('mousedown', handleMouseDown);
         gl.domElement.addEventListener('mouseup', handleMouseUp);
         gl.domElement.addEventListener('mouseleave', handleMouseLeave);
+        window.addEventListener('mouseup', handleMouseUp);
+        window.addEventListener('pointerup', handleMouseUp);
+        window.addEventListener('blur', handleWindowBlur);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
             // Cancel throttled handler to prevent pending callbacks
@@ -428,8 +462,12 @@ export function useMouseInteraction({
             gl.domElement.removeEventListener('mousedown', handleMouseDown);
             gl.domElement.removeEventListener('mouseup', handleMouseUp);
             gl.domElement.removeEventListener('mouseleave', handleMouseLeave);
+            window.removeEventListener('mouseup', handleMouseUp);
+            window.removeEventListener('pointerup', handleMouseUp);
+            window.removeEventListener('blur', handleWindowBlur);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
-    }, [gl, camera, robot, onSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, showCollision, showVisual]);
+    }, [gl, camera, scene, robot, onSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual]);
 
     return {
         mouseRef,

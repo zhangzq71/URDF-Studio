@@ -35,6 +35,39 @@ const generateLimitTag = (joint: UrdfJoint): string | null => {
   return null;
 };
 
+const generateCollisionElement = (
+  collision: UrdfLink['collision'],
+  vecStr: (v: { x: number; y: number; z: number }) => string,
+  rotStr: (v: { r: number; p: number; y: number }) => string,
+  f: (n: number) => string,
+  exportRobotName: string,
+): string => {
+  if (!collision || collision.type === GeometryType.NONE) return '';
+
+  let xml = `    <collision>\n`;
+  if (collision.origin) {
+    xml += `      <origin xyz="${vecStr(collision.origin.xyz)}" rpy="${rotStr(collision.origin.rpy)}" />\n`;
+  }
+  xml += `      <geometry>\n`;
+  if (collision.type === GeometryType.BOX) {
+    xml += `        <box size="${vecStr(collision.dimensions)}" />\n`;
+  } else if (collision.type === GeometryType.CYLINDER) {
+    xml += `        <cylinder radius="${f(collision.dimensions.x)}" length="${f(collision.dimensions.y)}" />\n`;
+  } else if (collision.type === GeometryType.SPHERE) {
+    xml += `        <sphere radius="${f(collision.dimensions.x)}" />\n`;
+  } else if (collision.type === GeometryType.CAPSULE) {
+    xml += `        <capsule radius="${f(collision.dimensions.x)}" length="${f(collision.dimensions.y)}" />\n`;
+  } else if (collision.type === GeometryType.MESH) {
+    const meshPath = collision.meshPath ? normalizeMeshPathForExport(collision.meshPath) : 'part_collision.stl';
+    const filename = `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
+    xml += `        <mesh filename="${filename}" />\n`;
+  }
+  xml += `      </geometry>\n`;
+  xml += `    </collision>\n`;
+
+  return xml;
+};
+
 export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean = false): string => {
   const mergedData = mergeAssembly(assembly);
   return generateURDF(mergedData as unknown as RobotState, extended);
@@ -83,29 +116,11 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         xml += `    </visual>\n`;
     }
 
-    // Collision
-    if (link.collision && link.collision.type !== GeometryType.NONE) {
-        xml += `    <collision>\n`;
-        if (link.collision.origin) {
-            xml += `      <origin xyz="${vecStr(link.collision.origin.xyz)}" rpy="${rotStr(link.collision.origin.rpy)}" />\n`;
-        }
-        xml += `      <geometry>\n`;
-         if (link.collision.type === GeometryType.BOX) {
-          xml += `        <box size="${vecStr(link.collision.dimensions)}" />\n`;
-        } else if (link.collision.type === GeometryType.CYLINDER) {
-          xml += `        <cylinder radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
-        } else if (link.collision.type === GeometryType.SPHERE) {
-          xml += `        <sphere radius="${f(link.collision.dimensions.x)}" />\n`;
-        } else if (link.collision.type === GeometryType.CAPSULE) {
-          xml += `        <capsule radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
-        } else if (link.collision.type === GeometryType.MESH) {
-           const meshPath = link.collision.meshPath ? normalizeMeshPathForExport(link.collision.meshPath) : 'part_collision.stl';
-           const filename = `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
-           xml += `        <mesh filename="${filename}" />\n`;
-        }
-        xml += `      </geometry>\n`;
-        xml += `    </collision>\n`;
-    }
+    // Collision (primary + additional bodies on the same link)
+    xml += generateCollisionElement(link.collision, vecStr, rotStr, f, exportRobotName);
+    (link.collisionBodies || []).forEach((collisionBody) => {
+      xml += generateCollisionElement(collisionBody, vecStr, rotStr, f, exportRobotName);
+    });
 
     // Inertial
     xml += `    <inertial>\n`;

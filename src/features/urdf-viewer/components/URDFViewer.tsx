@@ -46,7 +46,8 @@ export function URDFViewer({
     setShowOptionsPanel,
     showJointPanel = true,
     setShowJointPanel,
-    fileName
+    fileName,
+    onTransformPendingChange
 }: URDFViewerProps) {
     const t = translations[lang];
 
@@ -127,6 +128,28 @@ export function URDFViewer({
     const justSelectedRef = useRef(false);
     const transformPendingRef = useRef(false);
 
+    // Prevent OrbitControls from remaining disabled when pointer-up is missed (e.g. release outside canvas/window).
+    useEffect(() => {
+        const releaseDragLock = () => setIsDragging(false);
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                setIsDragging(false);
+            }
+        };
+
+        window.addEventListener('mouseup', releaseDragLock);
+        window.addEventListener('pointerup', releaseDragLock);
+        window.addEventListener('blur', releaseDragLock);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            window.removeEventListener('mouseup', releaseDragLock);
+            window.removeEventListener('pointerup', releaseDragLock);
+            window.removeEventListener('blur', releaseDragLock);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, []);
+
     // Get effective theme (light/dark) handling 'system' preference
     const effectiveTheme = useEffectiveTheme();
 
@@ -172,7 +195,15 @@ export function URDFViewer({
 
     const handleTransformPending = useCallback((pending: boolean) => {
         transformPendingRef.current = pending;
-    }, []);
+        onTransformPendingChange?.(pending);
+    }, [onTransformPendingChange]);
+
+    useEffect(() => {
+        return () => {
+            transformPendingRef.current = false;
+            onTransformPendingChange?.(false);
+        };
+    }, [onTransformPendingChange]);
 
     useEffect(() => {
         if (!robot || !jointAngleState) return;
@@ -553,6 +584,7 @@ export function URDFViewer({
                         onCollisionTransformEnd={onCollisionTransform}
                         isOrbitDragging={isOrbitDragging}
                         onTransformPending={handleTransformPending}
+                        isSelectionLockedRef={transformPendingRef}
                     />
                 </Suspense>
 
@@ -589,8 +621,12 @@ export function URDFViewer({
                     onEnd={() => { isOrbitDragging.current = false; }}
                 />
 
-                <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-                    <GizmoViewport labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'} axisHeadScale={1} />
+                <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
+                    <GizmoViewport
+                        labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+                        axisHeadScale={0.9}
+                        scale={34}
+                    />
                 </GizmoHelper>
 
             </Canvas>

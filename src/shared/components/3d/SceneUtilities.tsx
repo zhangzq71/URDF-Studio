@@ -253,14 +253,8 @@ export const SnapshotManager = ({
 
     const renderAndDownloadHighRes = (onDone?: () => void) => {
       const canvas = gl.domElement;
-      const { scene, camera } = get();
-      const { baseWidth, baseHeight, targetWidth, targetHeight } = resolveSnapshotSize(canvas);
-      const originalPixelRatio = gl.getPixelRatio();
-      const originalAutoClear = gl.autoClear;
-      const originalXREnabled = gl.xr.enabled;
-      const originalScissorTest = gl.getScissorTest();
-      const originalViewport = gl.getViewport(new THREE.Vector4());
-      const originalScissor = gl.getScissor(new THREE.Vector4());
+      const { scene } = get();
+      const { targetWidth, targetHeight } = resolveSnapshotSize(canvas);
 
       const applySnapshotSceneOverrides = () => {
         const hiddenObjects: Array<{ object: THREE.Object3D; visible: boolean }> = [];
@@ -309,45 +303,48 @@ export const SnapshotManager = ({
         };
       };
 
-      const restoreRendererState = () => {
-        gl.xr.enabled = originalXREnabled;
-        gl.autoClear = originalAutoClear;
-        gl.setViewport(originalViewport);
-        gl.setScissor(originalScissor);
-        gl.setScissorTest(originalScissorTest);
-        gl.setPixelRatio(originalPixelRatio);
-        gl.setSize(baseWidth, baseHeight, false);
+      const createUpscaledCanvas = () => {
+        if (canvas.width === targetWidth && canvas.height === targetHeight) {
+          return canvas;
+        }
+
+        const exportCanvas = document.createElement('canvas');
+        exportCanvas.width = targetWidth;
+        exportCanvas.height = targetHeight;
+        const ctx = exportCanvas.getContext('2d');
+        if (!ctx) {
+          return canvas;
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+        return exportCanvas;
       };
 
       let restoreSceneOverrides: (() => void) | null = null;
       try {
         restoreSceneOverrides = applySnapshotSceneOverrides();
-
-        // Render a single clean pass from the live scene/camera pipeline at higher buffer resolution.
-        gl.xr.enabled = false;
-        gl.autoClear = true;
-        gl.setPixelRatio(1);
-        gl.setSize(targetWidth, targetHeight, false);
-        gl.setViewport(0, 0, targetWidth, targetHeight);
-        gl.setScissor(0, 0, targetWidth, targetHeight);
-        gl.setScissorTest(false);
-        camera.updateProjectionMatrix();
-        camera.updateMatrixWorld(true);
-        scene.updateMatrixWorld(true);
-        gl.clear(true, true, true);
-        gl.render(scene, camera);
-
-        downloadCanvas(canvas, () => {
-          restoreRendererState();
-          onDone?.();
+        // Keep viewer rendering settings untouched; capture the real on-screen frame,
+        // then upscale to 4K-class output to preserve material/gloss appearance.
+        invalidate();
+        waitFrames(2, () => {
+          const exportCanvas = createUpscaledCanvas();
+          downloadCanvas(exportCanvas, () => {
+            if (restoreSceneOverrides) {
+              restoreSceneOverrides();
+              restoreSceneOverrides = null;
+            }
+            invalidate();
+            onDone?.();
+          });
         });
       } catch (e) {
-        restoreRendererState();
-        throw e;
-      } finally {
         if (restoreSceneOverrides) {
           restoreSceneOverrides();
+          restoreSceneOverrides = null;
         }
+        invalidate();
+        throw e;
       }
     };
 

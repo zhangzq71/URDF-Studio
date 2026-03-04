@@ -14,10 +14,8 @@ import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUnd
 import { parseURDF, generateURDF } from '@/core/parsers';
 import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io/utils';
 import {
-  DEFAULT_JOINT,
   DEFAULT_LINK,
   GeometryType,
-  JointType,
 } from '@/types';
 import type { RobotState, UrdfLink, UrdfJoint, RobotFile, AssemblyState } from '@/types';
 
@@ -74,29 +72,47 @@ function buildCollisionGeometryFromParent(parentLink: UrdfLink): UrdfLink['colli
   };
 }
 
-function getNextCollisionBodyIndex(
-  parentLinkId: string,
-  parentLinkName: string,
-  links: Record<string, UrdfLink>,
-  joints: Record<string, UrdfJoint>,
-): number {
-  const prefix = `${parentLinkName}_collision_`;
-  let maxIndex = 0;
+function getCollisionBodyCount(link: UrdfLink): number {
+  const primary = link.collision.type !== GeometryType.NONE ? 1 : 0;
+  const extras = (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
+  return primary + extras;
+}
 
-  Object.values(joints).forEach((joint) => {
-    if (joint.parentLinkId !== parentLinkId) return;
+function createCollisionBodyFromLink(link: UrdfLink): UrdfLink['collision'] {
+  const source = buildCollisionGeometryFromParent(link);
+  const count = getCollisionBodyCount(link);
+  const offset = count * 0.08;
+  const origin = source.origin || { xyz: { ...ZERO_VECTOR }, rpy: { ...ZERO_RPY } };
 
-    const child = links[joint.childLinkId];
-    if (!child || !child.name.startsWith(prefix)) return;
+  return {
+    ...source,
+    origin: {
+      xyz: {
+        x: origin.xyz.x,
+        y: origin.xyz.y + offset,
+        z: origin.xyz.z,
+      },
+      rpy: { ...origin.rpy },
+    },
+  };
+}
 
-    const rawIndex = child.name.slice(prefix.length);
-    const parsedIndex = Number.parseInt(rawIndex, 10);
-    if (Number.isFinite(parsedIndex)) {
-      maxIndex = Math.max(maxIndex, parsedIndex);
-    }
-  });
+function appendCollisionBody(link: UrdfLink): UrdfLink {
+  const newBody = createCollisionBodyFromLink(link);
+  const hasPrimary = link.collision.type !== GeometryType.NONE;
 
-  return maxIndex + 1;
+  if (!hasPrimary) {
+    return {
+      ...link,
+      collision: newBody,
+      collisionBodies: link.collisionBodies || [],
+    };
+  }
+
+  return {
+    ...link,
+    collisionBodies: [...(link.collisionBodies || []), newBody],
+  };
 }
 
 export function AppLayout({
@@ -176,6 +192,7 @@ export function AppLayout({
 
   // Snapshot ref
   const snapshotActionRef = useRef<(() => void) | null>(null);
+  const transformPendingRef = useRef(false);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
 
   // Merged robot data for assembly mode
@@ -249,8 +266,13 @@ export function AppLayout({
 
   // Handlers
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
+    if (transformPendingRef.current) return;
     setSelection({ type, id, subType });
   }, [setSelection]);
+
+  const handleTransformPendingChange = useCallback((pending: boolean) => {
+    transformPendingRef.current = pending;
+  }, []);
 
   const handleHover = useCallback((type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
     const current = useSelectionStore.getState().hoveredSelection;
@@ -391,67 +413,17 @@ export function AppLayout({
       for (const component of Object.values(assemblyState.components)) {
         const parentLink = component.robot.links[parentId];
         if (!parentLink) continue;
-
-        const nextIndex = getNextCollisionBodyIndex(
-          parentId,
-          parentLink.name,
-          component.robot.links,
-          component.robot.joints,
-        );
-
-        const ts = Date.now();
-        let suffix = 0;
-        let newLinkId = `${component.id}_collision_link_${ts}`;
-        let newJointId = `${component.id}_collision_joint_${ts}`;
-        while (component.robot.links[newLinkId] || component.robot.joints[newJointId]) {
-          suffix += 1;
-          newLinkId = `${component.id}_collision_link_${ts}_${suffix}`;
-          newJointId = `${component.id}_collision_joint_${ts}_${suffix}`;
-        }
-
-        const newLink: UrdfLink = {
-          ...DEFAULT_LINK,
-          id: newLinkId,
-          name: `${parentLink.name}_collision_${nextIndex}`,
-          visible: true,
-          visual: {
-            ...DEFAULT_LINK.visual,
-            type: GeometryType.NONE,
-            dimensions: { ...ZERO_VECTOR },
-            meshPath: undefined,
-            materialSource: undefined,
-          },
-          collision: buildCollisionGeometryFromParent(parentLink),
-          inertial: {
-            ...DEFAULT_LINK.inertial,
-            mass: 0,
-          },
-        };
-
-        const newJoint: UrdfJoint = {
-          ...DEFAULT_JOINT,
-          id: newJointId,
-          name: `${parentLink.name}_collision_joint_${nextIndex}`,
-          type: JointType.FIXED,
-          parentLinkId: parentId,
-          childLinkId: newLinkId,
-          origin: { xyz: { ...ZERO_VECTOR }, rpy: { ...ZERO_RPY } },
-          axis: { ...ZERO_VECTOR },
-        };
+        const updatedParentLink = appendCollisionBody(parentLink);
 
         updateComponentRobot(component.id, {
           links: {
             ...component.robot.links,
-            [newLinkId]: newLink,
-          },
-          joints: {
-            ...component.robot.joints,
-            [newJointId]: newJoint,
+            [parentId]: updatedParentLink,
           },
         });
 
-        setSelection({ type: 'link', id: newLinkId, subType: 'collision' });
-        focusOn(newLinkId);
+        setSelection({ type: 'link', id: parentId, subType: 'collision' });
+        focusOn(parentId);
         return;
       }
       return;
@@ -459,58 +431,17 @@ export function AppLayout({
 
     const parentLink = robot.links[parentId];
     if (!parentLink) return;
-
-    const nextIndex = getNextCollisionBodyIndex(
-      parentId,
-      parentLink.name,
-      robot.links,
-      robot.joints,
-    );
-
-    const { linkId, jointId } = addChild(parentId);
-    const latestState = useRobotStore.getState();
-    const createdLink = latestState.links[linkId];
-    const createdJoint = latestState.joints[jointId];
-    if (!createdLink || !createdJoint) return;
-
-    updateLink(linkId, {
-      ...createdLink,
-      name: `${parentLink.name}_collision_${nextIndex}`,
-      visible: true,
-      visual: {
-        ...DEFAULT_LINK.visual,
-        type: GeometryType.NONE,
-        dimensions: { ...ZERO_VECTOR },
-        meshPath: undefined,
-        materialSource: undefined,
-      },
-      collision: buildCollisionGeometryFromParent(parentLink),
-      inertial: {
-        ...createdLink.inertial,
-        mass: 0,
-      },
-    });
-
-    updateJoint(jointId, {
-      ...createdJoint,
-      name: `${parentLink.name}_collision_joint_${nextIndex}`,
-      type: JointType.FIXED,
-      origin: { xyz: { ...ZERO_VECTOR }, rpy: { ...ZERO_RPY } },
-      axis: { ...ZERO_VECTOR },
-    });
-
-    setSelection({ type: 'link', id: linkId, subType: 'collision' });
-    focusOn(linkId);
+    const updatedParentLink = appendCollisionBody(parentLink);
+    updateLink(parentId, updatedParentLink);
+    setSelection({ type: 'link', id: parentId, subType: 'collision' });
+    focusOn(parentId);
   }, [
-    addChild,
     assemblyState,
     focusOn,
-    robot.joints,
     robot.links,
     setSelection,
     sidebarTab,
     updateComponentRobot,
-    updateJoint,
     updateLink,
   ]);
 
@@ -940,6 +871,7 @@ export function AppLayout({
               setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
               showJointPanel={viewConfig.showJointPanel}
               setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
+              onTransformPendingChange={handleTransformPendingChange}
               onJointChange={handleJointChange}
               onCollisionTransform={(linkId, position, rotation) => {
                 if (linkId && robot.links[linkId]) {

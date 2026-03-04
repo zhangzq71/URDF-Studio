@@ -37,6 +37,8 @@ export interface URDFViewerProps {
     snapshotAction?: React.MutableRefObject<(() => void) | null>;
     /** Currently loaded filename for display in the UI */
     fileName?: string;
+    /** Notify parent when collision transform has a pending confirm/cancel state */
+    onTransformPendingChange?: (pending: boolean) => void;
 }
 
 export interface RobotModelProps {
@@ -74,6 +76,7 @@ export interface RobotModelProps {
     onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
     isOrbitDragging?: React.MutableRefObject<boolean>;
     onTransformPending?: (pending: boolean) => void;
+    isSelectionLockedRef?: React.MutableRefObject<boolean>;
     selection?: URDFViewerProps['selection'];
     hoveredSelection?: URDFViewerProps['selection'];
 }

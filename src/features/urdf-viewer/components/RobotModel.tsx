@@ -52,7 +52,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     toolMode = 'select',
     onCollisionTransformEnd,
     isOrbitDragging,
-    onTransformPending
+    onTransformPending,
+    isSelectionLockedRef
 }) => {
     const { invalidate } = useThree();
 
@@ -127,6 +128,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         setActiveJoint,
         justSelectedRef,
         isOrbitDragging,
+        isSelectionLockedRef,
         highlightGeometry
     });
 
@@ -148,6 +150,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         needsRaycastRef,
         isOrbitDragging,
         justSelectedRef,
+        isSelectionLockedRef,
         rayIntersectsBoundingBox,
         highlightGeometry
     });
