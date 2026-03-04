@@ -97,6 +97,11 @@ export function useFileExport() {
       if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
         referencedFiles.add(link.collision.meshPath);
       }
+      (link.collisionBodies || []).forEach((body) => {
+        if (body.type === GeometryType.MESH && body.meshPath) {
+          referencedFiles.add(body.meshPath);
+        }
+      });
     });
 
     const promises: Promise<void>[] = [];

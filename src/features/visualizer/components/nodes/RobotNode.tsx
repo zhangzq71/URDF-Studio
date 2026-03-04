@@ -215,7 +215,25 @@ export const RobotNode = memo(function RobotNode({
             selectionSubType={selectionSubType}
             onLinkClick={handleLinkClick}
             setCollisionRef={setCollisionRef}
+            geometryId="0"
           />
+
+          {(link.collisionBodies || []).map((collisionBody, index) => (
+            <GeometryRenderer
+              key={`collision-body-${linkId}-${index}`}
+              isCollision={true}
+              link={link}
+              mode={mode}
+              showGeometry={showGeometry}
+              showCollision={showCollision}
+              assets={assets}
+              isSelected={isSelected}
+              selectionSubType={selectionSubType}
+              onLinkClick={handleLinkClick}
+              geometryData={collisionBody}
+              geometryId={`extra-${index + 1}`}
+            />
+          ))}
         </>
       )}
 

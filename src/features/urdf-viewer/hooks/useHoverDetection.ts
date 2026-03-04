@@ -19,6 +19,7 @@ export interface UseHoverDetectionOptions {
     needsRaycastRef: React.MutableRefObject<boolean>;
     isOrbitDragging?: React.MutableRefObject<boolean>;
     justSelectedRef?: React.MutableRefObject<boolean>;
+    isSelectionLockedRef?: React.MutableRefObject<boolean>;
     rayIntersectsBoundingBox: (raycaster: THREE.Raycaster) => boolean;
     highlightGeometry: (
         linkName: string | null,
@@ -49,6 +50,7 @@ export function useHoverDetection({
     needsRaycastRef,
     isOrbitDragging,
     justSelectedRef,
+    isSelectionLockedRef,
     rayIntersectsBoundingBox,
     highlightGeometry
 }: UseHoverDetectionOptions): UseHoverDetectionResult {
@@ -183,7 +185,6 @@ export function useHoverDetection({
         needsRaycastRef.current = false;
 
         const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
-        const isTransformEditingMode = toolMode === 'translate' || toolMode === 'rotate' || toolMode === 'universal';
         const isCollisionMode = highlightMode === 'collision';
         const selectionSubType: 'visual' | 'collision' = selection?.subType ?? (isCollisionMode ? 'collision' : 'visual');
 
@@ -207,13 +208,12 @@ export function useHoverDetection({
             restoreSelectionHighlight();
         };
 
-        if (isTransformEditingMode) {
-            if (hoveredLinkRef.current) {
-                const hoverSubType = (hoveredLinkRef as any).currentSubType as 'visual' | 'collision' | null | undefined;
-                const shouldClearHover = hoveredLinkRef.current !== selection?.id || (hoverSubType && hoverSubType !== selectionSubType);
-                if (shouldClearHover) {
-                    clearHoverHighlight();
-                }
+        if (isSelectionLockedRef?.current) {
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                clearHoverHighlight();
+            }
+            if (highlightedFace) {
+                setHighlightedFace(null);
             }
             return;
         }

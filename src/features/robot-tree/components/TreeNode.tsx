@@ -71,13 +71,18 @@ export const TreeNode = memo(({
 
   const isVisible = link.visible !== false;
   const hasVisual = link.visual?.type && link.visual.type !== 'none';
-  const hasCollision = link.collision?.type && link.collision.type !== 'none';
+  const collisionBodyCount = (link.collision?.type && link.collision.type !== 'none' ? 1 : 0)
+    + (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
+  const hasCollision = collisionBodyCount > 0;
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
   const isVisualSelected = isLinkSelected && robot.selection.subType === 'visual';
   const isCollisionSelected = isLinkSelected && robot.selection.subType === 'collision';
   const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
   const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
-  const contextMenuHasCollision = Boolean(contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE);
+  const contextMenuHasCollision = Boolean(
+    (contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE)
+      || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE)
+  );
 
   useEffect(() => {
     if (!editingTarget) return;
@@ -170,7 +175,11 @@ export const TreeNode = memo(({
     event.stopPropagation();
 
     const menuWidth = 170;
-    const menuHeight = target.type === 'mesh' ? 44 : target.type === 'link' ? 220 : 88;
+    const menuHeight = target.type === 'mesh'
+      ? 44
+      : target.type === 'link'
+        ? (isSkeleton ? 260 : 236)
+        : (isSkeleton ? 176 : 144);
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
     setContextMenu({
@@ -183,6 +192,26 @@ export const TreeNode = memo(({
   const handleRenameMenuAction = () => {
     if (!contextMenu || (contextMenu.target.type !== 'link' && contextMenu.target.type !== 'joint')) return;
     beginRenaming(contextMenu.target.type, contextMenu.target.id, contextMenu.target.name);
+    setContextMenu(null);
+  };
+
+  const resolveContextMenuTargetLinkId = (): string | null => {
+    if (!contextMenu) return null;
+    if (contextMenu.target.type === 'link') return contextMenu.target.id;
+    if (contextMenu.target.type === 'joint') {
+      return robot.joints[contextMenu.target.id]?.childLinkId || null;
+    }
+    return null;
+  };
+
+  const handleAddChildMenuAction = () => {
+    const targetLinkId = resolveContextMenuTargetLinkId();
+    if (!targetLinkId) {
+      setContextMenu(null);
+      return;
+    }
+    onAddChild(targetLinkId);
+    setIsExpanded(true);
     setContextMenu(null);
   };
 
@@ -203,8 +232,12 @@ export const TreeNode = memo(({
   };
 
   const handleAddCollisionMenuAction = () => {
-    if (!contextMenu || contextMenu.target.type !== 'link') return;
-    onAddCollisionBody(contextMenu.target.id);
+    const targetLinkId = resolveContextMenuTargetLinkId();
+    if (!targetLinkId) {
+      setContextMenu(null);
+      return;
+    }
+    onAddCollisionBody(targetLinkId);
     setIsExpanded(true);
     setContextMenu(null);
   };
@@ -238,6 +271,27 @@ export const TreeNode = memo(({
     if (!contextMenu || contextMenu.target.type !== 'link') return;
     const targetLink = robot.links[contextMenu.target.id];
     if (!targetLink) {
+      setContextMenu(null);
+      return;
+    }
+
+    if (subType === 'collision') {
+      const hasAnyCollision = targetLink.collision.type !== GeometryType.NONE
+        || (targetLink.collisionBodies || []).some((body) => body.type !== GeometryType.NONE);
+      if (!hasAnyCollision) {
+        setContextMenu(null);
+        return;
+      }
+
+      onUpdate('link', contextMenu.target.id, {
+        ...targetLink,
+        collision: {
+          ...targetLink.collision,
+          type: GeometryType.NONE,
+          meshPath: undefined,
+        },
+        collisionBodies: [],
+      });
       setContextMenu(null);
       return;
     }
@@ -374,7 +428,7 @@ export const TreeNode = memo(({
                   if (link.collision.type !== GeometryType.MESH) return;
                   openContextMenu(event, { type: 'mesh', linkId, subType: 'collision' });
                 }}
-                title={`${t.collision}: ${link.collision.type}`}
+                title={`${t.collision}: ${link.collision.type}${collisionBodyCount > 1 ? ` (+${collisionBodyCount - 1})` : ''}`}
                 className={`shrink-0 inline-flex items-center gap-1 px-1.5 h-5 rounded border text-[10px] font-semibold leading-none transition-colors ${
                   isCollisionSelected
                     ? isLinkSelected
@@ -386,7 +440,7 @@ export const TreeNode = memo(({
                 }`}
               >
                 <Shield size={10} />
-                <span>COL</span>
+                <span>{collisionBodyCount > 1 ? `COL ${collisionBodyCount}` : 'COL'}</span>
               </button>
             )}
           </div>
@@ -552,6 +606,16 @@ export const TreeNode = memo(({
                 <span>{t.rename}</span>
               </button>
 
+              {isSkeleton && (
+                <button
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
+                  onClick={handleAddChildMenuAction}
+                >
+                  <Plus size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
+                  <span>{t.addChildLink}</span>
+                </button>
+              )}
+
               {contextMenu.target.type === 'link' && contextMenuHasVisual && (
                 <button
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
@@ -572,7 +636,7 @@ export const TreeNode = memo(({
                 </button>
               )}
 
-              {contextMenu.target.type === 'link' && (
+              {(contextMenu.target.type === 'link' || contextMenu.target.type === 'joint') && (
                 <button
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
                   onClick={handleAddCollisionMenuAction}

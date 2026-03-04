@@ -51,6 +51,11 @@ function collectReferencedMeshes(robot: RobotState): string[] {
     if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referenced.add(link.collision.meshPath);
     }
+    (link.collisionBodies || []).forEach((body) => {
+      if (body.type === GeometryType.MESH && body.meshPath) {
+        referenced.add(body.meshPath);
+      }
+    });
   });
   return Array.from(referenced);
 }

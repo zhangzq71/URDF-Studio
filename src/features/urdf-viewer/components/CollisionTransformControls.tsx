@@ -76,12 +76,17 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const markRotateKnobDragStart = useCallback((controls: any, axis: string) => {
         const rotateGizmo = controls?.children?.[0]?.gizmo?.rotate;
         if (!rotateGizmo) return;
-        const startAngle = typeof controls?.rotationAngle === 'number' ? controls.rotationAngle : 0;
+        // TransformControls keeps `rotationAngle` from the previous drag.
+        // If we reuse that value, knob offset will drift and feel like it lags behind the cursor.
+        if (typeof controls?.rotationAngle === 'number') {
+            controls.rotationAngle = 0;
+        }
 
         rotateGizmo.traverse((child: any) => {
             if (!child.userData?.urdfRotateKnob || child.name !== axis) return;
             child.userData.urdfDragStartAnchor = child.position.clone();
-            child.userData.urdfDragStartAngle = startAngle;
+            child.userData.urdfDragStartAngle = 0;
+            delete child.userData.urdfDragTheta;
         });
     }, []);
 
@@ -94,6 +99,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
             child.userData.urdfKnobAnchor = child.position.clone();
             delete child.userData.urdfDragStartAnchor;
             delete child.userData.urdfDragStartAngle;
+            delete child.userData.urdfDragTheta;
         });
     }, []);
 
@@ -133,6 +139,10 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
             const pickerLocal = rotatePicker.worldToLocal(knobWorld.clone());
             child.position.copy(pickerLocal);
         });
+
+        // Ensure raycast uses the latest picker transforms immediately.
+        rotatePicker.updateWorldMatrix(true, true);
+        rotateGizmo.updateWorldMatrix(true, true);
     }, []);
 
     const syncTranslateTipPickers = useCallback((controls: any) => {
@@ -199,6 +209,10 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
             const targetScale = activeAxis === child.name ? (isDragging ? 1.16 : 1.09) : 1;
             child.scale.setScalar(targetScale);
         });
+
+        // Ensure raycast uses the latest picker transforms immediately.
+        translatePicker.updateWorldMatrix(true, true);
+        translateGizmo.updateWorldMatrix(true, true);
     }, []);
 
     const syncAllGizmoPickers = useCallback(() => {
@@ -207,6 +221,32 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         syncRotateKnobPickers(transformRef.current);
         syncRotateKnobPickers(rotateTransformRef.current);
     }, [syncTranslateTipPickers, syncRotateKnobPickers]);
+
+    const syncUniversalControlPriority = useCallback(() => {
+        const translateControls = transformRef.current;
+        const rotateControls = rotateTransformRef.current;
+        if (!translateControls || !rotateControls) return;
+
+        const isAxisActive = (axis: unknown) => axis === 'X' || axis === 'Y' || axis === 'Z';
+        const translateActive = Boolean(translateControls.dragging) || isAxisActive(translateControls.axis);
+        const rotateActive = Boolean(rotateControls.dragging) || isAxisActive(rotateControls.axis);
+
+        // Prefer rotate interactions when both controls can potentially hit.
+        if (rotateActive) {
+            rotateControls.enabled = true;
+            translateControls.enabled = false;
+            return;
+        }
+
+        if (translateActive) {
+            translateControls.enabled = true;
+            rotateControls.enabled = false;
+            return;
+        }
+
+        translateControls.enabled = true;
+        rotateControls.enabled = true;
+    }, []);
 
     // Setup event listeners for TransformControls
     useEffect(() => {
@@ -231,6 +271,9 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                     currentAxisRef.current = axis;
                     currentIsRotateRef.current = controls.mode === 'rotate';
                     startValueRef.current = getAxisTransformValue(targetObject, axis, currentIsRotateRef.current);
+                    // Keep transform controls usable after pending popup shows.
+                    // Starting a new drag supersedes previous pending value.
+                    setPendingEdit(null);
 
                     if (currentIsRotateRef.current) {
                         syncRotateKnobPickers(controls);
@@ -286,6 +329,47 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         markRotateKnobDragStart,
         persistRotateKnobAnchor
     ]);
+
+    // Ensure hit-testing always uses the latest custom picker transforms.
+    useEffect(() => {
+        const controlsList = [transformRef.current, rotateTransformRef.current].filter(Boolean) as any[];
+        if (!targetObject || controlsList.length === 0) return;
+
+        const restores: Array<() => void> = [];
+        for (const controls of controlsList) {
+            const originalHover = controls.onPointerHover;
+            const originalDown = controls.onPointerDown;
+            if (typeof originalHover === 'function') {
+                controls.onPointerHover = (event: any) => {
+                    syncAllGizmoPickers();
+                    if (transformMode === 'universal') {
+                        syncUniversalControlPriority();
+                    }
+                    return originalHover.call(controls, event);
+                };
+                restores.push(() => {
+                    controls.onPointerHover = originalHover;
+                });
+            }
+
+            if (typeof originalDown === 'function') {
+                controls.onPointerDown = (event: any) => {
+                    syncAllGizmoPickers();
+                    if (transformMode === 'universal') {
+                        syncUniversalControlPriority();
+                    }
+                    return originalDown.call(controls, event);
+                };
+                restores.push(() => {
+                    controls.onPointerDown = originalDown;
+                });
+            }
+        }
+
+        return () => {
+            for (const restore of restores) restore();
+        };
+    }, [targetObject, transformMode, syncAllGizmoPickers, syncUniversalControlPriority]);
 
     // Find the selected collision mesh
     useEffect(() => {
@@ -413,9 +497,9 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                         mat.needsUpdate = true;
                     }
                     const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false;
-                    if (mat.opacity !== 1 || mat.transparent !== false || needsDepthReset) {
+                    if (mat.opacity !== 1 || mat.transparent !== true || needsDepthReset) {
                         mat.opacity = 1;
-                        mat.transparent = false;
+                        mat.transparent = true;
                         mat.depthTest = false;
                         mat.depthWrite = false;
                         mat.needsUpdate = true;
@@ -433,12 +517,89 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         const axis = typeof controls?.axis === 'string' ? controls.axis : null;
         const isDragging = Boolean(controls?.dragging);
         const axisPhase: Record<string, number> = { X: 0, Y: 2.1, Z: 4.2 };
-        const axisVectorMap: Record<string, THREE.Vector3> = {
-            X: new THREE.Vector3(1, 0, 0),
-            Y: new THREE.Vector3(0, 1, 0),
-            Z: new THREE.Vector3(0, 0, 1)
+        const pointEnd = controls?.pointEnd as THREE.Vector3 | undefined;
+        const worldStart = controls?.worldPositionStart as THREE.Vector3 | undefined;
+        const normalizeAngle = (angle: number) => {
+            let a = angle;
+            while (a <= -Math.PI) a += Math.PI * 2;
+            while (a > Math.PI) a -= Math.PI * 2;
+            return a;
         };
-        const rotationAngle = typeof controls?.rotationAngle === 'number' ? controls.rotationAngle : 0;
+
+        const getRingMeta = (line: any) => {
+            const cached = line?.userData?.urdfRingMeta as {
+                center: THREE.Vector3;
+                normal: THREE.Vector3;
+                radius: number;
+                basisU: THREE.Vector3;
+                basisV: THREE.Vector3;
+            } | undefined;
+            if (cached) return cached;
+
+            const geometry = line?.geometry as THREE.BufferGeometry | undefined;
+            const position = geometry?.getAttribute?.('position') as THREE.BufferAttribute | undefined;
+            if (!position || position.count < 3) return null;
+
+            const center = new THREE.Vector3();
+            for (let i = 0; i < position.count; i++) {
+                center.x += position.getX(i);
+                center.y += position.getY(i);
+                center.z += position.getZ(i);
+            }
+            center.multiplyScalar(1 / position.count);
+
+            let normal = new THREE.Vector3(0, 0, 1);
+            let basisU = new THREE.Vector3(1, 0, 0);
+            const pA = new THREE.Vector3();
+            const pB = new THREE.Vector3();
+            const tmp = new THREE.Vector3();
+            for (let i = 0; i < position.count - 2; i++) {
+                pA.set(position.getX(i), position.getY(i), position.getZ(i)).sub(center);
+                pB.set(position.getX(i + 1), position.getY(i + 1), position.getZ(i + 1)).sub(center);
+                tmp.crossVectors(pA, pB);
+                if (tmp.lengthSq() > 1e-10) {
+                    normal = tmp.normalize().clone();
+                    if (pA.lengthSq() > 1e-10) {
+                        basisU = pA.clone().normalize();
+                    }
+                    break;
+                }
+            }
+            const basisV = new THREE.Vector3().crossVectors(normal, basisU).normalize();
+            if (basisV.lengthSq() < 1e-10) {
+                basisU = new THREE.Vector3(1, 0, 0);
+                if (Math.abs(normal.dot(basisU)) > 0.99) {
+                    basisU = new THREE.Vector3(0, 1, 0);
+                }
+                basisU.addScaledVector(normal, -basisU.dot(normal)).normalize();
+                basisV.copy(new THREE.Vector3().crossVectors(normal, basisU).normalize());
+            }
+
+            let radius = 0;
+            const projected = new THREE.Vector3();
+            for (let i = 0; i < position.count; i++) {
+                projected.set(position.getX(i), position.getY(i), position.getZ(i)).sub(center);
+                projected.addScaledVector(normal, -projected.dot(normal));
+                radius += projected.length();
+            }
+            radius /= position.count;
+            if (!Number.isFinite(radius) || radius <= 1e-8) radius = 0.5;
+
+            const meta = { center, normal, radius, basisU, basisV };
+            line.userData.urdfRingMeta = meta;
+            return meta;
+        };
+
+        const getThetaOnRing = (
+            localPoint: THREE.Vector3,
+            ringMeta: { center: THREE.Vector3; basisU: THREE.Vector3; basisV: THREE.Vector3; normal: THREE.Vector3 }
+        ) => {
+            const v = localPoint.clone().sub(ringMeta.center);
+            v.addScaledVector(ringMeta.normal, -v.dot(ringMeta.normal));
+            const x = v.dot(ringMeta.basisU);
+            const y = v.dot(ringMeta.basisV);
+            return Math.atan2(y, x);
+        };
 
         rotateGizmo.traverse((child: any) => {
             if (child.userData?.urdfRotateKnob) {
@@ -448,17 +609,78 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
                 if (isDragging && axis === child.name) {
                     const dragStart = (child.userData.urdfDragStartAnchor as THREE.Vector3 | undefined)?.clone?.() || base.clone();
-                    const dragStartAngle = typeof child.userData?.urdfDragStartAngle === 'number' ? child.userData.urdfDragStartAngle : 0;
-                    const relativeAngle = rotationAngle - dragStartAngle;
-                    const axisVector = axisVectorMap[child.name];
-                    if (axisVector) {
-                        const rotation = new THREE.Quaternion().setFromAxisAngle(axisVector, relativeAngle);
-                        targetPos = dragStart.applyQuaternion(rotation);
+                    const line = child.parent;
+                    const ringMeta = getRingMeta(line);
+                    if (pointEnd && worldStart && line && ringMeta) {
+                        // Follow pointer in screen space: pick the ring point whose projected NDC
+                        // is closest to the pointer projection.
+                        // Keep angle unwrapped across frames to avoid flip/flop after >360deg.
+                        const camera = controls?.camera as THREE.Camera | undefined;
+                        const worldPoint = worldStart.clone().add(pointEnd);
+                        if (camera) {
+                            const pointerNdc = worldPoint.clone().project(camera);
+                            const steps = 240;
+                            const startTheta = getThetaOnRing(dragStart, ringMeta);
+                            const lastThetaRaw = typeof child.userData?.urdfDragTheta === 'number'
+                                ? child.userData.urdfDragTheta as number
+                                : startTheta;
+                            const wrappedLastTheta = normalizeAngle(lastThetaRaw);
+
+                            // Prevent occasional 180deg flips when screen-space projection is ambiguous.
+                            const MAX_STEP_ANGLE = Math.PI * 0.85;
+                            const ANGLE_PENALTY = 0.03;
+
+                            let bestScore = Number.POSITIVE_INFINITY;
+                            let bestTheta = 0;
+                            const candidateLocal = new THREE.Vector3();
+                            const candidateWorld = new THREE.Vector3();
+                            let foundCandidate = false;
+
+                            for (let i = 0; i < steps; i++) {
+                                const theta = (i / steps) * Math.PI * 2;
+                                const angularDistance = Math.abs(normalizeAngle(theta - wrappedLastTheta));
+                                if (angularDistance > MAX_STEP_ANGLE) {
+                                    continue;
+                                }
+
+                                candidateLocal.copy(ringMeta.center)
+                                    .addScaledVector(ringMeta.basisU, Math.cos(theta) * ringMeta.radius)
+                                    .addScaledVector(ringMeta.basisV, Math.sin(theta) * ringMeta.radius);
+
+                                candidateWorld.copy(candidateLocal);
+                                line.localToWorld(candidateWorld);
+                                candidateWorld.project(camera);
+
+                                const dx = candidateWorld.x - pointerNdc.x;
+                                const dy = candidateWorld.y - pointerNdc.y;
+                                const distSq = dx * dx + dy * dy;
+                                const score = distSq + ANGLE_PENALTY * angularDistance * angularDistance;
+                                if (score < bestScore) {
+                                    bestScore = score;
+                                    bestTheta = theta;
+                                    foundCandidate = true;
+                                }
+                            }
+
+                            const delta = foundCandidate
+                                ? normalizeAngle(bestTheta - wrappedLastTheta)
+                                : 0;
+                            const unwrappedTheta = lastThetaRaw + delta;
+                            child.userData.urdfDragTheta = unwrappedTheta;
+
+                            targetPos.copy(ringMeta.center)
+                                .addScaledVector(ringMeta.basisU, Math.cos(unwrappedTheta) * ringMeta.radius)
+                                .addScaledVector(ringMeta.basisV, Math.sin(unwrappedTheta) * ringMeta.radius);
+                        } else {
+                            targetPos = dragStart;
+                        }
+                    } else {
+                        targetPos = dragStart;
                     }
 
                     child.position.copy(targetPos);
                 } else {
-                    child.position.lerp(targetPos, 0.24);
+                    child.position.copy(targetPos);
                 }
 
                 const hoverPulse = 1 + 0.015 * (0.5 + 0.5 * Math.sin(elapsedTime * 6 + phase));
@@ -484,6 +706,17 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
     // Keep gizmo opacity stable (no auto fade on hover)
     useFrame((state) => {
+        if (transformMode === 'universal') {
+            syncUniversalControlPriority();
+        } else {
+            if (transformRef.current) {
+                transformRef.current.enabled = true;
+            }
+            if (rotateTransformRef.current) {
+                rotateTransformRef.current.enabled = true;
+            }
+        }
+
         normalizeGizmoMaterials(transformRef.current);
         normalizeGizmoMaterials(rotateTransformRef.current);
         updateRotateKnobFeedback(transformRef.current, state.clock.getElapsedTime());
@@ -599,14 +832,14 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
     return (
         <>
-            {/* Main TransformControls - disabled when pending edit exists */}
+            {/* Main TransformControls */}
             <TransformControls
                 ref={transformRef}
                 object={targetObject}
                 mode={getControlMode()}
                 size={COLLISION_TRANSLATE_GIZMO_SIZE}
                 space="local"
-                enabled={!pendingEdit}
+                enabled={true}
                 onChange={handleObjectChange}
             />
 
@@ -617,7 +850,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                     object={targetObject}
                     mode="rotate"
                     size={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
-                    enabled={!pendingEdit}
+                    enabled={true}
                     onChange={handleObjectChange}
                 />
             )}

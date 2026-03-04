@@ -65,6 +65,11 @@ export function collectReferencedMeshes(
     if (link.collision && link.collision.type === geometryType && link.collision.meshPath) {
       referencedFiles.add(link.collision.meshPath);
     }
+    (link.collisionBodies || []).forEach((body) => {
+      if (body.type === geometryType && body.meshPath) {
+        referencedFiles.add(body.meshPath);
+      }
+    });
   });
 
   return referencedFiles;

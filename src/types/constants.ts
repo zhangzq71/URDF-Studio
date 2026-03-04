@@ -22,6 +22,7 @@ export const DEFAULT_LINK: UrdfLink = {
     color: '#ef4444',
     origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }
   },
+  collisionBodies: [],
   inertial: {
     mass: 1.0,
     origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },

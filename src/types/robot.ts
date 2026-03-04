@@ -31,6 +31,11 @@ export interface UrdfLink {
   name: string;
   visual: UrdfVisual;
   collision: UrdfVisual;
+  /**
+   * Additional collision geometries on the same link.
+   * The primary collision is kept in `collision` for backward compatibility.
+   */
+  collisionBodies?: UrdfVisual[];
   inertial: UrdfInertial;
   visible?: boolean; // Controls visibility in the 3D scene
 }

@@ -40,6 +40,12 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       const meshPath = normalizeMeshPathForExport(link.collision.meshPath);
       if (meshPath) meshAssets.add(meshPath);
     }
+    (link.collisionBodies || []).forEach((body) => {
+      if (body.type === GeometryType.MESH && body.meshPath) {
+        const meshPath = normalizeMeshPathForExport(body.meshPath);
+        if (meshPath) meshAssets.add(meshPath);
+      }
+    });
   });
 
   const meshAssetNameMap = new Map<string, string>();
@@ -171,38 +177,39 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         bodyXml += `${indent}  <geom ${vGeomAttrs} />\n`;
     }
 
-    // 4. Collision Geom (group 0 is default collision)
-    // For simplicity in this exporter, we map collision similarly but usually hidden or different color
-    // If collision exists
-    if (link.collision && link.collision.type !== GeometryType.NONE) {
-         const c = link.collision;
-         let cPos = "0 0 0";
-         let cEuler = "0 0 0";
-         if (c.origin) {
-            cPos = vecStr(c.origin.xyz);
-            cEuler = rotStr(c.origin.rpy);
-         }
-         let cGeomAttrs = `pos="${cPos}" euler="${cEuler}" rgba="1 0 0 0.5" group="0"`; // group 0 for collision
+    // 4. Collision Geoms (group 0 is default collision)
+    const collisionGeoms = [link.collision, ...(link.collisionBodies || [])]
+      .filter((c) => c && c.type !== GeometryType.NONE);
 
-         if (c.type === GeometryType.BOX) {
-            cGeomAttrs += ` type="box" size="${f(c.dimensions.x/2)} ${f(c.dimensions.y/2)} ${f(c.dimensions.z/2)}"`;
-        } else if (c.type === GeometryType.CYLINDER) {
-            cGeomAttrs += ` type="cylinder" size="${f(c.dimensions.x)} ${f(c.dimensions.y/2)}"`;
-        } else if (c.type === GeometryType.SPHERE) {
-            cGeomAttrs += ` type="sphere" size="${f(c.dimensions.x)}"`;
-        } else if (c.type === GeometryType.CAPSULE) {
-            cGeomAttrs += ` type="capsule" size="${f(c.dimensions.x)} ${f(c.dimensions.y/2)}"`;
-        } else if (c.type === GeometryType.MESH && c.meshPath) {
-            const meshAssetName = resolveMeshAssetName(c.meshPath);
-            if (meshAssetName) {
-                cGeomAttrs += ` type="mesh" mesh="${meshAssetName}"`;
-            } else {
-                const fallback = normalizeMeshPathForExport(c.meshPath);
-                if (fallback) cGeomAttrs += ` type="mesh" mesh="${fallback}"`;
-            }
+    collisionGeoms.forEach((c) => {
+      let cPos = "0 0 0";
+      let cEuler = "0 0 0";
+      if (c.origin) {
+        cPos = vecStr(c.origin.xyz);
+        cEuler = rotStr(c.origin.rpy);
+      }
+      let cGeomAttrs = `pos="${cPos}" euler="${cEuler}" rgba="1 0 0 0.5" group="0"`;
+
+      if (c.type === GeometryType.BOX) {
+        cGeomAttrs += ` type="box" size="${f(c.dimensions.x / 2)} ${f(c.dimensions.y / 2)} ${f(c.dimensions.z / 2)}"`;
+      } else if (c.type === GeometryType.CYLINDER) {
+        cGeomAttrs += ` type="cylinder" size="${f(c.dimensions.x)} ${f(c.dimensions.y / 2)}"`;
+      } else if (c.type === GeometryType.SPHERE) {
+        cGeomAttrs += ` type="sphere" size="${f(c.dimensions.x)}"`;
+      } else if (c.type === GeometryType.CAPSULE) {
+        cGeomAttrs += ` type="capsule" size="${f(c.dimensions.x)} ${f(c.dimensions.y / 2)}"`;
+      } else if (c.type === GeometryType.MESH && c.meshPath) {
+        const meshAssetName = resolveMeshAssetName(c.meshPath);
+        if (meshAssetName) {
+          cGeomAttrs += ` type="mesh" mesh="${meshAssetName}"`;
+        } else {
+          const fallback = normalizeMeshPathForExport(c.meshPath);
+          if (fallback) cGeomAttrs += ` type="mesh" mesh="${fallback}"`;
         }
-        bodyXml += `${indent}  <geom ${cGeomAttrs} />\n`;
-    }
+      }
+
+      bodyXml += `${indent}  <geom ${cGeomAttrs} />\n`;
+    });
 
 
     // 5. Recursively add children
