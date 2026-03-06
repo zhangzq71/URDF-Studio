@@ -24,8 +24,6 @@ export const useCollisionTransformGizmo = ({
 
         rotateGizmo.traverse((child: any) => {
             if (!child.userData?.urdfRotateKnob) return;
-            child.userData.urdfDragFrozenPos = child.position.clone();
-            child.userData.urdfDragFrozenWorldPos = child.getWorldPosition(new THREE.Vector3());
             if (child.name !== axis) return;
             child.userData.urdfDragStartAnchor = child.position.clone();
             child.userData.urdfDragStartAngle = 0;
@@ -219,15 +217,10 @@ export const useCollisionTransformGizmo = ({
                 const mats = Array.isArray(child.material) ? child.material : [child.material];
                 for (const mat of mats) {
                     if (!mat) continue;
-                    (mat as any).tempOpacity = 1;
-                    const baseColor = mat.userData?.urdfBaseColor;
-                    if (baseColor && mat.color && !mat.color.equals(baseColor)) {
-                        mat.color.copy(baseColor);
-                        mat.needsUpdate = true;
-                    }
-                    const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false;
-                    if (mat.opacity !== 1 || mat.transparent !== true || needsDepthReset) {
-                        mat.opacity = 1;
+                    // Only enforce render-state — let TransformControls manage
+                    // opacity and color so hover highlight/dimming is visible.
+                    const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false || mat.transparent !== true;
+                    if (needsDepthReset) {
                         mat.transparent = true;
                         mat.depthTest = false;
                         mat.depthWrite = false;
@@ -454,14 +447,7 @@ export const useCollisionTransformGizmo = ({
 
                     child.position.copy(targetPos);
                 } else if (isDragging) {
-                    const frozenWorld = child.userData?.urdfDragFrozenWorldPos as THREE.Vector3 | undefined;
-                    if (frozenWorld && child.parent) {
-                        child.position.copy(child.parent.worldToLocal(frozenWorld.clone()));
-                    } else {
-                        const frozen = child.userData?.urdfDragFrozenPos as THREE.Vector3 | undefined;
-                        if (frozen) child.position.copy(frozen);
-                        else child.position.copy(targetPos);
-                    }
+                    child.position.copy(base);
                 } else {
                     child.position.copy(targetPos);
                 }

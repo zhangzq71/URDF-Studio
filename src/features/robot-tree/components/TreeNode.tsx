@@ -383,9 +383,9 @@ export const TreeNode = memo(({
             }`}
           />
         ) : (
-          <div className="flex items-center gap-1 min-w-0 flex-1">
+          <div className="flex items-center gap-1">
             <span
-              className="text-xs font-medium truncate flex-1 min-w-0 select-none"
+              className="text-xs font-medium whitespace-nowrap select-none"
               onDoubleClick={(event) => handleNameDoubleClick(event, 'link', linkId, link.name)}
               onDragStart={(event) => event.preventDefault()}
               title={link.name}
@@ -539,7 +539,7 @@ export const TreeNode = memo(({
                     />
                   ) : (
                     <span
-                      className="text-[11px] font-medium truncate flex-1 select-none"
+                      className="text-[11px] font-medium whitespace-nowrap select-none"
                       onDoubleClick={(event) => handleNameDoubleClick(event, 'joint', joint.id, joint.name)}
                       onDragStart={(event) => event.preventDefault()}
                       title={joint.name}

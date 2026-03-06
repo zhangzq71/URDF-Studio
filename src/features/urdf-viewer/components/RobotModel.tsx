@@ -24,6 +24,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     showCollision = false,
     showVisual = true,
     onSelect,
+    onMeshSelect,
     onJointChange,
     onJointChangeCommit,
     jointAngles,

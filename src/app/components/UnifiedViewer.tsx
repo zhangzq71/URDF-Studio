@@ -103,6 +103,7 @@ export const UnifiedViewer = React.memo(({
   robot,
   mode,
   onSelect,
+  onMeshSelect,
   onHover,
   onUpdate,
   assets,

@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import type { RobotState } from '@/types';
 import { GeometryType } from '@/types';
+import { disposeObject3D } from '@/features/urdf-viewer/utils/dispose';
 
 // Reusable THREE objects - avoid allocation in render/compute paths
 const _tempVec3A = new THREE.Vector3();
@@ -45,6 +46,55 @@ export function computeAutoAlign(robot: RobotState, linkId: string) {
       rpy: { r: _tempEuler.x, p: _tempEuler.y, y: _tempEuler.z }
     }
   };
+}
+
+export interface MeshBounds {
+  x: number;
+  y: number;
+  z: number;
+  cx: number; // bounding box center x (mesh-local, scaled to meters)
+  cy: number; // bounding box center y
+  cz: number; // bounding box center z
+}
+
+/**
+ * Asynchronously compute the bounding box size of a mesh from asset storage.
+ * Returns null if the mesh cannot be found, loaded, or has an empty bounding box.
+ */
+export async function computeMeshBoundsFromAssets(
+  meshPath: string,
+  assets: Record<string, string>
+): Promise<MeshBounds | null> {
+  try {
+    const { createLoadingManager, createMeshLoader } = await import('@/core/loaders/meshLoader');
+    const manager = createLoadingManager(assets);
+    const meshLoader = createMeshLoader(assets, manager);
+
+    return await new Promise<MeshBounds | null>((resolve) => {
+      meshLoader(meshPath, manager, (obj: THREE.Object3D) => {
+        if (!obj || (obj as THREE.Object3D & { userData: { isPlaceholder?: boolean } }).userData?.isPlaceholder) {
+          resolve(null);
+          return;
+        }
+        obj.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(obj);
+        disposeObject3D(obj, true);
+        if (box.isEmpty()) { resolve(null); return; }
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        resolve({
+          x: Math.abs(size.x),
+          y: Math.abs(size.y),
+          z: Math.abs(size.z),
+          cx: center.x,
+          cy: center.y,
+          cz: center.z,
+        });
+      });
+    });
+  } catch {
+    return null;
+  }
 }
 
 interface GeomData {
@@ -102,13 +152,93 @@ function normalizeDimensions(dimensions: GeomData['dimensions']): { x: number; y
 }
 
 /**
+ * When converting FROM a mesh, pick the best axis ordering:
+ * - longest axis → dims.y (length/height for cylinder/capsule)
+ * - max of remaining two → dims.x = dims.z (radius)
+ */
+function boundsToRadiusLength(bounds: { x: number; y: number; z: number }): { radius: number; length: number } {
+  const allDims: [number, number, number] = [bounds.x, bounds.y, bounds.z];
+  const maxVal = Math.max(...allDims);
+  const maxIdx = allDims.indexOf(maxVal);
+  const others = allDims.filter((_, i) => i !== maxIdx);
+  const rawRadius = Math.max(others[0], others[1]) / 2;
+  return { radius: rawRadius, length: maxVal };
+}
+
+/**
  * Convert geometry dimensions when switching between geometry types.
  * Uses stable, deterministic mapping and preserves origin rotation.
+ * When meshBounds is supplied (from mesh bounding box), uses it for
+ * smart sizing when converting FROM a mesh geometry.
  */
-export function convertGeometryType(geomData: GeomData, newType: GeometryType): ConversionResult {
+export function convertGeometryType(geomData: GeomData, newType: GeometryType, meshBounds?: MeshBounds): ConversionResult {
   const currentType = geomData.type;
   const currentDims = normalizeDimensions(geomData.dimensions);
   const origin = normalizeOrigin(geomData.origin);
+
+  // ── Smart conversion FROM mesh using actual bounding box ──────────────────
+  if (currentType === GeometryType.MESH && meshBounds) {
+    const { x: bx, y: by, z: bz, cx, cy, cz } = meshBounds;
+
+    // Center the primitive at the mesh's bounding box center.
+    // origin.xyz already places the mesh frame relative to link frame;
+    // adding the bb center moves the primitive to match the mesh's visual center.
+    const centeredOrigin: ConversionResult['origin'] = {
+      xyz: {
+        x: origin.xyz.x + cx,
+        y: origin.xyz.y + cy,
+        z: origin.xyz.z + cz,
+      },
+      rpy: origin.rpy,
+    };
+
+    if (newType === GeometryType.BOX) {
+      return {
+        type: newType,
+        dimensions: {
+          x: toPositive(bx, DEFAULT_DIMENSIONS.x),
+          y: toPositive(by, DEFAULT_DIMENSIONS.y),
+          z: toPositive(bz, DEFAULT_DIMENSIONS.z),
+        },
+        origin: centeredOrigin,
+      };
+    }
+
+    if (newType === GeometryType.SPHERE) {
+      const sphereRadius = toPositive(Math.max(bx, by, bz) / 2, 0.1);
+      return {
+        type: newType,
+        dimensions: { x: sphereRadius, y: sphereRadius, z: sphereRadius },
+        origin: centeredOrigin,
+      };
+    }
+
+    if (newType === GeometryType.CYLINDER) {
+      const { radius: rawRadius, length } = boundsToRadiusLength({ x: bx, y: by, z: bz });
+      const radius = toPositive(rawRadius, 0.05);
+      const safeLength = toPositive(length, 0.5);
+      return {
+        type: newType,
+        dimensions: { x: radius, y: safeLength, z: radius },
+        origin: centeredOrigin,
+      };
+    }
+
+    if (newType === GeometryType.CAPSULE) {
+      const { radius: rawRadius, length } = boundsToRadiusLength({ x: bx, y: by, z: bz });
+      // Clamp radius so at least 1/3 of total length is cylindrical body
+      // (body = totalLength - 2*radius, want body >= totalLength/3)
+      const maxRadius = length / 3;
+      const radius = toPositive(Math.min(rawRadius, maxRadius), 0.05);
+      const safeLength = toPositive(Math.max(length, radius * 2), 0.5);
+      return {
+        type: newType,
+        dimensions: { x: radius, y: safeLength, z: radius },
+        origin: centeredOrigin,
+      };
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   if (newType === GeometryType.CYLINDER || newType === GeometryType.CAPSULE) {
     let radius = 0.05;

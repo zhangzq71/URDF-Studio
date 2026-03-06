@@ -19,7 +19,7 @@ import {
 import { useCollisionTransformGizmo } from '../hooks/useCollisionTransformGizmo';
 import { CollisionPendingEditOverlay } from './CollisionPendingEditOverlay';
 
-const COLLISION_TRANSLATE_GIZMO_SIZE = 1.08;
+const COLLISION_TRANSLATE_GIZMO_SIZE = 1.4;
 const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.22;
 
 export const CollisionTransformControls: React.FC<CollisionTransformControlsProps> = ({
@@ -135,9 +135,11 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                         syncRotateKnobPickers(controls);
                     }
 
-                    const currentVal = isRotate
-                        ? getCurrentRotateValue(controls)
-                        : getAxisTransformValue(targetObject, axis, false);
+                    let currentVal = getAxisTransformValue(targetObject, axis, false);
+                    if (isRotate) {
+                        currentVal = getCurrentRotateValue(controls);
+                        applyAxisTransformValue(targetObject, axis, currentVal, true);
+                    }
                     const delta = currentVal - startValueRef.current;
                     if (Math.abs(delta) <= 0.0001) {
                         invalidate();
@@ -259,8 +261,12 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         if (collisionGroup) {
             const cg = collisionGroup as THREE.Object3D;
             setTargetObject(cg);
-            originalPositionRef.current.copy(cg.position);
-            originalRotationRef.current.copy(cg.rotation);
+            // Don't overwrite the saved original while a drag or pending confirm is
+            // in progress — cancelling must revert to the pre-drag position.
+            if (!isDraggingRef.current && !pendingEditRef.current) {
+                originalPositionRef.current.copy(cg.position);
+                originalRotationRef.current.copy(cg.rotation);
+            }
         } else {
             setTargetObject(null);
         }
@@ -319,10 +325,23 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         };
     }, [targetObject, transformMode, invalidate, syncAllGizmoPickers]);
 
-    const handleObjectChange = useCallback(() => {
+    const handleObjectChange = useCallback((controls: any) => {
+        const activeAxis = currentAxisRef.current;
+        if (
+            targetObject &&
+            controls &&
+            isDraggingRef.current &&
+            currentIsRotateRef.current &&
+            activeDragControlsRef.current === controls &&
+            (activeAxis === 'X' || activeAxis === 'Y' || activeAxis === 'Z')
+        ) {
+            const currentVal = getCurrentRotateValue(controls);
+            applyAxisTransformValue(targetObject, activeAxis, currentVal, true);
+        }
+
         syncAllGizmoPickers();
         invalidate();
-    }, [invalidate, syncAllGizmoPickers]);
+    }, [targetObject, getCurrentRotateValue, invalidate, syncAllGizmoPickers]);
 
     useFrame((state, delta) => {
         const hasAxisFocus = (controls: any) =>
@@ -393,15 +412,26 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     }, [targetObject, selection?.id, selection?.objectIndex, onTransformEnd, pendingEdit, invalidate]);
 
     const handleCancel = useCallback(() => {
-        if (targetObject) {
-            targetObject.position.copy(originalPositionRef.current);
-            targetObject.rotation.copy(originalRotationRef.current);
+        if (targetObject && pendingEdit) {
+            // Restore using the startValue stored in pendingEdit state — this is the
+            // most reliable source because it's captured at drag-start and is
+            // immutable React state (unlike originalPositionRef which can be
+            // overwritten by selection-change effects).
+            applyAxisTransformValue(targetObject, pendingEdit.axis, pendingEdit.startValue, pendingEdit.isRotate);
+            targetObject.updateMatrixWorld(true);
         }
         setPendingEdit(null);
         invalidate();
-    }, [targetObject, invalidate]);
+    }, [targetObject, pendingEdit, invalidate]);
 
     const getDeltaDisplay = useCallback(() => formatPendingDelta(pendingEdit), [pendingEdit]);
+
+    const getAxisLabel = useCallback((edit: CollisionPendingEdit) => {
+        if (!edit.isRotate) return edit.axis;
+        if (edit.axis === 'X') return t.roll;
+        if (edit.axis === 'Y') return t.pitch;
+        return t.yaw;
+    }, [t.pitch, t.roll, t.yaw]);
 
     const handleValueChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const rawValue = event.target.value;
@@ -444,7 +474,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                 size={COLLISION_TRANSLATE_GIZMO_SIZE}
                 space="local"
                 enabled={true}
-                onChange={handleObjectChange}
+                onChange={() => handleObjectChange(transformRef.current)}
             />
 
             {transformMode === 'universal' && (
@@ -455,13 +485,14 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                     size={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
                     space="local"
                     enabled={true}
-                    onChange={handleObjectChange}
+                    onChange={() => handleObjectChange(rotateTransformRef.current)}
                 />
             )}
 
             {pendingEdit && (
                 <CollisionPendingEditOverlay
                     pendingEdit={pendingEdit}
+                    axisLabel={getAxisLabel(pendingEdit)}
                     targetObject={targetObject}
                     inputValue={inputValue}
                     deltaDisplay={getDeltaDisplay()}

@@ -3,19 +3,20 @@ import * as THREE from 'three';
 type TransformGizmoRoot = THREE.Object3D & {
     gizmo?: Record<string, THREE.Object3D>;
     picker?: Record<string, THREE.Object3D>;
+    helper?: Record<string, THREE.Object3D>;
 };
 
 const AXIS_NAMES = new Set(['X', 'Y', 'Z']);
 const FREE_ROTATE_NAMES = new Set(['E', 'XYZE']);
 const FREE_TRANSLATE_NAMES = new Set(['XY', 'YZ', 'XZ', 'XYZ']);
-const TRANSLATE_PICKER_REMOVE_NAMES = new Set(['X', 'Y', 'Z', 'XY', 'YZ', 'XZ', 'XYZ']);
-const TRANSLATE_ARROW_RADIUS = 0.05;
-const TRANSLATE_ARROW_HEIGHT = 0.16;
-const TRANSLATE_TIP_KNOB_RADIUS = 0.055;
-const TRANSLATE_ARROW_HIT_RADIUS = 0.14;
+const TRANSLATE_PICKER_REMOVE_NAMES = new Set(['XY', 'YZ', 'XZ', 'XYZ']);
+const TRANSLATE_ARROW_RADIUS = 0.075;
+const TRANSLATE_ARROW_HEIGHT = 0.24;
+const TRANSLATE_TIP_KNOB_RADIUS = 0.08;
+const TRANSLATE_ARROW_HIT_RADIUS = 0.22;
 const ROTATE_KNOB_RADIUS = 0.065;
 const ROTATE_KNOB_HIT_RADIUS = 0.1;
-const THICK_TRANSLATE_SHAFT_RADIUS = 0.016;
+const THICK_TRANSLATE_SHAFT_RADIUS = 0.028;
 const THICK_ROTATE_ARC_RADIUS = 0.014;
 const TRANSLATE_AXIS_PICKER_SCALE = { x: 1.35, y: 1.8, z: 1.35 } as const;
 const TRANSLATE_PLANE_PICKER_SCALE = 0.68;
@@ -50,20 +51,10 @@ const normalizeVisibleGizmoMaterials = (root?: TransformGizmoRoot) => {
             for (const mat of materials) {
                 if (!mat) continue;
 
-                const baseColor = mat.userData?.urdfBaseColor as THREE.Color | undefined;
-                if (baseColor && mat.color) {
-                    if (!mat.color.equals(baseColor)) {
-                        mat.color.copy(baseColor);
-                        mat.needsUpdate = true;
-                    }
-                    (mat as any).tempColor = baseColor;
-                }
-
-                (mat as any).tempOpacity = 1;
-                const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false;
-                // Keep gizmos in the transparent pass so they render after transparent collision meshes.
-                if (mat.opacity !== 1 || mat.transparent !== true || needsDepthReset) {
-                    mat.opacity = 1;
+                // Only enforce render-state properties — let TransformControls manage
+                // opacity and color so its hover highlight/dimming feedback is visible.
+                const needsDepthReset = mat.depthTest !== false || mat.depthWrite !== false || mat.transparent !== true;
+                if (needsDepthReset) {
                     mat.transparent = true;
                     mat.depthTest = false;
                     mat.depthWrite = false;
@@ -71,6 +62,32 @@ const normalizeVisibleGizmoMaterials = (root?: TransformGizmoRoot) => {
                 }
             }
         });
+    }
+
+    // Normalize helper geometry (axis lines, plane indicators shown during transform).
+    // Without this, helper materials default to depthTest=true and are occluded by
+    // transparent collision meshes that render with depthTest=false.
+    if (root.helper) {
+        const helperGroups = Object.values(root.helper).filter(Boolean) as THREE.Object3D[];
+        for (const group of helperGroups) {
+            group.traverse((node) => {
+                if (node.renderOrder < GIZMO_RENDER_ORDER) {
+                    node.renderOrder = GIZMO_RENDER_ORDER;
+                }
+                const material = (node as any).material;
+                if (!material) return;
+                const materials = Array.isArray(material) ? material : [material];
+                for (const mat of materials) {
+                    if (!mat) continue;
+                    if (mat.depthTest !== false || mat.depthWrite !== false) {
+                        mat.depthTest = false;
+                        mat.depthWrite = false;
+                        mat.transparent = true;
+                        mat.needsUpdate = true;
+                    }
+                }
+            });
+        }
     }
 };
 
