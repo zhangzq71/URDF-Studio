@@ -16,6 +16,7 @@ interface RobotThumbnail3DProps {
   urdfPath: string;
   urdfFile?: string;
   theme?: 'light' | 'dark';
+  fallbackLabel?: string;
 }
 
 /**
@@ -39,6 +40,8 @@ function RobotPreviewModel({
   const loadedRef = useRef(false);
   const robotRef = useRef<THREE.Object3D | null>(null);
   const fullyLoadedRef = useRef(false);
+  const blobUrlsRef = useRef<string[]>([]);
+  const timeoutIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
     if (loadedRef.current) return;
@@ -76,6 +79,7 @@ function RobotPreviewModel({
             if (res.ok) {
               const blob = await res.blob();
               const blobUrl = URL.createObjectURL(blob);
+              blobUrlsRef.current.push(blobUrl);
               assets[filePath] = blobUrl;
               // Also map filename only
               const fileName = filePath.split('/').pop();
@@ -116,11 +120,10 @@ function RobotPreviewModel({
           const loadedRobot = robotRef.current;
           if (!loadedRobot || fullyLoadedRef.current) return;
 
-          // Small delay to ensure geometries are fully computed
-          setTimeout(() => {
+          timeoutIdsRef.current.push(setTimeout(() => {
             if (fullyLoadedRef.current) return;
             finalizeRobot(loadedRobot);
-          }, 50);
+          }, 50));
         };
         
         const finalizeRobot = (loadedRobot: THREE.Object3D) => {
@@ -206,8 +209,7 @@ function RobotPreviewModel({
         loadedRobot.visible = false;
         setRobot(loadedRobot);
         
-        // Handle case where no meshes to load or meshes load instantly
-        setTimeout(() => {
+        timeoutIdsRef.current.push(setTimeout(() => {
           if (!fullyLoadedRef.current && robotRef.current) {
             let hasMeshes = false;
             robotRef.current.traverse((c: any) => {
@@ -217,15 +219,14 @@ function RobotPreviewModel({
               manager.onLoad();
             }
           }
-        }, 200);
+        }, 200));
         
-        // Fallback timeout - force load after 3 seconds if still not loaded
-        setTimeout(() => {
+        timeoutIdsRef.current.push(setTimeout(() => {
           if (!fullyLoadedRef.current && robotRef.current) {
             console.warn('[RobotThumbnail3D] Force loading after timeout:', urdfPath);
             manager.onLoad();
           }
-        }, 3000);
+        }, 3000));
 
       } catch (e) {
         console.error('[RobotThumbnail3D] Failed to load robot:', e);
@@ -235,6 +236,26 @@ function RobotPreviewModel({
     };
 
     loadRobot();
+
+    return () => {
+      timeoutIdsRef.current.forEach(clearTimeout);
+      timeoutIdsRef.current = [];
+      blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
+      if (robotRef.current) {
+        robotRef.current.traverse((child: any) => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m: THREE.Material) => {
+              if ((m as any).map) (m as any).map.dispose();
+              m.dispose();
+            });
+          }
+        });
+        robotRef.current = null;
+      }
+    };
   }, [urdfPath, urdfFile, invalidate, camera]);
 
   // Continuous rotation
@@ -254,7 +275,7 @@ function RobotPreviewModel({
 
   return (
     <>
-      <ReferenceGrid theme={theme} groundOffset={0} />
+      <ReferenceGrid theme={theme} />
       <group ref={groupRef}>
         <primitive object={robot} />
       </group>
@@ -294,7 +315,12 @@ function LoadingIndicator({ theme }: { theme: 'light' | 'dark' }) {
  * RobotThumbnail3D - Main component with Canvas
  * Pure real-time 3D rendering
  */
-export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, urdfFile, theme = 'dark' }) => {
+export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({
+  urdfPath,
+  urdfFile,
+  theme = 'dark',
+  fallbackLabel = 'Preview'
+}) => {
   const [hasError, setHasError] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -324,7 +350,7 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, ur
     return (
       <div ref={containerRef} className="flex flex-col items-center justify-center w-full h-full text-slate-400">
         <Box className="w-8 h-8 opacity-30" />
-        <span className="text-[9px] mt-1 opacity-50">Preview</span>
+        <span className="text-[9px] mt-1 opacity-50">{fallbackLabel}</span>
       </div>
     );
   }

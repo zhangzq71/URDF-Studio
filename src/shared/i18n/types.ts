@@ -127,11 +127,13 @@ export interface TranslationKeys {
   box: string;
   cylinder: string;
   sphere: string;
+  capsule: string;
   mesh: string;
   width: string;
   depth: string;
   height: string;
   radius: string;
+  totalLength: string;
 
   // Visualizer
   skeletonOptions: string;
@@ -195,6 +197,7 @@ export interface TranslationKeys {
   showCenterOfMass: string;
   showInertia: string;
   jointControls: string;
+  joints: string;
   viewOptions: string;
   loadingRobot: string;
   enterRobotName: string;
@@ -226,6 +229,8 @@ export interface TranslationKeys {
 
   // Additional UI Elements
   gizmos: string;
+  visuals: string;
+  physics: string;
   size: string;
   resetJoints: string;
   reset: string;
@@ -256,7 +261,18 @@ export interface TranslationKeys {
   projectName: string;
   enterProjectName: string;
   filePreview: string;
+  closePreview: string;
+  preview: string;
   noPreviewImage: string;
+  loadedModel: string;
+  resize: string;
+  bridgeJointNamePlaceholder: string;
+  originX: string;
+  originY: string;
+  originZ: string;
+  meshNotFound: string;
+  deleteMeasurement: string;
+  webglContextRestoring: string;
   emptyAssemblyHint: string;
   clickToAddComponent: string;
   removeFromLibrary: string;

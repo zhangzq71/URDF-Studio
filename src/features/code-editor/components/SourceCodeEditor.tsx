@@ -386,9 +386,10 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, [isDirty, handleApply]);
 
   useEffect(() => {
-    requestAnimationFrame(() => {
+    const id = requestAnimationFrame(() => {
       editorRef.current?.layout();
     });
+    return () => cancelAnimationFrame(id);
   }, [isMaximized, size.height, size.width]);
 
   return (

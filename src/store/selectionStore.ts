@@ -9,13 +9,14 @@ export interface Selection {
   type: 'link' | 'joint' | null;
   id: string | null;
   subType?: 'visual' | 'collision';
+  objectIndex?: number;
 }
 
 interface SelectionState {
   // Current selection
   selection: Selection;
   setSelection: (selection: Selection) => void;
-  selectLink: (id: string, subType?: 'visual' | 'collision') => void;
+  selectLink: (id: string, subType?: 'visual' | 'collision', objectIndex?: number) => void;
   selectJoint: (id: string) => void;
   clearSelection: () => void;
 
@@ -52,11 +53,17 @@ export const useSelectionStore = create<SelectionState>()((set) => ({
   // Focus target
   focusTarget: null,
   setFocusTarget: (id) => set({ focusTarget: id }),
-  focusOn: (id) => {
-    set({ focusTarget: id });
-    // Clear focus target after a short delay to allow re-triggering
-    setTimeout(() => set({ focusTarget: null }), 100);
-  },
+  focusOn: (() => {
+    let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
+    return (id: string) => {
+      if (pendingTimeout !== null) clearTimeout(pendingTimeout);
+      set({ focusTarget: id });
+      pendingTimeout = setTimeout(() => {
+        pendingTimeout = null;
+        set({ focusTarget: null });
+      }, 100);
+    };
+  })(),
 }));
 
 // Helper to check if selection exists in data

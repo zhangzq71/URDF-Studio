@@ -4,12 +4,64 @@
 
 import OpenAI from 'openai'
 import type { RobotState, MotorSpec, InspectionReport } from '@/types'
+import type { Language } from '@/shared/i18n'
 import type { AIResponse } from '../types'
 import { getEasterEggResponse } from '../config/easterEggs'
 import { getGenerationSystemPrompt, getInspectionSystemPrompt } from '../config/prompts'
 import { normalizeAIRobotResponse } from '../utils/normalizeRobotData'
 import { processInspectionResults } from '../utils/processInspectionResults'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
+
+const getAiServiceTexts = (lang: Language) => ({
+  apiKeyMissing:
+    lang === 'zh'
+      ? 'API Key 缺失，请先完成环境配置。'
+      : 'API Key is missing. Please configure the environment.',
+  noContentFromApi:
+    lang === 'zh'
+      ? 'API 返回了空内容，请重试。'
+      : 'The API returned empty content. Please try again.',
+  rawResponse: lang === 'zh' ? '原始响应' : 'Raw response',
+  jsonParseFailed: (message: string) =>
+    lang === 'zh'
+      ? `JSON 解析失败: ${message || '未知错误'}`
+      : `Failed to parse JSON: ${message || 'unknown error'}`,
+  unknown: lang === 'zh' ? '未知' : 'Unknown',
+  suggestedMotorOptions: lang === 'zh' ? '建议的电机选项：' : 'Suggested motor options:',
+  generatedRobotSummary: (linkCount: number, jointCount: number) =>
+    lang === 'zh'
+      ? `已生成机器人结构。包含 ${linkCount} 个链接和 ${jointCount} 个关节。`
+      : `Generated robot structure with ${linkCount} links and ${jointCount} joints.`,
+  modifiedRobotSummary: (linkCount: number, jointCount: number) =>
+    lang === 'zh'
+      ? `已修改机器人结构。包含 ${linkCount} 个链接和 ${jointCount} 个关节。`
+      : `Modified robot structure with ${linkCount} links and ${jointCount} joints.`,
+  processedRequestNoRobotData:
+    lang === 'zh'
+      ? 'AI 已处理您的请求，但未返回机器人数据。'
+      : 'AI processed your request but did not return robot data.',
+  apiCallFailed: (message?: string, status?: number) =>
+    lang === 'zh'
+      ? `API 调用失败: ${message || '未知错误'}${status ? ` (状态码: ${status})` : ''}`
+      : `API request failed: ${message || 'unknown error'}${status ? ` (status: ${status})` : ''}`,
+  configurationError: lang === 'zh' ? '配置错误' : 'Configuration Error',
+  inspectionError: lang === 'zh' ? '检查错误' : 'Inspection Error',
+  parseError: lang === 'zh' ? '解析错误' : 'Parse Error',
+  failedToGetInspectionResponse:
+    lang === 'zh' ? '未能获取检查响应。' : 'Failed to get inspection response.',
+  failedToParseInspectionResults:
+    lang === 'zh' ? '未能解析检查结果。' : 'Failed to parse inspection results.',
+  failedToCompleteInspection:
+    lang === 'zh'
+      ? '由于 AI 错误，检查未能完成。'
+      : 'Failed to complete inspection due to an AI error.',
+  inspectionEmptyContent:
+    lang === 'zh' ? 'AI 服务返回了空内容。' : 'The AI service returned empty content.',
+  aiServiceRequestFailed: (message?: string) =>
+    lang === 'zh'
+      ? `AI 服务无法处理该请求：${message || '未知错误'}`
+      : `The AI service could not process the request: ${message || 'unknown error'}`,
+})
 
 /**
  * Create OpenAI client instance
@@ -56,7 +108,8 @@ const getContextRobot = (robot: RobotState) => {
 /**
  * Parse JSON from AI response with fallback strategies
  */
-const parseJSONResponse = (content: string): { result: unknown; error?: string } => {
+const parseJSONResponse = (content: string, lang: Language): { result: unknown; error?: string } => {
+  const text = getAiServiceTexts(lang)
   try {
     return { result: JSON.parse(content) }
   } catch (parseError) {
@@ -81,12 +134,13 @@ const parseJSONResponse = (content: string): { result: unknown; error?: string }
 
     return {
       result: null,
-      error: `JSON 解析失败: ${(parseError as Error)?.message || '未知错误'}`
+      error: text.jsonParseFailed((parseError as Error)?.message || '')
     }
   }
 }
 
-const extractExplanationText = (parsedResult: Record<string, unknown>): string | undefined => {
+const extractExplanationText = (parsedResult: Record<string, unknown>, lang: Language): string | undefined => {
+  const text = getAiServiceTexts(lang)
   let explanationText = parsedResult.explanation as string | undefined
   if (!explanationText) {
     if (parsedResult.recommendation) {
@@ -102,11 +156,11 @@ const extractExplanationText = (parsedResult: Record<string, unknown>): string |
       parsedResult.suggestions.length > 0
     ) {
       explanationText =
-        '建议的电机选项：\n' +
+        `${text.suggestedMotorOptions}\n` +
         parsedResult.suggestions
           .map(
             (s: Record<string, unknown>, i: number) =>
-              `${i + 1}. ${s.name || s.model || '未知'}: ${s.torque || s.effort || 'N/A'} Nm`
+              `${i + 1}. ${s.name || s.model || text.unknown}: ${s.torque || s.effort || 'N/A'} Nm`
           )
           .join('\n')
     }
@@ -154,8 +208,10 @@ const buildInspectionCriteriaDescription = (
 export const generateRobotFromPrompt = async (
   prompt: string,
   currentRobot: RobotState,
-  motorLibrary: Record<string, MotorSpec[]>
+  motorLibrary: Record<string, MotorSpec[]>,
+  lang: Language = 'en'
 ): Promise<AIResponse | null> => {
+  const text = getAiServiceTexts(lang)
   const easterEggResponse = getEasterEggResponse(prompt)
   if (easterEggResponse) {
     return easterEggResponse
@@ -169,7 +225,7 @@ export const generateRobotFromPrompt = async (
       OPENAI_MODEL: process.env.OPENAI_MODEL
     })
     return {
-      explanation: 'API Key is missing. Please configure the environment.',
+      explanation: text.apiKeyMissing,
       actionType: 'advice'
     }
   }
@@ -237,17 +293,17 @@ export const generateRobotFromPrompt = async (
     if (!content) {
       console.error('No content in API response')
       return {
-        explanation: 'API 返回了空内容，请重试。',
+        explanation: text.noContentFromApi,
         actionType: 'advice' as const
       }
     }
 
     console.log('[AI Service] Raw response content:', content.substring(0, 200) + '...')
 
-    const { result, error } = parseJSONResponse(content)
+    const { result, error } = parseJSONResponse(content, lang)
     if (!result) {
       return {
-        explanation: `${error}\n\n原始响应: ${content.substring(0, 500)}`,
+        explanation: `${error}\n\n${text.rawResponse}: ${content.substring(0, 500)}`,
         actionType: 'advice' as const
       }
     }
@@ -264,7 +320,7 @@ export const generateRobotFromPrompt = async (
       console.log('[AI Service] Data content:', data)
     }
 
-    const explanationText = extractExplanationText(parsedResult)
+    const explanationText = extractExplanationText(parsedResult, lang)
 
     let finalRobotState: Partial<RobotState> | undefined = undefined
     if (data) {
@@ -293,9 +349,14 @@ export const generateRobotFromPrompt = async (
     let explanation = explanationText
     if (!explanation) {
       if (finalRobotState) {
-        explanation = `已${actionType === 'generation' ? '生成' : '修改'}机器人结构。包含 ${Object.keys(finalRobotState.links || {}).length} 个链接和 ${Object.keys(finalRobotState.joints || {}).length} 个关节。`
+        const linkCount = Object.keys(finalRobotState.links || {}).length
+        const jointCount = Object.keys(finalRobotState.joints || {}).length
+        explanation =
+          actionType === 'generation'
+            ? text.generatedRobotSummary(linkCount, jointCount)
+            : text.modifiedRobotSummary(linkCount, jointCount)
       } else {
-        explanation = 'AI 已处理您的请求，但未返回机器人数据。'
+        explanation = text.processedRequestNoRobotData
       }
     }
 
@@ -321,7 +382,7 @@ export const generateRobotFromPrompt = async (
     })
 
     return {
-      explanation: `API 调用失败: ${error?.message || '未知错误'}${error?.status ? ` (状态码: ${error.status})` : ''}`,
+      explanation: text.apiCallFailed(error?.message, error?.status),
       actionType: 'advice' as const
     }
   }
@@ -333,17 +394,18 @@ export const generateRobotFromPrompt = async (
 export const runRobotInspection = async (
   robot: RobotState,
   selectedItems?: Record<string, string[]>,
-  lang: 'en' | 'zh' = 'en'
+  lang: Language = 'en'
 ): Promise<InspectionReport | null> => {
+  const text = getAiServiceTexts(lang)
   if (!process.env.API_KEY) {
     console.error('API Key missing')
     return {
-      summary: 'API Key is missing. Please configure the environment.',
+      summary: text.apiKeyMissing,
       issues: [
         {
           type: 'error',
-          title: 'Configuration Error',
-          description: 'API Key is missing. Please configure the environment.'
+          title: text.configurationError,
+          description: text.apiKeyMissing
         }
       ]
     }
@@ -372,12 +434,12 @@ export const runRobotInspection = async (
     const content = response.choices[0]?.message?.content
     if (!content) {
       return {
-        summary: 'Failed to get inspection response.',
+        summary: text.failedToGetInspectionResponse,
         issues: [
           {
             type: 'error',
-            title: 'Inspection Error',
-            description: 'The AI service returned empty content.'
+            title: text.inspectionError,
+            description: text.inspectionEmptyContent
           }
         ]
       }
@@ -385,15 +447,15 @@ export const runRobotInspection = async (
 
     console.log('[Inspection] Raw response content:', content.substring(0, 200) + '...')
 
-    const { result, error } = parseJSONResponse(content)
+    const { result, error } = parseJSONResponse(content, lang)
     if (!result) {
       return {
-        summary: 'Failed to parse inspection results.',
+        summary: text.failedToParseInspectionResults,
         issues: [
           {
             type: 'error',
-            title: 'Parse Error',
-            description: `${error}\n\n原始响应: ${content.substring(0, 500)}`
+            title: text.parseError,
+            description: `${error}\n\n${text.rawResponse}: ${content.substring(0, 500)}`
           }
         ]
       }
@@ -404,12 +466,12 @@ export const runRobotInspection = async (
     const error = e as { message?: string }
     console.error('Inspection failed', e)
     return {
-      summary: 'Failed to complete inspection due to an AI error.',
+      summary: text.failedToCompleteInspection,
       issues: [
         {
           type: 'error',
-          title: 'Inspection Error',
-          description: `The AI service could not process the request: ${error?.message || 'unknown error'}`
+          title: text.inspectionError,
+          description: text.aiServiceRequestFailed(error?.message)
         }
       ]
     }

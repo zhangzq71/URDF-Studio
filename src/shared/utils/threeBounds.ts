@@ -2,6 +2,35 @@ import * as THREE from 'three';
 
 interface LowestMeshZOptions {
   includeInvisible?: boolean;
+  includeVisual?: boolean;
+  includeCollision?: boolean;
+}
+
+type MeshRole = 'visual' | 'collision' | 'unknown';
+
+function getMeshRole(mesh: THREE.Mesh): MeshRole {
+  let current: THREE.Object3D | null = mesh;
+
+  while (current) {
+    if (
+      (current as any).isURDFCollider ||
+      current.userData?.isCollisionMesh === true ||
+      current.userData?.geometryRole === 'collision'
+    ) {
+      return 'collision';
+    }
+
+    if (
+      current.userData?.isVisualMesh === true ||
+      current.userData?.geometryRole === 'visual'
+    ) {
+      return 'visual';
+    }
+
+    current = current.parent;
+  }
+
+  return 'unknown';
 }
 
 /**
@@ -10,6 +39,8 @@ interface LowestMeshZOptions {
  */
 export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOptions): number | null {
   const includeInvisible = options?.includeInvisible ?? true;
+  const includeVisual = options?.includeVisual ?? true;
+  const includeCollision = options?.includeCollision ?? true;
   const worldBox = new THREE.Box3();
   let lowestZ = Number.POSITIVE_INFINITY;
 
@@ -21,6 +52,10 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
 
     const mesh = obj as THREE.Mesh;
     if (!mesh.geometry) return;
+
+    const meshRole = getMeshRole(mesh);
+    if (meshRole === 'collision' && !includeCollision) return;
+    if ((meshRole === 'visual' || meshRole === 'unknown') && !includeVisual) return;
 
     if (!mesh.geometry.boundingBox) {
       mesh.geometry.computeBoundingBox();

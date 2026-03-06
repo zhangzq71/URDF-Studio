@@ -55,6 +55,14 @@ export function useHoverDetection({
     highlightGeometry
 }: UseHoverDetectionOptions): UseHoverDetectionResult {
     const { scene, camera } = useThree();
+    const isGizmoObject = (object: THREE.Object3D | null): boolean => {
+        let current: THREE.Object3D | null = object;
+        while (current) {
+            if (current.userData?.isGizmo) return true;
+            current = current.parent;
+        }
+        return false;
+    };
 
     const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh; faceIndex: number } | null>(null);
     const highlightedFaceMeshRef = useRef<THREE.Mesh | null>(null);
@@ -200,10 +208,11 @@ export function useHoverDetection({
                 hoveredLinkRef.current,
                 true,
                 isCollisionMode ? 'collision' : 'visual',
-                (hoveredLinkRef as any).currentMesh
+                (hoveredLinkRef as any).currentMesh || (hoveredLinkRef as any).currentObjectIndex
             );
             hoveredLinkRef.current = null;
             (hoveredLinkRef as any).currentMesh = null;
+            (hoveredLinkRef as any).currentObjectIndex = null;
             (hoveredLinkRef as any).currentSubType = null;
             restoreSelectionHighlight();
         };
@@ -221,6 +230,13 @@ export function useHoverDetection({
         // Handle Face Selection Mode
         if (toolMode === 'face') {
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
+            const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
+            const nearestSceneHit = sceneHits[0];
+            if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+                if (highlightedFace) setHighlightedFace(null);
+                if (hoveredLinkRef.current) clearHoverHighlight();
+                return;
+            }
 
             // PERFORMANCE: Two-phase detection - check bounding box first
             if (!rayIntersectsBoundingBox(raycasterRef.current)) {
@@ -277,6 +293,14 @@ export function useHoverDetection({
         }
 
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
+        const nearestSceneHit = sceneHits[0];
+        if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                clearHoverHighlight();
+            }
+            return;
+        }
 
         // PERFORMANCE: Two-phase detection - check bounding box first
         if (!rayIntersectsBoundingBox(raycasterRef.current)) {
@@ -327,22 +351,44 @@ export function useHoverDetection({
                 validHits.sort((a, b) => a.distance - b.distance);
                 const hit = validHits[0];
 
-                // In collision mode, highlight whole link to avoid tiny per-mesh hover misses.
-                newHoveredMesh = isCollisionMode ? null : hit.object;
-
                 let current: THREE.Object3D | null = hit.object;
+                let linkObj: THREE.Object3D | null = null;
                 while (current) {
                     if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
                         newHoveredLink = current.name;
+                        linkObj = current;
                         break;
                     }
                     if ((robot as any).links && (robot as any).links[current.name]) {
                         newHoveredLink = current.name;
+                        linkObj = current;
                         break;
                     }
                     if (current === robot) break;
                     current = current.parent;
                 }
+
+                let newHoveredObjectIndex = 0;
+                if (linkObj) {
+                    let urdfElement: THREE.Object3D | null = null;
+                    let p: THREE.Object3D | null = hit.object;
+                    while (p && p !== linkObj) {
+                        if ((p as any).isURDFVisual || (p as any).isURDFCollider) {
+                            urdfElement = p;
+                            break;
+                        }
+                        p = p.parent;
+                    }
+
+                    if (urdfElement) {
+                        const isCollider = (urdfElement as any).isURDFCollider;
+                        const siblings = linkObj.children.filter(c => isCollider ? (c as any).isURDFCollider : (c as any).isURDFVisual);
+                        newHoveredObjectIndex = Math.max(0, siblings.indexOf(urdfElement));
+                    }
+                }
+
+                // Instead of highlighting the whole link, use objectIndex
+                newHoveredMesh = isCollisionMode ? newHoveredObjectIndex as any : hit.object;
             }
         }
 
@@ -357,6 +403,7 @@ export function useHoverDetection({
 
             hoveredLinkRef.current = newHoveredLink;
             (hoveredLinkRef as any).currentMesh = newHoveredMesh;
+            (hoveredLinkRef as any).currentObjectIndex = typeof newHoveredMesh === 'number' ? newHoveredMesh : null;
             (hoveredLinkRef as any).currentSubType = newHoveredLink ? (isCollisionMode ? 'collision' : 'visual') : null;
         }
     });

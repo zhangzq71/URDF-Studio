@@ -12,3 +12,5 @@ export type { CollisionRefsState } from './useCollisionRefs';
 
 export { useTransformControls } from './useTransformControls';
 export type { TransformControlsState } from './useTransformControls';
+
+export { useVisualizerController } from './useVisualizerController';

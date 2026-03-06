@@ -54,7 +54,7 @@ export function ReportChatOverlay({
           ? `当前机器人结构：\n${JSON.stringify(robot, null, 2)}\n\n检测报告摘要：\n${inspectionReport.summary}\n\n检测报告中的问题列表：\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\n用户问题：${userMessage}`
           : `Current robot structure:\n${JSON.stringify(robot, null, 2)}\n\nInspection report summary:\n${inspectionReport.summary}\n\nIssues:\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\nUser question: ${userMessage}`
 
-      const response = await generateRobotFromPrompt(contextPrompt, robot, motorLibrary)
+      const response = await generateRobotFromPrompt(contextPrompt, robot, motorLibrary, lang)
       const assistantMessage =
         response?.explanation || (lang === 'zh' ? '抱歉，无法生成回复。' : 'Sorry, unable to generate response.')
       setReportChatMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }])

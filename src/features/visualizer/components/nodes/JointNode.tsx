@@ -28,7 +28,7 @@ interface CommonVisualizerProps {
   showHardwareLabels: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
-  transformMode: 'translate' | 'rotate';
+  transformMode: 'translate' | 'rotate' | 'select';
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;

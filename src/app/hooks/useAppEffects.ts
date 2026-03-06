@@ -23,8 +23,8 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
         }
       }
-      // Redo: Ctrl+Y or Ctrl+Shift+Z
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+      // Redo: Ctrl+Shift+Z
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
         if (canRedo) {
           redo();
           e.preventDefault();

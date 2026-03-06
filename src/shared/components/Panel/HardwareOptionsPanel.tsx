@@ -59,7 +59,7 @@ export const HardwareOptionsPanel = forwardRef<HTMLDivElement, HardwareOptionsPa
             : { top: '16px', right: '16px' }
         }
       >
-        <OptionsPanelContainer isCollapsed={isCollapsed}>
+        <OptionsPanelContainer isCollapsed={isCollapsed} resizeTitle={t.resize}>
           <OptionsPanelHeader
             title={t.hardwareOptions}
             isCollapsed={isCollapsed}

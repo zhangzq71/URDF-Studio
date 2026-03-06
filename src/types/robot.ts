@@ -71,7 +71,7 @@ export interface RobotState {
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
+  selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
 }
 
 /** Robot data without selection (selection is in selectionStore) */

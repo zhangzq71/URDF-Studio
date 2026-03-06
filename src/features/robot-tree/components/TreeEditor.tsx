@@ -19,7 +19,6 @@ import { translations } from '@/shared/i18n';
 import { useAssemblyStore, useAssetsStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
 import { AssemblyTreeView } from './AssemblyTreeView';
-import { FilePreviewWindow } from './FilePreviewWindow';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
 import { FileTreeNodeComponent, type LibraryDeleteTarget } from './FileTreeNode';
 import { TreeNode } from './TreeNode';
@@ -53,6 +52,8 @@ export interface TreeEditorProps {
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
+  onPreviewFile?: (file: RobotFile) => void;
+  previewFileName?: string;
 }
 
 export const TreeEditor: React.FC<TreeEditorProps> = ({
@@ -83,6 +84,8 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onRemoveComponent,
   onRemoveBridge,
   onRenameComponent,
+  onPreviewFile,
+  previewFileName,
 }) => {
   const t = translations[lang];
   const sidebarTab = useUIStore((state) => state.sidebarTab);
@@ -116,8 +119,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const startHeight = useRef(0);
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [previewFile, setPreviewFile] = useState<RobotFile | null>(null);
-  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -159,17 +160,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, [availableFiles]);
 
   useEffect(() => {
-    if (!previewFile) return;
-    const exists = availableFiles.some((file) => file.name === previewFile.name);
-    if (!exists) {
-      setPreviewFile(null);
-      setIsPreviewOpen(false);
-    }
-  }, [availableFiles, previewFile]);
-
-  useEffect(() => {
     if (!isProMode) {
-      setIsPreviewOpen(false);
       setFileContextMenu(null);
     }
   }, [isProMode]);
@@ -224,9 +215,8 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, [fileContextMenu]);
 
   const handlePreviewFile = useCallback((file: RobotFile) => {
-    setPreviewFile(file);
-    setIsPreviewOpen(true);
-  }, []);
+    onPreviewFile?.(file);
+  }, [onPreviewFile]);
 
   const handleFileContextMenu = useCallback((event: React.MouseEvent, file: RobotFile) => {
     event.preventDefault();
@@ -281,25 +271,14 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       if (target.type === 'file') {
         if (!onDeleteLibraryFile) return;
         onDeleteLibraryFile(target.file);
-        if (previewFile?.name === target.file.name) {
-          setPreviewFile(null);
-          setIsPreviewOpen(false);
-        }
       } else {
         if (!onDeleteLibraryFolder) return;
         onDeleteLibraryFolder(target.path);
-        if (
-          previewFile &&
-          (previewFile.name === target.path || previewFile.name.startsWith(`${target.path}/`))
-        ) {
-          setPreviewFile(null);
-          setIsPreviewOpen(false);
-        }
       }
 
       setFileContextMenu(null);
     },
-    [onDeleteLibraryFile, onDeleteLibraryFolder, previewFile],
+    [onDeleteLibraryFile, onDeleteLibraryFolder],
   );
 
   const handleMouseDown = useCallback(
@@ -520,7 +499,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       expandedFolders={expandedFolders}
                       toggleFolder={toggleFolder}
                       showAddAsComponent={isProMode}
-                      selectedFileName={isProMode ? previewFile?.name : undefined}
+                      selectedFileName={isProMode ? previewFileName : undefined}
                       t={t}
                     />
                   ))
@@ -662,16 +641,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             handleDeleteFromLibrary(fileContextMenu.target);
           }
         }}
-      />
-
-      <FilePreviewWindow
-        isOpen={isPreviewOpen && isProMode}
-        file={previewFile}
-        availableFiles={availableFiles}
-        assets={assets}
-        lang={lang}
-        theme={_theme}
-        onClose={() => setIsPreviewOpen(false)}
       />
     </div>
   );

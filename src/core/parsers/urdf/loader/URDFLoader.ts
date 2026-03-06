@@ -267,7 +267,7 @@ export class URDFLoader {
             if (parseVisual) {
                 const visualNodes = children.filter(n => n.nodeName.toLowerCase() === 'visual');
                 visualNodes.forEach(visualNode => {
-                    const visual = processLinkElement(visualNode, materialMap);
+                    const visual = processLinkElement(visualNode, materialMap) as URDFVisual;
                     linkTarget.add(visual);
 
                     if (visualNode.hasAttribute('name')) {

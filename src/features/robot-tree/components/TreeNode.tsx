@@ -59,30 +59,6 @@ export const TreeNode = memo(({
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const link = robot.links[linkId];
-  if (!link) {
-    return null;
-  }
-
-  const childJoints = Object.values(robot.joints).filter((joint) => joint.parentLinkId === linkId);
-  const hasChildren = childJoints.length > 0;
-
-  const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
-  const isSkeleton = mode === 'skeleton';
-
-  const isVisible = link.visible !== false;
-  const hasVisual = link.visual?.type && link.visual.type !== 'none';
-  const collisionBodyCount = (link.collision?.type && link.collision.type !== 'none' ? 1 : 0)
-    + (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
-  const hasCollision = collisionBodyCount > 0;
-  const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
-  const isVisualSelected = isLinkSelected && robot.selection.subType === 'visual';
-  const isCollisionSelected = isLinkSelected && robot.selection.subType === 'collision';
-  const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
-  const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
-  const contextMenuHasCollision = Boolean(
-    (contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE)
-      || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE)
-  );
 
   useEffect(() => {
     if (!editingTarget) return;
@@ -115,6 +91,31 @@ export const TreeNode = memo(({
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [contextMenu]);
+
+  if (!link) {
+    return null;
+  }
+
+  const childJoints = Object.values(robot.joints).filter((joint) => joint.parentLinkId === linkId);
+  const hasChildren = childJoints.length > 0;
+
+  const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
+  const isSkeleton = mode === 'skeleton';
+
+  const isVisible = link.visible !== false;
+  const hasVisual = link.visual?.type && link.visual.type !== 'none';
+  const collisionBodyCount = (link.collision?.type && link.collision.type !== 'none' ? 1 : 0)
+    + (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
+  const hasCollision = collisionBodyCount > 0;
+  const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
+  const isVisualSelected = isLinkSelected && robot.selection.subType === 'visual';
+  const isCollisionSelected = isLinkSelected && robot.selection.subType === 'collision';
+  const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
+  const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
+  const contextMenuHasCollision = Boolean(
+    (contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE)
+      || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE)
+  );
 
   const beginRenaming = (
     type: 'link' | 'joint',

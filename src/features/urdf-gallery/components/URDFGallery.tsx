@@ -200,7 +200,15 @@ const getCategoryName = (categoryId: string, t: typeof translations['en']) => {
   }
 };
 
-const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' | 'dark' }) => {
+const RobotThumbnail = ({
+  model,
+  theme,
+  previewLabel,
+}: {
+  model: RobotModel;
+  theme?: 'light' | 'dark';
+  previewLabel: string;
+}) => {
   // Use 3D preview for server-hosted models with urdfPath
   if (model.sourceType === 'server' && model.urdfPath && !model.urdfPath.startsWith('http')) {
     return (
@@ -208,6 +216,7 @@ const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' |
         urdfPath={model.urdfPath}
         urdfFile={model.urdfFile}
         theme={theme}
+        fallbackLabel={previewLabel}
       />
     );
   }
@@ -217,7 +226,7 @@ const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' |
     <div className="flex flex-col items-center justify-center gap-2 text-text-tertiary w-full h-full">
       <Box className="w-10 h-10 opacity-40" />
       <span className="text-[9px] uppercase tracking-widest font-medium opacity-60">
-        {model.sourceType === 'url' ? 'GitHub' : 'Preview'}
+        {model.sourceType === 'url' ? 'GitHub' : previewLabel}
       </span>
     </div>
   );
@@ -277,7 +286,9 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
 
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
       const response = await fetch(apiUrl);
-      if (!response.ok) throw new Error('GitHub API request failed');
+      if (!response.ok) {
+        throw new Error(lang === 'zh' ? 'GitHub API 请求失败' : 'GitHub API request failed');
+      }
       const contents = await response.json();
 
       const downloadRecursive = async (items: any[], currentHandle: FileSystemDirectoryHandle) => {
@@ -327,7 +338,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
     try {
       const manifestUrl = `${model.urdfPath}/manifest.json`;
       const manifestRes = await fetch(manifestUrl);
-      if (!manifestRes.ok) throw new Error('Manifest not found');
+      if (!manifestRes.ok) throw new Error(t.manifestNotFound);
       const files: string[] = await manifestRes.json();
       
       const fileObjects = await Promise.all(files.map(async (filePath) => {
@@ -483,7 +494,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                     <div key={model.id} className="group bg-panel-bg rounded-lg border border-border-black hover:border-system-blue overflow-hidden transition-all shadow-sm hover:shadow-lg flex flex-col">
                       {/* Thumbnail Area */}
                       <div className="relative h-36 overflow-hidden bg-element-bg flex items-center justify-center">
-                        <RobotThumbnail model={model} theme={theme} />
+                        <RobotThumbnail model={model} theme={theme} previewLabel={t.preview} />
                         
                         <div className="absolute top-2 left-2 flex gap-1">
                           <span className="px-1.5 py-0.5 bg-panel-bg text-text-primary text-[9px] font-semibold rounded uppercase shadow-sm border border-border-black">

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createMatteMaterial } from '@/features/urdf-viewer';
+import { createMatteMaterial } from '@/shared/utils/materialFactory';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
 import type { MJCFCompilerSettings, MJCFMesh } from './mjcfUtils';

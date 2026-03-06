@@ -20,7 +20,7 @@ export interface UseHighlightManagerResult {
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
     revertAllHighlights: () => void;
     getRobotBoundingBox: () => THREE.Box3 | null;
@@ -211,10 +211,41 @@ export function useHighlightManager({
 
             // PERFORMANCE: Use pre-built linkMeshMap for O(1) lookup
             if (linkName) {
+                if (typeof meshToHighlight === 'number') {
+                    const linkObj = (robot as any).links?.[linkName];
+                    if (linkObj) {
+                        const isCollision = targetSubType === 'collision';
+                        const siblings = linkObj.children.filter((c: any) => isCollision ? c.isURDFCollider : c.isURDFVisual);
+                        const targetGroup = siblings[meshToHighlight];
+                        if (targetGroup) {
+                            targetGroup.traverse((c: any) => {
+                                if (c.isMesh && !c.userData?.isGizmo) {
+                                    if (!highlightedMeshesRef.current.has(c)) {
+                                        highlightedMeshesRef.current.set(c, c.material);
+                                    }
+                                    c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
+                                    c.visible = true;
+                                    if (c.parent) c.parent.visible = true;
+
+                                    if (targetSubType === 'collision' && c.material) {
+                                        (c.material as any).transparent = true;
+                                        (c.material as any).opacity = 1.0;
+                                        (c.material as any).depthTest = false;
+                                        (c.material as any).depthWrite = false;
+                                        c.renderOrder = 1000;
+                                    }
+                                }
+                            });
+                            return;
+                        }
+                    }
+                }
+
                 const mapKey = `${linkName}:${targetSubType}`;
                 const meshes = linkMeshMapRef.current.get(mapKey);
 
                 if (meshes && meshes.length > 0) {
+
                     for (let i = 0; i < meshes.length; i++) {
                         const mesh = meshes[i];
                         if (mesh.userData?.isGizmo) continue;

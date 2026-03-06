@@ -14,6 +14,7 @@ export interface UseMouseInteractionOptions {
     showCollision: boolean;
     showVisual: boolean;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
     onJointChangeCommit?: (name: string, angle: number) => void;
     setIsDragging?: (dragging: boolean) => void;
@@ -117,6 +118,15 @@ export function useMouseInteraction({
                 current = current.parent;
             }
             return null;
+        };
+
+        const isGizmoObject = (object: THREE.Object3D | null): boolean => {
+            let current: THREE.Object3D | null = object;
+            while (current) {
+                if (current.userData?.isGizmo) return true;
+                current = current.parent;
+            }
+            return false;
         };
 
         /**
@@ -301,15 +311,8 @@ export function useMouseInteraction({
             // If we only raycast `robot`, clicking gizmo will "pass through" and select
             // underlying collision/visual meshes by mistake.
             const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
-            const hitGizmo = sceneHits.some((hit) => {
-                let current: THREE.Object3D | null = hit.object;
-                while (current) {
-                    if (current.userData?.isGizmo) return true;
-                    current = current.parent;
-                }
-                return false;
-            });
-            if (hitGizmo) {
+            const nearestSceneHit = sceneHits[0];
+            if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
                 return;
             }
 
@@ -355,17 +358,42 @@ export function useMouseInteraction({
 
                 const linkObj = findParentLink(hit.object);
 
-                if (linkObj && onSelect) {
+                if (linkObj && (onSelect || onMeshSelect)) {
                     const subType = isCollisionMode ? 'collision' : 'visual';
 
-                    if (mode === 'detail') {
-                        onSelect('link', linkObj.name, subType);
-                    } else {
-                        const parent = linkObj.parent;
-                        if (parent && (parent as any).isURDFJoint) {
-                            onSelect('joint', parent.name);
-                        } else {
+                    if (onMeshSelect) {
+                        let objectIndex = 0;
+                        let current: THREE.Object3D | null = hit.object;
+                        let urdfElement: THREE.Object3D | null = null;
+                        while (current && current !== linkObj) {
+                            if ((current as any).isURDFVisual || (current as any).isURDFCollider) {
+                                urdfElement = current;
+                                break;
+                            }
+                            current = current.parent;
+                        }
+                        
+                        if (urdfElement) {
+                            const isCollider = (urdfElement as any).isURDFCollider;
+                            const siblings = linkObj.children.filter(c => isCollider ? (c as any).isURDFCollider : (c as any).isURDFVisual);
+                            objectIndex = Math.max(0, siblings.indexOf(urdfElement));
+                        }
+
+                        // Find parent joint for the event if applicable
+                        const clickedJoint = isCollisionMode ? null : findParentJoint(linkObj);
+                        onMeshSelect(linkObj.name, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
+                    }
+
+                    if (onSelect) {
+                        if (mode === 'detail') {
                             onSelect('link', linkObj.name, subType);
+                        } else {
+                            const parent = linkObj.parent;
+                            if (parent && (parent as any).isURDFJoint) {
+                                onSelect('joint', parent.name);
+                            } else {
+                                onSelect('link', linkObj.name, subType);
+                            }
                         }
                     }
 

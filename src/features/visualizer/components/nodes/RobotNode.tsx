@@ -29,7 +29,7 @@ interface CommonVisualizerProps {
   showHardwareLabels: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
-  transformMode: 'translate' | 'rotate';
+  transformMode: 'translate' | 'rotate' | 'select';
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
@@ -172,11 +172,11 @@ export const RobotNode = memo(function RobotNode({
                             px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
                             ${isSelected
                               ? 'bg-blue-600 text-white border-blue-400 z-50'
-                              : 'bg-white dark:bg-[#151515] text-slate-800 dark:text-slate-200 border-slate-300 dark:border-[#000000] hover:bg-slate-100 dark:hover:bg-[#2C2C2E]'
+                              : 'bg-white dark:bg-element-bg text-slate-800 dark:text-slate-200 border-slate-300 dark:border-border-black hover:bg-slate-100 dark:hover:bg-element-hover'
                             }
                           `}
                         >
-                          {link.name} (Base)
+                          {link.name} {lang === 'zh' ? '（基座）' : '(Base)'}
                         </div>
                       ) : (
                         <div className="w-2 h-2 rounded-full bg-slate-400/80 hover:scale-150 transition-transform" />
@@ -271,7 +271,7 @@ export const RobotNode = memo(function RobotNode({
                   px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
                   ${isSelected
                     ? 'bg-blue-600 text-white border-blue-400 z-50'
-                    : 'bg-white dark:bg-[#151515] text-blue-700 dark:text-blue-200 border-slate-300 dark:border-[#000000] hover:bg-slate-100 dark:hover:bg-[#2C2C2E]'
+                    : 'bg-white dark:bg-element-bg text-blue-700 dark:text-blue-200 border-slate-300 dark:border-border-black hover:bg-slate-100 dark:hover:bg-element-hover'
                   }
                 `}
               >

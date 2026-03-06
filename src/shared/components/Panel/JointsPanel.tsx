@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
-import { JointControlItem } from '@/features/urdf-viewer/components/JointControlItem';
-import { isSingleDofJoint } from '@/features/urdf-viewer/utils/jointTypes';
+import { JointControlItem } from './JointControlItem';
+import { isSingleDofJoint } from '@/shared/utils/jointTypes';
 
 interface JointsPanelProps {
     showJointControls: boolean;
@@ -110,6 +110,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             resizable={true}
             additionalControls={additionalControls}
             zIndex={40}
+            resizeTitle={t.resize}
         >
             <div className="p-2 space-y-2" onMouseLeave={() => onHover?.(null, null)}>
                 {robot?.joints && Object.entries(robot.joints)

@@ -3,7 +3,7 @@
  * Provides AI-powered robot inspection and generation interface
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useRef, useEffect } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
@@ -73,6 +73,14 @@ export function AIModal({
   const [isGeneratingAI, setIsGeneratingAI] = useState(false)
   const [aiResponse, setAiResponse] = useState<AIModalAIResponse | null>(null)
   const [inspectionReport, setInspectionReport] = useState<InspectionReport | null>(null)
+  const activeIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
+
+  useEffect(() => {
+    return () => {
+      activeIntervalsRef.current.forEach(clearInterval);
+      activeIntervalsRef.current = [];
+    };
+  }, []);
 
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(INSPECTION_CRITERIA.map(category => category.id))
@@ -105,16 +113,19 @@ export function AIModal({
     setInspectionReport(null)
 
     try {
-      const response = await generateRobotFromPrompt(aiPrompt, robot, motorLibrary)
+      const response = await generateRobotFromPrompt(aiPrompt, robot, motorLibrary, lang)
       if (response) {
         setAiResponse({
-          explanation: response.explanation || 'No valid response received',
+          explanation: response.explanation || (lang === 'zh' ? '未收到有效回复。' : 'No valid response received.'),
           type: response.actionType || 'advice',
           data: response.robotData
         })
       } else {
         setAiResponse({
-          explanation: 'AI service did not return a response, please try again.',
+          explanation:
+            lang === 'zh'
+              ? 'AI 服务未返回响应，请重试。'
+              : 'AI service did not return a response, please try again.',
           type: 'advice',
           data: undefined
         })
@@ -122,7 +133,10 @@ export function AIModal({
     } catch (error: any) {
       console.error('AI Generation Error', error)
       setAiResponse({
-        explanation: `Generation failed: ${error?.message || 'Unknown error'}`,
+        explanation:
+          lang === 'zh'
+            ? `生成失败：${error?.message || '未知错误'}`
+            : `Generation failed: ${error?.message || 'Unknown error'}`,
         type: 'advice',
         data: undefined
       })
@@ -178,28 +192,33 @@ export function AIModal({
       let progressInterval: ReturnType<typeof setInterval> | null = null
       let checkReportInterval: ReturnType<typeof setInterval> | null = null
 
-      const clearProgressInterval = () => {
-        if (progressInterval) {
-          clearInterval(progressInterval)
-          progressInterval = null
+      const trackInterval = (id: ReturnType<typeof setInterval>) => {
+        activeIntervalsRef.current.push(id);
+        return id;
+      };
+      const untrackInterval = (id: ReturnType<typeof setInterval> | null) => {
+        if (id) {
+          clearInterval(id);
+          activeIntervalsRef.current = activeIntervalsRef.current.filter(i => i !== id);
         }
+      };
+
+      const clearProgressInterval = () => {
+        untrackInterval(progressInterval);
+        progressInterval = null;
       }
 
       const clearTimerInterval = () => {
-        if (timerInterval) {
-          clearInterval(timerInterval)
-          timerInterval = null
-        }
+        untrackInterval(timerInterval);
+        timerInterval = null;
       }
 
       const clearCheckReportInterval = () => {
-        if (checkReportInterval) {
-          clearInterval(checkReportInterval)
-          checkReportInterval = null
-        }
+        untrackInterval(checkReportInterval);
+        checkReportInterval = null;
       }
 
-      progressInterval = setInterval(() => {
+      progressInterval = trackInterval(setInterval(() => {
         currentIndex++
         if (currentIndex <= totalItems) {
           const currentItem = selectedItemsList[currentIndex - 1]
@@ -232,7 +251,7 @@ export function AIModal({
             }
           }
 
-          timerInterval = setInterval(() => {
+          timerInterval = trackInterval(setInterval(() => {
             timerCount++
             setReportGenerationTimer(timerCount)
 
@@ -242,15 +261,15 @@ export function AIModal({
                 showReport()
               } else {
                 setReportGenerationTimer(null)
-                checkReportInterval = setInterval(() => {
+                checkReportInterval = trackInterval(setInterval(() => {
                   if (reportReady) {
                     clearCheckReportInterval()
                     showReport()
                   }
-                }, 100)
+                }, 100))
               }
             }
-          }, 1000)
+          }, 1000))
 
           runRobotInspection(robot, selectedItemsMap, lang)
             .then(report => {
@@ -271,7 +290,7 @@ export function AIModal({
               setReportGenerationTimer(null)
             })
         }
-      }, 300)
+      }, 300))
     } catch (error: any) {
       console.error('Inspection Error', error)
       setInspectionProgress(null)

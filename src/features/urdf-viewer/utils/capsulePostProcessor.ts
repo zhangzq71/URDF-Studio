@@ -66,9 +66,8 @@ function createCapsuleGeometry(
     bottomSphereMesh.position.y = -cylinderLength / 2;
     group.add(bottomSphereMesh);
 
-    // Rotate to align with URDF Z-axis convention
-    // URDF uses Z-up, Three.js CylinderGeometry uses Y-up
-    group.rotation.x = -Math.PI / 2;
+    // Align with URDFLoader cylinder primitive orientation.
+    group.rotation.x = Math.PI / 2;
 
     return group;
 }
@@ -89,6 +88,10 @@ export function processCapsuleGeometries(
     urdfContent: string
 ): void {
     try {
+        const capsuleAxisCorrection = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(Math.PI / 2, 0, 0)
+        );
+
         // Parse URDF XML
         const parser = new DOMParser();
         const doc = parser.parseFromString(urdfContent, 'text/xml');
@@ -223,7 +226,7 @@ export function processCapsuleGeometries(
                                 def.origin.xyz[1],
                                 def.origin.xyz[2]
                             );
-                            capsuleGroup.quaternion.setFromEuler(
+                            const originQuaternion = new THREE.Quaternion().setFromEuler(
                                 new THREE.Euler(
                                     def.origin.rpy[0],
                                     def.origin.rpy[1],
@@ -231,6 +234,8 @@ export function processCapsuleGeometries(
                                     'ZYX'
                                 )
                             );
+                            // Keep capsule axis correction after applying URDF origin rotation.
+                            capsuleGroup.quaternion.copy(originQuaternion).multiply(capsuleAxisCorrection);
                         }
 
                         // Apply color if specified

@@ -46,36 +46,6 @@ const DragGripIcon = ({ className = "w-3 h-3" }: { className?: string }) => (
   </svg>
 );
 
-// ============== File Icon ==============
-const FileIcon = () => (
-  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-  </svg>
-);
-
-// ============== Model Header Badge ==============
-interface ModelHeaderBadgeProps {
-  fileName: string;
-}
-
-export const ModelHeaderBadge: React.FC<ModelHeaderBadgeProps> = ({ fileName }) => {
-  return (
-    <div className="px-3 py-2 bg-element-bg border-b border-border-black">
-      <div className="flex items-center gap-2">
-        <FileIcon />
-        <div className="flex-1 min-w-0">
-          <div className="text-[10px] text-text-tertiary uppercase tracking-wide mb-0.5 whitespace-nowrap">
-            Loaded Model
-          </div>
-          <div className="text-[10px] text-text-secondary font-medium truncate" title={fileName}>
-            {fileName}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // ============== Checkbox Option ==============
 interface CheckboxOptionProps {
   checked: boolean;
@@ -339,6 +309,7 @@ interface OptionsPanelContainerProps {
   minHeight?: number;
   maxHeight?: number;
   isCollapsed?: boolean;
+  resizeTitle?: string;
 }
 
 export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
@@ -352,6 +323,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   minHeight = 150,
   maxHeight = 800,
   isCollapsed = false,
+  resizeTitle = 'Resize',
 }) => {
   const [panelSize, setPanelSize] = useState<{ width: number | string; height: number | string }>({
     width,
@@ -474,7 +446,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
             <div 
                 className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-transparent"
                 onPointerDown={(e) => handleResizeStart(e, 'corner')}
-                title="Resize"
+                title={resizeTitle}
             >
                 <svg viewBox="0 0 6 6" className="w-2 h-2 text-text-tertiary fill-current transform rotate-45 pointer-events-none">
                     <path d="M4 4 L6 6 M2 2 L6 2 L6 6 L2 6 Z" />
@@ -565,6 +537,13 @@ export function useDraggablePanel(
     }
   }, [handleMouseMove, handleMouseUp]);
 
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleMouseMove, handleMouseUp]);
+
   return {
     panelRef,
     position,
@@ -594,6 +573,7 @@ interface OptionsPanelProps {
   height?: number | string;
   resizable?: boolean;
   additionalControls?: ReactNode;
+  resizeTitle?: string;
 }
 
 export const OptionsPanel: React.FC<OptionsPanelProps> = ({
@@ -612,6 +592,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
   height,
   resizable,
   additionalControls,
+  resizeTitle,
 }) => {
   if (!show) return null;
 
@@ -627,7 +608,13 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
       className={`absolute z-${zIndex} pointer-events-auto`}
       style={style as React.CSSProperties}
     >
-      <OptionsPanelContainer width={width} height={height} resizable={resizable} isCollapsed={isCollapsed}>
+      <OptionsPanelContainer
+        width={width}
+        height={height}
+        resizable={resizable}
+        isCollapsed={isCollapsed}
+        resizeTitle={resizeTitle}
+      >
         <OptionsPanelHeader
           title={title}
           isCollapsed={isCollapsed}

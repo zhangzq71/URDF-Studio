@@ -55,8 +55,8 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
             rel="noopener noreferrer"
             className="flex items-center gap-3 p-3 rounded-xl border border-border-black hover:bg-element-bg dark:hover:bg-element-hover transition-colors group"
           >
-            <div className="w-9 h-9 bg-[#1C1C1E] dark:bg-black rounded-lg flex items-center justify-center">
-              <Github className="w-4 h-4 text-white" />
+            <div className="w-9 h-9 bg-text-primary dark:bg-element-active rounded-lg flex items-center justify-center">
+              <Github className="w-5 h-5 text-panel-bg dark:text-white" />
             </div>
             <div className="flex-1">
               <div className="text-sm font-medium text-text-primary group-hover:text-system-blue transition-colors">GitHub</div>

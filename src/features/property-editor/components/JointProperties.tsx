@@ -9,7 +9,7 @@ import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { JointType, type AppMode, type MotorSpec } from '@/types';
 import { translations } from '@/shared/i18n';
-import { InputGroup, CollapsibleSection, NumberInput, Vec3Input } from './FormControls';
+import { InputGroup, CollapsibleSection, NumberInput, Vec3Input, type Vec3Value } from './FormControls';
 import { useMotorConfig } from '../hooks/useMotorConfig';
 
 const AXIS_BASED_TYPES = new Set<JointType>([
@@ -37,6 +37,22 @@ const JOINT_TYPE_OPTIONS: JointType[] = [
 
 const DEFAULT_AXIS = { x: 0, y: 0, z: 1 };
 const DEFAULT_LIMIT = { lower: -1.57, upper: 1.57, effort: 100, velocity: 10 };
+const DEFAULT_ORIGIN = {
+  xyz: { x: 0, y: 0, z: 0 },
+  rpy: { r: 0, p: 0, y: 0 },
+};
+
+const toXYZ = (value: Vec3Value, fallback = DEFAULT_AXIS) => ({
+  x: value.x ?? fallback.x,
+  y: value.y ?? fallback.y,
+  z: value.z ?? fallback.z,
+});
+
+const toRPY = (value: Vec3Value, fallback = DEFAULT_ORIGIN.rpy) => ({
+  r: value.r ?? fallback.r,
+  p: value.p ?? fallback.p,
+  y: value.y ?? fallback.y,
+});
 
 const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): string => {
   switch (jointType) {
@@ -80,6 +96,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
   data, mode, selection, onUpdate, motorLibrary, t
 }) => {
   const jointType = (data.type as JointType | undefined) || JointType.REVOLUTE;
+  const origin = data.origin ?? DEFAULT_ORIGIN;
   const supportsAxis = AXIS_BASED_TYPES.has(jointType);
   const supportsFullLimit = LIMITED_TYPES.has(jointType);
   const supportsEffortVelocityLimit = EFFORT_VELOCITY_ONLY_TYPES.has(jointType);
@@ -172,18 +189,18 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
           <CollapsibleSection title={t.kinematics} storageKey="kinematics">
             <InputGroup label={t.originRelativeParent + " (XYZ)"}>
               <Vec3Input
-                value={data.origin?.xyz || { x: 0, y: 0, z: 0 }}
+                value={origin.xyz}
                 onChange={(v) => updateJoint({
-                  origin: { ...data.origin, xyz: v }
+                  origin: { ...origin, xyz: toXYZ(v, origin.xyz) }
                 })}
                 labels={['X', 'Y', 'Z']}
               />
             </InputGroup>
             <InputGroup label={t.originRelativeParent + " (RPY)"}>
               <Vec3Input
-                value={data.origin?.rpy || { r: 0, p: 0, y: 0 }}
+                value={origin.rpy}
                 onChange={(v) => updateJoint({
-                  origin: { ...data.origin, rpy: v }
+                  origin: { ...origin, rpy: toRPY(v, origin.rpy) }
                 })}
                 labels={[t.roll, t.pitch, t.yaw]}
                 keys={['r', 'p', 'y']}
@@ -194,7 +211,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
               <InputGroup label={t.axisRotation}>
                 <Vec3Input
                   value={data.axis || DEFAULT_AXIS}
-                  onChange={(v) => updateJoint({ axis: v })}
+                  onChange={(v) => updateJoint({ axis: toXYZ(v, data.axis || DEFAULT_AXIS) })}
                   labels={['X', 'Y', 'Z']}
                 />
               </InputGroup>

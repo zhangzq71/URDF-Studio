@@ -19,10 +19,11 @@ export interface URDFViewerProps {
     lang: Language;
     mode?: 'detail' | 'hardware';
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
     theme: Theme;
-    selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
-    hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
+    selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
+    hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
     robotLinks?: Record<string, UrdfLink>;
     focusTarget?: string | null;
     showVisual?: boolean;
@@ -33,10 +34,10 @@ export interface URDFViewerProps {
     setShowOptionsPanel?: (show: boolean) => void;
     showJointPanel?: boolean;
     setShowJointPanel?: (show: boolean) => void;
-    onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
+    onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     snapshotAction?: React.MutableRefObject<(() => void) | null>;
-    /** Currently loaded filename for display in the UI */
-    fileName?: string;
+    /** True when previewing a standalone mesh asset from the library (STL/DAE/OBJ/GLB). */
+    isMeshPreview?: boolean;
     /** Notify parent when collision transform has a pending confirm/cancel state */
     onTransformPendingChange?: (pending: boolean) => void;
 }
@@ -48,6 +49,7 @@ export interface RobotModelProps {
     showCollision?: boolean;
     showVisual?: boolean;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
     onJointChangeCommit?: (name: string, angle: number) => void;
     jointAngles?: Record<string, number>;
@@ -73,12 +75,13 @@ export interface RobotModelProps {
     focusTarget?: string | null;
     transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
     toolMode?: ToolMode;
-    onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
+    onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     isOrbitDragging?: React.MutableRefObject<boolean>;
     onTransformPending?: (pending: boolean) => void;
     isSelectionLockedRef?: React.MutableRefObject<boolean>;
     selection?: URDFViewerProps['selection'];
     hoveredSelection?: URDFViewerProps['selection'];
+    isMeshPreview?: boolean;
 }
 
 export interface CollisionTransformControlsProps {
@@ -86,25 +89,14 @@ export interface CollisionTransformControlsProps {
     selection: URDFViewerProps['selection'];
     transformMode: 'select' | 'translate' | 'rotate' | 'universal';
     setIsDragging: (dragging: boolean) => void;
-    onTransformEnd?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}) => void;
+    onTransformEnd?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     robotLinks?: Record<string, UrdfLink>;
     lang?: Language;
     onTransformPending?: (pending: boolean) => void;
 }
 
-export interface JointControlItemProps {
-    name: string;
-    joint: any;
-    jointAngles: Record<string, number>;
-    angleUnit: 'rad' | 'deg';
-    activeJoint: string | null;
-    setActiveJoint: (name: string | null) => void;
-    handleJointAngleChange: (name: string, val: number) => void;
-    handleJointChangeCommit: (name: string, val: number) => void;
-    onSelect?: (type: 'link' | 'joint', id: string) => void;
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
-    isAdvanced?: boolean;
-}
+// Re-exported from shared layer
+export type { JointControlItemProps } from '@/shared/components/Panel/JointControlItem';
 
 export interface ViewerToolbarProps {
     activeMode: ToolMode;
@@ -118,6 +110,7 @@ export interface MeasureToolProps {
     robot: THREE.Object3D | null;
     measureState: MeasureState;
     setMeasureState: React.Dispatch<React.SetStateAction<MeasureState>>;
+    deleteTooltip?: string;
 }
 
 export interface JointInteractionProps {

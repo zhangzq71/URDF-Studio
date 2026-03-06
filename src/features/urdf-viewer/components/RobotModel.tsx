@@ -53,7 +53,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     onCollisionTransformEnd,
     isOrbitDragging,
     onTransformPending,
-    isSelectionLockedRef
+    isSelectionLockedRef,
+    isMeshPreview = false
 }) => {
     const { invalidate } = useThree();
 
@@ -76,6 +77,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         assets,
         showCollision,
         showVisual,
+        isMeshPreview,
         robotLinks,
         onRobotLoaded
     });
@@ -122,6 +124,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         showCollision,
         showVisual,
         onSelect,
+        onMeshSelect,
         onJointChange,
         onJointChangeCommit,
         setIsDragging,

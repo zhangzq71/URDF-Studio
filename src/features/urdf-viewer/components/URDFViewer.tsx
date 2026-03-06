@@ -22,6 +22,12 @@ import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 import { useViewerSettings } from '../hooks/useViewerSettings';
 import { usePanelDrag } from '../hooks/usePanelDrag';
 
+const createEmptyMeasureState = (): MeasureState => ({
+    measurements: [],
+    currentPoints: [],
+    tempPoint: null
+});
+
 export function URDFViewer({
     urdfContent,
     assets,
@@ -39,6 +45,7 @@ export function URDFViewer({
     showVisual: propShowVisual,
     setShowVisual: propSetShowVisual,
     snapshotAction,
+    isMeshPreview = false,
     onCollisionTransform,
     showToolbar = true,
     setShowToolbar,
@@ -46,7 +53,6 @@ export function URDFViewer({
     setShowOptionsPanel,
     showJointPanel = true,
     setShowJointPanel,
-    fileName,
     onTransformPendingChange
 }: URDFViewerProps) {
     const t = translations[lang];
@@ -85,11 +91,7 @@ export function URDFViewer({
     const glRef = useRef<THREE.WebGLRenderer | null>(null);
     const sceneRef = useRef<THREE.Scene | null>(null);
 
-    const [measureState, setMeasureState] = useState<MeasureState>({
-        measurements: [],
-        currentPoints: [],
-        tempPoint: null
-    });
+    const [measureState, setMeasureState] = useState<MeasureState>(createEmptyMeasureState);
     
     const containerRef = useRef<HTMLDivElement>(null);
     const optionsPanelRef = useRef<HTMLDivElement>(null);
@@ -189,8 +191,6 @@ export function URDFViewer({
             setInitialJointAngles(defaultAngles);
         }
 
-        // Re-fit after initial joint values are applied (including preserved angles).
-        offsetRobotToGround(loadedRobot);
     }, []);
 
     const handleTransformPending = useCallback((pending: boolean) => {
@@ -220,6 +220,21 @@ export function URDFViewer({
             }
         });
     }, [robot, jointAngleState]);
+
+    useEffect(() => {
+        if (!robot) return;
+
+        const alignToGround = () => {
+            offsetRobotToGround(robot);
+            useUIStore.getState().setGroundPlaneOffset(0);
+        };
+
+        const timers = [0, 80, 220].map((delay) => window.setTimeout(alignToGround, delay));
+
+        return () => {
+            timers.forEach((timer) => window.clearTimeout(timer));
+        };
+    }, [robot]);
 
     useEffect(() => {
         if (robot && robot.joints) {
@@ -314,14 +329,40 @@ export function URDFViewer({
 
     const handleAutoFitGround = useCallback(() => {
         if (!robot) return;
-        let minZ = getLowestMeshZ(robot, { includeInvisible: false });
+        let minZ = getLowestMeshZ(robot, {
+            includeInvisible: false,
+            includeVisual: true,
+            includeCollision: false,
+        });
         if (minZ === null) {
-            minZ = getLowestMeshZ(robot, { includeInvisible: true });
+            minZ = getLowestMeshZ(robot, {
+                includeInvisible: true,
+                includeVisual: true,
+                includeCollision: false,
+            });
         }
         if (minZ !== null) {
             useUIStore.getState().setGroundPlaneOffset(minZ);
         }
     }, [robot]);
+
+    const handleToolModeChange = useCallback((nextMode: ToolMode) => {
+        setToolMode(nextMode);
+
+        if (nextMode !== 'measure') {
+            setMeasureState(prev => (
+                prev.currentPoints.length === 0 && prev.tempPoint === null
+                    ? prev
+                    : { ...prev, currentPoints: [], tempPoint: null }
+            ));
+        }
+    }, []);
+
+    const handleCloseMeasureTool = useCallback(() => {
+        setMeasureState(createEmptyMeasureState());
+        setToolMode('select');
+        onHover?.(null, null);
+    }, [onHover]);
 
     // Handle WebGL context creation and context lost/restored events
     const handleCanvasCreated = useCallback((state: RootState) => {
@@ -418,7 +459,6 @@ export function URDFViewer({
                 isOptionsCollapsed={isOptionsCollapsed}
                 toggleOptionsCollapsed={toggleOptionsCollapsed}
                 setShowOptionsPanel={setShowOptionsPanel}
-                fileName={fileName}
                 lang={lang}
                 highlightMode={highlightMode}
                 setHighlightMode={setHighlightMode}
@@ -483,7 +523,7 @@ export function URDFViewer({
             {showToolbar && (
                 <ViewerToolbar
                     activeMode={toolMode}
-                    setMode={setToolMode}
+                    setMode={handleToolModeChange}
                     onClose={setShowToolbar ? () => setShowToolbar(false) : undefined}
                     lang={lang}
                 />
@@ -495,6 +535,7 @@ export function URDFViewer({
                 measurePanelRef={measurePanelRef}
                 measurePanelPos={measurePanelPos}
                 onMouseDown={(e) => handleMouseDown('measure', e)}
+                onClose={handleCloseMeasureTool}
                 measureState={measureState}
                 setMeasureState={setMeasureState}
                 lang={lang}
@@ -505,7 +546,7 @@ export function URDFViewer({
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
                     <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl text-center">
                         <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-                        <p className="text-gray-700 dark:text-gray-300">WebGL context lost, restoring...</p>
+                        <p className="text-gray-700 dark:text-gray-300">{t.webglContextRestoring}</p>
                     </div>
                 </div>
             )}
@@ -518,7 +559,6 @@ export function URDFViewer({
                     antialias: true,
                     toneMapping: THREE.ACESFilmicToneMapping,
                     toneMappingExposure: 1.1,
-                    preserveDrawingBuffer: true,
                     powerPreference: 'high-performance',
                     failIfMajorPerformanceCaveat: false,
                 }}
@@ -544,6 +584,7 @@ export function URDFViewer({
                     robot={robot}
                     measureState={measureState}
                     setMeasureState={setMeasureState}
+                    deleteTooltip={t.deleteMeasurement}
                 />
 
                 <Suspense fallback={null}>
@@ -554,6 +595,7 @@ export function URDFViewer({
                         showCollision={showCollision}
                         showVisual={showVisual}
                         onSelect={handleSelectWrapper}
+                        onMeshSelect={onMeshSelect}
                         onJointChange={handleJointAngleChange}
                         onJointChangeCommit={handleJointChangeCommit}
                         jointAngles={jointAngles}
@@ -585,6 +627,7 @@ export function URDFViewer({
                         isOrbitDragging={isOrbitDragging}
                         onTransformPending={handleTransformPending}
                         isSelectionLockedRef={transformPendingRef}
+                        isMeshPreview={isMeshPreview}
                     />
                 </Suspense>
 
