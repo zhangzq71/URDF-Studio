@@ -25,7 +25,7 @@ export interface UseHoverDetectionOptions {
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
 }
 
@@ -198,7 +198,7 @@ export function useHoverDetection({
 
         const restoreSelectionHighlight = () => {
             if (selection?.type === 'link' && selection.id) {
-                highlightGeometry(selection.id, false, selectionSubType);
+                highlightGeometry(selection.id, false, selectionSubType, selection.objectIndex);
             }
         };
 

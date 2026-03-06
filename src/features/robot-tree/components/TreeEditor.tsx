@@ -573,6 +573,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             {isStructureOpen && (
               <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
                 <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-panel-bg">
+                  <div className="min-w-max">
                   {isAssemblyView && assemblyState ? (
                     <AssemblyTreeView
                       assemblyState={assemblyState}
@@ -605,6 +606,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       t={t}
                     />
                   )}
+                  </div>
                 </div>
               </div>
             )}

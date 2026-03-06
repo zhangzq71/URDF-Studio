@@ -5,6 +5,7 @@ import { getAxisColor, type CollisionPendingEdit } from '../utils/collisionTrans
 
 interface CollisionPendingEditOverlayProps {
     pendingEdit: CollisionPendingEdit;
+    axisLabel: string;
     targetObject: THREE.Object3D;
     inputValue: string;
     deltaDisplay: string;
@@ -18,6 +19,7 @@ interface CollisionPendingEditOverlayProps {
 
 export const CollisionPendingEditOverlay: React.FC<CollisionPendingEditOverlayProps> = ({
     pendingEdit,
+    axisLabel,
     targetObject,
     inputValue,
     deltaDisplay,
@@ -51,10 +53,10 @@ export const CollisionPendingEditOverlay: React.FC<CollisionPendingEditOverlayPr
                     onPointerDown={(event) => event.stopPropagation()}
                 >
                     <span
-                        className="w-5 h-5 rounded text-white text-xs font-bold flex items-center justify-center shadow"
+                        className="h-5 min-w-5 px-1.5 rounded text-white text-[10px] font-bold flex items-center justify-center shadow"
                         style={{ backgroundColor: getAxisColor(pendingEdit.axis) }}
                     >
-                        {pendingEdit.axis}
+                        {axisLabel}
                     </span>
                     <input
                         type="number"

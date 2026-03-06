@@ -10,7 +10,8 @@ import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 import { InputGroup, NumberInput, Vec3Input } from './FormControls';
 import { MeshPreview } from './MeshPreview';
-import { computeAutoAlign, convertGeometryType } from '../utils/geometryConversion';
+import { computeAutoAlign, convertGeometryType, computeMeshBoundsFromAssets } from '../utils/geometryConversion';
+import type { MeshBounds } from '../utils/geometryConversion';
 
 interface GeometryEditorProps {
   data: UrdfLink;
@@ -37,6 +38,9 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const geomData = data[category] || {} as any;
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
+    const meshBoundsRef = useRef<MeshBounds | null>(null);
+    const meshBoundsPathRef = useRef<string | null>(null);
+
     const geometrySnapshotCacheRef = useRef<Record<string, Partial<Record<GeometryType, {
       dimensions?: { x: number; y: number; z: number };
       origin?: { xyz: { x: number; y: number; z: number }; rpy: { r: number; p: number; y: number } };
@@ -82,6 +86,23 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       }
       geometrySnapshotCacheRef.current[snapshotKey][currentType] = createSnapshot(geomData);
     }, [geomData, snapshotKey]);
+
+    useEffect(() => {
+      if (geomData.type !== GeometryType.MESH || !geomData.meshPath) {
+        return;
+      }
+      if (meshBoundsPathRef.current === geomData.meshPath && meshBoundsRef.current) {
+        return;
+      }
+      meshBoundsPathRef.current = geomData.meshPath;
+      let cancelled = false;
+      computeMeshBoundsFromAssets(geomData.meshPath, assets).then((bounds) => {
+        if (!cancelled) {
+          meshBoundsRef.current = bounds;
+        }
+      });
+      return () => { cancelled = true; };
+    }, [geomData.meshPath, geomData.type, assets]);
 
     const handleApplyMesh = () => {
         if (previewMeshPath) {
@@ -137,7 +158,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           return;
         }
 
-        const converted = convertGeometryType(geomData, newType);
+        const meshBounds = (currentType === GeometryType.MESH) ? (meshBoundsRef.current ?? undefined) : undefined;
+        const converted = convertGeometryType(geomData, newType, meshBounds);
         const nextGeom = {
           ...converted,
           meshPath: newType === GeometryType.MESH ? geomData.meshPath : undefined,

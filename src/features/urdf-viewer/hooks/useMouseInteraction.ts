@@ -47,6 +47,7 @@ export function useMouseInteraction({
     showCollision,
     showVisual,
     onSelect,
+    onMeshSelect,
     onJointChange,
     onJointChangeCommit,
     setIsDragging,
@@ -495,7 +496,7 @@ export function useMouseInteraction({
             window.removeEventListener('blur', handleWindowBlur);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
-    }, [gl, camera, scene, robot, onSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual]);
+    }, [gl, camera, scene, robot, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual]);
 
     return {
         mouseRef,
