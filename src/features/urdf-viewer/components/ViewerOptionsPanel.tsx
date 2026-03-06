@@ -8,8 +8,7 @@ import {
     OptionsPanelHeader,
     OptionsPanelContent,
     SegmentedControl,
-    CollapsibleSection,
-    ModelHeaderBadge
+    CollapsibleSection
 } from '@/shared/components/Panel/OptionsPanel';
 
 interface ViewerOptionsPanelProps {
@@ -22,7 +21,6 @@ interface ViewerOptionsPanelProps {
     isOptionsCollapsed: boolean;
     toggleOptionsCollapsed: () => void;
     setShowOptionsPanel?: (show: boolean) => void;
-    fileName?: string;
     lang: string;
     highlightMode: 'link' | 'collision';
     setHighlightMode: (mode: 'link' | 'collision') => void;
@@ -69,7 +67,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     isOptionsCollapsed,
     toggleOptionsCollapsed,
     setShowOptionsPanel,
-    fileName,
     lang,
     highlightMode,
     setHighlightMode,
@@ -125,7 +122,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 : { top: '16px', right: '16px' }
             }
         >
-            <OptionsPanelContainer resizable={true} isCollapsed={isOptionsCollapsed}>
+            <OptionsPanelContainer resizable={true} isCollapsed={isOptionsCollapsed} resizeTitle={t.resize}>
                 <OptionsPanelHeader
                     title={mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
                     isCollapsed={isOptionsCollapsed}
@@ -135,9 +132,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 />
 
                 <OptionsPanelContent isCollapsed={isOptionsCollapsed}>
-                        {/* Loaded File Display */}
-                        {fileName && <ModelHeaderBadge fileName={fileName} />}
-
                         <div className="p-2 pb-0">
                             <SegmentedControl
                                 options={[

@@ -148,6 +148,9 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       ? ([origin.rpy.r, origin.rpy.p, origin.rpy.y] as [number, number, number])
       : undefined,
     ref: isCollision ? setCollisionRef : setVisualRef,
+    userData: {
+      geometryRole: isCollision ? 'collision' : 'visual',
+    },
   };
 
   let geometryNode;

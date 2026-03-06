@@ -143,7 +143,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Arm_to_Hand_Joint"
+              placeholder={t.bridgeJointNamePlaceholder}
               className={fieldClassName}
             />
           </div>
@@ -234,7 +234,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">Origin X</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">{t.originX}</label>
               <input
                 type="number"
                 step={0.01}
@@ -244,7 +244,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">Origin Y</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">{t.originY}</label>
               <input
                 type="number"
                 step={0.01}
@@ -254,7 +254,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">Origin Z</label>
+              <label className="block text-xs font-medium text-text-secondary mb-1">{t.originZ}</label>
               <input
                 type="number"
                 step={0.01}

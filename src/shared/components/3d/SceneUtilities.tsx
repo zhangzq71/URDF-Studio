@@ -61,11 +61,11 @@ export const HoverInvalidator = () => {
 export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number }) => {
   const { gl, setSize, invalidate, setFrameloop } = useThree();
   const loopFrameRef = useRef<number | null>(null);
+  const resizeWatchUntilRef = useRef(0);
   const lastSizeRef = useRef({ width: 0, height: 0 });
   const appliedBufferSizeRef = useRef({ width: 0, height: 0 });
   const pendingBufferSizeRef = useRef<{ width: number; height: number } | null>(null);
   const restoreFrameLoopTimerRef = useRef<number | null>(null);
-  const lastResizeAtRef = useRef(0);
 
   const beginSmoothResize = useCallback(() => {
     setFrameloop('always');
@@ -127,29 +127,58 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
     return true;
   }, [gl, setSize, invalidate]);
 
+  const ensureResizeWatch = useCallback((durationMs = transitionMs + 120) => {
+    const now = performance.now();
+    resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, now + durationMs);
+    if (loopFrameRef.current !== null) return;
+
+    const loop = () => {
+      loopFrameRef.current = null;
+      const frameNow = performance.now();
+      const changed = syncCanvasSize();
+      if (changed) {
+        beginSmoothResize();
+        // Keep watching for a short settle window while animated width/height changes continue.
+        resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, frameNow + 160);
+      } else if (pendingBufferSizeRef.current) {
+        flushPendingBufferSize();
+      }
+
+      if (frameNow < resizeWatchUntilRef.current || pendingBufferSizeRef.current) {
+        invalidate();
+        loopFrameRef.current = requestAnimationFrame(loop);
+      } else {
+        flushPendingBufferSize();
+      }
+    };
+
+    loopFrameRef.current = requestAnimationFrame(loop);
+  }, [transitionMs, syncCanvasSize, beginSmoothResize, flushPendingBufferSize, invalidate]);
+
   useLayoutEffect(() => {
     syncCanvasSize();
     flushPendingBufferSize();
 
-    const loop = () => {
-      const now = performance.now();
-      const changed = syncCanvasSize();
-      if (changed) {
-        lastResizeAtRef.current = now;
+    const parent = gl.domElement.parentElement;
+    let resizeObserver: ResizeObserver | null = null;
+    if (parent && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
         beginSmoothResize();
-      } else if (now - lastResizeAtRef.current > 80) {
-        flushPendingBufferSize();
-      }
+        ensureResizeWatch();
+      });
+      resizeObserver.observe(parent);
+    }
 
-      if (now - lastResizeAtRef.current < transitionMs + 80) {
-        invalidate();
-      }
-      loopFrameRef.current = requestAnimationFrame(loop);
+    const handleWindowResize = () => {
+      beginSmoothResize();
+      ensureResizeWatch();
     };
 
-    loopFrameRef.current = requestAnimationFrame(loop);
+    window.addEventListener('resize', handleWindowResize);
 
     return () => {
+      window.removeEventListener('resize', handleWindowResize);
+      resizeObserver?.disconnect();
       if (loopFrameRef.current !== null) {
         cancelAnimationFrame(loopFrameRef.current);
         loopFrameRef.current = null;
@@ -161,12 +190,12 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
       flushPendingBufferSize();
       setFrameloop('demand');
     };
-  }, [syncCanvasSize, flushPendingBufferSize, transitionMs, setFrameloop, beginSmoothResize, invalidate]);
+  }, [gl, syncCanvasSize, flushPendingBufferSize, setFrameloop, beginSmoothResize, ensureResizeWatch]);
 
   return null;
 };
 
-// Snapshot Manager - captures a clean studio-style snapshot using the live canvas pipeline
+// Snapshot Manager - captures the exact current 3D viewport from the live canvas pipeline
 export const SnapshotManager = ({
   actionRef,
   robotName
@@ -175,10 +204,8 @@ export const SnapshotManager = ({
   robotName: string;
 }) => {
   const SNAPSHOT_MIN_LONG_EDGE = 3840;
-  const SNAPSHOT_GROUND_SIZE = 400;
   const SNAPSHOT_GRID_OBJECT_NAME = 'ReferenceGrid';
   const { gl, get, invalidate } = useThree();
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const pendingCaptureRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -191,10 +218,10 @@ export const SnapshotManager = ({
       }
     };
 
-    const resolveSnapshotSize = (canvas: HTMLCanvasElement) => {
-      const currentSize = gl.getSize(new THREE.Vector2());
-      const baseWidth = Math.max(1, Math.round(canvas.clientWidth || currentSize.x || 1));
-      const baseHeight = Math.max(1, Math.round(canvas.clientHeight || currentSize.y || 1));
+    const resolveSnapshotSize = () => {
+      const drawingBufferSize = gl.getDrawingBufferSize(new THREE.Vector2());
+      const baseWidth = Math.max(1, Math.round(drawingBufferSize.x || 1));
+      const baseHeight = Math.max(1, Math.round(drawingBufferSize.y || 1));
       const longEdge = Math.max(baseWidth, baseHeight);
       const scale = longEdge >= SNAPSHOT_MIN_LONG_EDGE ? 1 : SNAPSHOT_MIN_LONG_EDGE / longEdge;
       return {
@@ -251,98 +278,92 @@ export const SnapshotManager = ({
       onDone?.();
     };
 
+    const readFramebufferToCanvas = (width: number, height: number) => {
+      const context = gl.getContext();
+      const pixelBuffer = new Uint8Array(width * height * 4);
+      const captureCanvas = document.createElement('canvas');
+      captureCanvas.width = width;
+      captureCanvas.height = height;
+      const ctx = captureCanvas.getContext('2d');
+      if (!ctx) {
+        return captureCanvas;
+      }
+
+      context.finish();
+      context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixelBuffer);
+
+      const imageData = ctx.createImageData(width, height);
+      const rowStride = width * 4;
+
+      for (let sourceRow = 0; sourceRow < height; sourceRow += 1) {
+        const destinationRow = height - sourceRow - 1;
+        const sourceOffset = sourceRow * rowStride;
+        const destinationOffset = destinationRow * rowStride;
+        imageData.data.set(
+          pixelBuffer.subarray(sourceOffset, sourceOffset + rowStride),
+          destinationOffset,
+        );
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      return captureCanvas;
+    };
+
+    const createExportCanvas = (sourceCanvas: HTMLCanvasElement, targetWidth: number, targetHeight: number) => {
+      if (sourceCanvas.width === targetWidth && sourceCanvas.height === targetHeight) {
+        return sourceCanvas;
+      }
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = targetWidth;
+      exportCanvas.height = targetHeight;
+      const ctx = exportCanvas.getContext('2d');
+      if (!ctx) {
+        return sourceCanvas;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+      return exportCanvas;
+    };
+
+    const hideSnapshotGrid = (scene: THREE.Scene) => {
+      const hiddenObjects: Array<{ object: THREE.Object3D; visible: boolean }> = [];
+
+      scene.traverse((object) => {
+        if (object.name !== SNAPSHOT_GRID_OBJECT_NAME) return;
+        hiddenObjects.push({ object, visible: object.visible });
+        object.visible = false;
+      });
+
+      return () => {
+        hiddenObjects.forEach(({ object, visible }) => {
+          object.visible = visible;
+        });
+      };
+    };
+
     const renderAndDownloadHighRes = (onDone?: () => void) => {
-      const canvas = gl.domElement;
-      const { scene } = get();
-      const { targetWidth, targetHeight } = resolveSnapshotSize(canvas);
-
-      const applySnapshotSceneOverrides = () => {
-        const hiddenObjects: Array<{ object: THREE.Object3D; visible: boolean }> = [];
-        scene.traverse((object) => {
-          if (object.name !== SNAPSHOT_GRID_OBJECT_NAME) return;
-          hiddenObjects.push({ object, visible: object.visible });
-          object.visible = false;
-        });
-
-        const floorColor = new THREE.Color('#e5e7eb');
-        if (scene.background instanceof THREE.Color) {
-          floorColor.copy(scene.background);
-          const floorHsl = { h: 0, s: 0, l: 0 };
-          floorColor.getHSL(floorHsl);
-          floorHsl.s *= 0.35;
-          floorHsl.l = Math.min(
-            0.92,
-            Math.max(0.16, floorHsl.l + (floorHsl.l > 0.5 ? -0.06 : 0.08))
-          );
-          floorColor.setHSL(floorHsl.h, floorHsl.s, floorHsl.l);
-        }
-
-        const floorGeometry = new THREE.PlaneGeometry(SNAPSHOT_GROUND_SIZE, SNAPSHOT_GROUND_SIZE);
-        // Use an unlit floor to avoid altering perceived robot material response in snapshot output.
-        const floorMaterial = new THREE.MeshBasicMaterial({
-          color: floorColor,
-          toneMapped: false,
-          dithering: true,
-          depthWrite: true,
-        });
-        const snapshotGround = new THREE.Mesh(floorGeometry, floorMaterial);
-        snapshotGround.name = '__snapshot_ground__';
-        snapshotGround.position.set(0, 0, (Number.isFinite(groundPlaneOffset) ? groundPlaneOffset : 0) - 0.002);
-        snapshotGround.receiveShadow = false;
-        snapshotGround.castShadow = false;
-        snapshotGround.renderOrder = -95;
-        scene.add(snapshotGround);
-
-        return () => {
-          scene.remove(snapshotGround);
-          floorGeometry.dispose();
-          floorMaterial.dispose();
-          hiddenObjects.forEach(({ object, visible }) => {
-            object.visible = visible;
-          });
-        };
-      };
-
-      const createUpscaledCanvas = () => {
-        if (canvas.width === targetWidth && canvas.height === targetHeight) {
-          return canvas;
-        }
-
-        const exportCanvas = document.createElement('canvas');
-        exportCanvas.width = targetWidth;
-        exportCanvas.height = targetHeight;
-        const ctx = exportCanvas.getContext('2d');
-        if (!ctx) {
-          return canvas;
-        }
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
-        return exportCanvas;
-      };
-
-      let restoreSceneOverrides: (() => void) | null = null;
+      const { targetWidth, targetHeight, baseWidth, baseHeight } = resolveSnapshotSize();
+      let restoreSnapshotGrid: (() => void) | null = null;
       try {
-        restoreSceneOverrides = applySnapshotSceneOverrides();
-        // Keep viewer rendering settings untouched; capture the real on-screen frame,
-        // then upscale to 4K-class output to preserve material/gloss appearance.
-        invalidate();
+        // Keep the live viewport material response unchanged, but hide the reference grid
+        // so snapshots look like clean promo images.
         waitFrames(2, () => {
-          const exportCanvas = createUpscaledCanvas();
+          const { scene: latestScene, camera: latestCamera } = get();
+          restoreSnapshotGrid = hideSnapshotGrid(latestScene);
+          gl.render(latestScene, latestCamera);
+          const capturedCanvas = readFramebufferToCanvas(baseWidth, baseHeight);
+          restoreSnapshotGrid();
+          restoreSnapshotGrid = null;
+          const exportCanvas = createExportCanvas(capturedCanvas, targetWidth, targetHeight);
           downloadCanvas(exportCanvas, () => {
-            if (restoreSceneOverrides) {
-              restoreSceneOverrides();
-              restoreSceneOverrides = null;
-            }
             invalidate();
             onDone?.();
           });
         });
       } catch (e) {
-        if (restoreSceneOverrides) {
-          restoreSceneOverrides();
-          restoreSceneOverrides = null;
-        }
+        restoreSnapshotGrid?.();
         invalidate();
         throw e;
       }
@@ -384,7 +405,7 @@ export const SnapshotManager = ({
       clearPendingFrames();
       if (actionRef) actionRef.current = null;
     };
-  }, [gl, get, robotName, actionRef, invalidate, groundPlaneOffset]);
+  }, [gl, get, robotName, actionRef, invalidate]);
 
   return null;
 };
@@ -709,11 +730,13 @@ export function SceneLighting({
 // ============================================================
 interface ReferenceGridProps {
   theme: Theme;
+  groundOffset?: number;
 }
 
-export function ReferenceGrid({ theme }: ReferenceGridProps) {
-  const gridRef = useRef<THREE.Object3D>(null);
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
+  const gridRef = useRef<THREE.Mesh>(null);
+  const storedGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+  const groundPlaneOffset = groundOffset ?? storedGroundPlaneOffset;
 
   const effectiveTheme = theme === 'system'
     ? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
@@ -728,6 +751,13 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
       gridRef.current.traverse((child) => {
         child.renderOrder = -100;
       });
+
+      const gridMaterial = gridRef.current.material as THREE.Material | undefined;
+      if (gridMaterial) {
+        gridMaterial.polygonOffset = true;
+        gridMaterial.polygonOffsetFactor = 1;
+        gridMaterial.polygonOffsetUnits = 1;
+      }
     }
   }, []);
 
@@ -735,6 +765,7 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
     <Grid
       ref={gridRef as any}
       name="ReferenceGrid"
+      side={THREE.DoubleSide}
       infiniteGrid
       fadeDistance={100}
       sectionSize={1}
@@ -744,7 +775,7 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
       cellColor={effectiveTheme === 'light' ? '#e2e8f0' : '#444444'}
       sectionColor={effectiveTheme === 'light' ? '#cbd5e1' : '#555555'}
       rotation={[Math.PI / 2, 0, 0]}
-      position={[0, 0, groundPlaneOffset - 0.001]}
+      position={[0, 0, groundPlaneOffset]}
       receiveShadow={false}
     />
   );

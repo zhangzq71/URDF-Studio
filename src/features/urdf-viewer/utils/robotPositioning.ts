@@ -1,19 +1,28 @@
 import * as THREE from 'three';
-import { useUIStore } from '@/store';
 import { getLowestMeshZ } from '@/shared/utils';
 
 /**
- * Auto-fit ground plane to the robot's lowest Z point.
- * Sets groundPlaneOffset in uiStore instead of moving the model.
+ * Align the rendered robot so its lowest visible visual geometry rests on Z=0.
+ * This keeps the grid/canvas stable while switching assets with different
+ * authoring origins, reducing visible scene "jumps" during preview updates.
  */
 export function offsetRobotToGround(robot: THREE.Object3D): void {
-    // Prefer visible geometry so hidden collision meshes don't pull the horizon down.
-    let minZ = getLowestMeshZ(robot, { includeInvisible: false });
+    // Prefer visible visual geometry so collision meshes never affect grounding.
+    let minZ = getLowestMeshZ(robot, {
+        includeInvisible: false,
+        includeVisual: true,
+        includeCollision: false,
+    });
     if (minZ === null) {
         // Fallback for edge cases where visibility is temporarily not initialized.
-        minZ = getLowestMeshZ(robot, { includeInvisible: true });
+        minZ = getLowestMeshZ(robot, {
+            includeInvisible: true,
+            includeVisual: true,
+            includeCollision: false,
+        });
     }
     if (minZ !== null) {
-        useUIStore.getState().setGroundPlaneOffset(minZ);
+        robot.position.z -= minZ;
+        robot.updateMatrixWorld(true);
     }
 }

@@ -8,6 +8,7 @@ import {
   Activity,
   Box,
   Cpu,
+  Pencil,
   Upload,
   Check,
   Globe,
@@ -55,7 +56,7 @@ function HeaderButton({
   return (
     <button
       onClick={onClick}
-      className={`relative z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+      className={`relative z-50 shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md whitespace-nowrap text-xs font-medium transition-all ${
         isActive
           ? 'bg-element-bg dark:bg-element-active text-text-primary dark:text-white'
           : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
@@ -84,6 +85,7 @@ interface HeaderProps {
   onOpenURDFGallery: () => void;
   // Snapshot
   onSnapshot: () => void;
+  onOptimizeCollisionCylinders: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -113,6 +115,7 @@ export function Header({
   onOpenAbout,
   onOpenURDFGallery,
   onSnapshot,
+  onOptimizeCollisionCylinders,
   viewConfig,
   setViewConfig,
 }: HeaderProps) {
@@ -142,9 +145,9 @@ export function Header({
   }, [activeMenu]);
 
   return (
-    <header className="h-12 border-b flex items-center px-3 shrink-0 relative bg-panel-bg dark:bg-panel-bg border-border-black">
+    <header className="h-12 border-b shrink-0 bg-panel-bg dark:bg-panel-bg border-border-black grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3">
       {/* Left Section - Logo & Menus */}
-      <div className="flex items-center gap-1 shrink-0 flex-1 min-w-0">
+      <div className="flex items-center gap-1 min-w-0">
         {/* Logo */}
         <div className="flex items-center gap-2 pr-3 mr-1 border-r border-border-black">
           <img src="/logos/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
@@ -165,14 +168,14 @@ export function Header({
               }}
             >
               <FileText className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{t.file}</span>
-              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
+              <span className="hidden lg:inline">{t.file}</span>
+              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden lg:inline ${activeMenu === 'file' ? 'rotate-180' : ''}`} />
             </HeaderButton>
 
             {activeMenu === 'file' && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => { setActiveMenu(null); setIsExportSubmenuOpen(false); }} />
-                <div className="absolute top-full left-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
+                <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
                   <button
                     onClick={() => { setActiveMenu(null); setTimeout(onImportFolder, 0); }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
@@ -205,7 +208,7 @@ export function Header({
                     </button>
 
                     {isExportSubmenuOpen && (
-                      <div className="absolute top-0 left-full ml-1 w-auto min-w-[8.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-[60] py-1">
+                      <div className="absolute top-0 left-full ml-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-[60] py-1">
                         <button
                           onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExportURDF(); }}
                           className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
@@ -239,6 +242,77 @@ export function Header({
             )}
           </div>
 
+          {/* Edit Menu */}
+          <div className="relative">
+            <HeaderButton
+              isActive={activeMenu === 'edit'}
+              onClick={() => setActiveMenu(activeMenu === 'edit' ? null : 'edit')}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              <span className="hidden lg:inline">{lang === 'zh' ? '编辑' : 'Edit'}</span>
+              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden lg:inline ${activeMenu === 'edit' ? 'rotate-180' : ''}`} />
+            </HeaderButton>
+
+            {activeMenu === 'edit' && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
+                <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
+                  <button
+                    onClick={() => {
+                      undo();
+                      setActiveMenu(null);
+                    }}
+                    disabled={!canUndo}
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center justify-between gap-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Undo className="w-4 h-4 text-slate-400" />
+                      {lang === 'zh' ? '撤销' : 'Undo'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Z</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      redo();
+                      setActiveMenu(null);
+                    }}
+                    disabled={!canRedo}
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center justify-between gap-6 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Redo className="w-4 h-4 text-slate-400" />
+                      {lang === 'zh' ? '重做' : 'Redo'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Shift+Z</span>
+                  </button>
+                  <div className="h-px bg-element-bg dark:bg-border-black my-1" />
+                  <div className="relative group">
+                    <button
+                      onClick={() => {
+                        onOptimizeCollisionCylinders();
+                        setActiveMenu(null);
+                      }}
+                      title={lang === 'zh'
+                        ? '将所有 cylinder 碰撞体一键转换为 capsule'
+                        : 'One-click convert all cylinder collision bodies to capsule'}
+                      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                    >
+                      <RefreshCw className="w-4 h-4 text-slate-400" />
+                      {lang === 'zh' ? '碰撞体优化' : 'Collision Optimization'}
+                    </button>
+                    <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block z-[60]">
+                      <div className="rounded-md border border-border-black bg-panel-bg dark:bg-panel-bg px-2 py-1 text-[10px] text-text-secondary whitespace-nowrap shadow-md dark:shadow-xl">
+                        {lang === 'zh'
+                          ? '一键将所有 Cylinder 碰撞体转换为 Capsule'
+                          : 'Convert all cylinder collisions to capsule'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           {/* Toolbox Menu */}
           <div className="relative">
             <HeaderButton
@@ -246,14 +320,14 @@ export function Header({
               onClick={() => setActiveMenu(activeMenu === 'toolbox' ? null : 'toolbox')}
             >
               <Briefcase className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{t.toolbox}</span>
-              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
+              <span className="hidden lg:inline">{t.toolbox}</span>
+              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden lg:inline ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />
             </HeaderButton>
 
             {activeMenu === 'toolbox' && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-auto min-w-[14rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 p-2">
+                <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 p-2">
                   <div className="space-y-1">
                     <button
                       onClick={() => { setActiveMenu(null); onOpenAI(); }}
@@ -319,8 +393,8 @@ export function Header({
               onClick={() => setActiveMenu(activeMenu === 'view' ? null : 'view')}
             >
               <Eye className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{lang === 'zh' ? '视图' : 'View'}</span>
-              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden md:inline ${activeMenu === 'view' ? 'rotate-180' : ''}`} />
+              <span className="hidden lg:inline">{lang === 'zh' ? '视图' : 'View'}</span>
+              <ChevronDown className={`w-3 h-3 opacity-60 transition-transform hidden lg:inline ${activeMenu === 'view' ? 'rotate-180' : ''}`} />
             </HeaderButton>
 
             {activeMenu === 'view' && (
@@ -352,26 +426,27 @@ export function Header({
             )}
           </div>
 
-          <div className="w-px h-5 bg-border-black mx-1.5 hidden md:block" />
+          <div className="w-px h-5 bg-border-black mx-1.5 hidden lg:block" />
 
           {/* Source Code Button */}
-          <div className="relative hidden md:block">
+          <div className="relative hidden lg:block shrink-0">
             <button
               onClick={onOpenCodeViewer}
               onMouseEnter={onPrefetchCodeViewer}
               onFocus={onPrefetchCodeViewer}
               onPointerDown={onPrefetchCodeViewer}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md whitespace-nowrap text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white"
+              title={lang === 'zh' ? '源代码' : 'Source Code'}
             >
               <Code className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">{lang === 'zh' ? '源代码' : 'Source Code'}</span>
+              <span className="hidden 2xl:inline">{lang === 'zh' ? '源代码' : 'Source Code'}</span>
             </button>
           </div>
 
-          <div className="w-px h-5 bg-border-black mx-1.5 hidden md:block" />
+          <div className="w-px h-5 bg-border-black mx-1.5 hidden xl:block" />
 
           {/* Undo/Redo */}
-          <div className="items-center gap-0.5 hidden md:flex">
+          <div className="items-center gap-0.5 hidden xl:flex">
             <button
               onClick={undo}
               disabled={!canUndo}
@@ -398,20 +473,21 @@ export function Header({
             </button>
           </div>
 
-          {/* Mode Switcher - Inline on small screens */}
-          <div className="flex items-center ml-2 lg:hidden">
-            <ModeSwitcher appMode={appMode} setAppMode={setAppMode} t={t} compact />
-          </div>
         </div>
       </div>
 
-      {/* Center - Mode Switcher - Large screens only */}
-      <div className="hidden lg:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+      {/* Center - Mode Switcher (compact on medium screens) */}
+      <div className="hidden md:flex xl:hidden justify-self-center">
+        <ModeSwitcher appMode={appMode} setAppMode={setAppMode} t={t} compact />
+      </div>
+
+      {/* Center - Mode Switcher (full labels on large screens) */}
+      <div className="hidden xl:flex justify-self-center">
         <ModeSwitcher appMode={appMode} setAppMode={setAppMode} t={t} />
       </div>
 
       {/* Right Section - Actions */}
-      <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+      <div className="flex items-center gap-0.5 shrink-0 justify-self-end">
         <button
           onClick={onOpenURDFGallery}
           className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
@@ -607,8 +683,8 @@ function MobileMoreMenu({
   appMode: AppMode;
   canUndo: boolean;
   canRedo: boolean;
-  activeMenu: 'file' | 'toolbox' | 'view' | 'more' | null;
-  setActiveMenu: (menu: 'file' | 'toolbox' | 'view' | 'more' | null) => void;
+  activeMenu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
+  setActiveMenu: (menu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null) => void;
   setAppMode: (mode: AppMode) => void;
   setLang: (lang: 'en' | 'zh') => void;
   setTheme: (theme: Theme) => void;

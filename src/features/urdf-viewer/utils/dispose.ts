@@ -83,17 +83,10 @@ export function disposeTexturesFromMaterial(material: THREE.Material): void {
  * Clean up a scene completely - useful for component unmount
  */
 export function cleanupScene(scene: THREE.Scene, excludeMaterials?: Set<THREE.Material>): void {
-    // Collect objects to remove (don't modify while traversing)
-    const objectsToRemove: THREE.Object3D[] = [];
-    
-    scene.traverse((child) => {
-        if (child !== scene) {
-            objectsToRemove.push(child);
-        }
-    });
-
-    // Dispose and remove each object
-    for (const obj of objectsToRemove) {
+    // Only dispose direct children to avoid double-dispose
+    // (disposeObject3D already traverses each subtree)
+    const directChildren = [...scene.children];
+    for (const obj of directChildren) {
         disposeObject3D(obj, true, excludeMaterials);
     }
 }

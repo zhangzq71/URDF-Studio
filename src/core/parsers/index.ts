@@ -19,3 +19,6 @@ export { parseUSDAToThreeJS } from './usd/usdLoader';
 // Xacro Parser (ROS Xacro format)
 export { isXacro, processXacro, parseXacro, getXacroArgs } from './xacro/xacroParser';
 export type { XacroArgs, XacroFileMap } from './xacro/xacroParser';
+
+// File Preview - Convert various robot file formats to URDF for preview
+export { computePreviewUrdf } from './filePreview';

@@ -12,6 +12,7 @@ interface JointTransformControlsProps {
   transformMode: 'translate' | 'rotate' | 'select';
   transformControlsState: TransformControlsState;
   confirmTitle?: string;
+  cancelTitle?: string;
 }
 
 /**
@@ -30,6 +31,7 @@ export const JointTransformControls = memo(function JointTransformControls({
   transformMode,
   transformControlsState,
   confirmTitle,
+  cancelTitle,
 }: JointTransformControlsProps) {
   const {
     transformControlRef,
@@ -88,6 +90,7 @@ export const JointTransformControls = memo(function JointTransformControls({
             handleConfirm={handleConfirm}
             handleCancel={handleCancel}
             confirmTitle={confirmTitle}
+            cancelTitle={cancelTitle}
           />
         );
       })()}

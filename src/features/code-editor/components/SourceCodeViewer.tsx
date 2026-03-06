@@ -2,7 +2,7 @@
  * SourceCodeViewer - Read-only code viewer with syntax highlighting
  * Features: syntax highlighting, copy to clipboard, download
  */
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Copy, Check, FileCode, Download } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -12,14 +12,20 @@ import type { Language } from '@/store';
 // i18n texts for viewer
 const viewerTexts = {
   en: {
+    download: 'Download',
+    downloadFile: 'Download File',
     copy: 'Copy',
-    copied: 'Copied',
+    copied: 'Copied!',
     copyToClipboard: 'Copy to Clipboard',
+    readOnlyView: 'Read-only View',
   },
   zh: {
+    download: '下载',
+    downloadFile: '下载文件',
     copy: '复制',
-    copied: '已复制',
+    copied: '已复制！',
     copyToClipboard: '复制到剪贴板',
+    readOnlyView: '只读视图',
   }
 };
 
@@ -39,12 +45,16 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
   lang = 'en'
 }) => {
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const t = viewerTexts[lang];
+
+  useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownload = () => {
@@ -56,6 +66,7 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     URL.revokeObjectURL(url);
   };
 
@@ -75,10 +86,10 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
             <button
               onClick={handleDownload}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-element-hover rounded transition-colors"
-              title="Download File"
+              title={t.downloadFile}
             >
               <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">Download</span>
+              <span className="hidden sm:inline">{t.download}</span>
             </button>
 
             <button
@@ -131,7 +142,7 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
         {/* Footer */}
         <div className="px-4 py-2 bg-element-bg border-t border-border-black flex justify-between items-center">
              <div className="text-[10px] text-text-tertiary">
-                 Read-only View
+                 {t.readOnlyView}
              </div>
              <div className="text-[10px] text-text-tertiary font-mono">
                  XML / URDF

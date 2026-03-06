@@ -54,7 +54,6 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.0,
-        preserveDrawingBuffer: true,
       }}
     >
       <CanvasResizeSync />

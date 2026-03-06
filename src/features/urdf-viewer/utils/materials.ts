@@ -1,80 +1,10 @@
 import * as THREE from 'three';
 import { disposeMaterial } from './dispose';
 
-// ============================================================
-// UNIFIED MATERIAL CONFIGURATION
-// PBR settings optimized for IBL (Image-Based Lighting)
-// ============================================================
-export const MATERIAL_CONFIG = {
-    // PBR properties for realistic matte finish
-    roughness: 0.7,         // 0.6-0.8 range for matte plastic/metal look
-    metalness: 0.1,         // Low metalness for plastic-like appearance
-    envMapIntensity: 1.0,   // Environment reflection intensity
-
-    // Color adjustment: slightly reduce white reflectivity to prevent overexposure
-    whiteColorMultiplier: 0.95, // Apply to pure white colors (1,1,1 -> 0.95,0.95,0.95)
-} as const;
-
-// ============================================================
-// UNIFIED MATERIAL FACTORY
-// Creates consistent MeshStandardMaterial for PBR rendering with IBL
-// ============================================================
-export interface CreateMaterialOptions {
-    color: THREE.ColorRepresentation;
-    opacity?: number;
-    transparent?: boolean;
-    side?: THREE.Side;
-    map?: THREE.Texture | null;
-    name?: string;
-}
-
-/**
- * Creates a unified MeshStandardMaterial for PBR rendering with IBL.
- * Optimized for realistic matte finish with proper roughness/metalness.
- *
- * @param options - Material configuration options
- * @returns THREE.MeshStandardMaterial
- */
-export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshStandardMaterial {
-    const {
-        color,
-        opacity = 1.0,
-        transparent = false,
-        side = THREE.DoubleSide,
-        map = null,
-        name = ''
-    } = options;
-
-    let finalColor = new THREE.Color(color);
-
-    // Reduce very bright/white colors to prevent overexposure
-    if (finalColor.r > 0.95 && finalColor.g > 0.95 && finalColor.b > 0.95) {
-        finalColor.multiplyScalar(MATERIAL_CONFIG.whiteColorMultiplier);
-    }
-
-    // Use MeshStandardMaterial for PBR rendering with IBL
-    const material = new THREE.MeshStandardMaterial({
-        color: finalColor,
-        roughness: MATERIAL_CONFIG.roughness,
-        metalness: MATERIAL_CONFIG.metalness,
-        envMapIntensity: MATERIAL_CONFIG.envMapIntensity,
-        side,
-        transparent: transparent || opacity < 1.0,
-        opacity,
-        depthWrite: opacity >= 1.0,
-        map,
-    });
-
-    if (name) material.name = name;
-
-    // Store original values for potential restoration
-    material.userData.originalColor = finalColor.clone();
-    material.userData.originalRoughness = MATERIAL_CONFIG.roughness;
-    material.userData.originalMetalness = MATERIAL_CONFIG.metalness;
-    material.userData.originalEnvMapIntensity = MATERIAL_CONFIG.envMapIntensity;
-
-    return material;
-}
+// Re-export shared material factory so existing consumers keep working
+export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
+export type { CreateMaterialOptions } from '@/shared/utils/materialFactory';
+import { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
 
 /**
  * Applies unified material properties to an existing mesh's materials.

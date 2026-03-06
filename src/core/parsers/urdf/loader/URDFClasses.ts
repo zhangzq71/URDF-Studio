@@ -22,33 +22,34 @@ class URDFBase extends Object3D {
 
 export class URDFCollider extends URDFBase {
     isURDFCollider = true;
+    override readonly type: string = 'URDFCollider';
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFCollider';
     }
 }
 
 export class URDFVisual extends URDFBase {
     isURDFVisual = true;
+    override readonly type: string = 'URDFVisual';
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFVisual';
     }
 }
 
 export class URDFLink extends URDFBase {
     isURDFLink = true;
+    override readonly type: string = 'URDFLink';
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFLink';
     }
 }
 
 export class URDFJoint extends URDFBase {
     isURDFJoint = true;
+    override readonly type: string = 'URDFJoint';
     jointValue: number[] | null = null;
     axis = new Vector3(1, 0, 0);
     limit: { lower: number; upper: number; effort?: number; velocity?: number } = { lower: 0, upper: 0 };
@@ -98,7 +99,6 @@ export class URDFJoint extends URDFBase {
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFJoint';
         this.jointType = 'fixed';
     }
 
@@ -268,13 +268,13 @@ export class URDFJoint extends URDFBase {
 
 export class URDFMimicJoint extends URDFJoint {
     isURDFMimicJoint = true;
+    override readonly type: string = 'URDFMimicJoint';
     mimicJoint: string | null = null;
     offset = 0;
     multiplier = 1;
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFMimicJoint';
     }
 
     updateFromMimickedJoint(...values: (number | null)[]) {
@@ -333,7 +333,10 @@ export class URDFRobot extends URDFLink {
         });
 
         Object.keys(this.joints).forEach(jointName => {
-            this.joints[jointName].mimicJoints = this.joints[jointName].mimicJoints.map((mimicJoint: any) => this.joints[mimicJoint.name]);
+            this.joints[jointName].mimicJoints = this.joints[jointName].mimicJoints.flatMap((mimicJoint: any) => {
+                const mappedJoint = this.joints[mimicJoint.name];
+                return mappedJoint instanceof URDFMimicJoint ? [mappedJoint] : [];
+            });
         });
 
         this.frames = {

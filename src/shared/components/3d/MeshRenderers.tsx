@@ -3,7 +3,7 @@
  * Used by both Visualizer.tsx and URDFViewer.tsx
  */
 
-import React, { useLayoutEffect, useMemo } from 'react';
+import React, { useLayoutEffect, useEffect, useMemo } from 'react';
 import { useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 // @ts-ignore
@@ -56,6 +56,7 @@ export const STLRenderer = React.memo(({
 }) => {
   const geometry = useLoader(STLLoader, url);
   const clone = useMemo(() => geometry.clone(), [geometry]);
+  useEffect(() => () => { clone.dispose(); }, [clone]);
   const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
   return <mesh geometry={clone} material={material} rotation={[0, 0, 0]} scale={scaleArr} />;
 });
@@ -98,6 +99,16 @@ export const OBJRenderer = React.memo(({
       mesh.material = material;
     });
   }, [overrideMeshes, material]);
+
+  useEffect(() => () => {
+    clone.traverse((child: any) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material && child.material !== material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach((m: THREE.Material) => m.dispose());
+      }
+    });
+  }, [clone, material]);
 
   const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
   return <group rotation={[0, 0, 0]} scale={scaleArr}><primitive object={clone} /></group>;
@@ -151,6 +162,16 @@ export const DAERenderer = React.memo(({
       mesh.material = material;
     });
   }, [overrideMeshes, material]);
+
+  useEffect(() => () => {
+    clone.traverse((child: any) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material && child.material !== material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach((m: THREE.Material) => m.dispose());
+      }
+    });
+  }, [clone, material]);
 
   const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
   return <group scale={scaleArr}><primitive object={clone} /></group>;

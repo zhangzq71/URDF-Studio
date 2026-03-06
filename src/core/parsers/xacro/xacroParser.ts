@@ -11,7 +11,7 @@
  *
  * Limitations:
  * - No Python expression evaluation (only simple variable substitution)
- * - $(find package) not supported (requires ROS environment)
+ * - $(find package) only supports path resolution inside imported file map
  * - Complex expressions need manual simplification
  */
 
@@ -32,6 +32,7 @@ interface XacroContext {
     args: XacroArgs;
     fileMap: XacroFileMap;
     basePath: string;
+    includeStack: string[];
 }
 
 /**
@@ -47,6 +48,11 @@ export function isXacro(content: string): boolean {
  * Preprocess XML content to fix common issues
  */
 function preprocessXML(content: string): string {
+    // Remove complete XML comments first, then clean any orphan '-->' tails.
+    // Some third-party xacro files contain broken comment tails like '</link> -->'.
+    content = content.replace(/<!--[\s\S]*?-->/g, '');
+    content = content.replace(/-->/g, '');
+
     // Remove XML declaration if it's not at the start (after comments)
     // Find if there's an XML declaration after content
     const xmlDeclMatch = content.match(/(<\?xml[^?]*\?>)/);
@@ -68,11 +74,16 @@ function preprocessXML(content: string): string {
  */
 function parseXacroArgs(content: string): Map<string, string> {
     const args = new Map<string, string>();
-    const argRegex = /<xacro:arg\s+name=["']([^"']+)["']\s+default=["']([^"']*)["']\s*\/>/g;
+    const argRegex = /<xacro:arg\b([^>]*?)\/>/g;
 
     let match;
     while ((match = argRegex.exec(content)) !== null) {
-        args.set(match[1], match[2]);
+        const attrs = match[1];
+        const nameMatch = attrs.match(/\bname=["']([^"']+)["']/);
+        const defaultMatch = attrs.match(/\bdefault=["']([^"']*)["']/);
+        if (nameMatch && defaultMatch) {
+            args.set(nameMatch[1], defaultMatch[1]);
+        }
     }
 
     return args;
@@ -184,73 +195,96 @@ function substituteVariables(content: string, ctx: XacroContext): string {
     return content;
 }
 
+function normalizePath(path: string): string {
+    const slashNormalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+    const parts = slashNormalized.split('/').filter(Boolean);
+    const resolved: string[] = [];
+
+    for (const part of parts) {
+        if (part === '.') continue;
+        if (part === '..') {
+            resolved.pop();
+            continue;
+        }
+        resolved.push(part);
+    }
+
+    return resolved.join('/');
+}
+
 /**
  * Find a file in the file map with fuzzy path matching
  */
 function findFileInMap(filename: string, ctx: XacroContext): string | null {
+    const resolvedFilename = substituteVariables(filename, ctx).trim();
+
     // Extract package name and relative path from $(find package)/path
-    const findMatch = filename.match(/\$\(find\s+([^)]+)\)(.*)$/);
+    const findMatch = resolvedFilename.match(/\$\(find\s+([^)]+)\)(.*)$/);
     let packageName = '';
-    let relativePath = filename;
+    let relativePath = resolvedFilename;
 
     if (findMatch) {
         packageName = findMatch[1].trim();
-        relativePath = findMatch[2];
+        relativePath = findMatch[2] || '';
     }
 
     // Remove leading slash
-    relativePath = relativePath.replace(/^\//, '');
+    relativePath = normalizePath(relativePath.replace(/^\//, ''));
+    const normalizedBasePath = normalizePath(ctx.basePath);
 
     const fileMapKeys = Object.keys(ctx.fileMap);
+    const normalizedKeys = fileMapKeys.map((key) => ({
+        original: key,
+        normalized: normalizePath(key),
+    }));
 
     // Strategy 1: Look for package/relativePath pattern in file map keys
-    if (packageName && relativePath) {
-        const searchPattern = `${packageName}/${relativePath}`;
-        for (const key of fileMapKeys) {
-            // Match paths like "sr_common/sr_description/other/xacro/file.xacro"
-            // when searching for "sr_description/other/xacro/file.xacro"
-            if (key.endsWith(searchPattern) || key === searchPattern) {
-                return key;
-            }
-            // Also check if key contains the pattern
-            if (key.includes('/' + searchPattern)) {
-                return key;
+    if (packageName) {
+        const searchPattern = normalizePath(
+            relativePath ? `${packageName}/${relativePath}` : packageName
+        );
+
+        for (const key of normalizedKeys) {
+            // Match paths like "workspace/pkg_name/path/to/file.xacro"
+            // when searching for "pkg_name/path/to/file.xacro"
+            if (key.normalized === searchPattern || key.normalized.endsWith(`/${searchPattern}`)) {
+                return key.original;
             }
         }
+
+        // If package is explicitly requested and not found, don't fall back
+        // to fuzzy package-agnostic matching (prevents circular self-include).
+        return null;
     }
 
     // Strategy 2: Try relative to base path
-    if (ctx.basePath) {
-        // Go up from base path to find package directory
-        const baseParts = ctx.basePath.split('/');
+    if (normalizedBasePath && relativePath) {
+        const baseParts = normalizedBasePath.split('/').filter(Boolean);
         for (let i = baseParts.length; i >= 0; i--) {
             const prefix = baseParts.slice(0, i).join('/');
-            const tryPath = prefix ? `${prefix}/${relativePath}` : relativePath;
-            if (ctx.fileMap[tryPath]) {
-                return tryPath;
-            }
-            if (packageName) {
-                const tryPathWithPkg = prefix ? `${prefix}/${packageName}/${relativePath}` : `${packageName}/${relativePath}`;
-                if (ctx.fileMap[tryPathWithPkg]) {
-                    return tryPathWithPkg;
-                }
+            const tryPath = normalizePath(prefix ? `${prefix}/${relativePath}` : relativePath);
+            const found = normalizedKeys.find((key) => key.normalized === tryPath);
+            if (found) {
+                return found.original;
             }
         }
     }
 
     // Strategy 3: Fuzzy search - look for files ending with the relative path
-    for (const key of fileMapKeys) {
-        if (key.endsWith('/' + relativePath) || key === relativePath) {
-            return key;
+    if (relativePath) {
+        for (const key of normalizedKeys) {
+            if (key.normalized === relativePath || key.normalized.endsWith('/' + relativePath)) {
+                return key.original;
+            }
         }
     }
 
     // Strategy 4: Search by filename only as last resort
     const justFilename = relativePath.split('/').pop() || '';
     if (justFilename && justFilename.includes('.')) {
-        for (const key of fileMapKeys) {
-            if (key.endsWith('/' + justFilename) || key === justFilename) {
-                return key;
+        for (const key of normalizedKeys) {
+            if (key.normalized.endsWith('/' + justFilename) || key.normalized === justFilename) {
+                return key.original;
             }
         }
     }
@@ -262,32 +296,42 @@ function findFileInMap(filename: string, ctx: XacroContext): string | null {
  * Process xacro:include elements
  */
 function processIncludes(content: string, ctx: XacroContext): string {
-    // Match <xacro:include filename="..."/>
-    const includeRegex = /<xacro:include\s+filename=["']([^"']+)["']\s*\/>/g;
+    // Match both self-closing and block-style include tags.
+    const includeRegex = /<xacro:include\s+filename=["']([^"']+)["']\s*(?:\/>|>\s*<\/xacro:include>)/g;
 
     return content.replace(includeRegex, (match, filename) => {
-        const foundPath = findFileInMap(filename, ctx);
+        const resolvedFilename = substituteVariables(filename, ctx);
+        const foundPath = findFileInMap(resolvedFilename, ctx);
 
         if (foundPath && ctx.fileMap[foundPath]) {
+            const normalizedFoundPath = normalizePath(foundPath);
+            if (ctx.includeStack.includes(normalizedFoundPath)) {
+                console.warn(`[Xacro] Circular include detected: ${resolvedFilename}`);
+                return `<!-- Circular include ignored: ${resolvedFilename} -->`;
+            }
+
             // Recursively process the included file
             let includedContent = ctx.fileMap[foundPath];
             includedContent = preprocessXML(includedContent);
 
             // Update base path for nested includes
             const oldBasePath = ctx.basePath;
-            const pathParts = foundPath.split('/');
+            const pathParts = normalizedFoundPath.split('/');
             pathParts.pop(); // Remove filename
             ctx.basePath = pathParts.join('/');
+            ctx.includeStack.push(normalizedFoundPath);
 
-            // Parse properties and macros from included file
-            parseProperties(includedContent, ctx);
-            parseMacros(includedContent, ctx);
+            try {
+                // Parse properties and macros from included file
+                parseProperties(includedContent, ctx);
+                parseMacros(includedContent, ctx);
 
-            // Process nested includes
-            includedContent = processIncludes(includedContent, ctx);
-
-            // Restore base path
-            ctx.basePath = oldBasePath;
+                // Process nested includes
+                includedContent = processIncludes(includedContent, ctx);
+            } finally {
+                ctx.includeStack.pop();
+                ctx.basePath = oldBasePath;
+            }
 
             // Remove robot tags from included content to avoid nesting
             includedContent = includedContent
@@ -299,8 +343,8 @@ function processIncludes(content: string, ctx: XacroContext): string {
         }
 
         // If file not found, return empty (or could return a comment)
-        console.warn(`[Xacro] Include file not found: ${filename}`);
-        return `<!-- Include not found: ${filename} -->`;
+        console.warn(`[Xacro] Include file not found: ${resolvedFilename}`);
+        return `<!-- Include not found: ${resolvedFilename} -->`;
     });
 }
 
@@ -385,31 +429,30 @@ function expandMacroCall(
  * Process xacro:if and xacro:unless conditionals
  */
 function processConditionals(content: string, ctx: XacroContext): string {
+    const isTruthy = (rawCondition: string): boolean => {
+        const value = substituteVariables(rawCondition, ctx).trim();
+
+        // If unresolved xacro syntax remains, treat as false in browser fallback mode.
+        if (/\$\(|\$\{/.test(value)) {
+            return false;
+        }
+
+        const normalized = value.replace(/^['"]|['"]$/g, '').trim().toLowerCase();
+        if (!normalized) return false;
+
+        return !['false', '0', 'none', 'no', 'off'].includes(normalized);
+    };
+
     // Process xacro:if
-    const ifRegex = /<xacro:if\s+value=["']\$\{([^}]+)\}["']>([\s\S]*?)<\/xacro:if>/g;
-    content = content.replace(ifRegex, (match, condition, body) => {
-        const value = substituteVariables('${' + condition + '}', ctx);
-        // Truthy check: non-empty, not "false", not "0", not "none"
-        const isTruthy = value &&
-                        value !== 'false' &&
-                        value !== '0' &&
-                        value !== 'none' &&
-                        value !== 'False' &&
-                        value !== 'None';
-        return isTruthy ? body : '';
+    const ifRegex = /<xacro:if\s+value=["']([^"']+)["']>([\s\S]*?)<\/xacro:if>/g;
+    content = content.replace(ifRegex, (match, conditionExpr, body) => {
+        return isTruthy(conditionExpr) ? body : '';
     });
 
     // Process xacro:unless
-    const unlessRegex = /<xacro:unless\s+value=["']\$\{([^}]+)\}["']>([\s\S]*?)<\/xacro:unless>/g;
-    content = content.replace(unlessRegex, (match, condition, body) => {
-        const value = substituteVariables('${' + condition + '}', ctx);
-        const isTruthy = value &&
-                        value !== 'false' &&
-                        value !== '0' &&
-                        value !== 'none' &&
-                        value !== 'False' &&
-                        value !== 'None';
-        return isTruthy ? '' : body;
+    const unlessRegex = /<xacro:unless\s+value=["']([^"']+)["']>([\s\S]*?)<\/xacro:unless>/g;
+    content = content.replace(unlessRegex, (match, conditionExpr, body) => {
+        return isTruthy(conditionExpr) ? '' : body;
     });
 
     return content;
@@ -460,7 +503,8 @@ export function processXacro(
         macros: new Map(),
         args,
         fileMap,
-        basePath
+        basePath: normalizePath(basePath),
+        includeStack: []
     };
 
     // Parse default args from xacro:arg elements
@@ -560,11 +604,16 @@ export function parseXacro(
  */
 export function getXacroArgs(content: string): { name: string, defaultValue: string }[] {
     const args: { name: string, defaultValue: string }[] = [];
-    const argRegex = /<xacro:arg\s+name=["']([^"']+)["']\s+default=["']([^"']*)["']\s*\/>/g;
+    const argRegex = /<xacro:arg\b([^>]*?)\/>/g;
 
     let match;
     while ((match = argRegex.exec(content)) !== null) {
-        args.push({ name: match[1], defaultValue: match[2] });
+        const attrs = match[1];
+        const nameMatch = attrs.match(/\bname=["']([^"']+)["']/);
+        const defaultMatch = attrs.match(/\bdefault=["']([^"']*)["']/);
+        if (nameMatch && defaultMatch) {
+            args.push({ name: nameMatch[1], defaultValue: defaultMatch[1] });
+        }
     }
 
     return args;

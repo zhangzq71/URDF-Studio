@@ -388,7 +388,8 @@ function patchGeometryCategory({
             new THREE.CapsuleGeometry(radius, bodyLength, 8, 16),
             isCollision ? collisionBaseMaterial : createMatteMaterial({ color: geometry.color || '#808080' })
         );
-        mesh.rotation.set(-Math.PI / 2, 0, 0);
+        // Keep capsule axis consistent with CylinderGeometry in this loader pipeline.
+        mesh.rotation.set(Math.PI / 2, 0, 0);
         addPrimitive(mesh);
     } else if (geometry.type === GeometryType.MESH) {
         if (!geometry.meshPath) {
@@ -497,6 +498,7 @@ export interface UseRobotLoaderOptions {
     assets: Record<string, string>;
     showCollision: boolean;
     showVisual: boolean;
+    isMeshPreview?: boolean;
     robotLinks?: Record<string, UrdfLink>;
     onRobotLoaded?: (robot: THREE.Object3D) => void;
 }
@@ -514,6 +516,7 @@ export function useRobotLoader({
     assets,
     showCollision,
     showVisual,
+    isMeshPreview = false,
     robotLinks,
     onRobotLoaded
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
@@ -528,6 +531,10 @@ export function useRobotLoader({
     const isMountedRef = useRef(true);
     // Track loading abort controller to cancel duplicate loads
     const loadAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
+    // Dispose the previously rendered robot only after the new one has had a chance to mount,
+    // otherwise the canvas can flash a blank frame during file switching.
+    const pendingDisposeRobotRef = useRef<THREE.Object3D | null>(null);
+    const pendingDisposeFrameRef = useRef<number | null>(null);
 
     // Refs for visibility state (used in loading callback)
     const showVisualRef = useRef(showVisual);
@@ -544,8 +551,58 @@ export function useRobotLoader({
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
 
+    const disposeRobotObject = useCallback((robotObject: THREE.Object3D | null) => {
+        if (!robotObject) return;
+        if (robotObject.parent) {
+            robotObject.parent.remove(robotObject);
+        }
+        disposeObject3D(robotObject, true, SHARED_MATERIALS);
+    }, []);
+
+    const flushPendingRobotDispose = useCallback(() => {
+        if (pendingDisposeFrameRef.current !== null && typeof window !== 'undefined') {
+            window.cancelAnimationFrame(pendingDisposeFrameRef.current);
+            pendingDisposeFrameRef.current = null;
+        }
+
+        if (pendingDisposeRobotRef.current) {
+            const robotToDispose = pendingDisposeRobotRef.current;
+            pendingDisposeRobotRef.current = null;
+            disposeRobotObject(robotToDispose);
+        }
+    }, [disposeRobotObject]);
+
+    const schedulePreviousRobotDispose = useCallback((previousRobot: THREE.Object3D | null) => {
+        if (!previousRobot) return;
+
+        flushPendingRobotDispose();
+        pendingDisposeRobotRef.current = previousRobot;
+
+        const disposePreviousRobot = () => {
+            pendingDisposeFrameRef.current = null;
+            const robotToDispose = pendingDisposeRobotRef.current;
+            pendingDisposeRobotRef.current = null;
+
+            if (!robotToDispose || robotToDispose === robotRef.current) {
+                return;
+            }
+
+            disposeRobotObject(robotToDispose);
+        };
+
+        if (typeof window !== 'undefined') {
+            pendingDisposeFrameRef.current = window.requestAnimationFrame(() => {
+                pendingDisposeFrameRef.current = window.requestAnimationFrame(disposePreviousRobot);
+            });
+            return;
+        }
+
+        queueMicrotask(disposePreviousRobot);
+    }, [disposeRobotObject, flushPendingRobotDispose]);
+
     // Incremental path: update exactly one changed link geometry in-place and skip next full URDF reload.
     useEffect(() => {
+        if (isMeshPreview) return;
         if (!robotLinks) return;
 
         const previousLinks = prevRobotLinksRef.current;
@@ -572,7 +629,7 @@ export function useRobotLoader({
         skipReloadForContentRef.current = urdfContent;
         setRobotVersion((v) => v + 1);
         setError(null);
-    }, [robotLinks, urdfContent, assets, invalidate]);
+    }, [robotLinks, urdfContent, assets, invalidate, isMeshPreview]);
 
     // Track component mount state for preventing state updates after unmount
     useEffect(() => {
@@ -585,18 +642,15 @@ export function useRobotLoader({
     // Cleanup on unmount ONLY
     useEffect(() => {
         return () => {
+            flushPendingRobotDispose();
+
             // Deep cleanup of robot resources on unmount
             if (robotRef.current) {
-                // Remove from scene
-                if (robotRef.current.parent) {
-                    robotRef.current.parent.remove(robotRef.current);
-                }
-                // Dispose all geometries, materials (except shared), and textures
-                disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
+                disposeRobotObject(robotRef.current);
                 robotRef.current = null;
             }
         };
-    }, []);
+    }, [disposeRobotObject, flushPendingRobotDispose]);
 
     // Load robot with proper cleanup and abort handling
     useEffect(() => {
@@ -645,7 +699,6 @@ export function useRobotLoader({
                         }
                         processCapsuleGeometries(robotModel, urdfContent);
                         enhanceMaterials(robotModel);
-                        offsetRobotToGround(robotModel);
                         setRobotVersion(v => v + 1);
                         invalidate();
                     };
@@ -703,9 +756,6 @@ export function useRobotLoader({
                         // Process capsule geometries (urdf-loader doesn't support capsule natively)
                         processCapsuleGeometries(robotModel, urdfContent);
                     }
-
-                    // Initial ground fit before visibility/userData tagging.
-                    offsetRobotToGround(robotModel);
 
                     enhanceMaterials(robotModel);
 
@@ -779,16 +829,7 @@ export function useRobotLoader({
                     // Re-fit using final visibility state so hidden meshes don't affect ground alignment.
                     offsetRobotToGround(robotModel);
 
-                    // Cleanup previous robot NOW, before replacing it
-                    if (robotRef.current) {
-                        // Remove from scene first
-                        if (robotRef.current.parent) {
-                            robotRef.current.parent.remove(robotRef.current);
-                        }
-                        // Deep dispose with shared materials exclusion
-                        disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
-                        robotRef.current = null;
-                    }
+                    const previousRobot = robotRef.current;
 
                     // Store the pre-built map
                     linkMeshMapRef.current = newLinkMeshMap;
@@ -797,6 +838,11 @@ export function useRobotLoader({
                     robotRef.current = robotModel;
                     setRobot(robotModel);
                     setError(null);
+                    invalidate();
+
+                    if (previousRobot && previousRobot !== robotModel) {
+                        schedulePreviousRobotDispose(previousRobot);
+                    }
 
                     if (onRobotLoaded) {
                         onRobotLoaded(robotModel);

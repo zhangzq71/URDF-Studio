@@ -3,21 +3,20 @@
  * Main application layout with Header and workspace area
  */
 import React, { useRef, useMemo, useCallback, useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
+import { UnifiedViewer } from './components/UnifiedViewer';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor';
-import { Visualizer } from '@/features/visualizer';
-import { URDFViewer } from '@/features/urdf-viewer';
 import { SourceCodeEditor, preloadSourceCodeEditor } from '@/features/code-editor';
 import { BridgeCreateModal } from '@/features/assembly';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo, useAssemblyStore } from '@/store';
-import { parseURDF, generateURDF } from '@/core/parsers';
+import { parseURDF, generateMujocoXML, generateURDF } from '@/core/parsers';
 import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io/utils';
-import {
-  DEFAULT_LINK,
-  GeometryType,
-} from '@/types';
 import type { RobotState, UrdfLink, UrdfJoint, RobotFile, AssemblyState } from '@/types';
+import { DEFAULT_LINK, GeometryType } from '@/types';
+import { appendCollisionBody, optimizeCylinderCollisionsToCapsules } from '@/core/robot';
+import { computePreviewUrdf } from '@/core/parsers';
 
 interface AppLayoutProps {
   // Import handlers (passed from App)
@@ -54,67 +53,6 @@ interface AppLayoutProps {
   onLoadRobot: (file: RobotFile) => void;
 }
 
-const ZERO_VECTOR = { x: 0, y: 0, z: 0 } as const;
-const ZERO_RPY = { r: 0, p: 0, y: 0 } as const;
-
-function buildCollisionGeometryFromParent(parentLink: UrdfLink): UrdfLink['collision'] {
-  const sourceGeometry = parentLink.visual.type !== GeometryType.NONE
-    ? parentLink.visual
-    : parentLink.collision.type !== GeometryType.NONE
-      ? parentLink.collision
-      : DEFAULT_LINK.collision;
-
-  return {
-    ...DEFAULT_LINK.collision,
-    ...sourceGeometry,
-    color: DEFAULT_LINK.collision.color,
-    materialSource: undefined,
-  };
-}
-
-function getCollisionBodyCount(link: UrdfLink): number {
-  const primary = link.collision.type !== GeometryType.NONE ? 1 : 0;
-  const extras = (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
-  return primary + extras;
-}
-
-function createCollisionBodyFromLink(link: UrdfLink): UrdfLink['collision'] {
-  const source = buildCollisionGeometryFromParent(link);
-  const count = getCollisionBodyCount(link);
-  const offset = count * 0.08;
-  const origin = source.origin || { xyz: { ...ZERO_VECTOR }, rpy: { ...ZERO_RPY } };
-
-  return {
-    ...source,
-    origin: {
-      xyz: {
-        x: origin.xyz.x,
-        y: origin.xyz.y + offset,
-        z: origin.xyz.z,
-      },
-      rpy: { ...origin.rpy },
-    },
-  };
-}
-
-function appendCollisionBody(link: UrdfLink): UrdfLink {
-  const newBody = createCollisionBodyFromLink(link);
-  const hasPrimary = link.collision.type !== GeometryType.NONE;
-
-  if (!hasPrimary) {
-    return {
-      ...link,
-      collision: newBody,
-      collisionBodies: link.collisionBodies || [],
-    };
-  }
-
-  return {
-    ...link,
-    collisionBodies: [...(link.collisionBodies || []), newBody],
-  };
-}
-
 export function AppLayout({
   importInputRef,
   importFolderInputRef,
@@ -134,88 +72,145 @@ export function AppLayout({
   setViewConfig,
   onLoadRobot,
 }: AppLayoutProps) {
-  // UI Store
-  const appMode = useUIStore((state) => state.appMode);
-  const lang = useUIStore((state) => state.lang);
-  const theme = useUIStore((state) => state.theme);
-  const os = useUIStore((state) => state.os);
-  const sidebar = useUIStore((state) => state.sidebar);
-  const toggleSidebar = useUIStore((state) => state.toggleSidebar);
-  const sidebarTab = useUIStore((state) => state.sidebarTab);
+  // UI Store (grouped with useShallow to reduce subscriptions)
+  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab } = useUIStore(
+    useShallow((state) => ({
+      appMode: state.appMode,
+      lang: state.lang,
+      theme: state.theme,
+      sidebar: state.sidebar,
+      toggleSidebar: state.toggleSidebar,
+      sidebarTab: state.sidebarTab,
+    }))
+  );
 
   // Selection Store
-  const selection = useSelectionStore((state) => state.selection);
-  const setSelection = useSelectionStore((state) => state.setSelection);
-  const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
-  const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
-  const focusTarget = useSelectionStore((state) => state.focusTarget);
-  const focusOn = useSelectionStore((state) => state.focusOn);
+  const { selection, setSelection, hoveredSelection, setHoveredSelection, focusTarget, focusOn } = useSelectionStore(
+    useShallow((state) => ({
+      selection: state.selection,
+      setSelection: state.setSelection,
+      hoveredSelection: state.hoveredSelection,
+      setHoveredSelection: state.setHoveredSelection,
+      focusTarget: state.focusTarget,
+      focusOn: state.focusOn,
+    }))
+  );
 
   // Assets Store
-  const assets = useAssetsStore((state) => state.assets);
-  const motorLibrary = useAssetsStore((state) => state.motorLibrary);
-  const availableFiles = useAssetsStore((state) => state.availableFiles);
-  const selectedFile = useAssetsStore((state) => state.selectedFile);
-  const originalUrdfContent = useAssetsStore((state) => state.originalUrdfContent);
-  const uploadAsset = useAssetsStore((state) => state.uploadAsset);
-  const removeRobotFile = useAssetsStore((state) => state.removeRobotFile);
-  const removeRobotFolder = useAssetsStore((state) => state.removeRobotFolder);
+  const {
+    assets, motorLibrary, availableFiles, selectedFile,
+    setAvailableFiles, setSelectedFile, originalUrdfContent, setOriginalUrdfContent,
+    uploadAsset, removeRobotFile, removeRobotFolder,
+  } = useAssetsStore(
+    useShallow((state) => ({
+      assets: state.assets,
+      motorLibrary: state.motorLibrary,
+      availableFiles: state.availableFiles,
+      selectedFile: state.selectedFile,
+      setAvailableFiles: state.setAvailableFiles,
+      setSelectedFile: state.setSelectedFile,
+      originalUrdfContent: state.originalUrdfContent,
+      setOriginalUrdfContent: state.setOriginalUrdfContent,
+      uploadAsset: state.uploadAsset,
+      removeRobotFile: state.removeRobotFile,
+      removeRobotFolder: state.removeRobotFolder,
+    }))
+  );
 
   // Robot Store
-  const robotName = useRobotStore((state) => state.name);
-  const robotLinks = useRobotStore((state) => state.links);
-  const robotJoints = useRobotStore((state) => state.joints);
-  const rootLinkId = useRobotStore((state) => state.rootLinkId);
-  const setName = useRobotStore((state) => state.setName);
-  const setRobot = useRobotStore((state) => state.setRobot);
-  const resetRobot = useRobotStore((state) => state.resetRobot);
-  const addChild = useRobotStore((state) => state.addChild);
-  const deleteSubtree = useRobotStore((state) => state.deleteSubtree);
-  const updateLink = useRobotStore((state) => state.updateLink);
-  const updateJoint = useRobotStore((state) => state.updateJoint);
-  const setAllLinksVisibility = useRobotStore((state) => state.setAllLinksVisibility);
-  const setJointAngle = useRobotStore((state) => state.setJointAngle);
-  const undo = useRobotStore((state) => state.undo);
-  const redo = useRobotStore((state) => state.redo);
+  const {
+    robotName, robotLinks, robotJoints, rootLinkId, robotMaterials,
+    setName, setRobot, resetRobot, addChild, deleteSubtree,
+    updateLink, updateJoint, setAllLinksVisibility, setJointAngle, undo, redo,
+  } = useRobotStore(
+    useShallow((state) => ({
+      robotName: state.name,
+      robotLinks: state.links,
+      robotJoints: state.joints,
+      rootLinkId: state.rootLinkId,
+      robotMaterials: state.materials,
+      setName: state.setName,
+      setRobot: state.setRobot,
+      resetRobot: state.resetRobot,
+      addChild: state.addChild,
+      deleteSubtree: state.deleteSubtree,
+      updateLink: state.updateLink,
+      updateJoint: state.updateJoint,
+      setAllLinksVisibility: state.setAllLinksVisibility,
+      setJointAngle: state.setJointAngle,
+      undo: state.undo,
+      redo: state.redo,
+    }))
+  );
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
 
   // Assembly Store
-  const assemblyState = useAssemblyStore((state) => state.assemblyState);
-  const addComponent = useAssemblyStore((state) => state.addComponent);
-  const removeComponent = useAssemblyStore((state) => state.removeComponent);
-  const addBridge = useAssemblyStore((state) => state.addBridge);
-  const removeBridge = useAssemblyStore((state) => state.removeBridge);
-  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
-  const updateComponentName = useAssemblyStore((state) => state.updateComponentName);
-  const updateComponentRobot = useAssemblyStore((state) => state.updateComponentRobot);
+  const {
+    assemblyState, addComponent, removeComponent,
+    addBridge, removeBridge, getMergedRobotData,
+    updateComponentName, updateComponentRobot,
+  } = useAssemblyStore(
+    useShallow((state) => ({
+      assemblyState: state.assemblyState,
+      addComponent: state.addComponent,
+      removeComponent: state.removeComponent,
+      addBridge: state.addBridge,
+      removeBridge: state.removeBridge,
+      getMergedRobotData: state.getMergedRobotData,
+      updateComponentName: state.updateComponentName,
+      updateComponentRobot: state.updateComponentRobot,
+    }))
+  );
 
   // Snapshot ref
   const snapshotActionRef = useRef<(() => void) | null>(null);
   const transformPendingRef = useRef(false);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
+  const isWorkspaceAssembly = Boolean(assemblyState && sidebarTab === 'workspace');
+
+  // File preview (rendered inside the main WorkspaceCanvas instead of a separate window)
+  const [filePreviewFile, setFilePreviewFile] = useState<RobotFile | null>(null);
 
   // Merged robot data for assembly mode
   const mergedRobotData = useMemo(() => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      return getMergedRobotData();
-    }
-    return null;
-  }, [assemblyState, sidebarTab, getMergedRobotData]);
+    if (!isWorkspaceAssembly) return null;
+    return getMergedRobotData();
+  }, [isWorkspaceAssembly, assemblyState, getMergedRobotData]);
 
   // Construct robot object for legacy components
   // Pro mode: use merged assembly data, or empty robot if no components
   // Simple mode: use robotStore data
   const emptyRobot: RobotState = useMemo(() => ({
     name: '',
-    links: { empty_root: { id: 'empty_root', name: 'base_link', visual: { type: 'none' as const }, collision: { type: 'none' as const }, inertial: { mass: 0, origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }, inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 } } } },
+    links: {
+      empty_root: {
+        ...DEFAULT_LINK,
+        id: 'empty_root',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        inertial: {
+          ...DEFAULT_LINK.inertial,
+          mass: 0,
+        },
+      },
+    },
     joints: {},
     rootLinkId: 'empty_root',
     selection: { type: null, id: null },
   }), []);
 
   const robot: RobotState = useMemo(() => {
-    if (assemblyState && sidebarTab === 'workspace') {
+    if (isWorkspaceAssembly) {
       if (mergedRobotData) {
         return { ...mergedRobotData, selection };
       }
@@ -228,7 +223,7 @@ export function AppLayout({
       rootLinkId,
       selection,
     };
-  }, [robotName, robotLinks, robotJoints, rootLinkId, selection, assemblyState, sidebarTab, mergedRobotData, emptyRobot]);
+  }, [robotName, robotLinks, robotJoints, rootLinkId, selection, isWorkspaceAssembly, mergedRobotData, emptyRobot]);
 
   // Joint angle state for URDFViewer
   const jointAngleState = useMemo(() => {
@@ -252,22 +247,56 @@ export function AppLayout({
   // This ensures collision geometry and other property changes are immediately visible
   // NOTE: Depends on links/joints only (not name) to avoid re-rendering on name input
   const urdfContentForViewer = useMemo(() => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      const merged = getMergedRobotData();
-      if (merged) {
-        return generateURDF(merged as unknown as RobotState, false);
+    if (isWorkspaceAssembly) {
+      if (mergedRobotData) {
+        return generateURDF(mergedRobotData as unknown as RobotState, false);
       }
       // Pro mode with no components: empty URDF
       return generateURDF(emptyRobot, false);
     }
-    return generateURDF(robot, false);
+    return generateURDF({
+      name: robotName,
+      links: robotLinks,
+      joints: robotJoints,
+      rootLinkId,
+      selection: { type: null, id: null },
+    }, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [robotLinks, robotJoints, rootLinkId, emptyRobot, assemblyState?.components, assemblyState?.bridges, sidebarTab, getMergedRobotData]);
+  }, [robotName, robotLinks, robotJoints, rootLinkId, emptyRobot, isWorkspaceAssembly, mergedRobotData]);
+
+  // File preview: compute URDF from the selected preview file
+  const filePreview = useMemo(() => {
+    if (!filePreviewFile) return undefined;
+    const urdf = computePreviewUrdf(filePreviewFile, availableFiles);
+    return urdf != null
+      ? { urdfContent: urdf, fileName: filePreviewFile.name }
+      : undefined;
+  }, [filePreviewFile, availableFiles]);
+
+  const handlePreviewFile = useCallback((file: RobotFile) => {
+    setFilePreviewFile(file);
+  }, []);
+
+  const handleClosePreview = useCallback(() => {
+    setFilePreviewFile(null);
+  }, []);
+
+  // Auto-close preview when the previewed file is removed from availableFiles
+  useEffect(() => {
+    if (!filePreviewFile) return;
+    const exists = availableFiles.some((f) => f.name === filePreviewFile.name);
+    if (!exists) setFilePreviewFile(null);
+  }, [availableFiles, filePreviewFile]);
 
   // Handlers
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
     if (transformPendingRef.current) return;
     setSelection({ type, id, subType });
+  }, [setSelection]);
+
+  const handleMeshSelect = useCallback((linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => {
+    if (transformPendingRef.current) return;
+    setSelection({ type: 'link', id: linkId, subType: objectType, objectIndex });
   }, [setSelection]);
 
   const handleTransformPendingChange = useCallback((pending: boolean) => {
@@ -530,6 +559,119 @@ export function AppLayout({
     setAllLinksVisibility(target);
   }, [setAllLinksVisibility]);
 
+  const handleOptimizeCollisionBodies = useCallback(() => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      let totalOptimized = 0;
+
+      Object.values(assemblyState.components).forEach((component) => {
+        let componentOptimized = 0;
+        const nextLinks: Record<string, UrdfLink> = {};
+
+        Object.entries(component.robot.links).forEach(([linkId, link]) => {
+          const { link: optimizedLink, optimizedCount } = optimizeCylinderCollisionsToCapsules(link);
+          nextLinks[linkId] = optimizedLink;
+          componentOptimized += optimizedCount;
+        });
+
+        if (componentOptimized > 0) {
+          updateComponentRobot(component.id, { links: nextLinks });
+          totalOptimized += componentOptimized;
+        }
+      });
+
+      showToast(
+        totalOptimized > 0
+          ? (lang === 'zh'
+              ? `已优化 ${totalOptimized} 个碰撞体（Cylinder → Capsule）`
+              : `Optimized ${totalOptimized} collision bodies (Cylinder → Capsule)`)
+          : (lang === 'zh'
+              ? '未找到可优化的 Cylinder 碰撞体'
+              : 'No cylinder collision bodies found to optimize'),
+        totalOptimized > 0 ? 'success' : 'info'
+      );
+      return;
+    }
+
+    let totalOptimized = 0;
+    const nextLinks: Record<string, UrdfLink> = {};
+
+    Object.entries(robotLinks).forEach(([linkId, link]) => {
+      const { link: optimizedLink, optimizedCount } = optimizeCylinderCollisionsToCapsules(link);
+      nextLinks[linkId] = optimizedLink;
+      totalOptimized += optimizedCount;
+    });
+
+    if (totalOptimized > 0) {
+      const optimizedRobotData = {
+        name: robotName,
+        links: nextLinks,
+        joints: robotJoints,
+        rootLinkId,
+        materials: robotMaterials,
+      };
+
+      setRobot({
+        ...optimizedRobotData,
+      });
+
+      // Keep source text in sync after one-click optimization (URDF/MJCF XML).
+      if (selectedFile && (selectedFile.format === 'urdf' || selectedFile.format === 'mjcf')) {
+        const robotForExport: RobotState = {
+          ...optimizedRobotData,
+          selection: { type: null, id: null },
+        };
+        const optimizedSourceContent = selectedFile.format === 'urdf'
+          ? generateURDF(robotForExport, false)
+          : generateMujocoXML(robotForExport, { meshdir: 'meshes/' });
+
+        const updatedSelectedFile: RobotFile = {
+          ...selectedFile,
+          content: optimizedSourceContent,
+        };
+        setSelectedFile(updatedSelectedFile);
+        setAvailableFiles(
+          availableFiles.map((file) =>
+            file.name === selectedFile.name
+              ? { ...file, content: optimizedSourceContent }
+              : file
+          )
+        );
+
+        if (selectedFile.format === 'urdf') {
+          setOriginalUrdfContent(optimizedSourceContent);
+        }
+      }
+    }
+
+    showToast(
+      totalOptimized > 0
+        ? (lang === 'zh'
+            ? `已优化 ${totalOptimized} 个碰撞体（Cylinder → Capsule）`
+            : `Optimized ${totalOptimized} collision bodies (Cylinder → Capsule)`)
+        : (lang === 'zh'
+            ? '未找到可优化的 Cylinder 碰撞体'
+            : 'No cylinder collision bodies found to optimize'),
+      totalOptimized > 0 ? 'success' : 'info'
+    );
+  }, [
+    assemblyState,
+    lang,
+    robotJoints,
+    robotLinks,
+    robotMaterials,
+    robotName,
+    rootLinkId,
+    selectedFile,
+    availableFiles,
+    setAvailableFiles,
+    setOriginalUrdfContent,
+    setSelectedFile,
+    setRobot,
+    showToast,
+    sidebarTab,
+    updateComponentRobot,
+  ]);
+
   const handleUploadAsset = useCallback((file: File) => {
     uploadAsset(file);
   }, [uploadAsset]);
@@ -703,7 +845,7 @@ export function AppLayout({
           e.preventDefault();
         }
       }
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
         if (canRedo) {
           redo();
           e.preventDefault();
@@ -721,9 +863,14 @@ export function AppLayout({
       void preloadSourceCodeEditor();
     };
 
-    if ('requestIdleCallback' in window) {
-      const idleId = window.requestIdleCallback(warmup, { timeout: 1800 });
-      return () => window.cancelIdleCallback(idleId);
+    const idleWindow = window as Window & {
+      requestIdleCallback?: typeof window.requestIdleCallback;
+      cancelIdleCallback?: typeof window.cancelIdleCallback;
+    };
+
+    if (typeof idleWindow.requestIdleCallback === 'function') {
+      const idleId = idleWindow.requestIdleCallback(warmup, { timeout: 1800 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
     }
 
     const timer = window.setTimeout(warmup, 800);
@@ -801,6 +948,7 @@ export function AppLayout({
         onOpenAbout={onOpenAbout}
         onOpenURDFGallery={onOpenURDFGallery}
         onSnapshot={handleSnapshot}
+        onOptimizeCollisionCylinders={handleOptimizeCollisionBodies}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
       />
@@ -835,89 +983,72 @@ export function AppLayout({
           onRemoveComponent={removeComponent}
           onRemoveBridge={removeBridge}
           onRenameComponent={handleRenameComponent}
+          onPreviewFile={handlePreviewFile}
+          previewFileName={filePreviewFile?.name}
         />
 
         {/* Viewer Container */}
         <div className="flex-1 relative min-w-0">
-          {/* URDFViewer for detail/hardware modes */}
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            display: (appMode === 'detail' || appMode === 'hardware') && urdfContentForViewer ? 'block' : 'none'
-          }}>
-            <URDFViewer
-              key="urdf-viewer"
-              urdfContent={urdfContentForViewer}
-              assets={assets}
-              lang={lang}
-              mode={appMode as 'detail' | 'hardware'}
-              onSelect={handleSelect}
-              onHover={handleHover}
-              selection={robot.selection}
-              hoveredSelection={hoveredSelection}
-              focusTarget={focusTarget}
-              theme={theme}
-              robotLinks={robot.links}
-              showVisual={showVisual}
-              setShowVisual={handleSetShowVisual}
-              jointAngleState={jointAngleState}
-              snapshotAction={snapshotActionRef}
-              showToolbar={viewConfig.showToolbar}
-              setShowToolbar={(show) => setViewConfig(prev => ({ ...prev, showToolbar: show }))}
-              showOptionsPanel={viewConfig.showOptionsPanel}
-              setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
-              showJointPanel={viewConfig.showJointPanel}
-              setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
-              onTransformPendingChange={handleTransformPendingChange}
-              onJointChange={handleJointChange}
-              onCollisionTransform={(linkId, position, rotation) => {
-                if (linkId && robot.links[linkId]) {
-                  const link = robot.links[linkId];
-                  const updatedLink = {
-                    ...link,
-                    collision: {
-                      ...link.collision,
-                      origin: {
-                        xyz: position,
-                        rpy: rotation
-                      }
-                    }
+          <UnifiedViewer
+            robot={robot}
+            mode={appMode}
+            onSelect={handleSelect}
+            onHover={handleHover}
+            onUpdate={handleUpdate}
+            assets={assets}
+            lang={lang}
+            theme={theme}
+            showVisual={showVisual}
+            setShowVisual={handleSetShowVisual}
+            snapshotAction={snapshotActionRef}
+            showToolbar={viewConfig.showToolbar}
+            setShowToolbar={(show) => setViewConfig(prev => ({ ...prev, showToolbar: show }))}
+            showOptionsPanel={viewConfig.showOptionsPanel}
+            setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
+            showSkeletonOptionsPanel={viewConfig.showSkeletonOptionsPanel}
+            setShowSkeletonOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: show }))}
+            showJointPanel={viewConfig.showJointPanel}
+            setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
+            urdfContent={urdfContentForViewer}
+            jointAngleState={jointAngleState}
+            onJointChange={handleJointChange}
+            selection={robot.selection}
+            hoveredSelection={hoveredSelection}
+            focusTarget={focusTarget}
+            isMeshPreview={selectedFile?.format === 'mesh'}
+            onTransformPendingChange={handleTransformPendingChange}
+            onCollisionTransform={(linkId, position, rotation, objectIndex) => {
+              if (linkId && robot.links[linkId]) {
+                const link = robot.links[linkId];
+                
+                let updatedLink = { ...link };
+                
+                if (objectIndex && objectIndex > 0 && link.collisionBodies && link.collisionBodies.length >= objectIndex) {
+                  const newCollisionBodies = [...link.collisionBodies];
+                  newCollisionBodies[objectIndex - 1] = {
+                    ...newCollisionBodies[objectIndex - 1],
+                    origin: {
+                      xyz: position,
+                      rpy: rotation,
+                    },
                   };
-                  handleUpdate('link', linkId, updatedLink);
+                  updatedLink.collisionBodies = newCollisionBodies;
+                } else {
+                  updatedLink.collision = {
+                    ...link.collision,
+                    origin: {
+                      xyz: position,
+                      rpy: rotation,
+                    },
+                  };
                 }
-              }}
-            />
-          </div>
-
-          {/* Visualizer for skeleton mode */}
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            display: appMode === 'skeleton' ? 'block' : 'none'
-          }}>
-            <Visualizer
-              key="visualizer"
-              robot={robot}
-              onSelect={handleSelect}
-              onUpdate={handleUpdate}
-              mode={appMode}
-              assets={assets}
-              lang={lang}
-              theme={theme}
-              os={os}
-              showVisual={showVisual}
-              setShowVisual={handleSetShowVisual}
-              snapshotAction={snapshotActionRef}
-              showOptionsPanel={viewConfig.showSkeletonOptionsPanel}
-              setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: show }))}
-            />
-          </div>
+                
+                handleUpdate('link', linkId, updatedLink);
+              }
+            }}
+            filePreview={filePreview}
+            onClosePreview={handleClosePreview}
+          />
         </div>
 
         <PropertyEditor

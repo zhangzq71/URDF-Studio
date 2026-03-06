@@ -5,7 +5,7 @@
 import { useCallback } from 'react';
 import JSZip from 'jszip';
 import type { RobotState, UrdfLink } from '@/types';
-import { GeometryType } from '@/types';
+import { DEFAULT_LINK, GeometryType } from '@/types';
 import { generateURDF, generateMujocoXML } from '@/core/parsers';
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
@@ -52,17 +52,22 @@ export function useFileExport() {
         name: '',
         links: {
           empty_root: {
+            ...DEFAULT_LINK,
             id: 'empty_root',
             name: 'base_link',
-            visual: { type: 'none' },
-            collision: { type: 'none' },
+            visual: {
+              ...DEFAULT_LINK.visual,
+              type: GeometryType.NONE,
+              dimensions: { x: 0, y: 0, z: 0 },
+            },
+            collision: {
+              ...DEFAULT_LINK.collision,
+              type: GeometryType.NONE,
+              dimensions: { x: 0, y: 0, z: 0 },
+            },
             inertial: {
+              ...DEFAULT_LINK.inertial,
               mass: 0,
-              origin: {
-                xyz: { x: 0, y: 0, z: 0 },
-                rpy: { r: 0, p: 0, y: 0 },
-              },
-              inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
             },
           },
         },

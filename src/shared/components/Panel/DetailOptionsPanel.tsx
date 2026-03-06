@@ -73,7 +73,7 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
             : { top: '16px', right: '16px' }
         }
       >
-        <OptionsPanelContainer isCollapsed={isCollapsed}>
+        <OptionsPanelContainer isCollapsed={isCollapsed} resizeTitle={t.resize}>
           <OptionsPanelHeader
             title={t.detailOptions}
             isCollapsed={isCollapsed}

@@ -30,6 +30,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   // Assets store
   const setAssets = useAssetsStore((state) => state.setAssets);
   const addAssets = useAssetsStore((state) => state.addAssets);
+  const clearAssets = useAssetsStore((state) => state.clearAssets);
   const setAvailableFiles = useAssetsStore((state) => state.setAvailableFiles);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
@@ -164,13 +165,14 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     try {
       // Mode 0: .usp Project File
       if (files.length === 1 && files[0].name.toLowerCase().endsWith('.usp')) {
-        const result = await importProject(files[0]);
+        const result = await importProject(files[0], lang);
         const { manifest, assets: newAssetUrls, availableFiles: newFiles, assemblyState: newAssembly } = result;
         if (manifest.ui) {
           if (manifest.ui.appMode) setAppMode(manifest.ui.appMode as any);
           if (manifest.ui.theme) setTheme(manifest.ui.theme as any);
           if (manifest.ui.lang) setLang(manifest.ui.lang as any);
         }
+        clearAssets();
         addAssets(newAssetUrls);
         setAvailableFiles(newFiles);
         if (newAssembly) {
@@ -360,7 +362,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       console.error("Import failed:", error);
       alert(lang === 'zh' ? "导入失败。请检查文件是否有效。" : "Failed to import. Please check if the file(s) are valid.");
     }
-  }, [lang, assets, availableFiles, robotName, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, addAssets, setAvailableFiles, setMotorLibrary, setAppMode, setTheme, setLang, setSidebarTab, setOriginalFileFormat, setRobot, initAssembly, setAssembly, addComponent]);
+  }, [lang, assets, availableFiles, robotName, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, addAssets, clearAssets, setAvailableFiles, setMotorLibrary, setAppMode, setTheme, setLang, setSidebarTab, setOriginalFileFormat, setRobot, initAssembly, setAssembly, addComponent]);
 
   return {
     handleImport,

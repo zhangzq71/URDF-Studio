@@ -17,18 +17,18 @@ const THROTTLE_INTERVAL = 33;
 // Memoized measurement item to avoid creating new Vector3 on each render
 const MeasurementItem = memo(({
     pair,
-    idx,
     isHovered,
     onHover,
     onLeave,
-    onDelete
+    onDelete,
+    deleteTooltip
 }: {
     pair: [THREE.Vector3, THREE.Vector3];
-    idx: number;
     isHovered: boolean;
     onHover: () => void;
     onLeave: () => void;
     onDelete: () => void;
+    deleteTooltip: string;
 }) => {
     // Cache midpoint calculation - only recalculate when pair changes
     const midpoint = useMemo(() =>
@@ -52,11 +52,11 @@ const MeasurementItem = memo(({
             <Line points={[pair[0], pair[1]]} color={color} lineWidth={2} depthTest={false} />
             <Html position={midpoint} style={{ pointerEvents: 'none' }}>
                 <div
-                    className={`bg-slate-700/80 dark:bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap font-mono cursor-pointer transition-colors group flex items-center gap-1 pointer-events-auto ${isHovered ? 'bg-red-600/90' : 'hover:bg-slate-700 dark:hover:bg-black'}`}
+                    className={`bg-slate-700/80 dark:bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap font-mono transition-colors group flex items-center gap-1 cursor-pointer pointer-events-auto ${isHovered ? 'bg-red-600/90' : 'hover:bg-slate-700 dark:hover:bg-black'}`}
                     onMouseEnter={onHover}
                     onMouseLeave={onLeave}
                     onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                    title="点击删除此测量"
+                    title={deleteTooltip}
                 >
                     {distance}m
                     <svg className={`w-3 h-3 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -106,7 +106,8 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     active,
     robot,
     measureState,
-    setMeasureState
+    setMeasureState,
+    deleteTooltip = 'Click to delete this measurement'
 }) => {
     const { camera, gl } = useThree();
     const [hoveredMeasurementIdx, setHoveredMeasurementIdx] = useState<number | null>(null);
@@ -142,6 +143,7 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     // Only clear temp state when deactivating, keep measurements
     useEffect(() => {
         if (!active) {
+            setHoveredMeasurementIdx(null);
             setMeasureState(prev => ({ ...prev, currentPoints: [], tempPoint: null }));
         }
     }, [active, setMeasureState]);
@@ -287,15 +289,15 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     return (
         <group>
             {/* Render all completed measurements using memoized component */}
-            {measurements.map((pair, idx) => (
+            {active && measurements.map((pair, idx) => (
                 <MeasurementItem
                     key={`measurement-${idx}`}
                     pair={pair}
-                    idx={idx}
                     isHovered={hoveredMeasurementIdx === idx}
                     onHover={() => setHoveredMeasurementIdx(idx)}
                     onLeave={() => setHoveredMeasurementIdx(null)}
                     onDelete={() => handleDeleteMeasurement(idx)}
+                    deleteTooltip={deleteTooltip}
                 />
             ))}
 

@@ -90,8 +90,8 @@ interface UIState {
   setSettingsPos: (pos: { x: number; y: number }) => void;
 
   // Menu state
-  activeMenu: 'file' | 'toolbox' | 'view' | 'more' | null;
-  setActiveMenu: (menu: 'file' | 'toolbox' | 'view' | 'more' | null) => void;
+  activeMenu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
+  setActiveMenu: (menu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null) => void;
 
   // OS detection
   os: 'mac' | 'win';

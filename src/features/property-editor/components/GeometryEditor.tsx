@@ -236,7 +236,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                              {/* Inline 3D Preview */}
                              {previewMeshPath && (
                                  <div className="mt-1 flex flex-col gap-1.5">
-                                     <MeshPreview meshPath={previewMeshPath} assets={assets} />
+                                     <MeshPreview meshPath={previewMeshPath} assets={assets} notFoundText={t.meshNotFound} />
                                      <div className="flex items-center gap-2">
                                          <button
                                              onClick={handleApplyMesh}

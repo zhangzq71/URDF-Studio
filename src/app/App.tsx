@@ -66,11 +66,14 @@ function AppContent() {
     showJointPanel: true,
   });
 
-  // Show toast helper
+  // Show toast helper with proper timer cleanup
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = useCallback((message: string, type: 'info' | 'success' = 'info') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ show: true, message, type });
-    setTimeout(() => setToast(prev => ({ ...prev, show: false })), 5000);
+    toastTimerRef.current = setTimeout(() => setToast(prev => ({ ...prev, show: false })), 5000);
   }, []);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
   // Build robot state for AI modal
   // In workspace mode, AI inspection/select should target merged assembly ids.
@@ -171,7 +174,7 @@ function AppContent() {
       setSelection({ type: null, id: null });
       setSelectedFile(file);
       setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-      setOriginalFileFormat(file.format);
+      setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
       setAppMode('detail');
     } else {
       alert(lang === 'zh' ? `解析 ${file.format.toUpperCase()} 失败` : `Failed to parse ${file.format.toUpperCase()}`);
