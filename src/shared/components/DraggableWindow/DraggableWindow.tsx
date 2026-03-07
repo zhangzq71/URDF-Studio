@@ -49,9 +49,11 @@ export interface DraggableWindowProps {
   closeTitle?: string;
   onHeaderDoubleClick?: () => void;
   showResizeHandles?: boolean;
+  leftResizeHandleClassName?: string;
   rightResizeHandleClassName?: string;
   bottomResizeHandleClassName?: string;
   cornerResizeHandleClassName?: string;
+  leftResizeDirection?: ResizeDirection;
   rightResizeDirection?: ResizeDirection;
   bottomResizeDirection?: ResizeDirection;
   cornerResizeDirection?: ResizeDirection;
@@ -63,6 +65,8 @@ const DEFAULT_CONTROL_BUTTON_CLASS =
   'p-1.5 hover:bg-element-hover rounded-md transition-colors';
 const DEFAULT_CLOSE_BUTTON_CLASS =
   'p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors';
+const DEFAULT_LEFT_RESIZE_CLASS =
+  'absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-system-blue/20 active:bg-system-blue/30 transition-colors z-20';
 const DEFAULT_RIGHT_RESIZE_CLASS =
   'absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-system-blue/20 active:bg-system-blue/30 transition-colors z-20';
 const DEFAULT_BOTTOM_RESIZE_CLASS =
@@ -99,9 +103,11 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   closeTitle,
   onHeaderDoubleClick,
   showResizeHandles = true,
+  leftResizeHandleClassName = DEFAULT_LEFT_RESIZE_CLASS,
   rightResizeHandleClassName = DEFAULT_RIGHT_RESIZE_CLASS,
   bottomResizeHandleClassName = DEFAULT_BOTTOM_RESIZE_CLASS,
   cornerResizeHandleClassName = DEFAULT_CORNER_RESIZE_CLASS,
+  leftResizeDirection = 'left',
   rightResizeDirection = 'right',
   bottomResizeDirection = 'bottom',
   cornerResizeDirection = 'corner',
@@ -143,6 +149,10 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
     <div ref={containerRef} style={windowStyle} className={rootClassName}>
       {shouldRenderResizeHandles && (
         <>
+          <div
+            className={leftResizeHandleClassName}
+            onMouseDown={(e) => handleResizeStart(e, leftResizeDirection)}
+          />
           <div
             className={rightResizeHandleClassName}
             onMouseDown={(e) => handleResizeStart(e, rightResizeDirection)}

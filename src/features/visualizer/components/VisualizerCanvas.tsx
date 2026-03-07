@@ -53,7 +53,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.0,
+        toneMappingExposure: 1.2,
       }}
     >
       <CanvasResizeSync />

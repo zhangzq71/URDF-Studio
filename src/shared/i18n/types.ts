@@ -297,6 +297,33 @@ export interface TranslationKeys {
   performance: string;
   showFPS: string;
   showMemory: string;
+
+  // Export Dialog
+  exportDialog: string;
+  exportFormat: string;
+  exportFormatMJCF: string;
+  exportFormatURDF: string;
+  exportFormatUSD: string;
+  exportComingSoon: string;
+  simulatorPreset: string;
+  presetCustom: string;
+  exportMeshdir: string;
+  exportFloatBase: string;
+  exportFloatBaseDesc: string;
+  exportIncludeActuators: string;
+  exportActuatorType: string;
+  exportActuatorPosition: string;
+  exportActuatorVelocity: string;
+  exportActuatorMotor: string;
+  exportDefaultKp: string;
+  exportIncludeMeshes: string;
+  exportIncludeExtended: string;
+  exportIncludeExtendedDesc: string;
+  exportIncludeBOM: string;
+  exportIncludeBOMDesc: string;
+  exportOutputSection: string;
+  exportOptionsSection: string;
+  exportDoExport: string;
 }
 
 export type Translations = Record<Language, TranslationKeys>;

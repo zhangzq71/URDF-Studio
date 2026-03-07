@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, RefObject } from 'react';
 
-export type ResizeDirection = 'right' | 'bottom' | 'corner' | 'e' | 's' | 'se';
+export type ResizeDirection = 'right' | 'bottom' | 'corner' | 'left' | 'e' | 's' | 'se' | 'w';
 
 interface Position {
   x: number;
@@ -52,9 +52,10 @@ const clamp = (value: number, min: number, max: number) => {
   return Math.max(min, Math.min(max, value));
 };
 
-const normalizeResizeDirection = (direction: ResizeDirection): 'right' | 'bottom' | 'corner' => {
+const normalizeResizeDirection = (direction: ResizeDirection): 'right' | 'bottom' | 'corner' | 'left' => {
   if (direction === 'e') return 'right';
   if (direction === 's') return 'bottom';
+  if (direction === 'w' || direction === 'left') return 'left';
   return 'corner';
 };
 
@@ -76,11 +77,11 @@ export const useDraggableWindow = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragTransform, setDragTransform] = useState<Position>({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState(false);
-  const [resizeDirection, setResizeDirection] = useState<'right' | 'bottom' | 'corner' | null>(null);
+  const [resizeDirection, setResizeDirection] = useState<'right' | 'bottom' | 'corner' | 'left' | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<Position>({ x: 0, y: 0 });
-  const resizeStartRef = useRef({ x: 0, y: 0, width: defaultSize.width, height: defaultSize.height });
+  const resizeStartRef = useRef({ x: 0, y: 0, width: defaultSize.width, height: defaultSize.height, posX: 0 });
   const positionRef = useRef(position);
   const sizeRef = useRef(size);
   const dragTransformRef = useRef(dragTransform);
@@ -180,6 +181,14 @@ export const useDraggableWindow = ({
       const deltaX = e.clientX - resizeStartRef.current.x;
       const deltaY = e.clientY - resizeStartRef.current.y;
 
+      if (resizeDirection === 'left') {
+        const newWidth = clamp(resizeStartRef.current.width - deltaX, minSize.width, resizeStartRef.current.width + resizeStartRef.current.posX);
+        const newX = resizeStartRef.current.posX + (resizeStartRef.current.width - newWidth);
+        setSize((prev) => (prev.width === newWidth ? prev : { ...prev, width: newWidth }));
+        setPosition((prev) => (prev.x === newX ? prev : { ...prev, x: newX }));
+        return;
+      }
+
       const maxWidth = clampResizeToViewport
         ? window.innerWidth - positionRef.current.x
         : Number.POSITIVE_INFINITY;
@@ -253,6 +262,7 @@ export const useDraggableWindow = ({
         y: e.clientY,
         width: sizeRef.current.width,
         height: sizeRef.current.height,
+        posX: positionRef.current.x,
       };
     },
     [isMaximized, isMinimized],

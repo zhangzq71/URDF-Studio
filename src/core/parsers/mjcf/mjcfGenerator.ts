@@ -6,13 +6,21 @@
 import { RobotState, GeometryType, JointType, UrdfLink } from '@/types';
 import { normalizeMeshPathForExport } from '../meshPathUtils';
 
-interface MujocoExportOptions {
+export type MjcfActuatorType = 'position' | 'velocity' | 'motor';
+
+export interface MujocoExportOptions {
   meshdir?: string;
+  addFloatBase?: boolean;
+  includeActuators?: boolean;
+  actuatorType?: MjcfActuatorType;
 }
 
 export const generateMujocoXML = (robot: RobotState, options: MujocoExportOptions = {}): string => {
   const { name, links, joints, rootLinkId } = robot;
   const meshdir = options.meshdir ?? '../meshes/';
+  const addFloatBase = options.addFloatBase ?? false;
+  const includeActuators = options.includeActuators ?? true;
+  const actuatorType = options.actuatorType ?? 'position';
 
   // Helper to format numbers
   const f = (n: number) => n.toFixed(4);
@@ -222,20 +230,43 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return bodyXml;
   };
 
-  xml += buildBody(rootLinkId, "    ");
+  const rootBodyXml = buildBody(rootLinkId, "    ");
+  if (addFloatBase) {
+    // Inject <freejoint/> right after the opening <body ...> line
+    const firstNewline = rootBodyXml.indexOf('\n');
+    xml += rootBodyXml.slice(0, firstNewline + 1) + '      <freejoint/>\n' + rootBodyXml.slice(firstNewline + 1);
+  } else {
+    xml += rootBodyXml;
+  }
 
   xml += `  </worldbody>\n`;
 
-  // Actuators
-  xml += `  <actuator>\n`;
-  Object.values(joints).forEach(j => {
+  // Actuators (conditional)
+  if (includeActuators && actuatorType !== 'motor') {
+    xml += `  <actuator>\n`;
+    Object.values(joints).forEach(j => {
       if (j.type !== JointType.FIXED) {
-          // Add a position servo by default for revolute/prismatic
-          xml += `    <position name="${j.name}_servo" joint="${j.name}" kp="50" />\n`;
-          // Alternatively could use motor: <motor name="${j.name}_motor" joint="${j.name}" gear="1" />
+        // Use joint dynamics for actuator gains
+        const kv = j.dynamics?.damping ?? 1.0;
+        const kp = j.limit?.effort ? j.limit.effort * 0.5 : 100.0;
+        
+        if (actuatorType === 'position') {
+          xml += `    <position name="${j.name}_servo" joint="${j.name}" kp="${f(kp)}" />\n`;
+        } else if (actuatorType === 'velocity') {
+          xml += `    <velocity name="${j.name}_vel" joint="${j.name}" kv="${f(kv)}" />\n`;
+        }
       }
-  });
-  xml += `  </actuator>\n`;
+    });
+    xml += `  </actuator>\n`;
+  } else if (includeActuators && actuatorType === 'motor') {
+    xml += `  <actuator>\n`;
+    Object.values(joints).forEach(j => {
+      if (j.type !== JointType.FIXED) {
+        xml += `    <motor name="${j.name}_motor" joint="${j.name}" gear="1" />\n`;
+      }
+    });
+    xml += `  </actuator>\n`;
+  }
 
   xml += `</mujoco>`;
   return xml;
