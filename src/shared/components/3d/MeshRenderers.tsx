@@ -102,7 +102,6 @@ export const OBJRenderer = React.memo(({
 
   useEffect(() => () => {
     clone.traverse((child: any) => {
-      if (child.geometry) child.geometry.dispose();
       if (child.material && child.material !== material) {
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         mats.forEach((m: THREE.Material) => m.dispose());
@@ -165,7 +164,6 @@ export const DAERenderer = React.memo(({
 
   useEffect(() => () => {
     clone.traverse((child: any) => {
-      if (child.geometry) child.geometry.dispose();
       if (child.material && child.material !== material) {
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         mats.forEach((m: THREE.Material) => m.dispose());

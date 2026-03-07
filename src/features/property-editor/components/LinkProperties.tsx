@@ -88,46 +88,42 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             </button>
           </div>
 
-          {/* Visual Tab Content */}
-          {linkTab === 'visual' && (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-panel-bg border-x border-b border-border-black rounded-b-lg p-3 shadow-sm mb-4">
-              <InputGroup label={t.name}>
-                <input
-                  type="text"
-                  value={data.name}
-                  onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
-                  className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:border-system-blue focus:outline-none"
-                />
-              </InputGroup>
-
-              <GeometryEditor
-                data={data}
-                robot={robot}
-                category="visual"
-                onUpdate={(d) => onUpdate('link', selection.id!, d)}
-                assets={assets}
-                onUploadAsset={onUploadAsset}
-                t={t}
-                isTabbed={true}
+          {/* Visual Tab Content - always mounted to preserve snapshot cache */}
+          <div style={{ display: linkTab === 'visual' ? undefined : 'none' }} className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-panel-bg border-x border-b border-border-black rounded-b-lg p-3 shadow-sm mb-4">
+            <InputGroup label={t.name}>
+              <input
+                type="text"
+                value={data.name}
+                onChange={(e) => onUpdate('link', selection.id!, { ...data, name: e.target.value })}
+                className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:border-system-blue focus:outline-none"
               />
-            </div>
-          )}
+            </InputGroup>
 
-          {/* Collision Tab Content */}
-          {linkTab === 'collision' && (
-            <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-panel-bg border-x border-b border-border-black rounded-b-lg p-3 shadow-sm mb-4">
-              <GeometryEditor
-                data={data}
-                robot={robot}
-                category="collision"
-                onUpdate={(d) => onUpdate('link', selection.id!, d)}
-                assets={assets}
-                onUploadAsset={onUploadAsset}
-                t={t}
-                isTabbed={true}
-              />
-            </div>
-          )}
+            <GeometryEditor
+              data={data}
+              robot={robot}
+              category="visual"
+              onUpdate={(d) => onUpdate('link', selection.id!, d)}
+              assets={assets}
+              onUploadAsset={onUploadAsset}
+              t={t}
+              isTabbed={true}
+            />
+          </div>
+
+          {/* Collision Tab Content - always mounted to preserve snapshot cache */}
+          <div style={{ display: linkTab === 'collision' ? undefined : 'none' }} className="animate-in fade-in slide-in-from-bottom-1 duration-200 bg-panel-bg border-x border-b border-border-black rounded-b-lg p-3 shadow-sm mb-4">
+            <GeometryEditor
+              data={data}
+              robot={robot}
+              category="collision"
+              onUpdate={(d) => onUpdate('link', selection.id!, d)}
+              assets={assets}
+              onUploadAsset={onUploadAsset}
+              t={t}
+              isTabbed={true}
+            />
+          </div>
         </>
       )}
 

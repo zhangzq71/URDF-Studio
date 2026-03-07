@@ -68,11 +68,12 @@ export function getCachedMaterial({
       });
     }
     // Keep cache bounded to avoid unbounded GPU memory growth in long sessions.
+    // Note: do NOT dispose evicted materials here — they may still be referenced
+    // by active Three.js meshes (via <primitive object={material} />) and calling
+    // dispose() on a live material corrupts its GPU program, causing visual glitches.
     if (materialCache.size >= MAX_MATERIAL_CACHE_SIZE) {
       const oldestKey = materialCache.keys().next().value;
       if (oldestKey !== undefined) {
-        const oldestMaterial = materialCache.get(oldestKey);
-        oldestMaterial?.dispose();
         materialCache.delete(oldestKey);
       }
     }
