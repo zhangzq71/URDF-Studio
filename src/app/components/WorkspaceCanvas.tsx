@@ -11,6 +11,8 @@ import {
   SceneLighting,
   SnapshotManager,
   UsageGuide,
+  WORKSPACE_CANVAS_BACKGROUND,
+  WorldOriginAxes,
 } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 
@@ -61,10 +63,7 @@ export const WorkspaceCanvas = ({
   environmentIntensity = 0.36,
   cameraFollowPrimary = false,
   orbitControlsProps,
-  background = {
-    light: '#f8f9fa',
-    dark: '#1f1f1f',
-  },
+  background = WORKSPACE_CANVAS_BACKGROUND,
   contextLostMessage,
 }: WorkspaceCanvasProps) => {
   const effectiveTheme = useEffectiveTheme();
@@ -158,6 +157,7 @@ export const WorkspaceCanvas = ({
           <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
           {children}
           <ReferenceGrid theme={effectiveTheme} />
+          <WorldOriginAxes />
           <OrbitControls {...finalOrbitControlsProps} />
           <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
             <GizmoViewport

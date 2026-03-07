@@ -107,7 +107,7 @@ export const Slider: React.FC<SliderProps> = ({
         <div className="absolute w-full h-[4px] bg-border-black rounded-full overflow-hidden">
           {/* Filled Track */}
           <div 
-            className="h-full bg-slider-accent transition-colors duration-200"
+            className="h-full bg-system-blue-solid transition-colors duration-200"
             style={{ width: `${clampedPercentage}%` }}
           />
         </div>

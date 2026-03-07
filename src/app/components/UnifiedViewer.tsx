@@ -4,6 +4,7 @@ import type { RobotState, Theme } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
+import { WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
 import { useVisualizerController } from '@/features/visualizer/hooks';
 import { VisualizerPanels } from '@/features/visualizer/components/VisualizerPanels';
 import { VisualizerScene } from '@/features/visualizer/components/VisualizerScene';
@@ -40,8 +41,8 @@ interface UnifiedViewerProps {
   urdfContent: string;
   jointAngleState?: Record<string, number>;
   onJointChange?: (jointName: string, angle: number) => void;
-  selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
-  hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
+  selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
+  hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
   focusTarget?: string | null;
   isMeshPreview?: boolean;
   onTransformPendingChange?: (pending: boolean) => void;
@@ -133,6 +134,10 @@ export const UnifiedViewer = React.memo(({
   onClosePreview,
 }: UnifiedViewerProps) => {
   const t = translations[lang];
+  const activePreview = mode === 'skeleton' ? undefined : filePreview;
+  const isPreviewing = !!activePreview;
+  const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
+
   const visualizerController = useVisualizerController({
     robot,
     onUpdate,
@@ -150,22 +155,20 @@ export const UnifiedViewer = React.memo(({
     showVisual,
     setShowVisual,
     onTransformPendingChange,
+    active: isViewerMode,
   });
 
-  const isPreviewing = !!filePreview;
-  const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
-
-  const effectiveUrdfContent = isPreviewing ? filePreview.urdfContent : urdfContent;
-  const effectiveSelection = isPreviewing ? emptySelection : selection;
-  const effectiveHoveredSelection = isPreviewing ? undefined : hoveredSelection;
-  const effectiveFocusTarget = isPreviewing ? undefined : focusTarget;
-  const effectiveIsMeshPreview = isPreviewing ? false : isMeshPreview;
+  const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
+  const effectiveSelection = activePreview ? emptySelection : selection;
+  const effectiveHoveredSelection = activePreview ? undefined : hoveredSelection;
+  const effectiveFocusTarget = activePreview ? undefined : focusTarget;
+  const effectiveIsMeshPreview = activePreview ? false : isMeshPreview;
 
   return (
     <WorkspaceCanvas
       theme={theme}
       lang={lang}
-      robotName={isPreviewing ? filePreview.fileName : (robot.name || 'robot')}
+      robotName={activePreview ? activePreview.fileName : (robot.name || 'robot')}
       containerRef={isViewerMode ? viewerController.containerRef : visualizerController.panel.containerRef}
       sceneRef={isViewerMode ? undefined : visualizerController.sceneRef}
       snapshotAction={snapshotAction}
@@ -191,21 +194,17 @@ export const UnifiedViewer = React.memo(({
             }
           : undefined
       }
-      background={
-        isViewerMode
-          ? { light: '#f8f9fa', dark: '#1f1f1f' }
-          : { light: '#f8f9fa', dark: '#000000' }
-      }
+      background={WORKSPACE_CANVAS_BACKGROUND}
       contextLostMessage={isViewerMode ? t.webglContextRestoring : undefined}
       overlays={
-        isPreviewing ? (
+        activePreview ? (
           <>
             <FilePreviewBanner
-              fileName={filePreview.fileName}
+              fileName={activePreview.fileName}
               onClose={() => onClosePreview?.()}
               lang={lang}
             />
-            {!filePreview.urdfContent && <FilePreviewError lang={lang} />}
+            {!activePreview.urdfContent && <FilePreviewError lang={lang} />}
           </>
         ) : isViewerMode ? (
           <URDFViewerPanels
@@ -235,12 +234,13 @@ export const UnifiedViewer = React.memo(({
           controller={viewerController}
           urdfContent={effectiveUrdfContent}
           assets={assets}
-          mode={isPreviewing ? 'detail' : (mode as 'detail' | 'hardware')}
+          mode={activePreview ? 'detail' : (mode as 'detail' | 'hardware')}
           selection={effectiveSelection}
           hoveredSelection={effectiveHoveredSelection}
-          robotLinks={isPreviewing ? undefined : robot.links}
+          onMeshSelect={activePreview ? undefined : onMeshSelect}
+          robotLinks={activePreview ? undefined : robot.links}
           focusTarget={effectiveFocusTarget}
-          onCollisionTransform={isPreviewing ? undefined : onCollisionTransform}
+          onCollisionTransform={activePreview ? undefined : onCollisionTransform}
           isMeshPreview={effectiveIsMeshPreview}
           t={t}
         />

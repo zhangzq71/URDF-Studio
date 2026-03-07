@@ -276,6 +276,9 @@ export interface TranslationKeys {
   emptyAssemblyHint: string;
   clickToAddComponent: string;
   removeFromLibrary: string;
+  deleteAllLibraryFiles: string;
+  deleteAllLibraryFilesConfirmTitle: string;
+  deleteAllLibraryFilesConfirmMessage: string;
   rightClickToRename: string;
   rightClickForActions: string;
 

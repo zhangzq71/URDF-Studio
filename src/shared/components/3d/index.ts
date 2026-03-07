@@ -19,8 +19,10 @@ export {
   NeutralStudioEnvironment,
   SceneLighting,
   ReferenceGrid,
-  LIGHTING_CONFIG
+  LIGHTING_CONFIG,
+  WORKSPACE_CANVAS_BACKGROUND
 } from './SceneUtilities';
+export { TransformControlsRotateGuide } from './TransformControlsRotateGuide';
 
 // Visualization Helpers
 export * from './helpers';

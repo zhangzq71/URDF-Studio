@@ -8,10 +8,24 @@ import { Upload, File, Wand, Check } from 'lucide-react';
 import type { RobotState, UrdfLink } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
-import { InputGroup, NumberInput, Vec3Input } from './FormControls';
+import {
+  InputGroup,
+  NumberInput,
+  Vec3InlineInput,
+  PROPERTY_EDITOR_HELPER_TEXT_CLASS,
+  PROPERTY_EDITOR_INPUT_CLASS,
+  PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS,
+  PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
+  PROPERTY_EDITOR_SECTION_TITLE_CLASS,
+  PROPERTY_EDITOR_SELECT_CLASS,
+} from './FormControls';
 import { MeshPreview } from './MeshPreview';
-import { computeAutoAlign, convertGeometryType, computeMeshBoundsFromAssets } from '../utils/geometryConversion';
-import type { MeshBounds } from '../utils/geometryConversion';
+import {
+  computeAutoAlign,
+  convertGeometryType,
+  computeMeshAnalysisFromAssets,
+} from '../utils/geometryConversion';
+import type { MeshAnalysis } from '../utils/geometryConversion';
 
 interface GeometryEditorProps {
   data: UrdfLink;
@@ -38,8 +52,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const geomData = data[category] || {} as any;
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
-    const meshBoundsRef = useRef<MeshBounds | null>(null);
-    const meshBoundsPathRef = useRef<string | null>(null);
+    const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
+    const meshAnalysisKeyRef = useRef<string | null>(null);
 
     const geometrySnapshotCacheRef = useRef<Record<string, Partial<Record<GeometryType, {
       dimensions?: { x: number; y: number; z: number };
@@ -75,6 +89,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       color: source?.color,
     });
 
+    const normalizeColor = (value?: string) => value?.trim().toLowerCase();
+
     const update = (newData: Partial<typeof geomData>) => {
         onUpdate({ ...data, [category]: { ...geomData, ...newData } });
     };
@@ -91,18 +107,20 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       if (geomData.type !== GeometryType.MESH || !geomData.meshPath) {
         return;
       }
-      if (meshBoundsPathRef.current === geomData.meshPath && meshBoundsRef.current) {
+      const analysisKey = `${geomData.meshPath}:${geomData.dimensions?.x ?? 1}:${geomData.dimensions?.y ?? 1}:${geomData.dimensions?.z ?? 1}`;
+      if (meshAnalysisKeyRef.current === analysisKey && meshAnalysisRef.current) {
         return;
       }
-      meshBoundsPathRef.current = geomData.meshPath;
+      meshAnalysisKeyRef.current = analysisKey;
+      meshAnalysisRef.current = null;
       let cancelled = false;
-      computeMeshBoundsFromAssets(geomData.meshPath, assets).then((bounds) => {
+      computeMeshAnalysisFromAssets(geomData.meshPath, assets, geomData.dimensions).then((analysis) => {
         if (!cancelled) {
-          meshBoundsRef.current = bounds;
+          meshAnalysisRef.current = analysis;
         }
       });
       return () => { cancelled = true; };
-    }, [geomData.meshPath, geomData.type, assets]);
+    }, [geomData.meshPath, geomData.type, geomData.dimensions?.x, geomData.dimensions?.y, geomData.dimensions?.z, assets]);
 
     const handleApplyMesh = () => {
         if (previewMeshPath) {
@@ -147,57 +165,80 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
         cacheByType[currentType] = createSnapshot(geomData);
 
         const cachedTarget = cacheByType[newType];
+        const representativeMeshColor =
+          currentType === GeometryType.MESH && newType !== GeometryType.MESH
+            ? meshAnalysisRef.current?.representativeColor
+            : undefined;
         if (cachedTarget) {
+          const shouldUseRepresentativeMeshColor =
+            Boolean(representativeMeshColor) &&
+            newType !== GeometryType.MESH &&
+            (
+              !cachedTarget.color ||
+              normalizeColor(cachedTarget.color) === normalizeColor(geomData.color)
+            );
+
           update({
             type: newType,
             dimensions: cachedTarget.dimensions || geomData.dimensions,
             origin: cachedTarget.origin || geomData.origin,
             meshPath: newType === GeometryType.MESH ? cachedTarget.meshPath : undefined,
-            color: cachedTarget.color || geomData.color,
+            color: shouldUseRepresentativeMeshColor
+              ? representativeMeshColor
+              : (cachedTarget.color || geomData.color),
           });
           return;
         }
 
-        const meshBounds = (currentType === GeometryType.MESH) ? (meshBoundsRef.current ?? undefined) : undefined;
-        const converted = convertGeometryType(geomData, newType, meshBounds);
+        const meshAnalysis =
+          currentType === GeometryType.MESH
+            ? (meshAnalysisRef.current ?? undefined)
+            : undefined;
+        const converted = convertGeometryType(geomData, newType, meshAnalysis);
         const nextGeom = {
           ...converted,
           meshPath: newType === GeometryType.MESH ? geomData.meshPath : undefined,
-          color: geomData.color,
+          color: newType === GeometryType.MESH
+            ? geomData.color
+            : representativeMeshColor || geomData.color,
         };
         cacheByType[newType] = createSnapshot(nextGeom);
         update(nextGeom);
     };
 
     return (
-        <div className={isTabbed ? "pt-2" : "border-t border-border-black pt-4"}>
-            <div className={`flex items-center justify-between ${isTabbed ? 'mb-2' : 'mb-3'}`}>
-                {!isTabbed && <h3 className="text-sm font-bold text-text-primary capitalize">{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>}
-                {isTabbed && <div />} {/* Spacer */}
-                {geomData.type === GeometryType.CYLINDER && (
-                    <button
-                        onClick={handleAutoAlign}
-                        className="p-1 hover:bg-element-hover rounded text-system-blue hover:text-system-blue-hover transition-colors"
-                        title={t.autoAlign}
-                    >
-                        <Wand className="w-4 h-4" />
-                    </button>
-                )}
-            </div>
+        <div className={isTabbed ? "pt-1" : "border-t border-border-black pt-4"}>
+            {!isTabbed && (
+                <div className="mb-2.5">
+                    <h3 className={`${PROPERTY_EDITOR_SECTION_TITLE_CLASS} capitalize`}>{category === 'visual' ? t.visualGeometry : t.collisionGeometry}</h3>
+                </div>
+            )}
 
             <InputGroup label={t.type}>
-                <select
-                    value={geomData.type || GeometryType.CYLINDER}
-                    onChange={handleTypeChange}
-                    className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:outline-none focus:border-system-blue"
-                >
-                    <option value={GeometryType.BOX}>{t.box}</option>
-                    <option value={GeometryType.CYLINDER}>{t.cylinder}</option>
-                    <option value={GeometryType.SPHERE}>{t.sphere}</option>
-                    <option value={GeometryType.CAPSULE}>{t.capsule}</option>
-                    <option value={GeometryType.MESH}>{t.mesh}</option>
-                    <option value={GeometryType.NONE}>{t.none}</option>
-                </select>
+                <div className="flex items-center gap-2">
+                    <select
+                        value={geomData.type || GeometryType.CYLINDER}
+                        onChange={handleTypeChange}
+                        className={`${PROPERTY_EDITOR_SELECT_CLASS} min-w-0 flex-1`}
+                    >
+                        <option value={GeometryType.BOX}>{t.box}</option>
+                        <option value={GeometryType.CYLINDER}>{t.cylinder}</option>
+                        <option value={GeometryType.SPHERE}>{t.sphere}</option>
+                        <option value={GeometryType.CAPSULE}>{t.capsule}</option>
+                        <option value={GeometryType.MESH}>{t.mesh}</option>
+                        <option value={GeometryType.NONE}>{t.none}</option>
+                    </select>
+                    {geomData.type === GeometryType.CYLINDER && (
+                        <button
+                            onClick={handleAutoAlign}
+                            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} h-8 shrink-0 px-2`}
+                            title={t.autoAlign}
+                        >
+                            <Wand className="w-3.5 h-3.5" />
+                            <span>{t.autoAlign}</span>
+                        </button>
+                    )}
+                </div>
             </InputGroup>
 
             {/* Mesh Selection UI */}
@@ -215,7 +256,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                 />
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
-                                    className="flex items-center gap-1 bg-system-blue-solid hover:bg-system-blue-hover text-white text-xs px-2 py-1 rounded transition-colors"
+                                    className={PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS}
                                 >
                                     <Upload className="w-3 h-3" />
                                     {t.upload}
@@ -224,7 +265,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
                              <div className="max-h-32 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-1">
                                 {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).length === 0 && (
-                                    <div className="text-[10px] text-text-tertiary italic"></div>
+                                    <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} italic`}></div>
                                 )}
                                 {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).map(filename => {
                                     const isApplied = geomData.meshPath === filename && !previewMeshPath;
@@ -238,7 +279,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                                 setPreviewMeshPath(null);
                                             }}
                                             className={`
-                                                flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors
+                                                flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer text-[11px] transition-colors
                                                 ${isApplied
                                                     ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue border border-system-blue/30 dark:border-system-blue/35'
                                                     : isPreviewing
@@ -262,14 +303,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                      <div className="flex items-center gap-2">
                                          <button
                                              onClick={handleApplyMesh}
-                                             className="flex-1 flex items-center justify-center gap-1 bg-system-blue-solid hover:bg-system-blue-hover text-white text-xs px-2 py-1.5 rounded transition-colors"
+                                             className={`${PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS} flex-1`}
                                          >
                                              <Check className="w-3 h-3" />
                                              {t.applyMesh}
                                          </button>
                                          <button
                                              onClick={() => setPreviewMeshPath(null)}
-                                             className="flex-1 text-xs px-2 py-1.5 rounded border border-border-strong text-text-secondary hover:bg-element-hover transition-colors"
+                                             className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} flex-1`}
                                          >
                                              {t.cancel}
                                          </button>
@@ -278,14 +319,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                              )}
 
                              {geomData.meshPath && !previewMeshPath && (
-                                 <div className="text-[10px] text-text-tertiary truncate mt-1">
+                                 <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} truncate mt-1`}>
                                      {t.selected}: <span className="text-system-blue">{geomData.meshPath}</span>
                                  </div>
                              )}
 
                              {/* Hint for double-click */}
                              {!previewMeshPath && Object.keys(assets).length > 0 && (
-                                 <div className="text-[9px] text-text-tertiary mt-0.5">
+                                 <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} mt-0.5`}>
                                      {t.meshHint}
                                  </div>
                              )}
@@ -375,22 +416,22 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             {geomData.type !== GeometryType.NONE && (
                 <InputGroup label={t.originRelativeLink}>
                     <div className="space-y-2">
-                    <div className="text-[10px] text-text-tertiary">{t.position}</div>
-                    <Vec3Input
+                    <Vec3InlineInput
                         value={geomData.origin?.xyz || {x:0, y:0, z:0}}
                         onChange={(v) => update({
                             origin: { ...(geomData.origin || { rpy: {r:0,p:0,y:0} }), xyz: v as { x: number; y: number; z: number } }
                         })}
                         labels={['X', 'Y', 'Z']}
+                        compact
                     />
-                    <div className="text-[10px] text-text-tertiary mt-2">{t.rotation}</div>
-                    <Vec3Input
+                    <Vec3InlineInput
                         value={geomData.origin?.rpy || {r:0, p:0, y:0}}
                         onChange={(v) => update({
                             origin: { ...(geomData.origin || { xyz: {x:0,y:0,z:0} }), rpy: v as { r: number; p: number; y: number } }
                         })}
                         labels={[t.roll, t.pitch, t.yaw]}
                         keys={['r', 'p', 'y']}
+                        compact
                     />
                     </div>
                 </InputGroup>
@@ -409,7 +450,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                             type="text"
                             value={geomData.color || '#ffffff'}
                             onChange={(e) => update({ color: e.target.value })}
-                            className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary flex-1 focus:outline-none focus:border-system-blue"
+                            className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1`}
                         />
                     </div>
                 </InputGroup>

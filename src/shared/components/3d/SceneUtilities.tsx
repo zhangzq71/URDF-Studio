@@ -497,6 +497,11 @@ export const LIGHTING_CONFIG = {
   cameraSoftFrontIntensityDark: 0.42,
 } as const;
 
+export const WORKSPACE_CANVAS_BACKGROUND = {
+  light: '#f8f9fa',
+  dark: '#1f1f1f',
+} as const;
+
 // Scene lighting setup for Z-up coordinate system
 // 5-Point lighting for comprehensive robot illumination
 export function SceneLighting({

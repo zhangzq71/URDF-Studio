@@ -2,13 +2,21 @@ import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react
 import { Canvas, RootState } from '@react-three/fiber';
 import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { SnapshotManager, NeutralStudioEnvironment, SceneLighting, ReferenceGrid, CanvasResizeSync, UsageGuide } from '@/shared/components/3d';
+import {
+    SnapshotManager,
+    NeutralStudioEnvironment,
+    SceneLighting,
+    ReferenceGrid,
+    CanvasResizeSync,
+    UsageGuide,
+    WORKSPACE_CANVAS_BACKGROUND,
+    WorldOriginAxes,
+} from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 import { useUIStore } from '@/store';
 import { getLowestMeshZ } from '@/shared/utils';
 import { isSingleDofJoint } from '../utils/jointTypes';
-import { offsetRobotToGround } from '../utils/robotPositioning';
 
 import type { URDFViewerProps, ToolMode, MeasureState } from '../types';
 import { RobotModel } from './RobotModel';
@@ -36,6 +44,7 @@ export function URDFViewer({
     lang,
     mode = 'detail',
     onSelect,
+    onMeshSelect,
     onHover,
     theme,
     selection,
@@ -222,21 +231,6 @@ export function URDFViewer({
     }, [robot, jointAngleState]);
 
     useEffect(() => {
-        if (!robot) return;
-
-        const alignToGround = () => {
-            offsetRobotToGround(robot);
-            useUIStore.getState().setGroundPlaneOffset(0);
-        };
-
-        const timers = [0, 80, 220].map((delay) => window.setTimeout(alignToGround, delay));
-
-        return () => {
-            timers.forEach((timer) => window.clearTimeout(timer));
-        };
-    }, [robot]);
-
-    useEffect(() => {
         if (robot && robot.joints) {
             setJointAngles(prev => {
                 const next = { ...prev };
@@ -329,11 +323,13 @@ export function URDFViewer({
 
     const handleAutoFitGround = useCallback(() => {
         if (!robot) return;
+
         let minZ = getLowestMeshZ(robot, {
             includeInvisible: false,
             includeVisual: true,
             includeCollision: false,
         });
+
         if (minZ === null) {
             minZ = getLowestMeshZ(robot, {
                 includeInvisible: true,
@@ -341,6 +337,7 @@ export function URDFViewer({
                 includeCollision: false,
             });
         }
+
         if (minZ !== null) {
             useUIStore.getState().setGroundPlaneOffset(minZ);
         }
@@ -574,7 +571,7 @@ export function URDFViewer({
                 }}
             >
                 <CanvasResizeSync />
-                <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#1f1f1f']} />
+                <color attach="background" args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]} />
                 <NeutralStudioEnvironment intensity={0.36} />
                 <SceneLighting theme={effectiveTheme} cameraFollowPrimary />
                 <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />
@@ -653,6 +650,7 @@ export function URDFViewer({
                 /> */}
 
                 <ReferenceGrid theme={effectiveTheme} />
+                <WorldOriginAxes />
 
                 <OrbitControls
                     makeDefault

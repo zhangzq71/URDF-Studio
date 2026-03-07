@@ -33,6 +33,7 @@ function createCollisionBodyFromLink(link: UrdfLink): UrdfLink['collision'] {
 
   return {
     ...source,
+    visible: true,
     origin: {
       xyz: {
         x: origin.xyz.x,

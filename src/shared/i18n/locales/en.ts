@@ -276,6 +276,9 @@ export const en: TranslationKeys = {
   emptyAssemblyHint: "Right-click files in the asset library above and choose Add or Delete",
   clickToAddComponent: "Click file to preview, right-click to add/delete",
   removeFromLibrary: "Remove from Library",
+  deleteAllLibraryFiles: "Delete All",
+  deleteAllLibraryFilesConfirmTitle: "Delete all library files",
+  deleteAllLibraryFilesConfirmMessage: "Delete all files in the asset library? This action cannot be undone.",
   rightClickToRename: "Right-click to rename",
   rightClickForActions: "Right-click for actions",
 

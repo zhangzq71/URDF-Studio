@@ -337,10 +337,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             || newRobotFiles[0];
           addComponent(preferredFile, { availableFiles: mergedFiles, assets: { ...assets, ...newAssets } });
           setSidebarTab('structure');
-          const robotState = loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
-          if (robotState && onLoadRobot) {
-            onLoadRobot(preferredFile);
-          }
+          loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
           setAppMode('detail');
         } else {
           // Subsequent import: notify user

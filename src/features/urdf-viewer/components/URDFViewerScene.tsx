@@ -12,6 +12,7 @@ interface URDFViewerSceneProps {
   mode: 'detail' | 'hardware';
   selection?: URDFViewerProps['selection'];
   hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  onMeshSelect?: URDFViewerProps['onMeshSelect'];
   robotLinks?: URDFViewerProps['robotLinks'];
   focusTarget?: URDFViewerProps['focusTarget'];
   onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
@@ -26,6 +27,7 @@ export const URDFViewerScene = ({
   mode,
   selection,
   hoveredSelection,
+  onMeshSelect,
   robotLinks,
   focusTarget,
   onCollisionTransform,
@@ -50,6 +52,7 @@ export const URDFViewerScene = ({
           showCollision={controller.showCollision}
           showVisual={controller.showVisual}
           onSelect={controller.handleSelectWrapper}
+          onMeshSelect={onMeshSelect}
           onJointChange={controller.handleJointAngleChange}
           onJointChangeCommit={controller.handleJointChangeCommit}
           jointAngles={controller.jointAngles}

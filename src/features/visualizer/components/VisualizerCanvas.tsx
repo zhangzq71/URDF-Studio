@@ -3,7 +3,14 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { Theme } from '@/types';
-import { SceneLighting, SnapshotManager, ReferenceGrid, CanvasResizeSync } from '@/shared/components/3d';
+import {
+  SceneLighting,
+  SnapshotManager,
+  ReferenceGrid,
+  CanvasResizeSync,
+  WORKSPACE_CANVAS_BACKGROUND,
+  WorldOriginAxes,
+} from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 
 interface VisualizerCanvasProps {
@@ -58,7 +65,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
     >
       <CanvasResizeSync />
       {sceneRef && <SceneCapture sceneRef={sceneRef} />}
-      <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#000000']} />
+      <color attach="background" args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]} />
       <Suspense fallback={null}>
         <OrbitControls makeDefault enableDamping={false} />
         {/* Pass effective theme to SceneLighting and ReferenceGrid */}
@@ -74,6 +81,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
 
         {/* Reference Grid */}
         <ReferenceGrid theme={effectiveTheme} />
+        <WorldOriginAxes />
 
         {/* Axis Gizmo */}
         <GizmoHelper alignment="bottom-right" margin={[68, 68]}>

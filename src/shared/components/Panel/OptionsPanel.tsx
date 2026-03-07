@@ -53,6 +53,7 @@ interface CheckboxOptionProps {
   label: string;
   icon?: ReactNode;
   compact?: boolean;
+  labelClassName?: string;
 }
 
 export const CheckboxOption: React.FC<CheckboxOptionProps> = ({
@@ -61,12 +62,13 @@ export const CheckboxOption: React.FC<CheckboxOptionProps> = ({
   label,
   icon,
   compact = false,
+  labelClassName = '',
 }) => {
   // Use the new Checkbox component but preserve the layout logic
   const content = (
     <div className="flex items-center gap-2">
       {icon}
-      <span className="text-[11px] leading-tight">{label}</span>
+      <span className={`text-[11px] leading-tight ${labelClassName}`}>{label}</span>
     </div>
   );
 
@@ -95,6 +97,7 @@ interface SliderOptionProps {
   compact?: boolean;
   icon?: ReactNode;
   showPercentage?: boolean;
+  labelClassName?: string;
 }
 
 export const SliderOption: React.FC<SliderOptionProps> = ({
@@ -109,6 +112,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   compact = false,
   icon,
   showPercentage = false,
+  labelClassName = '',
 }) => {
   const paddingClass = compact
     ? `${indent ? 'pl-4' : ''} pr-3 pb-1`
@@ -127,7 +131,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         showValue={true}
         formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
         className={compact ? "scale-95 origin-left" : ""}
-        labelClassName="text-[10px] text-text-tertiary mb-1" // Smaller label
+        labelClassName={`text-[10px] text-text-tertiary mb-1 ${labelClassName}`}
       />
     </div>
   );

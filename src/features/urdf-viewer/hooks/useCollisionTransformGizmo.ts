@@ -231,7 +231,7 @@ export const useCollisionTransformGizmo = ({
         }
     }, []);
 
-    const updateRotateKnobFeedback = useCallback((controls: any, elapsedTime: number) => {
+    const updateRotateKnobFeedback = useCallback((controls: any, _elapsedTime: number) => {
         if (controls?.mode !== 'rotate') return;
         const root = controls?.children?.[0];
         const rotateGizmo = root?.gizmo?.rotate;
@@ -250,7 +250,6 @@ export const useCollisionTransformGizmo = ({
         )
             ? lockedDragAxis
             : hoveredAxis;
-        const axisPhase: Record<string, number> = { X: 0, Y: 2.1, Z: 4.2 };
         const rotationAngle = typeof controls?.rotationAngle === 'number' ? controls.rotationAngle : 0;
         const pointEnd = controls?.pointEnd as THREE.Vector3 | undefined;
         const worldStart = controls?.worldPositionStart as THREE.Vector3 | undefined;
@@ -359,7 +358,6 @@ export const useCollisionTransformGizmo = ({
         rotateGizmo.traverse((child: any) => {
             if (child.userData?.urdfRotateKnob) {
                 const base = (child.userData.urdfKnobAnchor as THREE.Vector3 | undefined)?.clone?.() || child.position.clone();
-                const phase = axisPhase[child.name] ?? 0;
                 let targetPos = base.clone();
 
                 if (isDragging && axis === child.name) {
@@ -452,21 +450,14 @@ export const useCollisionTransformGizmo = ({
                     child.position.copy(targetPos);
                 }
 
-                const hoverPulse = 1 + 0.015 * (0.5 + 0.5 * Math.sin(elapsedTime * 6 + phase));
-                const targetScale = axis === child.name ? (isDragging ? 1.16 : 1.08) : hoverPulse;
-                const nextScale = THREE.MathUtils.lerp(child.scale.x, targetScale, 0.32);
-                child.scale.setScalar(nextScale);
+                child.scale.setScalar(1);
                 return;
             }
 
             if (child.userData?.urdfRotateKnobOutline && child.material) {
                 const mat = child.material;
-                const active = axis === child.name;
-                const pulse = 0.45 + 0.35 * (0.5 + 0.5 * Math.sin(elapsedTime * 11));
-                const nextOpacity = active ? pulse : 0;
-
-                if (Math.abs((mat.opacity ?? 0) - nextOpacity) > 0.005) {
-                    mat.opacity = nextOpacity;
+                if ((mat.opacity ?? 0) !== 0) {
+                    mat.opacity = 0;
                     mat.needsUpdate = true;
                 }
             }

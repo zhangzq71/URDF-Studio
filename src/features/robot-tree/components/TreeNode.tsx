@@ -13,12 +13,15 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
-import { GeometryType, type AppMode, type RobotState } from '@/types';
+import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
+import { GeometryType, JointType, type AppMode, type RobotState } from '@/types';
+import { useShallow } from 'zustand/react/shallow';
 
 export interface TreeNodeProps {
   linkId: string;
   robot: RobotState;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+  onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
@@ -29,10 +32,76 @@ export interface TreeNodeProps {
   depth?: number;
 }
 
+function getJointTypeLabel(type: JointType, t: TranslationKeys): string {
+  switch (type) {
+    case JointType.FIXED:
+      return t.jointTypeFixed;
+    case JointType.REVOLUTE:
+      return t.jointTypeRevolute;
+    case JointType.CONTINUOUS:
+      return t.jointTypeContinuous;
+    case JointType.PRISMATIC:
+      return t.jointTypePrismatic;
+    case JointType.PLANAR:
+      return t.jointTypePlanar;
+    case JointType.FLOATING:
+      return t.jointTypeFloating;
+    default:
+      return type;
+  }
+}
+
+function branchContainsSelection(robot: RobotState, branchLinkId: string): boolean {
+  const { selection } = robot;
+  if (!selection.type || !selection.id) return false;
+  if (selection.type === 'link' && selection.id === branchLinkId) return true;
+
+  const childJoints = Object.values(robot.joints).filter((joint) => joint.parentLinkId === branchLinkId);
+  for (const joint of childJoints) {
+    if (selection.type === 'joint' && selection.id === joint.id) return true;
+    if (branchContainsSelection(robot, joint.childLinkId)) return true;
+  }
+
+  return false;
+}
+
+function scrollElementIntoView(element: HTMLElement | null) {
+  if (!element) return;
+  window.requestAnimationFrame(() => {
+    element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
+}
+
+const treeRowHoverClass = 'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
+const treeRowHoveredClass = 'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15 dark:bg-system-blue/18 dark:ring-system-blue/25';
+const treeRowSelectedClass = 'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
+const treeRowAttentionClass = 'bg-system-blue/15 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/30 dark:bg-system-blue/25 dark:ring-system-blue/40';
+
+function resolveTreeRowStateClass(
+  baseClassName: string,
+  state: {
+    isHovered: boolean;
+    isSelected: boolean;
+    isAttentionHighlighted: boolean;
+  }
+) {
+  if (state.isAttentionHighlighted) {
+    return `${treeRowAttentionClass} ${baseClassName}`;
+  }
+  if (state.isSelected) {
+    return `${treeRowSelectedClass} ${baseClassName}`;
+  }
+  if (state.isHovered) {
+    return `${treeRowHoveredClass} ${baseClassName}`;
+  }
+  return `${treeRowHoverClass} ${baseClassName}`;
+}
+
 export const TreeNode = memo(({
   linkId,
   robot,
   onSelect,
+  onSelectGeometry,
   onFocus,
   onAddChild,
   onAddCollisionBody,
@@ -57,6 +126,19 @@ export const TreeNode = memo(({
       | { type: 'mesh'; linkId: string; subType: 'visual' | 'collision' };
   } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const linkRowRef = useRef<HTMLDivElement>(null);
+  const visualRowRef = useRef<HTMLDivElement>(null);
+  const primaryCollisionRowRef = useRef<HTMLDivElement>(null);
+  const collisionBodyRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const jointRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const { hoveredSelection, attentionSelection, setHoveredSelection, clearHover } = useSelectionStore(
+    useShallow((state) => ({
+      hoveredSelection: state.hoveredSelection,
+      attentionSelection: state.attentionSelection,
+      setHoveredSelection: state.setHoveredSelection,
+      clearHover: state.clearHover,
+    }))
+  );
 
   const link = robot.links[linkId];
 
@@ -103,20 +185,161 @@ export const TreeNode = memo(({
   const isSkeleton = mode === 'skeleton';
 
   const isVisible = link.visible !== false;
+  const isVisualVisible = link.visual.visible !== false;
+  const isPrimaryCollisionVisible = link.collision.visible !== false;
+  const hasPrimaryCollision = Boolean(link.collision?.type && link.collision.type !== GeometryType.NONE);
+  const selectedObjectIndex = robot.selection.objectIndex ?? 0;
   const hasVisual = link.visual?.type && link.visual.type !== 'none';
   const collisionBodyCount = (link.collision?.type && link.collision.type !== 'none' ? 1 : 0)
     + (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
+  const visibleCollisionBodies = (link.collisionBodies || [])
+    .map((body, bodyIndex) => ({ body, bodyIndex }))
+    .filter(({ body }) => body.type !== GeometryType.NONE)
+    .map((entry, visibleIndex) => ({
+      ...entry,
+      objectIndex: (hasPrimaryCollision ? 1 : 0) + visibleIndex,
+    }));
   const hasCollision = collisionBodyCount > 0;
   const hasExpandableContent = hasVisual || hasCollision || hasChildren;
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
-  const isVisualSelected = isLinkSelected && robot.selection.subType === 'visual';
-  const isCollisionSelected = isLinkSelected && robot.selection.subType === 'collision';
+  const isLinkHovered = hoveredSelection.type === 'link' && hoveredSelection.id === linkId;
+  const isLinkAttentionHighlighted = attentionSelection.type === 'link' && attentionSelection.id === linkId;
+  const isVisualSelected = isLinkSelected
+    && robot.selection.subType === 'visual'
+    && (robot.selection.objectIndex === undefined || selectedObjectIndex === 0);
+  const isVisualHovered = matchesSelection(
+    hoveredSelection,
+    { type: 'link', id: linkId, subType: 'visual', objectIndex: 0 }
+  );
+  const isVisualAttentionHighlighted = matchesSelection(
+    attentionSelection,
+    { type: 'link', id: linkId, subType: 'visual', objectIndex: 0 }
+  );
+  const isPrimaryCollisionSelected = isLinkSelected
+    && robot.selection.subType === 'collision'
+    && selectedObjectIndex === 0;
+  const isPrimaryCollisionHovered = matchesSelection(
+    hoveredSelection,
+    { type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }
+  );
+  const isPrimaryCollisionAttentionHighlighted = matchesSelection(
+    attentionSelection,
+    { type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }
+  );
+  const selectionInBranch = branchContainsSelection(robot, linkId);
   const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
   const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
   const contextMenuHasCollision = Boolean(
     (contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE)
       || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE)
   );
+
+  useEffect(() => {
+    if (selectionInBranch && hasExpandableContent) {
+      setIsExpanded(true);
+    }
+  }, [selectionInBranch, hasExpandableContent]);
+
+  useEffect(() => {
+    if (isLinkSelected && !robot.selection.subType) {
+      scrollElementIntoView(linkRowRef.current);
+    }
+  }, [isLinkSelected, robot.selection.subType]);
+
+  useEffect(() => {
+    if (isExpanded && isVisualSelected) {
+      scrollElementIntoView(visualRowRef.current);
+    }
+  }, [isExpanded, isVisualSelected]);
+
+  useEffect(() => {
+    if (isExpanded && isPrimaryCollisionSelected) {
+      scrollElementIntoView(primaryCollisionRowRef.current);
+    }
+  }, [isExpanded, isPrimaryCollisionSelected]);
+
+  useEffect(() => {
+    const hasSelectedExtraCollision = visibleCollisionBodies.some(({ objectIndex }) => objectIndex === selectedObjectIndex);
+    if (!(isExpanded && isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)) return;
+    scrollElementIntoView(collisionBodyRowRefs.current[selectedObjectIndex]);
+  }, [isExpanded, isLinkSelected, robot.selection.subType, selectedObjectIndex, visibleCollisionBodies]);
+
+  useEffect(() => {
+    if (!isExpanded || robot.selection.type !== 'joint' || !robot.selection.id) return;
+    scrollElementIntoView(jointRowRefs.current[robot.selection.id] || null);
+  }, [isExpanded, robot.selection.type, robot.selection.id]);
+
+  const handleSelectVisual = () => {
+    if (onSelectGeometry) {
+      onSelectGeometry(linkId, 'visual', 0);
+      return;
+    }
+    onSelect('link', linkId, 'visual');
+  };
+
+  const handleSelectPrimaryCollision = () => {
+    if (onSelectGeometry) {
+      onSelectGeometry(linkId, 'collision', 0);
+      return;
+    }
+    onSelect('link', linkId, 'collision');
+  };
+
+  const handleSelectCollisionBody = (objectIndex: number) => {
+    if (onSelectGeometry) {
+      onSelectGeometry(linkId, 'collision', objectIndex);
+      return;
+    }
+    onSelect('link', linkId, 'collision');
+  };
+
+  const toggleVisualVisibility = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onUpdate('link', linkId, {
+      ...link,
+      visual: {
+        ...link.visual,
+        visible: !isVisualVisible,
+      },
+    });
+  };
+
+  const togglePrimaryCollisionVisibility = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    onUpdate('link', linkId, {
+      ...link,
+      collision: {
+        ...link.collision,
+        visible: !isPrimaryCollisionVisible,
+      },
+    });
+  };
+
+  const toggleCollisionBodyVisibility = (event: React.MouseEvent, bodyIndex: number) => {
+    event.stopPropagation();
+    const nextBodies = [...(link.collisionBodies || [])];
+    const targetBody = nextBodies[bodyIndex];
+    if (!targetBody) return;
+
+    nextBodies[bodyIndex] = {
+      ...targetBody,
+      visible: targetBody.visible === false,
+    };
+
+    onUpdate('link', linkId, {
+      ...link,
+      collisionBodies: nextBodies,
+    });
+  };
+
+  const geometryVisibilityButtonClass = (active: boolean) => `p-1 rounded transition-colors ${
+    active
+      ? 'text-text-tertiary hover:text-text-primary hover:bg-element-hover'
+      : 'text-text-secondary hover:text-text-primary hover:bg-element-hover'
+  }`;
+  const jointRowIndent = '10px';
+  const geometryRowIndent = '24px';
+  const selectedLinkActionClass = 'text-system-blue hover:bg-system-blue/15 hover:text-system-blue-hover dark:hover:bg-system-blue/25';
 
   const beginRenaming = (
     type: 'link' | 'joint',
@@ -318,15 +541,19 @@ export const TreeNode = memo(({
   return (
     <div className="relative">
       <div
-        className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-colors
-          ${
-            isLinkSelected
-              ? 'bg-system-blue-solid text-white shadow-sm dark:bg-system-blue-solid'
-              : 'hover:bg-element-hover text-text-primary dark:text-text-secondary dark:hover:bg-element-hover'
-          }`}
+        ref={linkRowRef}
+        className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-all duration-200 ${
+          resolveTreeRowStateClass('text-text-primary dark:text-text-secondary', {
+            isHovered: isLinkHovered,
+            isSelected: isLinkSelected,
+            isAttentionHighlighted: isLinkAttentionHighlighted,
+          })
+        }`}
         onClick={() => onSelect('link', linkId)}
         onDoubleClick={() => onFocus && onFocus(linkId)}
         onContextMenu={(event) => openContextMenu(event, { type: 'link', id: linkId, name: link.name })}
+        onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId })}
+        onMouseLeave={clearHover}
         title={link.name || linkId}
         style={{ marginLeft: depth > 0 ? '8px' : '0' }}
       >
@@ -337,8 +564,8 @@ export const TreeNode = memo(({
         <div
           className={`w-6 h-6 flex items-center justify-center shrink-0 mr-0.5 rounded
             ${hasExpandableContent
-              ? isLinkSelected
-                ? 'hover:bg-on-accent-hover cursor-pointer transition-colors'
+              ? (isLinkSelected || isLinkHovered || isLinkAttentionHighlighted)
+                ? 'hover:bg-system-blue/15 dark:hover:bg-system-blue/25 cursor-pointer transition-colors'
                 : 'hover:bg-element-hover cursor-pointer transition-colors'
               : ''}`}
           onClick={(e) => {
@@ -350,17 +577,19 @@ export const TreeNode = memo(({
         >
           {hasExpandableContent
             && (isExpanded ? (
-              <ChevronDown size={12} className={isLinkSelected ? 'text-white/90' : 'text-text-tertiary'} />
+              <ChevronDown size={12} className={isLinkSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
             ) : (
-              <ChevronRight size={12} className={isLinkSelected ? 'text-white/90' : 'text-text-tertiary'} />
+              <ChevronRight size={12} className={isLinkSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
             ))}
         </div>
 
         <div
-          className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0
-            ${isLinkSelected ? 'bg-white/25' : 'bg-system-blue/10 dark:bg-element-bg'}`}
+          className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
+            ${(isLinkSelected || isLinkHovered || isLinkAttentionHighlighted)
+              ? 'bg-system-blue/15 dark:bg-system-blue/20 border-system-blue/25 dark:border-system-blue/30'
+              : 'bg-system-blue/10 dark:bg-system-blue/12 border-transparent'}`}
         >
-          <Box size={12} className={isLinkSelected ? 'text-white' : 'text-system-blue'} />
+          <Box size={12} className="text-system-blue" />
         </div>
 
         {isEditingLink ? (
@@ -379,7 +608,7 @@ export const TreeNode = memo(({
             }}
             className={`text-xs font-medium flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors ${
               isLinkSelected
-                ? 'bg-white/20 border-white/40 text-white placeholder:text-white/70 focus:border-white'
+                ? 'bg-panel-bg border-border-strong text-text-primary focus:border-system-blue'
                 : 'bg-input-bg border-border-strong text-text-primary focus:border-system-blue'
             }`}
           />
@@ -393,8 +622,8 @@ export const TreeNode = memo(({
             >
               {link.name}
             </span>
-            {hasVisual && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLinkSelected ? 'bg-white/60' : 'bg-emerald-500'}`} title={t.visual} />}
-            {hasCollision && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLinkSelected ? 'bg-white/60' : 'bg-amber-500'}`} title={t.collision} />}
+            {hasVisual && <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-500" title={t.visual} />}
+            {hasCollision && <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-amber-500" title={t.collision} />}
           </div>
         )}
 
@@ -402,8 +631,8 @@ export const TreeNode = memo(({
           <button
             className={`p-1 rounded cursor-pointer transition-colors ${
               isLinkSelected
-                ? 'text-white hover:bg-on-accent-hover'
-                : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
+                ? selectedLinkActionClass
+                : 'text-text-tertiary hover:bg-system-blue/10 hover:text-text-primary dark:hover:bg-system-blue/20'
             }`}
             onClick={(e) => {
               e.stopPropagation();
@@ -423,8 +652,8 @@ export const TreeNode = memo(({
               }}
               className={`p-1 rounded transition-all ${
                 isLinkSelected
-                  ? 'opacity-100 hover:bg-on-accent-hover'
-                  : 'opacity-0 group-hover:opacity-100 hover:bg-element-hover'
+                  ? 'opacity-100 hover:bg-system-blue/15 dark:hover:bg-system-blue/25'
+                  : 'opacity-0 group-hover:opacity-100 hover:bg-system-blue/10 dark:hover:bg-system-blue/20'
               }`}
               title={t.addChildJoint}
             >
@@ -440,114 +669,177 @@ export const TreeNode = memo(({
 
           {hasVisual && (
             <div
-              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-colors
-                ${isVisualSelected
-                  ? 'bg-system-blue/15 dark:bg-system-blue/20 text-system-blue'
-                  : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
-                }`}
-              onClick={() => onSelect('link', linkId, 'visual')}
+              ref={visualRowRef}
+              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
+                resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
+                  isHovered: isVisualHovered,
+                  isSelected: isVisualSelected,
+                  isAttentionHighlighted: isVisualAttentionHighlighted,
+                })
+              }`}
+              onClick={handleSelectVisual}
               onContextMenu={(event) => {
                 if (link.visual.type === GeometryType.MESH) {
                   openContextMenu(event, { type: 'mesh', linkId, subType: 'visual' });
                 }
               }}
-              style={{ marginLeft: '8px' }}
-              title={`${t.visual}: ${link.visual.type}${link.visual.meshPath ? ` (${link.visual.meshPath})` : ''}`}
+              onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'visual', objectIndex: 0 })}
+              onMouseLeave={clearHover}
+              style={{ marginLeft: geometryRowIndent }}
+              title={t.visualGeometry}
             >
               <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
-              <div className={`w-4 h-4 rounded flex items-center justify-center mr-1.5 shrink-0 ${isVisualSelected ? 'bg-system-blue/20' : 'bg-emerald-500/10 dark:bg-element-bg'}`}>
-                <Shapes size={10} className={isVisualSelected ? 'text-system-blue' : 'text-emerald-500'} />
+              <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${(isVisualSelected || isVisualHovered || isVisualAttentionHighlighted) ? 'bg-emerald-500/15 dark:bg-emerald-400/15 border-emerald-500/20 dark:border-emerald-400/20' : 'bg-emerald-500/10 dark:bg-emerald-400/10 border-transparent'}`}>
+                <Shapes size={9} className={(isVisualSelected || isVisualHovered || isVisualAttentionHighlighted) ? 'text-emerald-700 dark:text-emerald-300' : 'text-emerald-500 dark:text-emerald-400'} />
               </div>
-              <span className="text-[11px] font-medium truncate">
-                {link.visual.type === GeometryType.MESH && link.visual.meshPath
-                  ? link.visual.meshPath.split('/').pop()
-                  : `Visual · ${link.visual.type}`}
+              <span className="text-[10px] font-medium truncate flex-1 min-w-0">
+                {t.visualGeometry}
               </span>
+              <button
+                className={geometryVisibilityButtonClass(isVisualVisible)}
+                onClick={toggleVisualVisibility}
+                title={isVisualVisible ? t.hide : t.show}
+              >
+                {isVisualVisible ? <Eye size={10} /> : <EyeOff size={10} />}
+              </button>
             </div>
           )}
 
           {link.collision?.type && link.collision.type !== GeometryType.NONE && (
             <div
-              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-colors
-                ${isCollisionSelected
-                  ? 'bg-system-blue/15 dark:bg-system-blue/20 text-system-blue'
-                  : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
-                }`}
-              onClick={() => onSelect('link', linkId, 'collision')}
+              ref={primaryCollisionRowRef}
+              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
+                resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
+                  isHovered: isPrimaryCollisionHovered,
+                  isSelected: isPrimaryCollisionSelected,
+                  isAttentionHighlighted: isPrimaryCollisionAttentionHighlighted,
+                })
+              }`}
+              onClick={handleSelectPrimaryCollision}
               onContextMenu={(event) => {
                 if (link.collision.type === GeometryType.MESH) {
                   openContextMenu(event, { type: 'mesh', linkId, subType: 'collision' });
                 }
               }}
-              style={{ marginLeft: '8px' }}
-              title={`${t.collision}: ${link.collision.type}${link.collision.meshPath ? ` (${link.collision.meshPath})` : ''}`}
+              onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex: 0 })}
+              onMouseLeave={clearHover}
+              style={{ marginLeft: geometryRowIndent }}
+              title={t.collision}
             >
               <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
-              <div className={`w-4 h-4 rounded flex items-center justify-center mr-1.5 shrink-0 ${isCollisionSelected ? 'bg-system-blue/20' : 'bg-amber-500/10 dark:bg-element-bg'}`}>
-                <Shield size={10} className={isCollisionSelected ? 'text-system-blue' : 'text-amber-500'} />
+              <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${(isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted) ? 'bg-amber-500/15 dark:bg-amber-400/15 border-amber-500/20 dark:border-amber-400/20' : 'bg-amber-500/10 dark:bg-amber-400/10 border-transparent'}`}>
+                <Shield size={9} className={(isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted) ? 'text-amber-700 dark:text-amber-300' : 'text-amber-500 dark:text-amber-400'} />
               </div>
-              <span className="text-[11px] font-medium truncate">
-                {link.collision.type === GeometryType.MESH && link.collision.meshPath
-                  ? link.collision.meshPath.split('/').pop()
-                  : `Collision · ${link.collision.type}`}
+              <span className="text-[10px] font-medium truncate flex-1 min-w-0">
+                {t.collision}
               </span>
+              <button
+                className={geometryVisibilityButtonClass(isPrimaryCollisionVisible)}
+                onClick={togglePrimaryCollisionVisibility}
+                title={isPrimaryCollisionVisible ? t.hide : t.show}
+              >
+                {isPrimaryCollisionVisible ? <Eye size={10} /> : <EyeOff size={10} />}
+              </button>
             </div>
           )}
 
-          {(link.collisionBodies || [])
-            .filter((body) => body.type !== GeometryType.NONE)
-            .map((body, index) => (
+          {visibleCollisionBodies.map(({ body, bodyIndex, objectIndex }, index) => {
+            const isCollisionBodyHovered = matchesSelection(
+              hoveredSelection,
+              { type: 'link', id: linkId, subType: 'collision', objectIndex }
+            );
+            const isCollisionBodyAttentionHighlighted = matchesSelection(
+              attentionSelection,
+              { type: 'link', id: linkId, subType: 'collision', objectIndex }
+            );
+            const isCollisionBodySelected = isLinkSelected
+              && robot.selection.subType === 'collision'
+              && selectedObjectIndex === objectIndex;
+
+            return (
               <div
-                key={`collision-extra-${index}`}
-                className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-colors
-                  ${isCollisionSelected
-                    ? 'bg-system-blue/15 dark:bg-system-blue/20 text-system-blue'
-                    : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
-                  }`}
-                onClick={() => onSelect('link', linkId, 'collision')}
-                style={{ marginLeft: '8px' }}
-                title={`${t.collision}: ${body.type}`}
+                ref={(element) => {
+                  collisionBodyRowRefs.current[objectIndex] = element;
+                }}
+                key={`collision-extra-${bodyIndex}`}
+                className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
+                  resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
+                    isHovered: isCollisionBodyHovered,
+                    isSelected: isCollisionBodySelected,
+                    isAttentionHighlighted: isCollisionBodyAttentionHighlighted,
+                  })
+                }`}
+                onClick={() => handleSelectCollisionBody(objectIndex)}
+                onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex })}
+                onMouseLeave={clearHover}
+                style={{ marginLeft: geometryRowIndent }}
+                title={`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
               >
                 <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
-                <div className={`w-4 h-4 rounded flex items-center justify-center mr-1.5 shrink-0 ${isCollisionSelected ? 'bg-system-blue/20' : 'bg-amber-500/10 dark:bg-element-bg'}`}>
-                  <Shield size={10} className={isCollisionSelected ? 'text-system-blue' : 'text-amber-500'} />
+                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${
+                  (isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted)
+                    ? 'bg-amber-500/15 dark:bg-amber-400/15 border-amber-500/20 dark:border-amber-400/20'
+                    : 'bg-amber-500/10 dark:bg-amber-400/10 border-transparent'
+                }`}>
+                  <Shield
+                    size={9}
+                    className={
+                      (isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted)
+                        ? 'text-amber-700 dark:text-amber-300'
+                        : 'text-amber-500 dark:text-amber-400'
+                    }
+                  />
                 </div>
-                <span className="text-[11px] font-medium truncate">
-                  {body.type === GeometryType.MESH && body.meshPath
-                    ? body.meshPath.split('/').pop()
-                    : `Collision · ${body.type}`}
+                <span className="text-[10px] font-medium truncate flex-1 min-w-0">
+                  {`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
                 </span>
+                <button
+                  className={geometryVisibilityButtonClass(body.visible !== false)}
+                  onClick={(event) => toggleCollisionBodyVisibility(event, bodyIndex)}
+                  title={body.visible !== false ? t.hide : t.show}
+                >
+                  {body.visible !== false ? <Eye size={10} /> : <EyeOff size={10} />}
+                </button>
               </div>
-            ))
-          }
+            );
+          })}
 
           {childJoints.map((joint) => {
             const isJointSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
+            const isJointHovered = matchesSelection(hoveredSelection, { type: 'joint', id: joint.id });
+            const isJointAttentionHighlighted = matchesSelection(attentionSelection, { type: 'joint', id: joint.id });
             const isEditingJoint = editingTarget?.type === 'joint' && editingTarget.id === joint.id;
+            const jointTypeLabel = getJointTypeLabel(joint.type, t);
 
             return (
               <div key={joint.id} className="relative">
                 <div
-                  className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-colors
-                    ${
-                      isJointSelected
-                        ? 'bg-orange-500 text-white shadow-sm dark:bg-orange-500'
-                        : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
-                    }`}
+                  ref={(element) => {
+                    jointRowRefs.current[joint.id] = element;
+                  }}
+                  className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-all duration-200 ${
+                    resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
+                      isHovered: isJointHovered,
+                      isSelected: isJointSelected,
+                      isAttentionHighlighted: isJointAttentionHighlighted,
+                    })
+                  }`}
                   onClick={() => onSelect('joint', joint.id)}
                   onContextMenu={(event) => openContextMenu(event, { type: 'joint', id: joint.id, name: joint.name })}
-                  title={joint.name || joint.id}
-                  style={{ marginLeft: '8px' }}
+                  onMouseEnter={() => setHoveredSelection({ type: 'joint', id: joint.id })}
+                  onMouseLeave={clearHover}
+                  title={`${joint.name || joint.id} · ${jointTypeLabel}`}
+                  style={{ marginLeft: jointRowIndent }}
                 >
                   <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
 
                   <div
-                    className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0
-                      ${isJointSelected ? 'bg-white/25' : 'bg-orange-100 dark:bg-element-bg'}`}
+                    className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
+                      ${(isJointSelected || isJointHovered || isJointAttentionHighlighted) ? 'bg-orange-500/15 dark:bg-orange-400/15 border-orange-500/20 dark:border-orange-400/20' : 'bg-orange-500/10 dark:bg-orange-400/10 border-transparent'}`}
                   >
                     <ArrowRightLeft
                       size={10}
-                      className={isJointSelected ? 'text-white' : 'text-orange-600 dark:text-orange-300'}
+                      className={(isJointSelected || isJointHovered || isJointAttentionHighlighted) ? 'text-orange-700 dark:text-orange-300' : 'text-orange-600 dark:text-orange-300'}
                     />
                   </div>
 
@@ -567,19 +859,30 @@ export const TreeNode = memo(({
                       }}
                       className={`text-[11px] font-medium flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors ${
                         isJointSelected
-                          ? 'bg-white/20 border-white/40 text-white placeholder:text-white/70 focus:border-white'
+                          ? 'bg-panel-bg border-border-strong text-text-primary focus:border-system-blue'
                           : 'bg-input-bg border-border-strong text-text-primary focus:border-system-blue'
                       }`}
                     />
                   ) : (
-                    <span
-                      className="text-[11px] font-medium whitespace-nowrap select-none"
-                      onDoubleClick={(event) => handleNameDoubleClick(event, 'joint', joint.id, joint.name)}
-                      onDragStart={(event) => event.preventDefault()}
-                      title={joint.name}
-                    >
-                      {joint.name}
-                    </span>
+                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <span
+                        className="text-[11px] font-medium whitespace-nowrap select-none truncate"
+                        onDoubleClick={(event) => handleNameDoubleClick(event, 'joint', joint.id, joint.name)}
+                        onDragStart={(event) => event.preventDefault()}
+                        title={joint.name}
+                      >
+                        {joint.name}
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0 ${
+                          isJointSelected
+                            ? 'bg-orange-500/12 text-orange-700 dark:bg-orange-400/12 dark:text-orange-300'
+                            : 'bg-orange-500/10 text-orange-700 dark:bg-orange-400/10 dark:text-orange-300'
+                        }`}
+                      >
+                        {jointTypeLabel}
+                      </span>
+                    </div>
                   )}
 
                   {isSkeleton && (
@@ -595,7 +898,7 @@ export const TreeNode = memo(({
                         }}
                         className={`p-0.5 rounded transition-colors ${
                           isJointSelected
-                            ? 'hover:bg-on-accent-hover'
+                            ? 'hover:bg-panel-bg'
                             : 'hover:bg-element-hover'
                         }`}
                         title={t.deleteBranch}
@@ -610,6 +913,7 @@ export const TreeNode = memo(({
                   linkId={joint.childLinkId}
                   robot={robot}
                   onSelect={onSelect}
+                  onSelectGeometry={onSelectGeometry}
                   onFocus={onFocus}
                   onAddChild={onAddChild}
                   onAddCollisionBody={onAddCollisionBody}

@@ -187,25 +187,18 @@ export function useTransformControls(
   // Update axis opacity based on active axis and dragging state
   const updateAxisOpacity = useCallback((gizmo: any, axis: string | null, isDragging: boolean) => {
     gizmo.traverse((child: any) => {
-      if (child.material && child.material.color) {
-        const color = child.material.color;
-        const isXAxis = color.r > 0.5 && color.g < 0.4 && color.b < 0.4;
-        const isYAxis = color.g > 0.5 && color.r < 0.4 && color.b < 0.4;
-        const isZAxis = color.b > 0.5 && color.r < 0.4 && color.g < 0.4;
-
-        const isActiveAxis =
-          !axis ||
-          (axis === 'X' && isXAxis) ||
-          (axis === 'Y' && isYAxis) ||
-          (axis === 'Z' && isZAxis);
+      if (child.material) {
+        const isActiveAxis = !axis || child.name === axis;
 
         if (axis && !isActiveAxis) {
           child.material.opacity = isDragging ? 0.15 : 0.3;
           child.material.transparent = true;
         } else {
           child.material.opacity = 1.0;
-          child.material.transparent = false;
+          child.material.transparent = true;
         }
+        child.material.depthTest = false;
+        child.material.depthWrite = false;
         child.material.needsUpdate = true;
       }
     });

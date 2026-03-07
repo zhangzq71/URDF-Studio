@@ -22,7 +22,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
       <div className="relative flex items-center">
         <input
           type="checkbox"
-          className="peer appearance-none w-4 h-4 border border-border-black rounded bg-input-bg checked:bg-system-blue checked:border-system-blue focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 transition-all duration-200"
+          className="peer appearance-none w-4 h-4 border border-border-black rounded bg-input-bg checked:bg-system-blue-solid checked:border-system-blue-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 transition-all duration-200"
           checked={checked}
           onChange={(e) => !disabled && onChange(e.target.checked)}
           disabled={disabled}

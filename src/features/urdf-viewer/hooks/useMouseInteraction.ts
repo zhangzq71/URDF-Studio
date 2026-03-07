@@ -2,9 +2,10 @@ import { useRef, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { throttle } from '@/shared/utils';
-import { MOUSE_MOVE_THRESHOLD, THROTTLE_INTERVAL } from '../constants';
+import { THROTTLE_INTERVAL } from '../constants';
 import type { ToolMode } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
+import { resolveSelectionTarget } from '../utils/selectionTargets';
 
 export interface UseMouseInteractionOptions {
     robot: THREE.Object3D | null;
@@ -242,16 +243,6 @@ export function useMouseInteraction({
 
         // Core mouse move logic (will be throttled for hover, but immediate for dragging)
         const handleMouseMoveCore = (e: MouseEvent) => {
-            // PERFORMANCE: State locking - skip if mouse moved less than threshold
-            const dx = e.clientX - lastMousePosRef.current.x;
-            const dy = e.clientY - lastMousePosRef.current.y;
-            const distSq = dx * dx + dy * dy;
-
-            if (distSq < MOUSE_MOVE_THRESHOLD * MOUSE_MOVE_THRESHOLD) {
-                return; // Skip - mouse hasn't moved enough
-            }
-
-            // Update last position
             lastMousePosRef.current.x = e.clientX;
             lastMousePosRef.current.y = e.clientY;
 
@@ -362,22 +353,7 @@ export function useMouseInteraction({
                 if (linkObj && (onSelect || onMeshSelect)) {
                     const subType = isCollisionMode ? 'collision' : 'visual';
 
-                    // Compute objectIndex outside onMeshSelect block so it's available for highlightGeometry
-                    let objectIndex = 0;
-                    let current: THREE.Object3D | null = hit.object;
-                    let urdfElement: THREE.Object3D | null = null;
-                    while (current && current !== linkObj) {
-                        if ((current as any).isURDFVisual || (current as any).isURDFCollider) {
-                            urdfElement = current;
-                            break;
-                        }
-                        current = current.parent;
-                    }
-                    if (urdfElement) {
-                        const isCollider = (urdfElement as any).isURDFCollider;
-                        const siblings = linkObj.children.filter((c: any) => isCollider ? (c as any).isURDFCollider : (c as any).isURDFVisual);
-                        objectIndex = Math.max(0, siblings.indexOf(urdfElement));
-                    }
+                    const { objectIndex, highlightTarget } = resolveSelectionTarget(hit.object, linkObj);
 
                     // Call onSelect FIRST so onMeshSelect (called after) wins in React state batching
                     if (onSelect) {
@@ -402,7 +378,7 @@ export function useMouseInteraction({
                     if (mode === 'detail' || !((linkObj.parent as any)?.isURDFJoint)) {
                         // Clear all stale highlights first, then apply only the specific body
                         highlightGeometry(linkObj.name, true, subType);
-                        highlightGeometry(linkObj.name, false, subType, isCollisionMode ? objectIndex : undefined);
+                        highlightGeometry(linkObj.name, false, subType, highlightTarget);
                     }
 
                     hoveredLinkRef.current = null;

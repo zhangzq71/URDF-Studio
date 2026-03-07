@@ -340,8 +340,22 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       const manifestRes = await fetch(manifestUrl);
       if (!manifestRes.ok) throw new Error(t.manifestNotFound);
       const files: string[] = await manifestRes.json();
+
+      const orderedFiles = [...files];
+      if (model.urdfFile) {
+        const preferredIndex = orderedFiles.findIndex((filePath) => (
+          filePath === model.urdfFile ||
+          filePath.endsWith(`/${model.urdfFile}`) ||
+          filePath.split('/').pop() === model.urdfFile
+        ));
+
+        if (preferredIndex > 0) {
+          const [preferredFile] = orderedFiles.splice(preferredIndex, 1);
+          orderedFiles.unshift(preferredFile);
+        }
+      }
       
-      const fileObjects = await Promise.all(files.map(async (filePath) => {
+      const fileObjects = await Promise.all(orderedFiles.map(async (filePath) => {
           const res = await fetch(`${model.urdfPath}/${filePath}`);
           const blob = await res.blob();
           const fileName = filePath.split('/').pop()!;
