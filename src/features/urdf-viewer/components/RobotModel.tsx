@@ -80,6 +80,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         showVisual,
         isMeshPreview,
         robotLinks,
+        initialJointAngles: jointAngles,
         onRobotLoaded
     });
 
@@ -96,6 +97,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         highlightMode,
         showCollision,
         showVisual,
+        robotLinks,
         linkMeshMapRef
     });
 

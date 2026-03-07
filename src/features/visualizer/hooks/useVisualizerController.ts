@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { RobotState } from '@/types';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
-import { getLowestMeshZ } from '@/shared/utils';
+import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { useCollisionRefs } from './useCollisionRefs';
 import { useDraggablePanel } from './useDraggablePanel';
 import { useJointPivots } from './useJointPivots';
@@ -27,6 +27,7 @@ export const useVisualizerController = ({
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
   const clearSelection = useSelectionStore((state) => state.clearSelection);
+  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const robotRootRef = useRef<THREE.Group | null>(null);
 
@@ -53,25 +54,20 @@ export const useVisualizerController = ({
   const handleAutoFitGround = useCallback(() => {
     const robotRoot = robotRootRef.current;
     if (!robotRoot) return;
-
-    let minZ = getLowestMeshZ(robotRoot, {
+    const aligned = alignObjectLowestPointToZ(robotRoot, groundPlaneOffset, {
       includeInvisible: false,
       includeVisual: true,
       includeCollision: false,
     });
 
-    if (minZ === null) {
-      minZ = getLowestMeshZ(robotRoot, {
+    if (aligned === null) {
+      alignObjectLowestPointToZ(robotRoot, groundPlaneOffset, {
         includeInvisible: true,
         includeVisual: true,
         includeCollision: false,
       });
     }
-
-    if (minZ !== null) {
-      useUIStore.getState().setGroundPlaneOffset(minZ);
-    }
-  }, []);
+  }, [groundPlaneOffset]);
 
   const handleCollisionTransformEnd = useCallback(() => {
     if (!selectedCollisionRef || !robot.selection.id || robot.selection.type !== 'link') return;
@@ -96,14 +92,16 @@ export const useVisualizerController = ({
   }, [onUpdate, robot, selectedCollisionRef]);
 
   useEffect(() => {
-    const timers = [80, 220, 500].map((delay) =>
+    if (mode !== 'skeleton') return;
+
+    const timers = [0, 80, 220].map((delay) =>
       window.setTimeout(handleAutoFitGround, delay)
     );
 
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [handleAutoFitGround, robot.joints, robot.links]);
+  }, [groundPlaneOffset, handleAutoFitGround, mode, robot.joints, robot.links]);
 
   useEffect(() => {
     return () => {

@@ -278,6 +278,9 @@ export const zh: TranslationKeys = {
   emptyAssemblyHint: "在上方素材库右键文件并选择“添加”或“删除”",
   clickToAddComponent: "点击文件查看预览，右键可添加/删除",
   removeFromLibrary: "从素材库删除",
+  deleteAllLibraryFiles: "全部删除",
+  deleteAllLibraryFilesConfirmTitle: "确认删除全部素材",
+  deleteAllLibraryFilesConfirmMessage: "是否删除素材库中的全部文件？此操作不可撤销。",
   rightClickToRename: "右键重命名",
   rightClickForActions: "右键更多操作",
 

@@ -81,7 +81,7 @@ export function AppLayout({
   );
 
   // Selection Store
-  const { selection, setSelection, hoveredSelection, setHoveredSelection, focusTarget, focusOn } = useSelectionStore(
+  const { selection, setSelection, hoveredSelection, setHoveredSelection, focusTarget, focusOn, pulseSelection } = useSelectionStore(
     useShallow((state) => ({
       selection: state.selection,
       setSelection: state.setSelection,
@@ -89,6 +89,7 @@ export function AppLayout({
       setHoveredSelection: state.setHoveredSelection,
       focusTarget: state.focusTarget,
       focusOn: state.focusOn,
+      pulseSelection: state.pulseSelection,
     }))
   );
 
@@ -96,7 +97,7 @@ export function AppLayout({
   const {
     assets, motorLibrary, availableFiles, selectedFile,
     setAvailableFiles, setSelectedFile, originalUrdfContent, setOriginalUrdfContent,
-    uploadAsset, removeRobotFile, removeRobotFolder,
+    uploadAsset, removeRobotFile, removeRobotFolder, clearRobotLibrary,
   } = useAssetsStore(
     useShallow((state) => ({
       assets: state.assets,
@@ -110,6 +111,7 @@ export function AppLayout({
       uploadAsset: state.uploadAsset,
       removeRobotFile: state.removeRobotFile,
       removeRobotFolder: state.removeRobotFolder,
+      clearRobotLibrary: state.clearRobotLibrary,
     }))
   );
 
@@ -290,10 +292,24 @@ export function AppLayout({
     setSelection({ type, id, subType });
   }, [setSelection]);
 
-  const handleMeshSelect = useCallback((linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => {
+  const handleSelectGeometry = useCallback((linkId: string, subType: 'visual' | 'collision', objectIndex = 0) => {
     if (transformPendingRef.current) return;
-    setSelection({ type: 'link', id: linkId, subType: objectType, objectIndex });
+    setSelection({ type: 'link', id: linkId, subType, objectIndex });
   }, [setSelection]);
+
+  const handleViewerSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
+    if (transformPendingRef.current) return;
+    const nextSelection = { type, id, subType } as const;
+    setSelection(nextSelection);
+    pulseSelection(nextSelection);
+  }, [pulseSelection, setSelection]);
+
+  const handleViewerMeshSelect = useCallback((linkId: string, _jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => {
+    if (transformPendingRef.current) return;
+    const nextSelection = { type: 'link' as const, id: linkId, subType: objectType, objectIndex };
+    setSelection(nextSelection);
+    pulseSelection(nextSelection);
+  }, [pulseSelection, setSelection]);
 
   const handleTransformPendingChange = useCallback((pending: boolean) => {
     transformPendingRef.current = pending;
@@ -754,6 +770,44 @@ export function AppLayout({
     showToast,
   ]);
 
+  const handleDeleteAllLibraryFiles = useCallback(() => {
+    if (availableFiles.length === 0) return;
+
+    const availableFileNames = new Set(availableFiles.map((file) => file.name));
+    const shouldClearCurrentModel = selectedFile?.name
+      ? availableFileNames.has(selectedFile.name)
+      : false;
+    const relatedComponentIds = assemblyState
+      ? Object.values(assemblyState.components)
+          .filter((component) => availableFileNames.has(component.sourceFile))
+          .map((component) => component.id)
+      : [];
+
+    relatedComponentIds.forEach((componentId) => removeComponent(componentId));
+
+    if (shouldClearCurrentModel) {
+      clearLoadedModel();
+    }
+
+    clearRobotLibrary();
+
+    showToast(
+      lang === 'zh'
+        ? `已删除素材库全部 ${availableFiles.length} 个文件`
+        : `Deleted all ${availableFiles.length} file(s) from the asset library`,
+      'success',
+    );
+  }, [
+    assemblyState,
+    availableFiles,
+    clearLoadedModel,
+    clearRobotLibrary,
+    lang,
+    removeComponent,
+    selectedFile?.name,
+    showToast,
+  ]);
+
   const handleExportLibraryFile = useCallback(async (file: RobotFile, format: 'urdf' | 'mjcf') => {
     const result = await exportLibraryRobotFile({
       file,
@@ -952,6 +1006,7 @@ export function AppLayout({
         <TreeEditor
           robot={robot}
           onSelect={handleSelect}
+          onSelectGeometry={handleSelectGeometry}
           onFocus={handleFocus}
           onAddChild={handleAddChild}
           onAddCollisionBody={handleAddCollisionBody}
@@ -972,6 +1027,7 @@ export function AppLayout({
           onAddComponent={handleAddComponent}
           onDeleteLibraryFile={handleDeleteLibraryFile}
           onDeleteLibraryFolder={handleDeleteLibraryFolder}
+          onDeleteAllLibraryFiles={handleDeleteAllLibraryFiles}
           onExportLibraryFile={handleExportLibraryFile}
           onCreateBridge={handleCreateBridge}
           onRemoveComponent={removeComponent}
@@ -986,7 +1042,8 @@ export function AppLayout({
           <UnifiedViewer
             robot={robot}
             mode={appMode}
-            onSelect={handleSelect}
+            onSelect={handleViewerSelect}
+            onMeshSelect={handleViewerMeshSelect}
             onHover={handleHover}
             onUpdate={handleUpdate}
             assets={assets}

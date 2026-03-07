@@ -21,4 +21,5 @@ export interface UrdfVisual {
   materialSource?: 'inline' | 'named' | 'gazebo';
   meshPath?: string; // For later detailed design
   origin: { xyz: Vector3; rpy: Euler }; // Offset relative to link frame
+  visible?: boolean;
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useUIStore } from '@/store';
 import { URDFLoader, URDFCollider, URDFVisual } from '@/core/parsers/urdf/loader';
 import { disposeObject3D, disposeMaterial } from '../utils/dispose';
 import { enhanceMaterials, collisionBaseMaterial, createMatteMaterial } from '../utils/materials';
@@ -13,6 +14,7 @@ import { parseURDF } from '@/core/parsers/urdf/parser';
 import { processCapsuleGeometries } from '../utils/capsulePostProcessor';
 import { GeometryType } from '@/types';
 import type { UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
+import { isSingleDofJoint } from '../utils/jointTypes';
 
 function preprocessURDFForLoader(content: string): string {
     // Remove <transmission> blocks to prevent urdf-loader from finding duplicate joints
@@ -260,31 +262,42 @@ function rebuildLinkMeshMapForLink(
     const visualMeshes: THREE.Mesh[] = [];
     const collisionMeshes: THREE.Mesh[] = [];
 
-    linkObject.traverse((child: any) => {
-        if (!child.isMesh) return;
+    const collectGroupMeshes = (group: THREE.Object3D, kind: 'visual' | 'collision') => {
+        group.traverse((child: any) => {
+            if (!child.isMesh) return;
+            if (child.userData?.isGizmo || String(child.name || '').startsWith('__')) return;
+
+            child.userData.parentLinkName = linkName;
+
+            if (kind === 'collision') {
+                child.userData.isCollisionMesh = true;
+                child.userData.isVisualMesh = false;
+                collisionMeshes.push(child as THREE.Mesh);
+            } else {
+                child.userData.isVisualMesh = true;
+                child.userData.isCollisionMesh = false;
+                visualMeshes.push(child as THREE.Mesh);
+            }
+        });
+    };
+
+    linkObject.children.forEach((child: any) => {
         if (child.userData?.isGizmo || String(child.name || '').startsWith('__')) return;
 
-        let isCollision = Boolean(child.userData?.isCollisionMesh);
-        if (!isCollision) {
-            let current = child.parent;
-            while (current && current !== linkObject.parent) {
-                if (current.userData?.isGizmo || String(current.name || '').startsWith('__')) return;
-                if ((current as any).isURDFCollider) {
-                    isCollision = true;
-                    break;
-                }
-                if (current === linkObject) break;
-                current = current.parent;
-            }
+        if (child.isURDFCollider) {
+            collectGroupMeshes(child, 'collision');
+            return;
         }
 
-        if (isCollision) {
-            child.userData.isCollisionMesh = true;
+        if (child.isURDFVisual) {
+            collectGroupMeshes(child, 'visual');
+            return;
+        }
+
+        if (child.isMesh) {
             child.userData.parentLinkName = linkName;
-            collisionMeshes.push(child as THREE.Mesh);
-        } else {
             child.userData.isVisualMesh = true;
-            child.userData.parentLinkName = linkName;
+            child.userData.isCollisionMesh = false;
             visualMeshes.push(child as THREE.Mesh);
         }
     });
@@ -352,7 +365,7 @@ function patchGeometryCategory({
 
     if (geometry.type === GeometryType.NONE) {
         rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-        offsetRobotToGround(robotModel);
+        robotModel.updateMatrixWorld(true);
         invalidate();
         return;
     }
@@ -394,7 +407,7 @@ function patchGeometryCategory({
     } else if (geometry.type === GeometryType.MESH) {
         if (!geometry.meshPath) {
             rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-            offsetRobotToGround(robotModel);
+            robotModel.updateMatrixWorld(true);
             invalidate();
             return;
         }
@@ -426,7 +439,7 @@ function patchGeometryCategory({
 
             targetGroup!.add(obj);
             rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-            offsetRobotToGround(robotModel);
+            robotModel.updateMatrixWorld(true);
             invalidate();
         });
 
@@ -434,7 +447,7 @@ function patchGeometryCategory({
     }
 
     rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-    offsetRobotToGround(robotModel);
+    robotModel.updateMatrixWorld(true);
     invalidate();
 }
 
@@ -500,6 +513,7 @@ export interface UseRobotLoaderOptions {
     showVisual: boolean;
     isMeshPreview?: boolean;
     robotLinks?: Record<string, UrdfLink>;
+    initialJointAngles?: Record<string, number>;
     onRobotLoaded?: (robot: THREE.Object3D) => void;
 }
 
@@ -518,6 +532,7 @@ export function useRobotLoader({
     showVisual,
     isMeshPreview = false,
     robotLinks,
+    initialJointAngles,
     onRobotLoaded
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
@@ -539,6 +554,7 @@ export function useRobotLoader({
     // Refs for visibility state (used in loading callback)
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
+    const initialJointAnglesRef = useRef(initialJointAngles);
 
     // PERFORMANCE: Pre-built map of linkName -> meshes for O(1) highlight lookup
     const linkMeshMapRef = useRef<Map<string, THREE.Mesh[]>>(new Map());
@@ -550,6 +566,7 @@ export function useRobotLoader({
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
+    useEffect(() => { initialJointAnglesRef.current = initialJointAngles; }, [initialJointAngles]);
 
     const disposeRobotObject = useCallback((robotObject: THREE.Object3D | null) => {
         if (!robotObject) return;
@@ -673,9 +690,121 @@ export function useRobotLoader({
                 // We wait until the new robot is ready to avoid flickering/rendering disposed objects.
 
                 let robotModel: THREE.Object3D | null = null;
+                const isMJCFAsset = isMJCFContent(urdfContent);
+
+                const finalizeLoadedRobot = (loadedRobot: THREE.Object3D) => {
+                    if (abortController.aborted || !isMountedRef.current) {
+                        return;
+                    }
+
+                    if (!isMJCFAsset) {
+                        const materials = parseURDFMaterials(urdfContent);
+                        try {
+                            applyURDFMaterials(loadedRobot, materials);
+                        } finally {
+                            disposeTempMaterialMap(materials);
+                        }
+
+                        processCapsuleGeometries(loadedRobot, urdfContent);
+                    }
+
+                    enhanceMaterials(loadedRobot);
+
+                    const newLinkMeshMap = new Map<string, THREE.Mesh[]>();
+
+                    loadedRobot.traverse((child: any) => {
+                        let parentLink: any = null;
+                        let current = child;
+                        while (current) {
+                            if (current.isURDFLink || (loadedRobot as any).links?.[current.name]) {
+                                parentLink = current;
+                                break;
+                            }
+                            current = current.parent;
+                        }
+
+                        if (child.isURDFCollider) {
+                            child.visible = showCollisionRef.current;
+                            child.traverse((inner: any) => {
+                                if (!inner.isMesh) return;
+
+                                inner.userData.isCollisionMesh = true;
+                                if (parentLink) {
+                                    inner.userData.parentLinkName = parentLink.name;
+                                    const key = `${parentLink.name}:collision`;
+                                    if (!newLinkMeshMap.has(key)) {
+                                        newLinkMeshMap.set(key, []);
+                                    }
+                                    newLinkMeshMap.get(key)!.push(inner);
+                                }
+                            });
+                            return;
+                        }
+
+                        if (!child.isMesh || child.userData.isCollisionMesh) {
+                            return;
+                        }
+
+                        let isVisual = false;
+                        let checkParent = child.parent;
+                        while (checkParent) {
+                            if (checkParent.isURDFCollider) {
+                                break;
+                            }
+                            if (checkParent.isURDFLink) {
+                                isVisual = true;
+                                break;
+                            }
+                            checkParent = checkParent.parent;
+                        }
+
+                        if (isVisual && parentLink) {
+                            child.userData.parentLinkName = parentLink.name;
+                            child.userData.isVisualMesh = true;
+                            const key = `${parentLink.name}:visual`;
+                            if (!newLinkMeshMap.has(key)) {
+                                newLinkMeshMap.set(key, []);
+                            }
+                            newLinkMeshMap.get(key)!.push(child);
+                        }
+
+                        child.visible = showVisualRef.current;
+                    });
+
+                    const nextJointAngles = initialJointAnglesRef.current;
+                    if (nextJointAngles && (loadedRobot as any).joints) {
+                        Object.entries(nextJointAngles).forEach(([jointName, angle]) => {
+                            const joint = (loadedRobot as any).joints?.[jointName];
+                            if (!isSingleDofJoint(joint) || typeof angle !== 'number') {
+                                return;
+                            }
+
+                            joint.setJointValue?.(angle);
+                        });
+                        loadedRobot.updateMatrixWorld(true);
+                    }
+
+                    const groundPlaneOffset = useUIStore.getState().groundPlaneOffset;
+                    offsetRobotToGround(loadedRobot, groundPlaneOffset);
+
+                    const previousRobot = robotRef.current;
+
+                    linkMeshMapRef.current = newLinkMeshMap;
+                    robotRef.current = loadedRobot;
+                    setRobot(loadedRobot);
+                    setRobotVersion((v) => v + 1);
+                    setError(null);
+                    invalidate();
+
+                    if (previousRobot && previousRobot !== loadedRobot) {
+                        schedulePreviousRobotDispose(previousRobot);
+                    }
+
+                    onRobotLoaded?.(loadedRobot);
+                };
 
                 // Check if content is MJCF (MuJoCo XML)
-                if (isMJCFContent(urdfContent)) {
+                if (isMJCFAsset) {
                     robotModel = await loadMJCFToThreeJS(urdfContent, assets);
 
                     if (abortController.aborted) {
@@ -689,18 +818,8 @@ export function useRobotLoader({
                     const urdfDir = '';
                     const manager = createLoadingManager(assets, urdfDir);
                     manager.onLoad = () => {
-                        if (!robotModel || abortController.aborted || !isMountedRef.current) return;
-
-                        const materials = parseURDFMaterials(urdfContent);
-                        try {
-                            applyURDFMaterials(robotModel, materials);
-                        } finally {
-                            disposeTempMaterialMap(materials);
-                        }
-                        processCapsuleGeometries(robotModel, urdfContent);
-                        enhanceMaterials(robotModel);
-                        setRobotVersion(v => v + 1);
-                        invalidate();
+                        if (!robotModel) return;
+                        finalizeLoadedRobot(robotModel);
                     };
                     // Use new local URDFLoader
                     const loader = new URDFLoader(manager);
@@ -710,143 +829,41 @@ export function useRobotLoader({
                     loader.loadMeshCb = createMeshLoader(assets, manager, urdfDir);
                     loader.packages = '';
 
-                    const cleanContent = preprocessURDFForLoader(urdfContent);
-                    robotModel = loader.parse(cleanContent);
+                    const loadCompletionKey = '__urdf_studio_robot_finalize__';
+                    manager.itemStart(loadCompletionKey);
+                    try {
+                        const cleanContent = preprocessURDFForLoader(urdfContent);
+                        robotModel = loader.parse(cleanContent);
 
-                    // Extract full joint limits (effort, velocity) which urdf-loader might miss
-                    const fullRobotState = parseURDF(urdfContent);
-                    if (fullRobotState && fullRobotState.joints && (robotModel as any).joints) {
-                        Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
-                             const parsedJoint = fullRobotState.joints[name];
-                             if (parsedJoint && parsedJoint.limit) {
-                                 // Ensure limit object exists on the threejs joint
-                                 if (!joint.limit) joint.limit = {};
-                                 
-                                 // Update missing properties
-                                 joint.limit.effort = parsedJoint.limit.effort;
-                                 joint.limit.velocity = parsedJoint.limit.velocity;
-                                 
-                                 // Also ensure lower/upper are consistent if they were missing
-                                 if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
-                                 if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
-                             }
-                        });
-                    }
-
-                    // Check if load was aborted (e.g., by StrictMode remount or urdfContent change)
-                    if (abortController.aborted) {
-                        // Dispose the loaded model since we don't need it
-                        if (robotModel) {
-                            disposeObject3D(robotModel, true, SHARED_MATERIALS);
-                        }
-                        return;
-                    }
-                }
-
-                if (robotModel && isMountedRef.current) {
-                    // Apply URDF materials from XML (urdf-loader doesn't handle inline rgba)
-                    if (!isMJCFContent(urdfContent)) {
-                        const materials = parseURDFMaterials(urdfContent);
-                        try {
-                            applyURDFMaterials(robotModel, materials);
-                        } finally {
-                            disposeTempMaterialMap(materials);
-                        }
-
-                        // Process capsule geometries (urdf-loader doesn't support capsule natively)
-                        processCapsuleGeometries(robotModel, urdfContent);
-                    }
-
-                    enhanceMaterials(robotModel);
-
-                    // PERFORMANCE: Build linkName -> meshes map and inject userData in single traverse
-                    // This eliminates the need for traverse in highlightGeometry
-                    const newLinkMeshMap = new Map<string, THREE.Mesh[]>();
-
-                    robotModel.traverse((child: any) => {
-                        // Find parent link for this object
-                        let parentLink: any = null;
-                        let current = child;
-                        while (current) {
-                            if (current.isURDFLink || (robotModel as any).links?.[current.name]) {
-                                parentLink = current;
-                                break;
-                            }
-                            current = current.parent;
-                        }
-
-                        // Handle collision meshes
-                        if (child.isURDFCollider) {
-                            child.visible = showCollisionRef.current;
-                            child.traverse((inner: any) => {
-                                if (inner.isMesh) {
-                                    inner.userData.isCollisionMesh = true;
-                                    // Inject parent link name for fast lookup
-                                    if (parentLink) {
-                                        inner.userData.parentLinkName = parentLink.name;
-                                    }
-                                    // Add to link mesh map
-                                    if (parentLink) {
-                                        const key = `${parentLink.name}:collision`;
-                                        if (!newLinkMeshMap.has(key)) {
-                                            newLinkMeshMap.set(key, []);
-                                        }
-                                        newLinkMeshMap.get(key)!.push(inner);
-                                    }
+                        const fullRobotState = parseURDF(urdfContent);
+                        if (fullRobotState && fullRobotState.joints && (robotModel as any).joints) {
+                            Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
+                                const parsedJoint = fullRobotState.joints[name];
+                                if (parsedJoint && parsedJoint.limit) {
+                                    if (!joint.limit) joint.limit = {};
+                                    joint.limit.effort = parsedJoint.limit.effort;
+                                    joint.limit.velocity = parsedJoint.limit.velocity;
+                                    if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
+                                    if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
                                 }
                             });
                         }
-                        // Handle visual meshes
-                        else if (child.isMesh && !child.userData.isCollisionMesh) {
-                            // Check if it's a visual (not a joint or collider)
-                            let isVisual = false;
-                            let checkParent = child.parent;
-                            while (checkParent) {
-                                if (checkParent.isURDFCollider) {
-                                    break; // Already handled as collision
-                                }
-                                if (checkParent.isURDFLink) {
-                                    isVisual = true;
-                                    break;
-                                }
-                                checkParent = checkParent.parent;
-                            }
 
-                            if (isVisual && parentLink) {
-                                child.userData.parentLinkName = parentLink.name;
-                                child.userData.isVisualMesh = true;
-                                const key = `${parentLink.name}:visual`;
-                                if (!newLinkMeshMap.has(key)) {
-                                    newLinkMeshMap.set(key, []);
-                                }
-                                newLinkMeshMap.get(key)!.push(child);
+                        if (abortController.aborted) {
+                            if (robotModel) {
+                                disposeObject3D(robotModel, true, SHARED_MATERIALS);
                             }
-
-                            child.visible = showVisualRef.current;
+                            return;
                         }
-                    });
-
-                    // Re-fit using final visibility state so hidden meshes don't affect ground alignment.
-                    offsetRobotToGround(robotModel);
-
-                    const previousRobot = robotRef.current;
-
-                    // Store the pre-built map
-                    linkMeshMapRef.current = newLinkMeshMap;
-
-                    // Store in ref for cleanup
-                    robotRef.current = robotModel;
-                    setRobot(robotModel);
-                    setError(null);
-                    invalidate();
-
-                    if (previousRobot && previousRobot !== robotModel) {
-                        schedulePreviousRobotDispose(previousRobot);
+                    } finally {
+                        manager.itemEnd(loadCompletionKey);
                     }
 
-                    if (onRobotLoaded) {
-                        onRobotLoaded(robotModel);
-                    }
+                    return;
+                }
+
+                if (robotModel && isMountedRef.current) {
+                    finalizeLoadedRobot(robotModel);
                 } else if (robotModel) {
                      // Aborted or unmounted after load but before we could use it
                      disposeObject3D(robotModel, true, SHARED_MATERIALS);

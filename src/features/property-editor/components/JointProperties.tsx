@@ -9,7 +9,17 @@ import React from 'react';
 import { ExternalLink } from 'lucide-react';
 import { JointType, type AppMode, type MotorSpec } from '@/types';
 import { translations } from '@/shared/i18n';
-import { InputGroup, CollapsibleSection, NumberInput, Vec3Input, type Vec3Value } from './FormControls';
+import {
+  InputGroup,
+  CollapsibleSection,
+  NumberInput,
+  Vec3Input,
+  Vec3InlineInput,
+  PROPERTY_EDITOR_INPUT_CLASS,
+  PROPERTY_EDITOR_LINK_CLASS,
+  PROPERTY_EDITOR_SELECT_CLASS,
+  type Vec3Value,
+} from './FormControls';
 import { useMotorConfig } from '../hooks/useMotorConfig';
 
 const AXIS_BASED_TYPES = new Set<JointType>([
@@ -150,14 +160,14 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
               type="text"
               value={data.name}
               onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
-              className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:border-system-blue focus:outline-none"
+              className={PROPERTY_EDITOR_INPUT_CLASS}
             />
           </InputGroup>
           <InputGroup label={t.type}>
             <select
               value={jointType}
               onChange={(e) => handleJointTypeChange(e.target.value as JointType)}
-              className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+              className={PROPERTY_EDITOR_SELECT_CLASS}
             >
               {JOINT_TYPE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -176,7 +186,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
             <select
               value={jointType}
               onChange={(e) => handleJointTypeChange(e.target.value as JointType)}
-              className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+              className={PROPERTY_EDITOR_SELECT_CLASS}
             >
               {JOINT_TYPE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -188,22 +198,24 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
 
           <CollapsibleSection title={t.kinematics} storageKey="kinematics">
             <InputGroup label={t.originRelativeParent + " (XYZ)"}>
-              <Vec3Input
+              <Vec3InlineInput
                 value={origin.xyz}
                 onChange={(v) => updateJoint({
                   origin: { ...origin, xyz: toXYZ(v, origin.xyz) }
                 })}
                 labels={['X', 'Y', 'Z']}
+                compact
               />
             </InputGroup>
             <InputGroup label={t.originRelativeParent + " (RPY)"}>
-              <Vec3Input
+              <Vec3InlineInput
                 value={origin.rpy}
                 onChange={(v) => updateJoint({
                   origin: { ...origin, rpy: toRPY(v, origin.rpy) }
                 })}
                 labels={[t.roll, t.pitch, t.yaw]}
                 keys={['r', 'p', 'y']}
+                compact
               />
             </InputGroup>
 
@@ -227,7 +239,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
             <select
               value={jointType}
               onChange={(e) => handleJointTypeChange(e.target.value as JointType)}
-              className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+              className={PROPERTY_EDITOR_SELECT_CLASS}
             >
               {JOINT_TYPE_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -244,7 +256,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                 <select
                   value={motorSource}
                   onChange={(e) => handleSourceChange(e.target.value)}
-                  className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+                  className={PROPERTY_EDITOR_SELECT_CLASS}
                 >
                   <option value="None">{t.none}</option>
                   <option value="Library">{t.library}</option>
@@ -258,7 +270,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                     <select
                       value={motorBrand}
                       onChange={(e) => handleBrandChange(e.target.value)}
-                      className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+                      className={PROPERTY_EDITOR_SELECT_CLASS}
                     >
                       {Object.keys(motorLibrary).map(brand => (
                         <option key={brand} value={brand}>{brand}</option>
@@ -269,7 +281,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                     <select
                       value={currentMotorType}
                       onChange={(e) => handleLibraryMotorChange(e.target.value)}
-                      className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+                      className={PROPERTY_EDITOR_SELECT_CLASS}
                     >
                       {motorLibrary[motorBrand]?.map(m => (
                         <option key={m.name} value={m.name}>{m.name}</option>
@@ -283,7 +295,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                         href={currentLibMotor.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 text-xs text-system-blue hover:text-system-blue-hover transition-colors"
+                        className={PROPERTY_EDITOR_LINK_CLASS}
                       >
                         {t.viewMotor}
                         <ExternalLink className="w-3 h-3" />
@@ -302,7 +314,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                     onChange={(e) => updateJoint({
                       hardware: { ...data.hardware, motorType: e.target.value }
                     })}
-                    className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:outline-none focus:border-system-blue"
+                    className={PROPERTY_EDITOR_INPUT_CLASS}
                   />
                 </InputGroup>
               )}
@@ -317,7 +329,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                         onChange={(e) => updateJoint({
                           hardware: { ...data.hardware, motorId: e.target.value }
                         })}
-                        className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full focus:outline-none focus:border-system-blue"
+                        className={PROPERTY_EDITOR_INPUT_CLASS}
                       />
                     </InputGroup>
                     <InputGroup label={t.direction}>
@@ -326,7 +338,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                         onChange={(e) => updateJoint({
                           hardware: { ...data.hardware, motorDirection: parseInt(e.target.value, 10) }
                         })}
-                        className="bg-input-bg border border-border-strong rounded-lg px-2 py-1 text-sm text-text-primary w-full"
+                        className={PROPERTY_EDITOR_SELECT_CLASS}
                       >
                         <option value={1}>1 ({t.normal})</option>
                         <option value={-1}>-1 ({t.inverted})</option>

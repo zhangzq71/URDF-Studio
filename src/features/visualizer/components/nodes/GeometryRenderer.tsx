@@ -44,6 +44,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
 
   // Fallback if collision data doesn't exist yet
   if (isCollision && !data) return null;
+  if (data?.visible === false) return null;
 
   if (mode === 'skeleton' && !showGeometry && !isCollision) return null;
 

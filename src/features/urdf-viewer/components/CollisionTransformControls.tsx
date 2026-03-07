@@ -4,6 +4,7 @@ import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { CollisionTransformControlsProps } from '../types';
 import { translations } from '@/shared/i18n';
+import { TransformControlsRotateGuide } from '@/shared/components/3d';
 import { enhanceTransformControlsGizmo } from '../utils/transformGizmo';
 import {
     applyAxisTransformValue,
@@ -476,17 +477,29 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                 enabled={true}
                 onChange={() => handleObjectChange(transformRef.current)}
             />
+            <TransformControlsRotateGuide
+                controlsRef={transformRef}
+                targetObject={targetObject}
+                active={transformMode === 'rotate'}
+            />
 
             {transformMode === 'universal' && (
-                <TransformControls
-                    ref={rotateTransformRef}
-                    object={targetObject}
-                    mode="rotate"
-                    size={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
-                    space="local"
-                    enabled={true}
-                    onChange={() => handleObjectChange(rotateTransformRef.current)}
-                />
+                <>
+                    <TransformControls
+                        ref={rotateTransformRef}
+                        object={targetObject}
+                        mode="rotate"
+                        size={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
+                        space="local"
+                        enabled={true}
+                        onChange={() => handleObjectChange(rotateTransformRef.current)}
+                    />
+                    <TransformControlsRotateGuide
+                        controlsRef={rotateTransformRef}
+                        targetObject={targetObject}
+                        active={true}
+                    />
+                </>
             )}
 
             {pendingEdit && (

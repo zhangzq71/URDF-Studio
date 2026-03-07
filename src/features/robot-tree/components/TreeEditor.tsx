@@ -12,10 +12,12 @@ import {
   FileCode,
   LayoutGrid,
   Plus,
+  Trash2,
   Trees,
 } from 'lucide-react';
 import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
+import { Button, Dialog } from '@/shared/components/ui';
 import { useAssemblyStore, useAssetsStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
 import { AssemblyTreeView } from './AssemblyTreeView';
@@ -26,6 +28,7 @@ import { TreeNode } from './TreeNode';
 export interface TreeEditorProps {
   robot: RobotState;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+  onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
@@ -47,6 +50,7 @@ export interface TreeEditorProps {
   onAddComponent?: (file: RobotFile) => void;
   onDeleteLibraryFile?: (file: RobotFile) => void;
   onDeleteLibraryFolder?: (folderPath: string) => void;
+  onDeleteAllLibraryFiles?: () => void;
   onExportLibraryFile?: (file: RobotFile, format: 'urdf' | 'mjcf') => void | Promise<void>;
   onCreateBridge?: () => void;
   onRemoveComponent?: (id: string) => void;
@@ -59,6 +63,7 @@ export interface TreeEditorProps {
 export const TreeEditor: React.FC<TreeEditorProps> = ({
   robot,
   onSelect,
+  onSelectGeometry,
   onFocus,
   onAddChild,
   onAddCollisionBody,
@@ -79,6 +84,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onAddComponent,
   onDeleteLibraryFile,
   onDeleteLibraryFolder,
+  onDeleteAllLibraryFiles,
   onExportLibraryFile,
   onCreateBridge,
   onRemoveComponent,
@@ -127,6 +133,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     y: number;
     target: LibraryDeleteTarget;
   } | null>(null);
+  const [isDeleteAllLibraryDialogOpen, setIsDeleteAllLibraryDialogOpen] = useState(false);
 
   const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
   const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
@@ -164,6 +171,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       setFileContextMenu(null);
     }
   }, [isProMode]);
+
+  useEffect(() => {
+    if (availableFiles.length === 0) {
+      setIsDeleteAllLibraryDialogOpen(false);
+    }
+  }, [availableFiles.length]);
 
   useEffect(() => {
     if (!isEditingName) return;
@@ -281,6 +294,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     [onDeleteLibraryFile, onDeleteLibraryFolder],
   );
 
+  const handleConfirmDeleteAllLibraryFiles = useCallback(() => {
+    if (!onDeleteAllLibraryFiles || availableFiles.length === 0) return;
+    onDeleteAllLibraryFiles();
+    setIsDeleteAllLibraryDialogOpen(false);
+  }, [availableFiles.length, onDeleteAllLibraryFiles]);
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       isResizing.current = true;
@@ -340,6 +359,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
   const actualWidth = collapsed ? 0 : width;
   const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;
+  const canDeleteAllLibraryFiles = Boolean(onDeleteAllLibraryFiles && availableFiles.length > 0);
 
   return (
     <div
@@ -463,7 +483,24 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                   {t.fileBrowser}
                 </span>
               </div>
-              <span className="text-[10px] text-text-tertiary">{availableFiles.length}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-text-tertiary">{availableFiles.length}</span>
+                {canDeleteAllLibraryFiles && (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setFileContextMenu(null);
+                      setIsDeleteAllLibraryDialogOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
+                    title={t.deleteAllLibraryFiles}
+                  >
+                    <Trash2 size={10} strokeWidth={2.25} />
+                    <span>{t.deleteAllLibraryFiles}</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {isFileBrowserOpen && isProMode && availableFiles.length > 0 && (
@@ -579,6 +616,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       assemblyState={assemblyState}
                       robot={robot}
                       onSelect={onSelect}
+                      onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}
                       onAddChild={onAddChild}
                       onAddCollisionBody={onAddCollisionBody}
@@ -597,6 +635,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       linkId={robot.rootLinkId}
                       robot={robot}
                       onSelect={onSelect}
+                      onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}
                       onAddChild={onAddChild}
                       onAddCollisionBody={onAddCollisionBody}
@@ -644,6 +683,35 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           }
         }}
       />
+
+      <Dialog
+        isOpen={isDeleteAllLibraryDialogOpen}
+        onClose={() => setIsDeleteAllLibraryDialogOpen(false)}
+        title={t.deleteAllLibraryFilesConfirmTitle}
+        width="w-[420px]"
+        footer={(
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsDeleteAllLibraryDialogOpen(false)}
+            >
+              {t.cancel}
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleConfirmDeleteAllLibraryFiles}
+            >
+              {t.confirm}
+            </Button>
+          </div>
+        )}
+      >
+        <p className="text-sm leading-6 text-text-secondary">
+          {t.deleteAllLibraryFilesConfirmMessage}
+        </p>
+      </Dialog>
     </div>
   );
 };

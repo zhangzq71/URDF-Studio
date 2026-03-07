@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIStore } from '@/store';
-import { getLowestMeshZ } from '@/shared/utils';
+import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import type { MeasureState, ToolMode, URDFViewerProps } from '../types';
-import { offsetRobotToGround } from '../utils/robotPositioning';
 import { usePanelDrag } from './usePanelDrag';
 import { useViewerSettings } from './useViewerSettings';
 
@@ -25,6 +24,7 @@ interface UseURDFViewerControllerProps {
   showVisual?: URDFViewerProps['showVisual'];
   setShowVisual?: URDFViewerProps['setShowVisual'];
   onTransformPendingChange?: URDFViewerProps['onTransformPendingChange'];
+  active?: boolean;
 }
 
 export const useURDFViewerController = ({
@@ -37,7 +37,9 @@ export const useURDFViewerController = ({
   showVisual: propShowVisual,
   setShowVisual: propSetShowVisual,
   onTransformPendingChange,
+  active = true,
 }: UseURDFViewerControllerProps) => {
+  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const isOrbitDragging = useRef(false);
   const [robot, setRobot] = useState<any>(null);
   const {
@@ -219,23 +221,6 @@ export const useURDFViewerController = ({
     });
   }, [robot]);
 
-  useEffect(() => {
-    if (!robot) return;
-
-    const alignToGround = () => {
-      offsetRobotToGround(robot);
-      useUIStore.getState().setGroundPlaneOffset(0);
-    };
-
-    const timers = [0, 80, 220].map((delay) =>
-      window.setTimeout(alignToGround, delay)
-    );
-
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, [robot]);
-
   const handleJointAngleChange = useCallback(
     (jointName: string, angle: number) => {
       if (!robot?.joints?.[jointName]) return;
@@ -311,25 +296,20 @@ export const useURDFViewerController = ({
 
   const handleAutoFitGround = useCallback(() => {
     if (!robot) return;
-
-    let minZ = getLowestMeshZ(robot, {
+    const aligned = alignObjectLowestPointToZ(robot, groundPlaneOffset, {
       includeInvisible: false,
       includeVisual: true,
       includeCollision: false,
     });
 
-    if (minZ === null) {
-      minZ = getLowestMeshZ(robot, {
+    if (aligned === null) {
+      alignObjectLowestPointToZ(robot, groundPlaneOffset, {
         includeInvisible: true,
         includeVisual: true,
         includeCollision: false,
       });
     }
-
-    if (minZ !== null) {
-      useUIStore.getState().setGroundPlaneOffset(minZ);
-    }
-  }, [robot]);
+  }, [groundPlaneOffset, robot]);
 
   const handleToolModeChange = useCallback((nextMode: ToolMode) => {
     setToolMode(nextMode);
@@ -355,6 +335,16 @@ export const useURDFViewerController = ({
     onSelect?.('link', '');
     setActiveJoint(null);
   }, [onSelect]);
+
+  useEffect(() => {
+    if (!active || !robot) return;
+
+    const timers = [0, 80, 220].map((delay) => window.setTimeout(handleAutoFitGround, delay));
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [active, groundPlaneOffset, handleAutoFitGround, robot]);
 
   useEffect(() => {
     if (!robot) return;

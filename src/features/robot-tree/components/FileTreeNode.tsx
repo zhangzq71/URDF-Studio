@@ -93,7 +93,7 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
         className={`flex items-center gap-1.5 py-1 pr-2 cursor-pointer transition-colors group rounded-sm
           ${
             isSelectedFile
-              ? 'bg-system-blue/10 dark:bg-system-blue/20'
+              ? 'bg-element-bg dark:bg-element-hover shadow-sm ring-1 ring-inset ring-border-strong'
               : 'hover:bg-element-bg dark:hover:bg-element-hover'
           }`}
         style={{ paddingLeft: `${paddingLeft}px` }}

@@ -39,9 +39,56 @@ export interface UseVisualizationEffectsOptions {
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
     highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, THREE.Material | THREE.Material[]>>;
+}
+
+function resolveLinkNameFromObject(object: THREE.Object3D | null): string | null {
+    if (!object) return null;
+    if (typeof object.userData?.parentLinkName === 'string' && object.userData.parentLinkName) {
+        return object.userData.parentLinkName;
+    }
+
+    let current: THREE.Object3D | null = object;
+    while (current) {
+        if ((current as any).isURDFLink && current.name) {
+            return current.name;
+        }
+        current = current.parent;
+    }
+
+    return null;
+}
+
+function getCollisionGeometryByIndex(linkData: UrdfLink | undefined, colliderIndex: number) {
+    if (!linkData) return undefined;
+    if (colliderIndex <= 0) return linkData.collision;
+    return linkData.collisionBodies?.[colliderIndex - 1];
+}
+
+function isVisualGeometryVisible(linkData: UrdfLink | undefined, showVisual: boolean): boolean {
+    return showVisual && linkData?.visible !== false && linkData?.visual.visible !== false;
+}
+
+function isCollisionGeometryVisible(
+    linkData: UrdfLink | undefined,
+    colliderIndex: number,
+    showCollision: boolean
+): boolean {
+    const geometry = getCollisionGeometryByIndex(linkData, colliderIndex);
+    return showCollision && geometry?.visible !== false;
+}
+
+function getColliderIndex(collider: THREE.Object3D): number {
+    const linkObject = collider.parent && (collider.parent as any).isURDFLink
+        ? collider.parent
+        : null;
+    if (!linkObject) return 0;
+
+    const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
+    const colliderIndex = colliders.indexOf(collider);
+    return colliderIndex >= 0 ? colliderIndex : 0;
 }
 
 export function useVisualizationEffects({
@@ -116,55 +163,60 @@ export function useVisualizationEffects({
         };
     }, [highlightedMeshesRef]);
 
-    // Update collision visibility when showCollision changes
+    // Sync per-link / per-geometry visibility for visual and collision content.
     useEffect(() => {
         if (!robot) return;
 
         robot.traverse((child: any) => {
+            const linkName = resolveLinkNameFromObject(child);
+            const linkData = linkName ? robotLinks?.[linkName] : undefined;
+
             if (child.isURDFCollider) {
-                child.visible = showCollision;
+                const colliderIndex = getColliderIndex(child);
+                const isVisible = isCollisionGeometryVisible(linkData, colliderIndex, showCollision);
+
+                child.visible = isVisible;
                 child.traverse((inner: any) => {
-                    if (inner.isMesh) {
-                        inner.userData.isCollisionMesh = true;
-                        inner.raycast = (highlightMode === 'collision' && showCollision)
-                            ? THREE.Mesh.prototype.raycast
-                            : emptyRaycast;
+                    if (!inner.isMesh) return;
+
+                    inner.userData.isCollisionMesh = true;
+                    inner.raycast = (highlightMode === 'collision' && isVisible)
+                        ? THREE.Mesh.prototype.raycast
+                        : emptyRaycast;
+
+                    if (isVisible) {
+                        inner.visible = true;
+                        if (inner.__origMaterial) {
+                            inner.__origMaterial = collisionBaseMaterial;
+                        }
+                        inner.material = collisionBaseMaterial;
+                        inner.renderOrder = 999;
+                    } else {
+                        inner.visible = false;
                     }
                 });
-
-                if (showCollision) {
-                    child.traverse((innerChild: any) => {
-                        if (innerChild.isMesh) {
-                            innerChild.userData.isCollisionMesh = true;
-                            if (innerChild.__origMaterial) {
-                                innerChild.__origMaterial = collisionBaseMaterial;
-                            }
-                            innerChild.material = collisionBaseMaterial;
-                            innerChild.renderOrder = 999;
-                        }
-                    });
-                }
-            }
-        });
-    }, [robot, showCollision, robotVersion, highlightMode]);
-
-    // Update visual mesh visibility when showVisual changes
-    useEffect(() => {
-        if (!robot) return;
-
-        robot.traverse((child: any) => {
-            // Handle visual group containers (from MJCF loader)
-            if (child.userData?.isVisualGroup) {
-                child.visible = showVisual;
                 return;
             }
 
-            // Handle individual visual meshes (marked during load)
-            if (child.isMesh && child.userData?.isVisual) {
-                child.visible = showVisual;
+            if (child.userData?.isVisualGroup) {
+                child.visible = isVisualGeometryVisible(linkData, showVisual);
+                return;
             }
 
-            // Handle URDF visual meshes (check parent chain for URDFVisual)
+            if (
+                child.parent
+                && child.parent.isURDFLink
+                && !child.isURDFJoint
+                && !child.isURDFCollider
+                && child.userData?.isGizmo !== true
+            ) {
+                child.visible = isVisualGeometryVisible(linkData, showVisual);
+            }
+
+            if (child.isMesh && child.userData?.isVisual) {
+                child.visible = isVisualGeometryVisible(linkData, showVisual);
+            }
+
             if (child.isMesh && !child.userData?.isCollision && !child.userData?.isCollisionMesh) {
                 let parent = child.parent;
                 let isUrdfVisual = false;
@@ -178,14 +230,15 @@ export function useVisualizationEffects({
                     }
                     parent = parent.parent;
                 }
+
                 if (isUrdfVisual) {
-                    child.visible = showVisual;
+                    child.visible = isVisualGeometryVisible(linkData, showVisual);
                 }
             }
         });
 
         invalidate();
-    }, [robot, showVisual, robotVersion, invalidate]);
+    }, [robot, showCollision, showVisual, robotLinks, robotVersion, highlightMode, invalidate]);
 
     // Update link axes, joint axes visibility, and model opacity
     useEffect(() => {
@@ -272,27 +325,6 @@ export function useVisualizationEffects({
 
         invalidate();
     }, [robot, showOrigins, originSize, showJointAxes, jointAxisSize, modelOpacity, robotVersion, invalidate]);
-
-    // Update visual visibility when link visibility changes
-    useEffect(() => {
-        if (!robot) return;
-
-        robot.traverse((child: any) => {
-            if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider && child.userData?.isGizmo !== true) {
-                const linkName = child.parent.name;
-                const isLinkVisible = robotLinks?.[linkName]?.visible !== false;
-                child.visible = isLinkVisible;
-            }
-            if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh && child.userData?.isGizmo !== true) {
-                let linkName = '';
-                if (child.parent && child.parent.isURDFLink) linkName = child.parent.name;
-                else if (child.parent && child.parent.parent && child.parent.parent.isURDFLink) linkName = child.parent.parent.name;
-
-                const isLinkVisible = linkName ? (robotLinks?.[linkName]?.visible !== false) : true;
-                child.visible = isLinkVisible;
-            }
-        });
-    }, [robot, robotVersion, robotLinks]);
 
     // Effect to handle inertia and CoM visualization
     useEffect(() => {

@@ -14,13 +14,16 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
+import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import type { AppMode, AssemblyState, RobotState } from '@/types';
+import { useShallow } from 'zustand/react/shallow';
 import { TreeNode } from './TreeNode';
 
 export interface AssemblyTreeViewProps {
   assemblyState: AssemblyState;
   robot: RobotState;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+  onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
@@ -39,6 +42,7 @@ export const AssemblyTreeView = memo(({
   assemblyState,
   robot,
   onSelect,
+  onSelectGeometry,
   onFocus,
   onAddChild,
   onAddCollisionBody,
@@ -49,9 +53,17 @@ export const AssemblyTreeView = memo(({
   onRenameComponent,
   onCreateBridge,
   onToggleComponentVisibility,
-  mode,
-  t,
+	mode,
+	t,
 }: AssemblyTreeViewProps) => {
+  const { hoveredSelection, attentionSelection, setHoveredSelection, clearHover } = useSelectionStore(
+    useShallow((state) => ({
+      hoveredSelection: state.hoveredSelection,
+      attentionSelection: state.attentionSelection,
+      setHoveredSelection: state.setHoveredSelection,
+      clearHover: state.clearHover,
+    }))
+  );
   const [isComponentsExpanded, setIsComponentsExpanded] = useState(true);
   const [isBridgesExpanded, setIsBridgesExpanded] = useState(true);
   const [expandedComponents, setExpandedComponents] = useState<Record<string, boolean>>({});
@@ -145,6 +157,10 @@ export const AssemblyTreeView = memo(({
 
   const components = Object.values(assemblyState.components);
   const bridges = Object.values(assemblyState.bridges);
+  const sectionHoverClass = 'hover:bg-system-blue/10 hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
+  const itemHoverClass = 'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
+  const itemSelectedClass = 'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
+  const itemAttentionClass = 'bg-system-blue/15 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/30 dark:bg-system-blue/25 dark:ring-system-blue/40';
 
   return (
     <div className="space-y-1">
@@ -155,7 +171,7 @@ export const AssemblyTreeView = memo(({
 
       <div className="mt-2">
         <div
-          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover transition-colors group"
+          className={`flex items-center gap-1.5 py-1 px-2 cursor-pointer transition-all duration-200 group rounded-md ${sectionHoverClass}`}
           onClick={() => setIsComponentsExpanded(!isComponentsExpanded)}
         >
           {isComponentsExpanded ? (
@@ -184,7 +200,7 @@ export const AssemblyTreeView = memo(({
               return (
                 <div key={component.id}>
                   <div
-                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group hover:bg-element-bg dark:hover:bg-element-hover transition-colors
+                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group transition-all duration-200 ${itemHoverClass}
                       ${!isVisible ? 'opacity-60' : ''}`}
                     onClick={() => {
                       toggleComponent(component.id);
@@ -255,6 +271,7 @@ export const AssemblyTreeView = memo(({
                         linkId={component.robot.rootLinkId}
                         robot={robot}
                         onSelect={onSelect}
+                        onSelectGeometry={onSelectGeometry}
                         onFocus={onFocus}
                         onAddChild={onAddChild}
                         onAddCollisionBody={onAddCollisionBody}
@@ -275,7 +292,7 @@ export const AssemblyTreeView = memo(({
 
       <div className="mt-2">
         <div
-          className="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover transition-colors group"
+          className={`flex items-center gap-1.5 py-1 px-2 cursor-pointer transition-all duration-200 group rounded-md ${sectionHoverClass}`}
           onClick={() => setIsBridgesExpanded(!isBridgesExpanded)}
         >
           {isBridgesExpanded ? (
@@ -309,15 +326,20 @@ export const AssemblyTreeView = memo(({
               bridges.map((bridge) => (
                 <div
                   key={bridge.id}
-                  className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer hover:bg-element-bg dark:hover:bg-element-hover group transition-colors
-                    ${
-                      robot.selection.type === 'joint' && robot.selection.id === bridge.id
-                        ? 'bg-orange-100 dark:bg-orange-900/20 text-orange-600'
-                        : ''
-                    }`}
+                  className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group transition-all duration-200 ${
+                    matchesSelection(attentionSelection, { type: 'joint', id: bridge.id })
+                      ? itemAttentionClass
+                      : robot.selection.type === 'joint' && robot.selection.id === bridge.id
+                        ? itemSelectedClass
+                        : matchesSelection(hoveredSelection, { type: 'joint', id: bridge.id })
+                          ? itemSelectedClass
+                          : `text-text-secondary dark:text-text-secondary ${itemHoverClass}`
+                  }`}
                   onClick={() => onSelect('joint', bridge.id)}
+                  onMouseEnter={() => setHoveredSelection({ type: 'joint', id: bridge.id })}
+                  onMouseLeave={clearHover}
                 >
-                  <ArrowRightLeft size={12} className="text-orange-500" />
+                  <ArrowRightLeft size={12} className="text-orange-500 dark:text-orange-300" />
                   <span className="text-xs font-medium truncate flex-1">{bridge.name}</span>
                   <button
                     onClick={(e) => {

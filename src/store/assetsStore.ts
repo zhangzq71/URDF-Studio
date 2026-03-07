@@ -21,6 +21,7 @@ interface AssetsState {
   addRobotFile: (file: RobotFile) => void;
   removeRobotFile: (fileName: string) => void;
   removeRobotFolder: (folderPath: string) => void;
+  clearRobotLibrary: () => void;
 
   // Currently selected file in file browser
   selectedFile: RobotFile | null;
@@ -171,6 +172,21 @@ export const useAssetsStore = create<AssetsState>()((set, get) => ({
         selectedFile: nextSelectedFile,
         allFileContents: nextAllFileContents,
         assets: nextAssets,
+      };
+    }),
+  clearRobotLibrary: () =>
+    set((state) => {
+      const targetUrls = new Set(
+        Object.values(state.assets).filter((url) => url.startsWith('blob:')),
+      );
+
+      targetUrls.forEach((url) => URL.revokeObjectURL(url));
+
+      return {
+        availableFiles: [],
+        selectedFile: null,
+        allFileContents: {},
+        assets: {},
       };
     }),
 

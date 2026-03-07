@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { highlightFaceMaterial } from '../utils/materials';
+import { resolveSelectionTarget } from '../utils/selectionTargets';
 import type { ToolMode, URDFViewerProps } from '../types';
 
 export interface UseHoverDetectionOptions {
@@ -370,25 +371,10 @@ export function useHoverDetection({
 
                 let newHoveredObjectIndex = 0;
                 if (linkObj) {
-                    let urdfElement: THREE.Object3D | null = null;
-                    let p: THREE.Object3D | null = hit.object;
-                    while (p && p !== linkObj) {
-                        if ((p as any).isURDFVisual || (p as any).isURDFCollider) {
-                            urdfElement = p;
-                            break;
-                        }
-                        p = p.parent;
-                    }
-
-                    if (urdfElement) {
-                        const isCollider = (urdfElement as any).isURDFCollider;
-                        const siblings = linkObj.children.filter(c => isCollider ? (c as any).isURDFCollider : (c as any).isURDFVisual);
-                        newHoveredObjectIndex = Math.max(0, siblings.indexOf(urdfElement));
-                    }
+                    const resolvedTarget = resolveSelectionTarget(hit.object, linkObj);
+                    newHoveredObjectIndex = resolvedTarget.objectIndex;
+                    newHoveredMesh = resolvedTarget.highlightTarget;
                 }
-
-                // Instead of highlighting the whole link, use objectIndex
-                newHoveredMesh = isCollisionMode ? newHoveredObjectIndex as any : hit.object;
             }
         }
 
