@@ -5,6 +5,11 @@
 
 import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState, RobotData } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import {
+  MAX_GEOMETRY_DIMENSION_DECIMALS,
+  MAX_PROPERTY_DECIMALS,
+  formatNumberWithMaxDecimals,
+} from '@/core/utils/numberPrecision';
 import { normalizeMeshPathForExport } from '../meshPathUtils';
 
 const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'planar']);
@@ -24,13 +29,13 @@ const hexToRgba = (hex: string): string => {
   return '0.5 0.5 0.5 1.0'; // fallback gray
 };
 
-const generateLimitTag = (joint: UrdfJoint): string | null => {
+const generateLimitTag = (joint: UrdfJoint, formatScalar: (n: number) => string): string | null => {
   const jointType = String(joint.type).toLowerCase();
   if (FULL_LIMIT_EXPORT_TYPES.has(jointType)) {
-    return `    <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />`;
+    return `    <limit lower="${formatScalar(joint.limit.lower)}" upper="${formatScalar(joint.limit.upper)}" effort="${formatScalar(joint.limit.effort)}" velocity="${formatScalar(joint.limit.velocity)}" />`;
   }
   if (EFFORT_VELOCITY_LIMIT_EXPORT_TYPES.has(jointType)) {
-    return `    <limit effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />`;
+    return `    <limit effort="${formatScalar(joint.limit.effort)}" velocity="${formatScalar(joint.limit.velocity)}" />`;
   }
   return null;
 };
@@ -39,7 +44,7 @@ const generateCollisionElement = (
   collision: UrdfLink['collision'],
   vecStr: (v: { x: number; y: number; z: number }) => string,
   rotStr: (v: { r: number; p: number; y: number }) => string,
-  f: (n: number) => string,
+  formatShape: (n: number) => string,
   exportRobotName: string,
 ): string => {
   if (!collision || collision.type === GeometryType.NONE) return '';
@@ -52,11 +57,11 @@ const generateCollisionElement = (
   if (collision.type === GeometryType.BOX) {
     xml += `        <box size="${vecStr(collision.dimensions)}" />\n`;
   } else if (collision.type === GeometryType.CYLINDER) {
-    xml += `        <cylinder radius="${f(collision.dimensions.x)}" length="${f(collision.dimensions.y)}" />\n`;
+    xml += `        <cylinder radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
   } else if (collision.type === GeometryType.SPHERE) {
-    xml += `        <sphere radius="${f(collision.dimensions.x)}" />\n`;
+    xml += `        <sphere radius="${formatShape(collision.dimensions.x)}" />\n`;
   } else if (collision.type === GeometryType.CAPSULE) {
-    xml += `        <capsule radius="${f(collision.dimensions.x)}" length="${f(collision.dimensions.y)}" />\n`;
+    xml += `        <capsule radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
   } else if (collision.type === GeometryType.MESH) {
     const meshPath = collision.meshPath ? normalizeMeshPathForExport(collision.meshPath) : 'part_collision.stl';
     const filename = `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
@@ -80,9 +85,10 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
   let xml = `<?xml version="1.0"?>\n<robot name="${name}">\n\n`;
 
   // Helper to format numbers
-  const f = (n: number) => n.toFixed(4);
-  const vecStr = (v: { x: number; y: number; z: number }) => `${f(v.x)} ${f(v.y)} ${f(v.z)}`;
-  const rotStr = (v: { r: number; p: number; y: number }) => `${f(v.r)} ${f(v.p)} ${f(v.y)}`;
+  const formatScalar = (n: number) => formatNumberWithMaxDecimals(n, MAX_PROPERTY_DECIMALS);
+  const formatShape = (n: number) => formatNumberWithMaxDecimals(n, MAX_GEOMETRY_DIMENSION_DECIMALS);
+  const vecStr = (v: { x: number; y: number; z: number }) => `${formatScalar(v.x)} ${formatScalar(v.y)} ${formatScalar(v.z)}`;
+  const rotStr = (v: { r: number; p: number; y: number }) => `${formatScalar(v.r)} ${formatScalar(v.p)} ${formatScalar(v.y)}`;
 
   // Generate Links
   Object.values(links).forEach((link) => {
@@ -99,11 +105,11 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         if (link.visual.type === GeometryType.BOX) {
           xml += `        <box size="${vecStr(link.visual.dimensions)}" />\n`;
         } else if (link.visual.type === GeometryType.CYLINDER) {
-          xml += `        <cylinder radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
+          xml += `        <cylinder radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.SPHERE) {
-          xml += `        <sphere radius="${f(link.visual.dimensions.x)}" />\n`;
+          xml += `        <sphere radius="${formatShape(link.visual.dimensions.x)}" />\n`;
         } else if (link.visual.type === GeometryType.CAPSULE) {
-          xml += `        <capsule radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
+          xml += `        <capsule radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
            const meshPath = link.visual.meshPath ? normalizeMeshPathForExport(link.visual.meshPath) : 'part.stl';
            const filename = `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
@@ -117,9 +123,9 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
     }
 
     // Collision (primary + additional bodies on the same link)
-    xml += generateCollisionElement(link.collision, vecStr, rotStr, f, exportRobotName);
+    xml += generateCollisionElement(link.collision, vecStr, rotStr, formatShape, exportRobotName);
     (link.collisionBodies || []).forEach((collisionBody) => {
-      xml += generateCollisionElement(collisionBody, vecStr, rotStr, f, exportRobotName);
+      xml += generateCollisionElement(collisionBody, vecStr, rotStr, formatShape, exportRobotName);
     });
 
     // Inertial
@@ -127,8 +133,8 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
     if (link.inertial.origin) {
       xml += `      <origin xyz="${vecStr(link.inertial.origin.xyz)}" rpy="${rotStr(link.inertial.origin.rpy)}" />\n`;
     }
-    xml += `      <mass value="${link.inertial.mass}" />\n`;
-    xml += `      <inertia ixx="${f(link.inertial.inertia.ixx)}" ixy="${f(link.inertial.inertia.ixy)}" ixz="${f(link.inertial.inertia.ixz)}" iyy="${f(link.inertial.inertia.iyy)}" iyz="${f(link.inertial.inertia.iyz)}" izz="${f(link.inertial.inertia.izz)}" />\n`;
+    xml += `      <mass value="${formatScalar(link.inertial.mass)}" />\n`;
+    xml += `      <inertia ixx="${formatScalar(link.inertial.inertia.ixx)}" ixy="${formatScalar(link.inertial.inertia.ixy)}" ixz="${formatScalar(link.inertial.inertia.ixz)}" iyy="${formatScalar(link.inertial.inertia.iyy)}" iyz="${formatScalar(link.inertial.inertia.iyz)}" izz="${formatScalar(link.inertial.inertia.izz)}" />\n`;
     xml += `    </inertial>\n`;
     xml += `  </link>\n\n`;
   });
@@ -148,14 +154,14 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         xml += `    <axis xyz="${vecStr(joint.axis)}" />\n`;
     }
 
-    const limitTag = generateLimitTag(joint);
+    const limitTag = generateLimitTag(joint, formatScalar);
     if (limitTag) {
         xml += `${limitTag}\n`;
     }
 
     if (DYNAMICS_EXPORT_TYPES.has(jointType)) {
         if (joint.dynamics && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)) {
-            xml += `    <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
+            xml += `    <dynamics damping="${formatScalar(joint.dynamics.damping)}" friction="${formatScalar(joint.dynamics.friction)}" />\n`;
         }
     }
 
@@ -166,7 +172,7 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
             if (joint.hardware.motorType) xml += `      <motorType>${joint.hardware.motorType}</motorType>\n`;
             if (joint.hardware.motorId) xml += `      <motorId>${joint.hardware.motorId}</motorId>\n`;
             if (joint.hardware.motorDirection) xml += `      <motorDirection>${joint.hardware.motorDirection}</motorDirection>\n`;
-            if (joint.hardware.armature !== undefined) xml += `      <armature>${joint.hardware.armature}</armature>\n`;
+            if (joint.hardware.armature !== undefined) xml += `      <armature>${formatScalar(joint.hardware.armature)}</armature>\n`;
             xml += `    </hardware>\n`;
         }
     }

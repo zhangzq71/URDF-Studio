@@ -1,7 +1,7 @@
 import React, { useRef, useState, useMemo, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
-import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { UnifiedTransformControls } from '@/shared/components/3d';
 import type { JointInteractionProps } from '../types';
 
 export const JointInteraction: React.FC<JointInteractionProps> = ({ joint, value, onChange, onCommit }) => {
@@ -143,7 +143,7 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({ joint, value
     return (
         <>
             <primitive object={dummyRef.current} />
-            <TransformControls
+            <UnifiedTransformControls
                 ref={transformRef}
                 object={dummyRef.current}
                 mode="rotate"

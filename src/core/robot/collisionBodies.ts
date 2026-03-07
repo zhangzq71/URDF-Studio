@@ -3,20 +3,25 @@ import type { UrdfLink } from '@/types';
 
 const ZERO_VECTOR = { x: 0, y: 0, z: 0 } as const;
 const ZERO_RPY = { r: 0, p: 0, y: 0 } as const;
+const DEFAULT_COLLISION_BOX_DIMENSIONS = { x: 0.08, y: 0.12, z: 0.08 } as const;
 
-function buildCollisionGeometryFromParent(parentLink: UrdfLink): UrdfLink['collision'] {
-  const sourceGeometry = parentLink.visual.type !== GeometryType.NONE
-    ? parentLink.visual
-    : parentLink.collision.type !== GeometryType.NONE
-      ? parentLink.collision
-      : DEFAULT_LINK.collision;
+function getCollisionOriginSource(parentLink: UrdfLink): UrdfLink['collision'] {
+  if (parentLink.collision.type !== GeometryType.NONE) {
+    return parentLink.collision;
+  }
 
-  return {
-    ...DEFAULT_LINK.collision,
-    ...sourceGeometry,
-    color: DEFAULT_LINK.collision.color,
-    materialSource: undefined,
-  };
+  const lastCollisionBody = [...(parentLink.collisionBodies || [])]
+    .reverse()
+    .find((body) => body.type !== GeometryType.NONE);
+  if (lastCollisionBody) {
+    return lastCollisionBody;
+  }
+
+  if (parentLink.visual.type !== GeometryType.NONE) {
+    return parentLink.visual;
+  }
+
+  return DEFAULT_LINK.collision;
 }
 
 function getCollisionBodyCount(link: UrdfLink): number {
@@ -25,15 +30,136 @@ function getCollisionBodyCount(link: UrdfLink): number {
   return primary + extras;
 }
 
+export interface CollisionGeometryEntry {
+  geometry: UrdfLink['collision'];
+  objectIndex: number;
+  bodyIndex: number | null;
+}
+
+export function getCollisionGeometryEntries(link: UrdfLink): CollisionGeometryEntry[] {
+  const entries: CollisionGeometryEntry[] = [];
+
+  if (link.collision.type !== GeometryType.NONE) {
+    entries.push({
+      geometry: link.collision,
+      objectIndex: entries.length,
+      bodyIndex: null,
+    });
+  }
+
+  (link.collisionBodies || []).forEach((body, bodyIndex) => {
+    if (body.type === GeometryType.NONE) return;
+    entries.push({
+      geometry: body,
+      objectIndex: entries.length,
+      bodyIndex,
+    });
+  });
+
+  return entries;
+}
+
+export function getCollisionGeometryByObjectIndex(
+  link: UrdfLink,
+  objectIndex = 0,
+): CollisionGeometryEntry | null {
+  const entries = getCollisionGeometryEntries(link);
+  if (entries.length === 0) return null;
+  return entries.find((entry) => entry.objectIndex === objectIndex) || entries[0];
+}
+
+export function updateCollisionGeometryByObjectIndex(
+  link: UrdfLink,
+  objectIndex: number,
+  updates: Partial<UrdfLink['collision']>,
+): UrdfLink {
+  const target = getCollisionGeometryByObjectIndex(link, objectIndex);
+
+  if (!target || target.bodyIndex === null) {
+    return {
+      ...link,
+      collision: {
+        ...link.collision,
+        ...updates,
+      },
+    };
+  }
+
+  const nextCollisionBodies = [...(link.collisionBodies || [])];
+  nextCollisionBodies[target.bodyIndex] = {
+    ...nextCollisionBodies[target.bodyIndex],
+    ...updates,
+  };
+
+  return {
+    ...link,
+    collisionBodies: nextCollisionBodies,
+  };
+}
+
+export function removeCollisionGeometryByObjectIndex(
+  link: UrdfLink,
+  objectIndex: number,
+): {
+  link: UrdfLink;
+  removed: boolean;
+  nextObjectIndex: number | null;
+} {
+  const target = getCollisionGeometryByObjectIndex(link, objectIndex);
+
+  if (!target) {
+    return {
+      link,
+      removed: false,
+      nextObjectIndex: null,
+    };
+  }
+
+  let nextLink = link;
+
+  if (target.bodyIndex === null) {
+    nextLink = {
+      ...link,
+      collision: {
+        ...link.collision,
+        type: GeometryType.NONE,
+        meshPath: undefined,
+      },
+    };
+  } else {
+    const nextCollisionBodies = [...(link.collisionBodies || [])];
+    nextCollisionBodies.splice(target.bodyIndex, 1);
+    nextLink = {
+      ...link,
+      collisionBodies: nextCollisionBodies,
+    };
+  }
+
+  const remainingEntries = getCollisionGeometryEntries(nextLink);
+
+  return {
+    link: nextLink,
+    removed: true,
+    nextObjectIndex: remainingEntries.length
+      ? Math.min(objectIndex, remainingEntries.length - 1)
+      : null,
+  };
+}
+
 function createCollisionBodyFromLink(link: UrdfLink): UrdfLink['collision'] {
-  const source = buildCollisionGeometryFromParent(link);
+  const source = getCollisionOriginSource(link);
   const count = getCollisionBodyCount(link);
   const offset = count * 0.08;
   const origin = source.origin || { xyz: { ...ZERO_VECTOR }, rpy: { ...ZERO_RPY } };
 
   return {
-    ...source,
+    ...DEFAULT_LINK.collision,
+    type: GeometryType.BOX,
+    dimensions: { ...DEFAULT_COLLISION_BOX_DIMENSIONS },
     visible: true,
+    color: DEFAULT_LINK.collision.color,
+    materialSource: undefined,
+    meshPath: undefined,
     origin: {
       xyz: {
         x: origin.xyz.x,

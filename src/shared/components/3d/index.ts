@@ -22,7 +22,7 @@ export {
   LIGHTING_CONFIG,
   WORKSPACE_CANVAS_BACKGROUND
 } from './SceneUtilities';
-export { TransformControlsRotateGuide } from './TransformControlsRotateGuide';
+export { UnifiedTransformControls } from './UnifiedTransformControls';
 
 // Visualization Helpers
 export * from './helpers';

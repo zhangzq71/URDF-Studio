@@ -13,6 +13,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
+import {
+  getCollisionGeometryByObjectIndex,
+  removeCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import { GeometryType, JointType, type AppMode, type RobotState } from '@/types';
 import { useShallow } from 'zustand/react/shallow';
@@ -123,7 +127,7 @@ export const TreeNode = memo(({
     target:
       | { type: 'link'; id: string; name: string }
       | { type: 'joint'; id: string; name: string }
-      | { type: 'mesh'; linkId: string; subType: 'visual' | 'collision' };
+      | { type: 'geometry'; linkId: string; subType: 'visual' | 'collision'; objectIndex: number };
   } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const linkRowRef = useRef<HTMLDivElement>(null);
@@ -131,12 +135,13 @@ export const TreeNode = memo(({
   const primaryCollisionRowRef = useRef<HTMLDivElement>(null);
   const collisionBodyRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const jointRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const { hoveredSelection, attentionSelection, setHoveredSelection, clearHover } = useSelectionStore(
+  const { hoveredSelection, attentionSelection, setHoveredSelection, clearHover, setSelection } = useSelectionStore(
     useShallow((state) => ({
       hoveredSelection: state.hoveredSelection,
       attentionSelection: state.attentionSelection,
       setHoveredSelection: state.setHoveredSelection,
       clearHover: state.clearHover,
+      setSelection: state.setSelection,
     }))
   );
 
@@ -233,6 +238,15 @@ export const TreeNode = memo(({
     (contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE)
       || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE)
   );
+  const contextMenuGeometry = contextMenu?.target.type === 'geometry'
+    ? (() => {
+      const targetLink = robot.links[contextMenu.target.linkId];
+      if (!targetLink) return null;
+      return contextMenu.target.subType === 'visual'
+        ? targetLink.visual
+        : getCollisionGeometryByObjectIndex(targetLink, contextMenu.target.objectIndex)?.geometry || null;
+    })()
+    : null;
 
   useEffect(() => {
     if (selectionInBranch && hasExpandableContent) {
@@ -394,13 +408,16 @@ export const TreeNode = memo(({
 
   const openContextMenu = (
     event: React.MouseEvent,
-    target: { type: 'link'; id: string; name: string } | { type: 'joint'; id: string; name: string } | { type: 'mesh'; linkId: string; subType: 'visual' | 'collision' }
+    target:
+      | { type: 'link'; id: string; name: string }
+      | { type: 'joint'; id: string; name: string }
+      | { type: 'geometry'; linkId: string; subType: 'visual' | 'collision'; objectIndex: number }
   ) => {
     event.preventDefault();
     event.stopPropagation();
 
     const menuWidth = 170;
-    const menuHeight = target.type === 'mesh'
+    const menuHeight = target.type === 'geometry'
       ? 44
       : target.type === 'link'
         ? (isSkeleton ? 260 : 236)
@@ -467,28 +484,71 @@ export const TreeNode = memo(({
     setContextMenu(null);
   };
 
-  const handleDeleteMesh = () => {
-    if (!contextMenu || contextMenu.target.type !== 'mesh') return;
-    const targetLink = robot.links[contextMenu.target.linkId];
+  const handleDeleteGeometryMenuAction = () => {
+    if (!contextMenu || contextMenu.target.type !== 'geometry') return;
+    const { linkId: targetLinkId, subType, objectIndex } = contextMenu.target;
+    const targetLink = robot.links[targetLinkId];
     if (!targetLink) {
       setContextMenu(null);
       return;
     }
 
-    const geometry = targetLink[contextMenu.target.subType];
-    if (geometry.type !== GeometryType.MESH) {
+    const deletedGeometrySelection = {
+      type: 'link' as const,
+      id: targetLinkId,
+      subType,
+      objectIndex,
+    };
+    const shouldSyncSelection = matchesSelection(robot.selection, deletedGeometrySelection);
+
+    if (subType === 'collision') {
+      const { link: nextLink, removed, nextObjectIndex } = removeCollisionGeometryByObjectIndex(
+        targetLink,
+        objectIndex,
+      );
+
+      if (!removed) {
+        setContextMenu(null);
+        return;
+      }
+
+      onUpdate('link', targetLinkId, nextLink);
+      if (shouldSyncSelection) {
+        if (nextObjectIndex === null) {
+          setSelection({ type: 'link', id: targetLinkId });
+        } else {
+          setSelection({
+            type: 'link',
+            id: targetLinkId,
+            subType: 'collision',
+            objectIndex: nextObjectIndex,
+          });
+        }
+      }
+
       setContextMenu(null);
       return;
     }
 
-    onUpdate('link', contextMenu.target.linkId, {
+    const geometry = targetLink.visual;
+    if (geometry.type === GeometryType.NONE) {
+      setContextMenu(null);
+      return;
+    }
+
+    onUpdate('link', targetLinkId, {
       ...targetLink,
-      [contextMenu.target.subType]: {
+      visual: {
         ...geometry,
         type: GeometryType.NONE,
         meshPath: undefined,
       },
     });
+
+    if (shouldSyncSelection) {
+      setSelection({ type: 'link', id: targetLinkId });
+    }
+
     setContextMenu(null);
   };
 
@@ -517,6 +577,13 @@ export const TreeNode = memo(({
         },
         collisionBodies: [],
       });
+      if (
+        robot.selection.type === 'link'
+        && robot.selection.id === contextMenu.target.id
+        && robot.selection.subType === 'collision'
+      ) {
+        setSelection({ type: 'link', id: contextMenu.target.id });
+      }
       setContextMenu(null);
       return;
     }
@@ -535,6 +602,13 @@ export const TreeNode = memo(({
         meshPath: undefined,
       },
     });
+    if (
+      robot.selection.type === 'link'
+      && robot.selection.id === contextMenu.target.id
+      && robot.selection.subType === 'visual'
+    ) {
+      setSelection({ type: 'link', id: contextMenu.target.id });
+    }
     setContextMenu(null);
   };
 
@@ -679,9 +753,7 @@ export const TreeNode = memo(({
               }`}
               onClick={handleSelectVisual}
               onContextMenu={(event) => {
-                if (link.visual.type === GeometryType.MESH) {
-                  openContextMenu(event, { type: 'mesh', linkId, subType: 'visual' });
-                }
+                openContextMenu(event, { type: 'geometry', linkId, subType: 'visual', objectIndex: 0 });
               }}
               onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'visual', objectIndex: 0 })}
               onMouseLeave={clearHover}
@@ -717,9 +789,7 @@ export const TreeNode = memo(({
               }`}
               onClick={handleSelectPrimaryCollision}
               onContextMenu={(event) => {
-                if (link.collision.type === GeometryType.MESH) {
-                  openContextMenu(event, { type: 'mesh', linkId, subType: 'collision' });
-                }
+                openContextMenu(event, { type: 'geometry', linkId, subType: 'collision', objectIndex: 0 });
               }}
               onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex: 0 })}
               onMouseLeave={clearHover}
@@ -770,6 +840,9 @@ export const TreeNode = memo(({
                   })
                 }`}
                 onClick={() => handleSelectCollisionBody(objectIndex)}
+                onContextMenu={(event) => {
+                  openContextMenu(event, { type: 'geometry', linkId, subType: 'collision', objectIndex });
+                }}
                 onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex })}
                 onMouseLeave={clearHover}
                 style={{ marginLeft: geometryRowIndent }}
@@ -995,13 +1068,19 @@ export const TreeNode = memo(({
             </>
           )}
 
-          {contextMenu.target.type === 'mesh' && (
+          {contextMenu.target.type === 'geometry' && contextMenuGeometry && (
             <button
               className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-              onClick={handleDeleteMesh}
+              onClick={handleDeleteGeometryMenuAction}
             >
               <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-              <span>{t.deleteMesh}</span>
+              <span>
+                {contextMenu.target.subType === 'visual' && contextMenuGeometry.type === GeometryType.MESH
+                  ? t.deleteMesh
+                  : contextMenu.target.subType === 'visual'
+                    ? t.deleteVisualGeometry
+                    : t.deleteCollisionGeometry}
+              </span>
             </button>
           )}
         </div>

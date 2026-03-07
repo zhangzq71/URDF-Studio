@@ -11,11 +11,16 @@ import { PropertyEditor } from '@/features/property-editor';
 import { SourceCodeEditor, preloadSourceCodeEditor } from '@/features/code-editor';
 import { BridgeCreateModal } from '@/features/assembly';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo, useAssemblyStore } from '@/store';
-import { parseURDF, generateMujocoXML, generateURDF } from '@/core/parsers';
+import { parseMJCF, parseURDF, generateMujocoXML, generateURDF } from '@/core/parsers';
 import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io/utils';
 import type { RobotState, UrdfLink, UrdfJoint, RobotFile, AssemblyState } from '@/types';
 import { DEFAULT_LINK, GeometryType } from '@/types';
-import { appendCollisionBody, optimizeCylinderCollisionsToCapsules } from '@/core/robot';
+import {
+  appendCollisionBody,
+  getCollisionGeometryEntries,
+  optimizeCylinderCollisionsToCapsules,
+  updateCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import { computePreviewUrdf } from '@/core/parsers';
 
 interface AppLayoutProps {
@@ -262,6 +267,69 @@ export function AppLayout({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [robotName, robotLinks, robotJoints, rootLinkId, emptyRobot, isWorkspaceAssembly, mergedRobotData]);
 
+  const currentRobotSourceState = useMemo<RobotState>(() => ({
+    name: robotName,
+    links: robotLinks,
+    joints: robotJoints,
+    rootLinkId,
+    selection: { type: null, id: null },
+  }), [robotName, robotLinks, robotJoints, rootLinkId]);
+
+  const syncedSourceContent = useMemo(() => {
+    if (!selectedFile || isWorkspaceAssembly) {
+      return null;
+    }
+
+    if (selectedFile.format === 'urdf') {
+      return generateURDF(currentRobotSourceState, false);
+    }
+
+    if (selectedFile.format === 'mjcf') {
+      return generateMujocoXML(currentRobotSourceState, { meshdir: 'meshes/' });
+    }
+
+    return null;
+  }, [currentRobotSourceState, isWorkspaceAssembly, selectedFile]);
+
+  useEffect(() => {
+    if (!selectedFile || !syncedSourceContent) {
+      return;
+    }
+
+    if (selectedFile.content !== syncedSourceContent) {
+      setSelectedFile({
+        ...selectedFile,
+        content: syncedSourceContent,
+      });
+    }
+
+    const needsAvailableFileSync = availableFiles.some(
+      (file) => file.name === selectedFile.name && file.content !== syncedSourceContent,
+    );
+
+    if (needsAvailableFileSync) {
+      setAvailableFiles(
+        availableFiles.map((file) =>
+          file.name === selectedFile.name
+            ? { ...file, content: syncedSourceContent }
+            : file,
+        ),
+      );
+    }
+
+    if (selectedFile.format === 'urdf' && originalUrdfContent !== syncedSourceContent) {
+      setOriginalUrdfContent(syncedSourceContent);
+    }
+  }, [
+    availableFiles,
+    originalUrdfContent,
+    selectedFile,
+    setAvailableFiles,
+    setOriginalUrdfContent,
+    setSelectedFile,
+    syncedSourceContent,
+  ]);
+
   // File preview: compute URDF from the selected preview file
   const filePreview = useMemo(() => {
     if (!filePreviewFile) return undefined;
@@ -270,6 +338,9 @@ export function AppLayout({
       ? { urdfContent: urdf, fileName: filePreviewFile.name }
       : undefined;
   }, [filePreviewFile, availableFiles]);
+
+  const sourceCodeContent = syncedSourceContent
+    ?? (selectedFile ? selectedFile.content : urdfContentForViewer);
 
   const handlePreviewFile = useCallback((file: RobotFile) => {
     setFilePreviewFile(file);
@@ -455,6 +526,8 @@ export function AppLayout({
         const parentLink = component.robot.links[parentId];
         if (!parentLink) continue;
         const updatedParentLink = appendCollisionBody(parentLink);
+        const nextCollisionEntries = getCollisionGeometryEntries(updatedParentLink);
+        const nextObjectIndex = Math.max(0, nextCollisionEntries.length - 1);
 
         updateComponentRobot(component.id, {
           links: {
@@ -463,7 +536,7 @@ export function AppLayout({
           },
         });
 
-        setSelection({ type: 'link', id: parentId, subType: 'collision' });
+        setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
         focusOn(parentId);
         return;
       }
@@ -473,8 +546,10 @@ export function AppLayout({
     const parentLink = robot.links[parentId];
     if (!parentLink) return;
     const updatedParentLink = appendCollisionBody(parentLink);
+    const nextCollisionEntries = getCollisionGeometryEntries(updatedParentLink);
+    const nextObjectIndex = Math.max(0, nextCollisionEntries.length - 1);
     updateLink(parentId, updatedParentLink);
-    setSelection({ type: 'link', id: parentId, subType: 'collision' });
+    setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
     focusOn(parentId);
   }, [
     assemblyState,
@@ -858,12 +933,14 @@ export function AppLayout({
   }, [setJointAngle]);
 
   const handleCodeChange = useCallback((newCode: string) => {
-    const newState = parseURDF(newCode);
+    const newState = selectedFile?.format === 'mjcf'
+      ? parseMJCF(newCode)
+      : parseURDF(newCode);
     if (newState) {
       const { selection: _, ...newData } = newState;
       setRobot(newData);
     }
-  }, [setRobot]);
+  }, [selectedFile?.format, setRobot]);
 
   const handleSnapshot = useCallback(() => {
     if (snapshotActionRef.current) {
@@ -1071,29 +1148,13 @@ export function AppLayout({
             onCollisionTransform={(linkId, position, rotation, objectIndex) => {
               if (linkId && robot.links[linkId]) {
                 const link = robot.links[linkId];
-                
-                let updatedLink = { ...link };
-                
-                if (objectIndex && objectIndex > 0 && link.collisionBodies && link.collisionBodies.length >= objectIndex) {
-                  const newCollisionBodies = [...link.collisionBodies];
-                  newCollisionBodies[objectIndex - 1] = {
-                    ...newCollisionBodies[objectIndex - 1],
-                    origin: {
-                      xyz: position,
-                      rpy: rotation,
-                    },
-                  };
-                  updatedLink.collisionBodies = newCollisionBodies;
-                } else {
-                  updatedLink.collision = {
-                    ...link.collision,
-                    origin: {
-                      xyz: position,
-                      rpy: rotation,
-                    },
-                  };
-                }
-                
+                const updatedLink = updateCollisionGeometryByObjectIndex(link, objectIndex ?? 0, {
+                  origin: {
+                    xyz: position,
+                    rpy: rotation,
+                  },
+                });
+
                 handleUpdate('link', linkId, updatedLink);
               }
             }}
@@ -1121,7 +1182,7 @@ export function AppLayout({
       {/* Source Code Editor */}
       {isCodeViewerOpen && (
         <SourceCodeEditor
-          code={selectedFile ? selectedFile.content : urdfContentForViewer}
+          code={sourceCodeContent}
           onCodeChange={handleCodeChange}
           onClose={() => setIsCodeViewerOpen(false)}
           theme={theme}

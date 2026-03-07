@@ -4,6 +4,11 @@
  */
 import React, { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  MAX_PROPERTY_DECIMALS,
+  formatNumberWithMaxDecimals,
+  roundToMaxDecimals,
+} from '@/core/utils/numberPrecision';
 
 export const PROPERTY_EDITOR_PANEL_EYEBROW_CLASS =
   'text-[10px] font-bold uppercase tracking-[0.16em] text-text-tertiary';
@@ -71,22 +76,39 @@ export const CollapsibleSection = ({ title, children, defaultOpen = true, classN
   );
 };
 
-export const NumberInput = ({ value, onChange, label, step = 0.1, compact = false }: { value: number, onChange: (val: number) => void, label?: string, step?: number, compact?: boolean }) => {
-  const [localValue, setLocalValue] = useState<string>(value?.toString() || '0');
+export const NumberInput = ({
+  value,
+  onChange,
+  label,
+  step = 0.1,
+  compact = false,
+  precision = MAX_PROPERTY_DECIMALS,
+}: {
+  value: number,
+  onChange: (val: number) => void,
+  label?: string,
+  step?: number,
+  compact?: boolean,
+  precision?: number,
+}) => {
+  const [localValue, setLocalValue] = useState<string>(
+    formatNumberWithMaxDecimals(value ?? 0, precision) || '0',
+  );
 
   useEffect(() => {
-    setLocalValue(value?.toString() || '0');
-  }, [value]);
+    setLocalValue(formatNumberWithMaxDecimals(value ?? 0, precision) || '0');
+  }, [precision, value]);
 
   const handleBlur = () => {
     const parsed = parseFloat(localValue);
     if (!isNaN(parsed) && isFinite(parsed)) {
-      if (parsed !== value) {
-        onChange(parsed);
+      const rounded = roundToMaxDecimals(parsed, precision);
+      if (rounded !== value) {
+        onChange(rounded);
       }
-      setLocalValue(parsed.toString());
+      setLocalValue(formatNumberWithMaxDecimals(rounded, precision) || '0');
     } else {
-      setLocalValue(value?.toString() || '0');
+      setLocalValue(formatNumberWithMaxDecimals(value ?? 0, precision) || '0');
     }
   };
 
@@ -125,22 +147,39 @@ export interface Vec3Value {
   p?: number;
 }
 
-const InlineNumberInput = ({ value, onChange, label, step = 0.1, compact = false }: { value: number, onChange: (val: number) => void, label: string, step?: number, compact?: boolean }) => {
-  const [localValue, setLocalValue] = useState<string>(value?.toString() || '0');
+const InlineNumberInput = ({
+  value,
+  onChange,
+  label,
+  step = 0.1,
+  compact = false,
+  precision = MAX_PROPERTY_DECIMALS,
+}: {
+  value: number,
+  onChange: (val: number) => void,
+  label: string,
+  step?: number,
+  compact?: boolean,
+  precision?: number,
+}) => {
+  const [localValue, setLocalValue] = useState<string>(
+    formatNumberWithMaxDecimals(value ?? 0, precision) || '0',
+  );
 
   useEffect(() => {
-    setLocalValue(value?.toString() || '0');
-  }, [value]);
+    setLocalValue(formatNumberWithMaxDecimals(value ?? 0, precision) || '0');
+  }, [precision, value]);
 
   const handleBlur = () => {
     const parsed = parseFloat(localValue);
     if (!isNaN(parsed) && isFinite(parsed)) {
-      if (parsed !== value) {
-        onChange(parsed);
+      const rounded = roundToMaxDecimals(parsed, precision);
+      if (rounded !== value) {
+        onChange(rounded);
       }
-      setLocalValue(parsed.toString());
+      setLocalValue(formatNumberWithMaxDecimals(rounded, precision) || '0');
     } else {
-      setLocalValue(value?.toString() || '0');
+      setLocalValue(formatNumberWithMaxDecimals(value ?? 0, precision) || '0');
     }
   };
 
@@ -173,6 +212,7 @@ export const Vec3Input = ({ value, onChange, labels, keys = ['x', 'y', 'z'], com
   labels: string[];
   keys?: string[];
   compact?: boolean;
+  precision?: number;
 }) => (
   <div className="grid grid-cols-3 gap-2">
     <NumberInput
@@ -196,12 +236,13 @@ export const Vec3Input = ({ value, onChange, labels, keys = ['x', 'y', 'z'], com
   </div>
 );
 
-export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'], compact = false }: {
+export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'], compact = false, precision = MAX_PROPERTY_DECIMALS }: {
   value: Vec3Value;
   onChange: (v: Vec3Value) => void;
   labels: string[];
   keys?: string[];
   compact?: boolean;
+  precision?: number;
 }) => (
   <div className="grid grid-cols-3 gap-2">
     <InlineNumberInput
@@ -209,18 +250,21 @@ export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'
       value={(value as Record<string, number>)[keys[0]] ?? 0}
       onChange={(v: number) => onChange({ ...value, [keys[0]]: v })}
       compact={compact}
+      precision={precision}
     />
     <InlineNumberInput
       label={labels[1]}
       value={(value as Record<string, number>)[keys[1]] ?? 0}
       onChange={(v: number) => onChange({ ...value, [keys[1]]: v })}
       compact={compact}
+      precision={precision}
     />
     <InlineNumberInput
       label={labels[2]}
       value={(value as Record<string, number>)[keys[2]] ?? 0}
       onChange={(v: number) => onChange({ ...value, [keys[2]]: v })}
       compact={compact}
+      precision={precision}
     />
   </div>
 );
