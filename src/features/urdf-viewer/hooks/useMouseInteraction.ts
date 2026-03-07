@@ -26,7 +26,7 @@ export interface UseMouseInteractionOptions {
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
 }
 
@@ -362,29 +362,24 @@ export function useMouseInteraction({
                 if (linkObj && (onSelect || onMeshSelect)) {
                     const subType = isCollisionMode ? 'collision' : 'visual';
 
-                    if (onMeshSelect) {
-                        let objectIndex = 0;
-                        let current: THREE.Object3D | null = hit.object;
-                        let urdfElement: THREE.Object3D | null = null;
-                        while (current && current !== linkObj) {
-                            if ((current as any).isURDFVisual || (current as any).isURDFCollider) {
-                                urdfElement = current;
-                                break;
-                            }
-                            current = current.parent;
+                    // Compute objectIndex outside onMeshSelect block so it's available for highlightGeometry
+                    let objectIndex = 0;
+                    let current: THREE.Object3D | null = hit.object;
+                    let urdfElement: THREE.Object3D | null = null;
+                    while (current && current !== linkObj) {
+                        if ((current as any).isURDFVisual || (current as any).isURDFCollider) {
+                            urdfElement = current;
+                            break;
                         }
-                        
-                        if (urdfElement) {
-                            const isCollider = (urdfElement as any).isURDFCollider;
-                            const siblings = linkObj.children.filter(c => isCollider ? (c as any).isURDFCollider : (c as any).isURDFVisual);
-                            objectIndex = Math.max(0, siblings.indexOf(urdfElement));
-                        }
-
-                        // Find parent joint for the event if applicable
-                        const clickedJoint = isCollisionMode ? null : findParentJoint(linkObj);
-                        onMeshSelect(linkObj.name, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
+                        current = current.parent;
+                    }
+                    if (urdfElement) {
+                        const isCollider = (urdfElement as any).isURDFCollider;
+                        const siblings = linkObj.children.filter((c: any) => isCollider ? (c as any).isURDFCollider : (c as any).isURDFVisual);
+                        objectIndex = Math.max(0, siblings.indexOf(urdfElement));
                     }
 
+                    // Call onSelect FIRST so onMeshSelect (called after) wins in React state batching
                     if (onSelect) {
                         if (mode === 'detail') {
                             onSelect('link', linkObj.name, subType);
@@ -398,8 +393,16 @@ export function useMouseInteraction({
                         }
                     }
 
+                    // Call onMeshSelect AFTER onSelect so its objectIndex wins in React batching
+                    if (onMeshSelect) {
+                        const clickedJoint = isCollisionMode ? null : findParentJoint(linkObj);
+                        onMeshSelect(linkObj.name, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
+                    }
+
                     if (mode === 'detail' || !((linkObj.parent as any)?.isURDFJoint)) {
-                        highlightGeometry(linkObj.name, false, subType);
+                        // Clear all stale highlights first, then apply only the specific body
+                        highlightGeometry(linkObj.name, true, subType);
+                        highlightGeometry(linkObj.name, false, subType, isCollisionMode ? objectIndex : undefined);
                     }
 
                     hoveredLinkRef.current = null;

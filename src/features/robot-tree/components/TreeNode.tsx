@@ -107,6 +107,7 @@ export const TreeNode = memo(({
   const collisionBodyCount = (link.collision?.type && link.collision.type !== 'none' ? 1 : 0)
     + (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
   const hasCollision = collisionBodyCount > 0;
+  const hasExpandableContent = hasVisual || hasCollision || hasChildren;
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
   const isVisualSelected = isLinkSelected && robot.selection.subType === 'visual';
   const isCollisionSelected = isLinkSelected && robot.selection.subType === 'collision';
@@ -335,19 +336,19 @@ export const TreeNode = memo(({
 
         <div
           className={`w-6 h-6 flex items-center justify-center shrink-0 mr-0.5 rounded
-            ${hasChildren
+            ${hasExpandableContent
               ? isLinkSelected
                 ? 'hover:bg-on-accent-hover cursor-pointer transition-colors'
                 : 'hover:bg-element-hover cursor-pointer transition-colors'
               : ''}`}
           onClick={(e) => {
             e.stopPropagation();
-            if (hasChildren) {
+            if (hasExpandableContent) {
               setIsExpanded(!isExpanded);
             }
           }}
         >
-          {hasChildren
+          {hasExpandableContent
             && (isExpanded ? (
               <ChevronDown size={12} className={isLinkSelected ? 'text-white/90' : 'text-text-tertiary'} />
             ) : (
@@ -383,67 +384,17 @@ export const TreeNode = memo(({
             }`}
           />
         ) : (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 min-w-0">
             <span
-              className="text-xs font-medium whitespace-nowrap select-none"
+              className="text-xs font-medium whitespace-nowrap select-none truncate"
               onDoubleClick={(event) => handleNameDoubleClick(event, 'link', linkId, link.name)}
               onDragStart={(event) => event.preventDefault()}
               title={link.name}
             >
               {link.name}
             </span>
-
-            {hasVisual && (
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect('link', linkId, 'visual');
-                }}
-                onContextMenu={(event) => {
-                  if (link.visual.type !== GeometryType.MESH) return;
-                  openContextMenu(event, { type: 'mesh', linkId, subType: 'visual' });
-                }}
-                title={`${t.visual}: ${link.visual.type}`}
-                className={`shrink-0 inline-flex items-center gap-1 px-1.5 h-5 rounded border text-[10px] font-semibold leading-none transition-colors ${
-                  isVisualSelected
-                    ? isLinkSelected
-                      ? 'bg-white/20 border-white/35 text-white'
-                      : 'bg-system-blue/15 border-system-blue/40 text-system-blue'
-                    : isLinkSelected
-                      ? 'border-white/20 text-white/85 hover:bg-on-accent-hover'
-                      : 'border-border-black text-text-tertiary hover:bg-element-hover hover:text-system-blue'
-                }`}
-              >
-                <Shapes size={10} />
-                <span>VIS</span>
-              </button>
-            )}
-
-            {hasCollision && (
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect('link', linkId, 'collision');
-                }}
-                onContextMenu={(event) => {
-                  if (link.collision.type !== GeometryType.MESH) return;
-                  openContextMenu(event, { type: 'mesh', linkId, subType: 'collision' });
-                }}
-                title={`${t.collision}: ${link.collision.type}${collisionBodyCount > 1 ? ` (+${collisionBodyCount - 1})` : ''}`}
-                className={`shrink-0 inline-flex items-center gap-1 px-1.5 h-5 rounded border text-[10px] font-semibold leading-none transition-colors ${
-                  isCollisionSelected
-                    ? isLinkSelected
-                      ? 'bg-white/20 border-white/35 text-white'
-                      : 'bg-system-blue/15 border-system-blue/40 text-system-blue'
-                    : isLinkSelected
-                      ? 'border-white/20 text-white/85 hover:bg-on-accent-hover'
-                      : 'border-border-black text-text-tertiary hover:bg-element-hover hover:text-system-blue'
-                }`}
-              >
-                <Shield size={10} />
-                <span>{collisionBodyCount > 1 ? `COL ${collisionBodyCount}` : 'COL'}</span>
-              </button>
-            )}
+            {hasVisual && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLinkSelected ? 'bg-white/60' : 'bg-emerald-500'}`} title={t.visual} />}
+            {hasCollision && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLinkSelected ? 'bg-white/60' : 'bg-amber-500'}`} title={t.collision} />}
           </div>
         )}
 
@@ -483,9 +434,92 @@ export const TreeNode = memo(({
         </div>
       </div>
 
-      {hasChildren && isExpanded && (
+      {hasExpandableContent && isExpanded && (
         <div className="relative ml-3">
           <div className="absolute left-0 top-0 bottom-2 w-px bg-border-black" />
+
+          {hasVisual && (
+            <div
+              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-colors
+                ${isVisualSelected
+                  ? 'bg-system-blue/15 dark:bg-system-blue/20 text-system-blue'
+                  : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
+                }`}
+              onClick={() => onSelect('link', linkId, 'visual')}
+              onContextMenu={(event) => {
+                if (link.visual.type === GeometryType.MESH) {
+                  openContextMenu(event, { type: 'mesh', linkId, subType: 'visual' });
+                }
+              }}
+              style={{ marginLeft: '8px' }}
+              title={`${t.visual}: ${link.visual.type}${link.visual.meshPath ? ` (${link.visual.meshPath})` : ''}`}
+            >
+              <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+              <div className={`w-4 h-4 rounded flex items-center justify-center mr-1.5 shrink-0 ${isVisualSelected ? 'bg-system-blue/20' : 'bg-emerald-500/10 dark:bg-element-bg'}`}>
+                <Shapes size={10} className={isVisualSelected ? 'text-system-blue' : 'text-emerald-500'} />
+              </div>
+              <span className="text-[11px] font-medium truncate">
+                {link.visual.type === GeometryType.MESH && link.visual.meshPath
+                  ? link.visual.meshPath.split('/').pop()
+                  : `Visual · ${link.visual.type}`}
+              </span>
+            </div>
+          )}
+
+          {link.collision?.type && link.collision.type !== GeometryType.NONE && (
+            <div
+              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-colors
+                ${isCollisionSelected
+                  ? 'bg-system-blue/15 dark:bg-system-blue/20 text-system-blue'
+                  : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
+                }`}
+              onClick={() => onSelect('link', linkId, 'collision')}
+              onContextMenu={(event) => {
+                if (link.collision.type === GeometryType.MESH) {
+                  openContextMenu(event, { type: 'mesh', linkId, subType: 'collision' });
+                }
+              }}
+              style={{ marginLeft: '8px' }}
+              title={`${t.collision}: ${link.collision.type}${link.collision.meshPath ? ` (${link.collision.meshPath})` : ''}`}
+            >
+              <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+              <div className={`w-4 h-4 rounded flex items-center justify-center mr-1.5 shrink-0 ${isCollisionSelected ? 'bg-system-blue/20' : 'bg-amber-500/10 dark:bg-element-bg'}`}>
+                <Shield size={10} className={isCollisionSelected ? 'text-system-blue' : 'text-amber-500'} />
+              </div>
+              <span className="text-[11px] font-medium truncate">
+                {link.collision.type === GeometryType.MESH && link.collision.meshPath
+                  ? link.collision.meshPath.split('/').pop()
+                  : `Collision · ${link.collision.type}`}
+              </span>
+            </div>
+          )}
+
+          {(link.collisionBodies || [])
+            .filter((body) => body.type !== GeometryType.NONE)
+            .map((body, index) => (
+              <div
+                key={`collision-extra-${index}`}
+                className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-colors
+                  ${isCollisionSelected
+                    ? 'bg-system-blue/15 dark:bg-system-blue/20 text-system-blue'
+                    : 'hover:bg-element-hover text-text-secondary dark:text-text-tertiary dark:hover:bg-element-hover'
+                  }`}
+                onClick={() => onSelect('link', linkId, 'collision')}
+                style={{ marginLeft: '8px' }}
+                title={`${t.collision}: ${body.type}`}
+              >
+                <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+                <div className={`w-4 h-4 rounded flex items-center justify-center mr-1.5 shrink-0 ${isCollisionSelected ? 'bg-system-blue/20' : 'bg-amber-500/10 dark:bg-element-bg'}`}>
+                  <Shield size={10} className={isCollisionSelected ? 'text-system-blue' : 'text-amber-500'} />
+                </div>
+                <span className="text-[11px] font-medium truncate">
+                  {body.type === GeometryType.MESH && body.meshPath
+                    ? body.meshPath.split('/').pop()
+                    : `Collision · ${body.type}`}
+                </span>
+              </div>
+            ))
+          }
 
           {childJoints.map((joint) => {
             const isJointSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
