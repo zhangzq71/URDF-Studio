@@ -13,8 +13,6 @@ export interface TransformControlsState {
   transformControlRef: React.RefObject<any>;
   pendingEdit: PendingEdit | null;
   setPendingEdit: (edit: PendingEdit | null) => void;
-  currentAxis: string | null;
-  isDraggingAxis: boolean;
   getDisplayValue: () => string;
   getDeltaDisplay: () => string;
   handleValueChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -26,7 +24,8 @@ export interface TransformControlsState {
 
 /**
  * Custom hook to manage TransformControls state and interactions
- * Handles dragging, confirming, canceling, and axis highlighting
+ * Handles dragging, confirming, and canceling while preserving
+ * the stock Three.js TransformControls appearance.
  */
 export function useTransformControls(
   selectedObject: THREE.Group | null,
@@ -43,8 +42,6 @@ export function useTransformControls(
   const isDraggingControlRef = useRef(false);
   const currentAxisRef = useRef<string | null>(null);
   const startValueRef = useRef<number>(0);
-  const [currentAxis, setCurrentAxis] = useState<string | null>(null);
-  const [isDraggingAxis, setIsDraggingAxis] = useState(false);
 
   // Clear pending edit when selection changes
   useEffect(() => {
@@ -184,26 +181,6 @@ export function useTransformControls(
     [handleConfirm, handleCancel]
   );
 
-  // Update axis opacity based on active axis and dragging state
-  const updateAxisOpacity = useCallback((gizmo: any, axis: string | null, isDragging: boolean) => {
-    gizmo.traverse((child: any) => {
-      if (child.material) {
-        const isActiveAxis = !axis || child.name === axis;
-
-        if (axis && !isActiveAxis) {
-          child.material.opacity = isDragging ? 0.15 : 0.3;
-          child.material.transparent = true;
-        } else {
-          child.material.opacity = 1.0;
-          child.material.transparent = true;
-        }
-        child.material.depthTest = false;
-        child.material.depthWrite = false;
-        child.material.needsUpdate = true;
-      }
-    });
-  }, []);
-
   // Setup event listeners for TransformControls
   useEffect(() => {
     const controls = transformControlRef.current;
@@ -215,17 +192,11 @@ export function useTransformControls(
       if (dragging) {
         // Start dragging
         isDraggingControlRef.current = true;
-        setIsDraggingAxis(true);
         originalPositionRef.current.copy(selectedObject.position);
         originalRotationRef.current.copy(selectedObject.rotation);
 
         const axis = controls.axis;
         currentAxisRef.current = axis;
-
-        const gizmo = (controls as any).children?.[0];
-        if (gizmo && axis) {
-          updateAxisOpacity(gizmo, axis, true);
-        }
 
         const isRotate = transformMode === 'rotate';
         let startValue = 0;
@@ -254,14 +225,8 @@ export function useTransformControls(
       } else if (isDraggingControlRef.current) {
         // End dragging
         isDraggingControlRef.current = false;
-        setIsDraggingAxis(false);
 
         const axis = currentAxisRef.current;
-
-        const gizmo = (controls as any).children?.[0];
-        if (gizmo && axis) {
-          updateAxisOpacity(gizmo, axis, false);
-        }
 
         const isRotate = transformMode === 'rotate';
         let currentVal = 0;
@@ -304,58 +269,12 @@ export function useTransformControls(
     return () => {
       controls.removeEventListener('dragging-changed', handleDraggingChange);
     };
-  }, [selectedObject, transformMode, mode, updateAxisOpacity]);
-
-  // Customize TransformControls appearance
-  useEffect(() => {
-    const controls = transformControlRef.current;
-    if (!controls || mode !== 'skeleton') return;
-
-    const gizmo = (controls as any).children?.[0];
-    if (!gizmo) return;
-
-    const updateAxisAppearance = () => {
-      gizmo.traverse((child: any) => {
-        if (child.isMesh || child.isLine) {
-          if (child.material) {
-            if (child.material.linewidth !== undefined) {
-              child.material.linewidth = 3;
-            }
-            if (!child.userData.scaled) {
-              if (child.isLine) {
-                child.scale.multiplyScalar(1.5);
-              }
-              child.userData.scaled = true;
-            }
-          }
-        }
-      });
-    };
-
-    updateAxisAppearance();
-
-    const handleAxisChanged = (event: any) => {
-      if (pendingEdit) return;
-
-      const axis = event.value;
-      setCurrentAxis(axis);
-
-      updateAxisOpacity(gizmo, axis, isDraggingAxis);
-    };
-
-    controls.addEventListener('axis-changed', handleAxisChanged);
-
-    return () => {
-      controls.removeEventListener('axis-changed', handleAxisChanged);
-    };
-  }, [selectedObject, transformMode, mode, pendingEdit, isDraggingAxis, updateAxisOpacity]);
+  }, [selectedObject, transformMode, mode]);
 
   return {
     transformControlRef,
     pendingEdit,
     setPendingEdit,
-    currentAxis,
-    isDraggingAxis,
     getDisplayValue,
     getDeltaDisplay,
     handleValueChange,

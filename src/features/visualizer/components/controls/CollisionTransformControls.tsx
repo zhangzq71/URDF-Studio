@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
-import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { RobotState } from '@/types';
+import { UnifiedTransformControls } from '@/shared/components/3d';
 import { TransformControlsState } from '../../hooks/useTransformControls';
 import { TransformConfirmUI } from './TransformConfirmUI';
 
@@ -56,7 +56,7 @@ export const CollisionTransformControls = memo(function CollisionTransformContro
   return (
     <>
       {/* TransformControls at root Canvas level - not nested in hierarchy */}
-      <TransformControls
+      <UnifiedTransformControls
         ref={transformControlRef}
         object={selectedCollisionRef}
         mode={transformMode}

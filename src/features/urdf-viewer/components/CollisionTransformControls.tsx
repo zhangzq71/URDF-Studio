@@ -1,27 +1,26 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { useThree, useFrame } from '@react-three/fiber';
-import { TransformControls } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { UnifiedTransformControls } from '@/shared/components/3d';
 import type { CollisionTransformControlsProps } from '../types';
 import { translations } from '@/shared/i18n';
-import { TransformControlsRotateGuide } from '@/shared/components/3d';
-import { enhanceTransformControlsGizmo } from '../utils/transformGizmo';
 import {
     applyAxisTransformValue,
     degToRad,
     formatPendingDelta,
     getAxisTransformValue,
     getObjectRPY,
-    getTransformControlMode,
     radToDeg,
     type CollisionPendingEdit,
     type CollisionTransformAxis
 } from '../utils/collisionTransformMath';
-import { useCollisionTransformGizmo } from '../hooks/useCollisionTransformGizmo';
 import { CollisionPendingEditOverlay } from './CollisionPendingEditOverlay';
 
 const COLLISION_TRANSLATE_GIZMO_SIZE = 1.4;
 const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.22;
+
+const isTransformAxis = (axis: unknown): axis is CollisionTransformAxis =>
+    axis === 'X' || axis === 'Y' || axis === 'Z';
 
 export const CollisionTransformControls: React.FC<CollisionTransformControlsProps> = ({
     robot,
@@ -37,40 +36,21 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const rotateTransformRef = useRef<any>(null);
     const { invalidate } = useThree();
     const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
-
     const [pendingEdit, setPendingEdit] = useState<CollisionPendingEdit | null>(null);
-    const [, forceUpdate] = useState(0);
+    const pendingEditRef = useRef<CollisionPendingEdit | null>(null);
+    const [inputValue, setInputValue] = useState('');
 
     const originalPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
     const originalRotationRef = useRef<THREE.Euler>(new THREE.Euler());
-
     const isDraggingRef = useRef(false);
     const activeDragControlsRef = useRef<any | null>(null);
     const currentAxisRef = useRef<CollisionTransformAxis | null>(null);
     const currentIsRotateRef = useRef(false);
     const startValueRef = useRef(0);
-    const idleSyncAccumulatorRef = useRef(0);
 
-    const [inputValue, setInputValue] = useState('');
-
-    const getCurrentRotateValue = useCallback((controls: any) => {
-        const rotationAngle = typeof controls?.rotationAngle === 'number' ? controls.rotationAngle : 0;
-        return startValueRef.current + rotationAngle;
-    }, []);
-
-    const {
-        markRotateKnobDragStart,
-        persistRotateKnobAnchor,
-        syncRotateKnobPickers,
-        syncTranslateTipPickers,
-        syncAllGizmoPickers,
-        syncUniversalControlPriority,
-        normalizeGizmoMaterials,
-        updateRotateKnobFeedback
-    } = useCollisionTransformGizmo({
-        transformRef,
-        rotateTransformRef
-    });
+    useEffect(() => {
+        pendingEditRef.current = pendingEdit;
+    }, [pendingEdit]);
 
     useEffect(() => {
         const controlsList = [transformRef.current, rotateTransformRef.current].filter(Boolean) as any[];
@@ -79,69 +59,49 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         const cleanups: Array<() => void> = [];
         for (const controls of controlsList) {
             const handleDraggingChange = (event: any) => {
-                const dragging = event.value;
+                const dragging = Boolean(event.value);
 
                 if (dragging) {
                     if (isDraggingRef.current && activeDragControlsRef.current !== controls) {
                         return;
                     }
 
-                    const axis = controls.axis as string | null;
-                    if (!axis || (axis !== 'X' && axis !== 'Y' && axis !== 'Z')) return;
-
-                    const activeAxis = axis as CollisionTransformAxis;
+                    const axis = controls.axis;
+                    if (!isTransformAxis(axis)) return;
 
                     isDraggingRef.current = true;
                     activeDragControlsRef.current = controls;
-                    setIsDragging(true);
+                    currentAxisRef.current = axis;
+                    currentIsRotateRef.current = controls.mode === 'rotate';
+                    startValueRef.current = getAxisTransformValue(
+                        targetObject,
+                        axis,
+                        currentIsRotateRef.current
+                    );
 
                     originalPositionRef.current.copy(targetObject.position);
                     originalRotationRef.current.copy(targetObject.rotation);
-
-                    currentAxisRef.current = activeAxis;
-                    currentIsRotateRef.current = controls.mode === 'rotate';
-                    startValueRef.current = getAxisTransformValue(targetObject, activeAxis, currentIsRotateRef.current);
                     setPendingEdit(null);
-
-                    if (currentIsRotateRef.current) {
-                        syncRotateKnobPickers(controls);
-                        markRotateKnobDragStart(controls, activeAxis);
-                        if (transformMode === 'universal' && transformRef.current) {
-                            transformRef.current.enabled = false;
-                        }
-                    } else if (transformMode === 'universal' && rotateTransformRef.current) {
-                        rotateTransformRef.current.enabled = false;
-                    }
+                    setIsDragging(true);
                 } else if (isDraggingRef.current) {
                     if (activeDragControlsRef.current && activeDragControlsRef.current !== controls) {
                         return;
                     }
+
                     isDraggingRef.current = false;
                     activeDragControlsRef.current = null;
                     setIsDragging(false);
 
                     const axis = currentAxisRef.current;
-                    const isRotate = currentIsRotateRef.current;
-                    if (transformMode === 'universal') {
-                        if (transformRef.current) transformRef.current.enabled = true;
-                        if (rotateTransformRef.current) rotateTransformRef.current.enabled = true;
-                    }
                     if (!axis) {
                         invalidate();
                         return;
                     }
 
-                    if (isRotate) {
-                        persistRotateKnobAnchor(controls, axis);
-                        syncRotateKnobPickers(controls);
-                    }
-
-                    let currentVal = getAxisTransformValue(targetObject, axis, false);
-                    if (isRotate) {
-                        currentVal = getCurrentRotateValue(controls);
-                        applyAxisTransformValue(targetObject, axis, currentVal, true);
-                    }
+                    const isRotate = currentIsRotateRef.current;
+                    const currentVal = getAxisTransformValue(targetObject, axis, isRotate);
                     const delta = currentVal - startValueRef.current;
+
                     if (Math.abs(delta) <= 0.0001) {
                         invalidate();
                         return;
@@ -154,7 +114,6 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                         isRotate
                     });
                     setInputValue(isRotate ? radToDeg(currentVal).toFixed(2) : currentVal.toFixed(4));
-                    forceUpdate((n) => n + 1);
                 }
 
                 invalidate();
@@ -169,56 +128,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         return () => {
             for (const cleanup of cleanups) cleanup();
         };
-    }, [
-        targetObject,
-        transformMode,
-        setIsDragging,
-        invalidate,
-        getCurrentRotateValue,
-        syncRotateKnobPickers,
-        markRotateKnobDragStart,
-        persistRotateKnobAnchor
-    ]);
-
-    useEffect(() => {
-        const controlsList = [transformRef.current, rotateTransformRef.current].filter(Boolean) as any[];
-        if (!targetObject || controlsList.length === 0) return;
-
-        const restores: Array<() => void> = [];
-        for (const controls of controlsList) {
-            const originalHover = controls.onPointerHover;
-            const originalDown = controls.onPointerDown;
-            if (typeof originalHover === 'function') {
-                controls.onPointerHover = (event: any) => {
-                    syncAllGizmoPickers();
-                    if (transformMode === 'universal') {
-                        syncUniversalControlPriority();
-                    }
-                    return originalHover.call(controls, event);
-                };
-                restores.push(() => {
-                    controls.onPointerHover = originalHover;
-                });
-            }
-
-            if (typeof originalDown === 'function') {
-                controls.onPointerDown = (event: any) => {
-                    syncAllGizmoPickers();
-                    if (transformMode === 'universal') {
-                        syncUniversalControlPriority();
-                    }
-                    return originalDown.call(controls, event);
-                };
-                restores.push(() => {
-                    controls.onPointerDown = originalDown;
-                });
-            }
-        }
-
-        return () => {
-            for (const restore of restores) restore();
-        };
-    }, [targetObject, transformMode, syncAllGizmoPickers, syncUniversalControlPriority]);
+    }, [targetObject, transformMode, setIsDragging, invalidate]);
 
     useEffect(() => {
         if (!robot || !selection?.id || selection.subType !== 'collision' || transformMode === 'select') {
@@ -226,6 +136,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
             setPendingEdit(null);
             activeDragControlsRef.current = null;
             isDraggingRef.current = false;
+            setIsDragging(false);
             return;
         }
 
@@ -235,53 +146,41 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
             return;
         }
 
-        let colliders: THREE.Object3D[] = [];
+        const colliders: THREE.Object3D[] = [];
         linkObj.traverse((child: any) => {
             if (child.isURDFCollider && child.parent === linkObj) {
                 colliders.push(child);
             }
         });
 
-        // Fallback to traverse all if not direct children
         if (colliders.length === 0) {
-             linkObj.traverse((child: any) => {
-                 if (child.isURDFCollider) {
-                     colliders.push(child);
-                 }
-             });
+            linkObj.traverse((child: any) => {
+                if (child.isURDFCollider) {
+                    colliders.push(child);
+                }
+            });
         }
 
-        let collisionGroup: THREE.Object3D | null = null;
         const objectIndex = selection.objectIndex ?? 0;
-        
-        if (colliders.length > 0) {
-            // Find the specific collider by index, or default to the first one
-            collisionGroup = colliders[objectIndex] || colliders[0];
-        }
+        const collisionGroup = colliders[objectIndex] || colliders[0] || null;
 
-        if (collisionGroup) {
-            const cg = collisionGroup as THREE.Object3D;
-            setTargetObject(cg);
-            // Don't overwrite the saved original while a drag or pending confirm is
-            // in progress — cancelling must revert to the pre-drag position.
-            if (!isDraggingRef.current && !pendingEditRef.current) {
-                originalPositionRef.current.copy(cg.position);
-                originalRotationRef.current.copy(cg.rotation);
-            }
-        } else {
+        if (!collisionGroup) {
             setTargetObject(null);
+            return;
         }
-    }, [robot, selection, transformMode]);
 
-    const pendingEditRef = useRef(pendingEdit);
-    useEffect(() => {
-        pendingEditRef.current = pendingEdit;
-    }, [pendingEdit]);
+        setTargetObject(collisionGroup);
+        if (!isDraggingRef.current && !pendingEditRef.current) {
+            originalPositionRef.current.copy(collisionGroup.position);
+            originalRotationRef.current.copy(collisionGroup.rotation);
+        }
+    }, [robot, selection, transformMode, setIsDragging]);
 
     useEffect(() => {
         if (pendingEditRef.current && targetObject) {
             targetObject.position.copy(originalPositionRef.current);
             targetObject.rotation.copy(originalRotationRef.current);
+            targetObject.updateMatrixWorld(true);
         }
         setPendingEdit(null);
     }, [selection?.id, selection?.type, selection?.subType, transformMode, targetObject]);
@@ -292,105 +191,19 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
     useEffect(() => {
         return () => {
+            setIsDragging(false);
             if (pendingEditRef.current && targetObject) {
                 targetObject.position.copy(originalPositionRef.current);
                 targetObject.rotation.copy(originalRotationRef.current);
+                targetObject.updateMatrixWorld(true);
                 invalidate();
             }
         };
-    }, [targetObject, invalidate]);
+    }, [targetObject, invalidate, setIsDragging]);
 
-    useEffect(() => {
-        if (transformRef.current) {
-            enhanceTransformControlsGizmo(transformRef.current);
-        }
-        if (rotateTransformRef.current) {
-            enhanceTransformControlsGizmo(rotateTransformRef.current);
-        }
-
-        syncAllGizmoPickers();
-        const rafIds: number[] = [];
-        for (let i = 0; i < 3; i++) {
-            const id = window.requestAnimationFrame(() => {
-                syncAllGizmoPickers();
-                invalidate();
-            });
-            rafIds.push(id);
-        }
+    const handleObjectChange = useCallback(() => {
         invalidate();
-
-        return () => {
-            for (const id of rafIds) {
-                window.cancelAnimationFrame(id);
-            }
-        };
-    }, [targetObject, transformMode, invalidate, syncAllGizmoPickers]);
-
-    const handleObjectChange = useCallback((controls: any) => {
-        const activeAxis = currentAxisRef.current;
-        if (
-            targetObject &&
-            controls &&
-            isDraggingRef.current &&
-            currentIsRotateRef.current &&
-            activeDragControlsRef.current === controls &&
-            (activeAxis === 'X' || activeAxis === 'Y' || activeAxis === 'Z')
-        ) {
-            const currentVal = getCurrentRotateValue(controls);
-            applyAxisTransformValue(targetObject, activeAxis, currentVal, true);
-        }
-
-        syncAllGizmoPickers();
-        invalidate();
-    }, [targetObject, getCurrentRotateValue, invalidate, syncAllGizmoPickers]);
-
-    useFrame((state, delta) => {
-        const hasAxisFocus = (controls: any) =>
-            controls?.axis === 'X' || controls?.axis === 'Y' || controls?.axis === 'Z';
-
-        const hasActiveInteraction = Boolean(
-            transformRef.current?.dragging ||
-            rotateTransformRef.current?.dragging ||
-            hasAxisFocus(transformRef.current) ||
-            hasAxisFocus(rotateTransformRef.current) ||
-            pendingEditRef.current
-        );
-
-        if (transformMode === 'universal') {
-            syncUniversalControlPriority();
-        } else {
-            if (transformRef.current) {
-                transformRef.current.enabled = true;
-            }
-            if (rotateTransformRef.current) {
-                rotateTransformRef.current.enabled = true;
-            }
-        }
-
-        if (!hasActiveInteraction) {
-            idleSyncAccumulatorRef.current += delta;
-            if (idleSyncAccumulatorRef.current < 0.2) {
-                return;
-            }
-            idleSyncAccumulatorRef.current = 0;
-        } else {
-            idleSyncAccumulatorRef.current = 0;
-        }
-
-        normalizeGizmoMaterials(transformRef.current);
-        normalizeGizmoMaterials(rotateTransformRef.current);
-
-        if (hasActiveInteraction) {
-            const elapsed = state.clock.getElapsedTime();
-            updateRotateKnobFeedback(transformRef.current, elapsed);
-            updateRotateKnobFeedback(rotateTransformRef.current, elapsed);
-        }
-
-        syncTranslateTipPickers(transformRef.current);
-        syncTranslateTipPickers(rotateTransformRef.current);
-        syncRotateKnobPickers(transformRef.current);
-        syncRotateKnobPickers(rotateTransformRef.current);
-    }, 1000);
+    }, [invalidate]);
 
     const handleConfirm = useCallback(() => {
         if (!targetObject || !selection?.id || !onTransformEnd || !pendingEdit) return;
@@ -407,17 +220,12 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
         originalPositionRef.current.copy(targetObject.position);
         originalRotationRef.current.copy(targetObject.rotation);
-
         setPendingEdit(null);
         invalidate();
     }, [targetObject, selection?.id, selection?.objectIndex, onTransformEnd, pendingEdit, invalidate]);
 
     const handleCancel = useCallback(() => {
         if (targetObject && pendingEdit) {
-            // Restore using the startValue stored in pendingEdit state — this is the
-            // most reliable source because it's captured at drag-start and is
-            // immutable React state (unlike originalPositionRef which can be
-            // overwritten by selection-change effects).
             applyAxisTransformValue(targetObject, pendingEdit.axis, pendingEdit.startValue, pendingEdit.isRotate);
             targetObject.updateMatrixWorld(true);
         }
@@ -445,6 +253,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
             if (targetObject) {
                 applyAxisTransformValue(targetObject, pendingEdit.axis, value, pendingEdit.isRotate);
+                targetObject.updateMatrixWorld(true);
                 invalidate();
             }
         }
@@ -468,39 +277,18 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
     return (
         <>
-            <TransformControls
+            <UnifiedTransformControls
                 ref={transformRef}
+                rotateRef={rotateTransformRef}
                 object={targetObject}
-                mode={getTransformControlMode(transformMode)}
+                mode={transformMode}
                 size={COLLISION_TRANSLATE_GIZMO_SIZE}
+                rotateSize={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
                 space="local"
                 enabled={true}
-                onChange={() => handleObjectChange(transformRef.current)}
+                onChange={handleObjectChange}
+                onRotateChange={handleObjectChange}
             />
-            <TransformControlsRotateGuide
-                controlsRef={transformRef}
-                targetObject={targetObject}
-                active={transformMode === 'rotate'}
-            />
-
-            {transformMode === 'universal' && (
-                <>
-                    <TransformControls
-                        ref={rotateTransformRef}
-                        object={targetObject}
-                        mode="rotate"
-                        size={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
-                        space="local"
-                        enabled={true}
-                        onChange={() => handleObjectChange(rotateTransformRef.current)}
-                    />
-                    <TransformControlsRotateGuide
-                        controlsRef={rotateTransformRef}
-                        targetObject={targetObject}
-                        active={true}
-                    />
-                </>
-            )}
 
             {pendingEdit && (
                 <CollisionPendingEditOverlay

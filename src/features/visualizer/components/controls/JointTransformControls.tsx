@@ -1,8 +1,7 @@
 import React, { memo } from 'react';
-import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { JointType, RobotState } from '@/types';
-import { TransformControlsRotateGuide } from '@/shared/components/3d';
+import { UnifiedTransformControls } from '@/shared/components/3d';
 import { TransformControlsState } from '../../hooks/useTransformControls';
 import { TransformConfirmUI } from './TransformConfirmUI';
 
@@ -64,7 +63,7 @@ export const JointTransformControls = memo(function JointTransformControls({
   return (
     <>
       {/* TransformControls at root Canvas level - not nested in hierarchy */}
-      <TransformControls
+      <UnifiedTransformControls
         ref={transformControlRef}
         object={selectedJointPivot}
         mode={transformMode}
@@ -72,11 +71,6 @@ export const JointTransformControls = memo(function JointTransformControls({
         space="local"
         enabled={!pendingEdit}
         onChange={handleObjectChange}
-      />
-      <TransformControlsRotateGuide
-        controlsRef={transformControlRef}
-        targetObject={selectedJointPivot}
-        active={transformMode === 'rotate'}
       />
 
       {/* Confirm/Cancel UI */}

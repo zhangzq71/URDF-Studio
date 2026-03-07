@@ -65,6 +65,8 @@ export interface MeshAnalysis {
   primitiveFits?: {
     cylinder?: PrimitiveFit;
     capsule?: PrimitiveFit;
+    cylinderCandidates?: PrimitiveFit[];
+    capsuleCandidates?: PrimitiveFit[];
   };
 }
 
@@ -74,6 +76,11 @@ interface PrimitiveFit {
   radius: number;
   length: number;
   volume: number;
+}
+
+interface ScalarInterval {
+  start: number;
+  end: number;
 }
 
 interface Point3 {
@@ -253,6 +260,10 @@ interface ConversionResult {
   };
 }
 
+interface ConversionContext {
+  siblingGeometries?: GeomData[];
+}
+
 const DEFAULT_DIMENSIONS = { x: 0.1, y: 0.5, z: 0.1 };
 const DEFAULT_ORIGIN = {
   xyz: { x: 0, y: 0, z: 0 },
@@ -350,6 +361,244 @@ function canonicalizeAxis(axis: Point3): Point3 | null {
   }
 
   return normalized;
+}
+
+function getAxisVectorForPrimaryAxis(primaryAxis: MeshPrimaryAxis): Point3 {
+  if (primaryAxis === 'x') return { x: 1, y: 0, z: 0 };
+  if (primaryAxis === 'y') return { x: 0, y: 1, z: 0 };
+  return { x: 0, y: 0, z: 1 };
+}
+
+function computeSweepHalfExtent(
+  primitiveRadius: number,
+  primitiveLength: number,
+  newType: GeometryType
+): number {
+  if (newType === GeometryType.CAPSULE) {
+    return Math.max(toPositive(primitiveLength, 0.1) / 2 - toPositive(primitiveRadius, 0.05), 0);
+  }
+
+  return toPositive(primitiveLength, 0.1) / 2;
+}
+
+function composePrimitiveLength(
+  sweepHalfExtent: number,
+  primitiveRadius: number,
+  newType: GeometryType
+): number {
+  if (newType === GeometryType.CAPSULE) {
+    return Math.max(sweepHalfExtent, 0) * 2 + toPositive(primitiveRadius, 0.05) * 2;
+  }
+
+  return Math.max(sweepHalfExtent, 0) * 2;
+}
+
+function subtractBlockedInterval(intervals: ScalarInterval[], blockedStart: number, blockedEnd: number): ScalarInterval[] {
+  if (!Number.isFinite(blockedStart) || !Number.isFinite(blockedEnd) || blockedEnd <= blockedStart) {
+    return intervals;
+  }
+
+  const nextIntervals: ScalarInterval[] = [];
+
+  intervals.forEach((interval) => {
+    if (blockedEnd <= interval.start || blockedStart >= interval.end) {
+      nextIntervals.push(interval);
+      return;
+    }
+
+    if (blockedStart > interval.start) {
+      nextIntervals.push({
+        start: interval.start,
+        end: Math.min(blockedStart, interval.end),
+      });
+    }
+
+    if (blockedEnd < interval.end) {
+      nextIntervals.push({
+        start: Math.max(blockedEnd, interval.start),
+        end: interval.end,
+      });
+    }
+  });
+
+  return nextIntervals.filter((interval) => interval.end - interval.start > 1e-8);
+}
+
+function choosePreferredInterval(intervals: ScalarInterval[]): ScalarInterval | null {
+  if (intervals.length === 0) return null;
+
+  return intervals.reduce<ScalarInterval | null>((best, interval) => {
+    if (!best) return interval;
+
+    const intervalLength = interval.end - interval.start;
+    const bestLength = best.end - best.start;
+    if (intervalLength > bestLength + 1e-8) {
+      return interval;
+    }
+
+    if (Math.abs(intervalLength - bestLength) <= 1e-8) {
+      const intervalMidpoint = Math.abs((interval.start + interval.end) / 2);
+      const bestMidpoint = Math.abs((best.start + best.end) / 2);
+      if (intervalMidpoint < bestMidpoint - 1e-8) {
+        return interval;
+      }
+    }
+
+    return best;
+  }, null);
+}
+
+function isPreferredCapsuleMetrics(
+  candidateVolume: number,
+  candidateLength: number,
+  incumbentVolume: number,
+  incumbentLength: number
+): boolean {
+  const volumeTolerance = Math.max(incumbentVolume * 0.03, 1e-8);
+
+  if (candidateVolume < incumbentVolume - volumeTolerance) {
+    return true;
+  }
+
+  return Math.abs(candidateVolume - incumbentVolume) <= volumeTolerance
+    && candidateLength < incumbentLength - 1e-8;
+}
+
+function isPreferredCapsuleFit(candidate: PrimitiveFit, incumbent: PrimitiveFit): boolean {
+  if (isPreferredCapsuleMetrics(candidate.volume, candidate.length, incumbent.volume, incumbent.length)) {
+    return true;
+  }
+
+  return Math.abs(candidate.volume - incumbent.volume) <= Math.max(incumbent.volume * 0.03, 1e-8)
+    && Math.abs(candidate.length - incumbent.length) <= 1e-8
+    && candidate.radius < incumbent.radius - 1e-8;
+}
+
+function rotateLocalVectorByOrigin(
+  origin: ConversionResult['origin'],
+  localVector: Point3
+): Point3 {
+  _tempEuler.set(origin.rpy.r, origin.rpy.p, origin.rpy.y);
+  _tempVec3A.set(localVector.x, localVector.y, localVector.z).applyEuler(_tempEuler);
+  const axis = canonicalizeAxis({ x: _tempVec3A.x, y: _tempVec3A.y, z: _tempVec3A.z });
+  return axis ?? { x: 0, y: 0, z: 1 };
+}
+
+function computeBroadPhaseRadius(geometry: GeomData): number | null {
+  const type = geometry.type ?? GeometryType.NONE;
+  const dims = normalizeDimensions(geometry.dimensions);
+
+  switch (type) {
+    case GeometryType.SPHERE:
+      return toPositive(dims.x, 0.05);
+    case GeometryType.BOX:
+      return Math.hypot(dims.x, dims.y, dims.z) / 2;
+    case GeometryType.CYLINDER:
+      return Math.hypot(toPositive(dims.x, 0.05), toPositive(dims.y, 0.1) / 2);
+    case GeometryType.CAPSULE:
+      return Math.max(toPositive(dims.y, 0.1) / 2, toPositive(dims.x, 0.05));
+    default:
+      return null;
+  }
+}
+
+function applySiblingCollisionClearance(
+  primitiveRadius: number,
+  primitiveLength: number,
+  axisInLinkSpace: Point3,
+  newType: GeometryType,
+  siblingGeometries: GeomData[] | undefined,
+  centerOrigin: ConversionResult['origin'],
+): { radius: number; length: number } {
+  if ((newType !== GeometryType.CYLINDER && newType !== GeometryType.CAPSULE) || !siblingGeometries?.length) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+    };
+  }
+
+  const axis = canonicalizeAxis(axisInLinkSpace);
+  if (!axis) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+    };
+  }
+
+  const siblingSpheres = siblingGeometries
+    .map((geometry) => {
+      const radius = computeBroadPhaseRadius(geometry);
+      if (!radius || radius <= 1e-8) return null;
+
+      const origin = normalizeOrigin(geometry.origin);
+      return {
+        center: new THREE.Vector3(origin.xyz.x, origin.xyz.y, origin.xyz.z),
+        radius,
+      };
+    })
+    .filter((sphere): sphere is { center: THREE.Vector3; radius: number } => sphere !== null);
+
+  if (siblingSpheres.length === 0) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+    };
+  }
+
+  const candidateCenter = new THREE.Vector3(
+    centerOrigin.xyz.x,
+    centerOrigin.xyz.y,
+    centerOrigin.xyz.z,
+  );
+  const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
+
+  let radius = toPositive(primitiveRadius, 0.05);
+  let segmentHalfExtent = newType === GeometryType.CAPSULE
+    ? Math.max(toPositive(primitiveLength, 0.1) / 2 - radius, 0)
+    : toPositive(primitiveLength, 0.1) / 2;
+  const minSize = 1e-4;
+  const clearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    let nextRadius = radius;
+    let nextSegmentHalfExtent = segmentHalfExtent;
+
+    siblingSpheres.forEach((sibling) => {
+      _tempVec3A.copy(sibling.center).sub(candidateCenter);
+      const projection = _tempVec3A.dot(axisVector);
+      _tempVec3B.copy(axisVector).multiplyScalar(projection);
+      _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+
+      const radialDistance = _tempVec3C.length();
+      const combinedRadius = radius + sibling.radius + clearance;
+
+      if (Math.abs(projection) <= segmentHalfExtent + 1e-8) {
+        nextRadius = Math.min(nextRadius, Math.max(radialDistance - sibling.radius - clearance, 0));
+      }
+
+      if (radialDistance >= combinedRadius) {
+        return;
+      }
+
+      const axialPadding = Math.sqrt(Math.max(combinedRadius * combinedRadius - radialDistance * radialDistance, 0));
+      nextSegmentHalfExtent = Math.min(
+        nextSegmentHalfExtent,
+        Math.max(0, Math.abs(projection) - axialPadding),
+      );
+    });
+
+    radius = Math.max(Math.min(radius, nextRadius), minSize);
+    segmentHalfExtent = newType === GeometryType.CAPSULE
+      ? Math.max(nextSegmentHalfExtent, 0)
+      : Math.max(nextSegmentHalfExtent, minSize);
+  }
+
+  return {
+    radius,
+    length: newType === GeometryType.CAPSULE
+      ? segmentHalfExtent * 2 + radius * 2
+      : segmentHalfExtent * 2,
+  };
 }
 
 function addCandidateAxis(axes: Point3[], axis: Point3): void {
@@ -781,10 +1030,15 @@ function computeBestPrimitiveFits(points: Point3[]): MeshAnalysis['primitiveFits
 
   let bestCylinder: PrimitiveFit | undefined;
   let bestCapsule: PrimitiveFit | undefined;
+  const cylinderCandidates: PrimitiveFit[] = [];
+  const capsuleCandidates: PrimitiveFit[] = [];
 
   candidateAxes.forEach((axis) => {
     const fit = computePrimitiveFitsForAxis(points, axis);
     if (!fit) return;
+
+    cylinderCandidates.push(fit.cylinder);
+    capsuleCandidates.push(fit.capsule);
 
     if (!bestCylinder || fit.cylinder.volume < bestCylinder.volume) {
       bestCylinder = fit.cylinder;
@@ -797,6 +1051,12 @@ function computeBestPrimitiveFits(points: Point3[]): MeshAnalysis['primitiveFits
   return {
     cylinder: bestCylinder,
     capsule: bestCapsule,
+    cylinderCandidates: cylinderCandidates.sort((left, right) =>
+      left.volume - right.volume || left.length - right.length || left.radius - right.radius
+    ),
+    capsuleCandidates: capsuleCandidates.sort((left, right) =>
+      left.volume - right.volume || left.length - right.length || left.radius - right.radius
+    ),
   };
 }
 
@@ -935,6 +1195,88 @@ function computeCapsuleVolume(totalLength: number, radius: number): number {
     - (2 / 3) * Math.PI * clampedRadius * clampedRadius * clampedRadius;
 }
 
+function computePrimitiveVolume(type: GeometryType, radius: number, length: number): number {
+  if (type === GeometryType.CYLINDER) {
+    return Math.PI * radius * radius * Math.max(length, 0);
+  }
+  if (type === GeometryType.CAPSULE) {
+    return computeCapsuleVolume(length, radius);
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+function selectBestPrimitiveFitCandidate(
+  primitiveFits: MeshAnalysis['primitiveFits'] | undefined,
+  newType: GeometryType,
+  origin: ConversionResult['origin'],
+  siblingGeometries?: GeomData[],
+): {
+  fit: PrimitiveFit;
+  centeredOrigin: ConversionResult['origin'];
+  radius: number;
+  length: number;
+} | null {
+  const candidates = newType === GeometryType.CYLINDER
+    ? (primitiveFits?.cylinderCandidates ?? (primitiveFits?.cylinder ? [primitiveFits.cylinder] : []))
+    : newType === GeometryType.CAPSULE
+      ? (primitiveFits?.capsuleCandidates ?? (primitiveFits?.capsule ? [primitiveFits.capsule] : []))
+      : [];
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const evaluated = candidates
+    .map((fit) => {
+      const centeredOrigin = offsetOriginByLocalVector(origin, fit.center);
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, fit.axis);
+      const clearanceAdjustedSize = applySiblingCollisionClearance(
+        fit.radius,
+        fit.length,
+        axisInLinkSpace,
+        newType,
+        siblingGeometries,
+        centeredOrigin,
+      );
+      const radius = toPositive(clearanceAdjustedSize.radius, 0.05);
+      const length = toPositive(
+        newType === GeometryType.CAPSULE
+          ? Math.max(clearanceAdjustedSize.length, radius * 2)
+          : clearanceAdjustedSize.length,
+        0.1,
+      );
+
+      return {
+        fit,
+        centeredOrigin,
+        radius,
+        length,
+        adjustedVolume: computePrimitiveVolume(newType, radius, length),
+      };
+    })
+    .filter((candidate) => Number.isFinite(candidate.adjustedVolume) && candidate.adjustedVolume > 0);
+
+  if (evaluated.length === 0) {
+    return null;
+  }
+
+  const minAdjustedVolume = evaluated.reduce(
+    (minVolume, candidate) => Math.min(minVolume, candidate.adjustedVolume),
+    Number.POSITIVE_INFINITY,
+  );
+  const finalists = evaluated
+    .filter((candidate) => candidate.adjustedVolume <= minAdjustedVolume * 1.15 + 1e-8)
+    .sort((left, right) =>
+      left.length - right.length ||
+      left.adjustedVolume - right.adjustedVolume ||
+      left.fit.volume - right.fit.volume ||
+      left.radius - right.radius
+    );
+
+  const best = finalists[0];
+  return best ?? null;
+}
+
 function computeEquivalentCapsuleRadius(totalLength: number, targetVolume: number): number {
   if (!Number.isFinite(totalLength) || totalLength <= 1e-8) {
     return 0;
@@ -972,7 +1314,8 @@ function computeEquivalentCapsuleRadius(totalLength: number, targetVolume: numbe
 export function convertGeometryType(
   geomData: GeomData,
   newType: GeometryType,
-  meshAnalysis?: MeshAnalysis
+  meshAnalysis?: MeshAnalysis,
+  context?: ConversionContext,
 ): ConversionResult {
   const currentType = geomData.type;
   const currentDims = normalizeDimensions(geomData.dimensions);
@@ -980,27 +1323,22 @@ export function convertGeometryType(
 
   // ── Smart conversion FROM mesh using actual bounding box ──────────────────
   if (currentType === GeometryType.MESH && meshAnalysis?.bounds) {
-    const fittedPrimitive = newType === GeometryType.CYLINDER
-      ? meshAnalysis.primitiveFits?.cylinder
-      : newType === GeometryType.CAPSULE
-        ? meshAnalysis.primitiveFits?.capsule
-        : undefined;
+    const fittedPrimitive = selectBestPrimitiveFitCandidate(
+      meshAnalysis.primitiveFits,
+      newType,
+      origin,
+      context?.siblingGeometries,
+    );
 
     if (fittedPrimitive) {
-      const centeredOrigin = offsetOriginByLocalVector(origin, fittedPrimitive.center);
       return {
         type: newType,
         dimensions: {
-          x: toPositive(fittedPrimitive.radius, 0.05),
-          y: toPositive(
-            newType === GeometryType.CAPSULE
-              ? Math.max(fittedPrimitive.length, fittedPrimitive.radius * 2)
-              : fittedPrimitive.length,
-            0.1
-          ),
-          z: toPositive(fittedPrimitive.radius, 0.05),
+          x: fittedPrimitive.radius,
+          y: fittedPrimitive.length,
+          z: fittedPrimitive.radius,
         },
-        origin: alignOriginToAxis(centeredOrigin, fittedPrimitive.axis),
+        origin: alignOriginToAxis(fittedPrimitive.centeredOrigin, fittedPrimitive.fit.axis),
       };
     }
 
@@ -1035,9 +1373,23 @@ export function convertGeometryType(
       const rawRadius = computeEquivalentCylinderRadius(length, targetVolume);
       const radius = toPositive(rawRadius, 0.05);
       const safeLength = toPositive(length, 0.5);
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, getAxisVectorForPrimaryAxis(primaryAxis));
+      const clearanceAdjustedSize = applySiblingCollisionClearance(
+        radius,
+        safeLength,
+        axisInLinkSpace,
+        newType,
+        context?.siblingGeometries,
+        centeredOrigin,
+      );
+
       return {
         type: newType,
-        dimensions: { x: radius, y: safeLength, z: radius },
+        dimensions: {
+          x: clearanceAdjustedSize.radius,
+          y: clearanceAdjustedSize.length,
+          z: clearanceAdjustedSize.radius,
+        },
         origin: alignOriginToPrimaryAxis(centeredOrigin, primaryAxis),
       };
     }
@@ -1048,9 +1400,23 @@ export function convertGeometryType(
       const safeLength = toPositive(length, 0.5);
       const rawRadius = computeEquivalentCapsuleRadius(safeLength, targetVolume);
       const radius = toPositive(rawRadius, 0.05);
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, getAxisVectorForPrimaryAxis(primaryAxis));
+      const clearanceAdjustedSize = applySiblingCollisionClearance(
+        radius,
+        Math.max(safeLength, radius * 2),
+        axisInLinkSpace,
+        newType,
+        context?.siblingGeometries,
+        centeredOrigin,
+      );
+
       return {
         type: newType,
-        dimensions: { x: radius, y: Math.max(safeLength, radius * 2), z: radius },
+        dimensions: {
+          x: clearanceAdjustedSize.radius,
+          y: Math.max(clearanceAdjustedSize.length, clearanceAdjustedSize.radius * 2),
+          z: clearanceAdjustedSize.radius,
+        },
         origin: alignOriginToPrimaryAxis(centeredOrigin, primaryAxis),
       };
     }

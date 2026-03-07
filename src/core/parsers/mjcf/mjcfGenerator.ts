@@ -4,6 +4,11 @@
  */
 
 import { RobotState, GeometryType, JointType, UrdfLink } from '@/types';
+import {
+  MAX_GEOMETRY_DIMENSION_DECIMALS,
+  MAX_PROPERTY_DECIMALS,
+  formatNumberWithMaxDecimals,
+} from '@/core/utils/numberPrecision';
 import { normalizeMeshPathForExport } from '../meshPathUtils';
 
 export type MjcfActuatorType = 'position' | 'velocity' | 'motor';
@@ -23,9 +28,10 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   const actuatorType = options.actuatorType ?? 'position';
 
   // Helper to format numbers
-  const f = (n: number) => n.toFixed(4);
-  const vecStr = (v: { x: number; y: number; z: number }) => `${f(v.x)} ${f(v.y)} ${f(v.z)}`;
-  const rotStr = (v: { r: number; p: number; y: number }) => `${f(v.r)} ${f(v.p)} ${f(v.y)}`; // MuJoCo accepts Euler XYZ by default
+  const formatScalar = (n: number) => formatNumberWithMaxDecimals(n, MAX_PROPERTY_DECIMALS);
+  const formatShape = (n: number) => formatNumberWithMaxDecimals(n, MAX_GEOMETRY_DIMENSION_DECIMALS);
+  const vecStr = (v: { x: number; y: number; z: number }) => `${formatScalar(v.x)} ${formatScalar(v.y)} ${formatScalar(v.z)}`;
+  const rotStr = (v: { r: number; p: number; y: number }) => `${formatScalar(v.r)} ${formatScalar(v.p)} ${formatScalar(v.y)}`; // MuJoCo accepts Euler XYZ by default
 
   // Helper to convert hex color to rgba string
   const hexToRgba = (hex: string) => {
@@ -34,7 +40,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     const r = parseInt(result[1], 16) / 255;
     const g = parseInt(result[2], 16) / 255;
     const b = parseInt(result[3], 16) / 255;
-    return `${f(r)} ${f(g)} ${f(b)} 1.0`;
+    return `${formatNumberWithMaxDecimals(r, 4)} ${formatNumberWithMaxDecimals(g, 4)} ${formatNumberWithMaxDecimals(b, 4)} 1.0`;
   };
 
   // Collect all mesh assets and create stable MJCF mesh names.
@@ -139,14 +145,14 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
        let limitStr = "";
        if (parentJoint.type !== JointType.CONTINUOUS) {
-           limitStr = `range="${parentJoint.limit.lower} ${parentJoint.limit.upper}"`;
+           limitStr = `range="${formatScalar(parentJoint.limit.lower)} ${formatScalar(parentJoint.limit.upper)}"`;
        }
 
-       bodyXml += `${indent}  <joint name="${parentJoint.name}" type="${jType}" axis="${vecStr(parentJoint.axis)}" ${limitStr} damping="${parentJoint.dynamics.damping}" frictionloss="${parentJoint.dynamics.friction}"/>\n`;
+       bodyXml += `${indent}  <joint name="${parentJoint.name}" type="${jType}" axis="${vecStr(parentJoint.axis)}" ${limitStr} damping="${formatScalar(parentJoint.dynamics.damping)}" frictionloss="${formatScalar(parentJoint.dynamics.friction)}"/>\n`;
     }
 
     // 2. Inertial
-    bodyXml += `${indent}  <inertial pos="0 0 0" mass="${link.inertial.mass}" diaginertia="${f(link.inertial.inertia.ixx)} ${f(link.inertial.inertia.iyy)} ${f(link.inertial.inertia.izz)}"/>\n`;
+    bodyXml += `${indent}  <inertial pos="0 0 0" mass="${formatScalar(link.inertial.mass)}" diaginertia="${formatScalar(link.inertial.inertia.ixx)} ${formatScalar(link.inertial.inertia.iyy)} ${formatScalar(link.inertial.inertia.izz)}"/>\n`;
 
     // 3. Visual Geom
     // Offset visual geom by its origin
@@ -163,15 +169,15 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
         if (v.type === GeometryType.BOX) {
             // MuJoCo box size is half-extents
-            vGeomAttrs += ` type="box" size="${f(v.dimensions.x/2)} ${f(v.dimensions.y/2)} ${f(v.dimensions.z/2)}"`;
+            vGeomAttrs += ` type="box" size="${formatScalar(v.dimensions.x / 2)} ${formatScalar(v.dimensions.y / 2)} ${formatScalar(v.dimensions.z / 2)}"`;
         } else if (v.type === GeometryType.CYLINDER) {
             // MuJoCo cylinder size is radius half-height
-            vGeomAttrs += ` type="cylinder" size="${f(v.dimensions.x)} ${f(v.dimensions.y/2)}"`;
+            vGeomAttrs += ` type="cylinder" size="${formatShape(v.dimensions.x)} ${formatShape(v.dimensions.y / 2)}"`;
         } else if (v.type === GeometryType.SPHERE) {
-            vGeomAttrs += ` type="sphere" size="${f(v.dimensions.x)}"`;
+            vGeomAttrs += ` type="sphere" size="${formatShape(v.dimensions.x)}"`;
         } else if (v.type === GeometryType.CAPSULE) {
             // MuJoCo capsule size is radius half-height
-            vGeomAttrs += ` type="capsule" size="${f(v.dimensions.x)} ${f(v.dimensions.y/2)}"`;
+            vGeomAttrs += ` type="capsule" size="${formatShape(v.dimensions.x)} ${formatShape(v.dimensions.y / 2)}"`;
         } else if (v.type === GeometryType.MESH && v.meshPath) {
             const meshAssetName = resolveMeshAssetName(v.meshPath);
             if (meshAssetName) {
@@ -199,13 +205,13 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       let cGeomAttrs = `pos="${cPos}" euler="${cEuler}" rgba="1 0 0 0.5" group="0"`;
 
       if (c.type === GeometryType.BOX) {
-        cGeomAttrs += ` type="box" size="${f(c.dimensions.x / 2)} ${f(c.dimensions.y / 2)} ${f(c.dimensions.z / 2)}"`;
+        cGeomAttrs += ` type="box" size="${formatScalar(c.dimensions.x / 2)} ${formatScalar(c.dimensions.y / 2)} ${formatScalar(c.dimensions.z / 2)}"`;
       } else if (c.type === GeometryType.CYLINDER) {
-        cGeomAttrs += ` type="cylinder" size="${f(c.dimensions.x)} ${f(c.dimensions.y / 2)}"`;
+        cGeomAttrs += ` type="cylinder" size="${formatShape(c.dimensions.x)} ${formatShape(c.dimensions.y / 2)}"`;
       } else if (c.type === GeometryType.SPHERE) {
-        cGeomAttrs += ` type="sphere" size="${f(c.dimensions.x)}"`;
+        cGeomAttrs += ` type="sphere" size="${formatShape(c.dimensions.x)}"`;
       } else if (c.type === GeometryType.CAPSULE) {
-        cGeomAttrs += ` type="capsule" size="${f(c.dimensions.x)} ${f(c.dimensions.y / 2)}"`;
+        cGeomAttrs += ` type="capsule" size="${formatShape(c.dimensions.x)} ${formatShape(c.dimensions.y / 2)}"`;
       } else if (c.type === GeometryType.MESH && c.meshPath) {
         const meshAssetName = resolveMeshAssetName(c.meshPath);
         if (meshAssetName) {
@@ -251,9 +257,9 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         const kp = j.limit?.effort ? j.limit.effort * 0.5 : 100.0;
         
         if (actuatorType === 'position') {
-          xml += `    <position name="${j.name}_servo" joint="${j.name}" kp="${f(kp)}" />\n`;
+          xml += `    <position name="${j.name}_servo" joint="${j.name}" kp="${formatScalar(kp)}" />\n`;
         } else if (actuatorType === 'velocity') {
-          xml += `    <velocity name="${j.name}_vel" joint="${j.name}" kv="${f(kv)}" />\n`;
+          xml += `    <velocity name="${j.name}_vel" joint="${j.name}" kv="${formatScalar(kv)}" />\n`;
         }
       }
     });

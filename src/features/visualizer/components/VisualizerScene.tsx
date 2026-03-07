@@ -1,9 +1,8 @@
 import React from 'react';
-import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { RobotState } from '@/types';
 import type { Language } from '@/shared/i18n';
-import { TransformControlsRotateGuide } from '@/shared/components/3d';
+import { UnifiedTransformControls } from '@/shared/components/3d';
 import { RobotNode } from './nodes';
 import { JointTransformControls } from './controls';
 import type { VisualizerController } from '../hooks/useVisualizerController';
@@ -98,18 +97,13 @@ export const VisualizerScene = React.memo(({
         robot.selection.id &&
         robot.selection.subType === 'collision' && (
           <>
-            <TransformControls
+            <UnifiedTransformControls
               ref={collisionTransformControlRef}
               object={selectedCollisionRef}
               mode={state.transformMode === 'select' ? 'translate' : state.transformMode}
               size={0.7}
               space="local"
               onMouseUp={handleCollisionTransformEnd}
-            />
-            <TransformControlsRotateGuide
-              controlsRef={collisionTransformControlRef}
-              targetObject={selectedCollisionRef}
-              active={state.transformMode === 'rotate'}
             />
           </>
         )}

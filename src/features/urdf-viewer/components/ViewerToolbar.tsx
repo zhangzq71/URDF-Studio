@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { RotateCcw, Move, ArrowUpRight, MousePointer2, View as ViewIcon, Scan, Ruler, X } from 'lucide-react';
+import { Move, MousePointer2, View as ViewIcon, Scan, Ruler, X } from 'lucide-react';
 import Draggable from 'react-draggable';
 import { translations } from '@/shared/i18n';
 import type { ViewerToolbarProps, ToolMode } from '../types';
@@ -11,9 +11,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({ activeMode, setMod
     const tools = [
         { id: 'view', icon: ViewIcon, label: t.viewMode },
         { id: 'select', icon: MousePointer2, label: t.selectMode },
-        { id: 'translate', icon: Move, label: t.translateMode },
-        { id: 'rotate', icon: RotateCcw, label: t.rotateMode },
-        { id: 'universal', icon: ArrowUpRight, label: t.universalMode },
+        { id: 'universal', icon: Move, label: t.transformMode },
         { id: 'face', icon: Scan, label: t.faceMode },
         { id: 'measure', icon: Ruler, label: t.measureMode },
     ];
