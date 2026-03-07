@@ -6,10 +6,12 @@ import { useCallback } from 'react';
 import JSZip from 'jszip';
 import type { RobotState, UrdfLink } from '@/types';
 import { DEFAULT_LINK, GeometryType } from '@/types';
-import { generateURDF, generateMujocoXML } from '@/core/parsers';
+import { generateURDF, generateMujocoXML, injectGazeboTags } from '@/core/parsers';
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
+import { compressSTLBlob } from '@/core/stl-compressor';
 import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
 import { exportProject } from '@/features/file-io/utils';
+import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog';
 
 export function useFileExport() {
   const lang = useUIStore((state) => state.lang);
@@ -91,7 +93,11 @@ export function useFileExport() {
     return trimmed && trimmed.length > 0 ? trimmed : 'robot';
   }, []);
 
-  const addMeshesToZip = useCallback(async (robot: RobotState, zip: JSZip) => {
+  const addMeshesToZip = useCallback(async (
+    robot: RobotState,
+    zip: JSZip,
+    compressOptions?: { compressSTL: boolean; stlQuality: number },
+  ) => {
     const meshFolder = zip.folder("meshes");
     const referencedFiles = new Set<string>();
 
@@ -125,8 +131,14 @@ export function useFileExport() {
 
       const p = fetch(blobUrl)
         .then(res => res.blob())
-        .then(blob => {
-          meshFolder?.file(exportPath, blob);
+        .then(async (blob) => {
+          if (compressOptions?.compressSTL) {
+            const filename = exportPath.split('/').pop() ?? exportPath;
+            const result = await compressSTLBlob(blob, filename, { quality: compressOptions.stlQuality });
+            meshFolder?.file(exportPath, result.blob);
+          } else {
+            meshFolder?.file(exportPath, blob);
+          }
         })
         .catch((err: any) => console.error(`Failed to load mesh ${meshPath}`, err));
 
@@ -217,6 +229,40 @@ export function useFileExport() {
     downloadBlob(content, `${exportName}_package.zip`);
   }, [buildRobotForExport, getRobotExportName, generateBOM, addMeshesToZip, downloadBlob]);
 
+  const handleExportWithConfig = useCallback(async (config: ExportDialogConfig) => {
+    const robot = buildRobotForExport();
+    const exportName = getRobotExportName(robot);
+    const zip = new JSZip();
+
+    if (config.format === 'mjcf') {
+      const { meshdir, addFloatBase, includeActuators, actuatorType, includeMeshes, compressSTL, stlQuality } = config.mjcf;
+      zip.file(
+        `${exportName}.xml`,
+        generateMujocoXML(robot, { meshdir, addFloatBase, includeActuators, actuatorType }),
+      );
+      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const content = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(content, `${exportName}_mjcf.zip`);
+    } else if (config.format === 'urdf') {
+      const { includeExtended, includeBOM, includeMeshes, compressSTL, stlQuality } = config.urdf;
+      zip.file(`${exportName}.urdf`, generateURDF(robot, includeExtended));
+      if (includeBOM) {
+        const hardwareFolder = zip.folder('hardware');
+        hardwareFolder?.file('bom_list.csv', generateBOM(robot));
+      }
+      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const content = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(content, `${exportName}_urdf.zip`);
+    } else if (config.format === 'xacro') {
+      const { rosVersion, rosHardwareInterface, includeMeshes, compressSTL, stlQuality } = config.xacro;
+      const xacroContent = injectGazeboTags(generateURDF(robot, false), robot, rosVersion, rosHardwareInterface);
+      zip.file(`${exportName}.urdf.xacro`, xacroContent);
+      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const content = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(content, `${exportName}_xacro.zip`);
+    }
+  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob, generateBOM]);
+
   // Export project as .usp
   const handleExportProject = useCallback(async () => {
     const blob = await exportProject({
@@ -241,6 +287,7 @@ export function useFileExport() {
     handleExportMJCF,
     handleExport,
     handleExportProject,
+    handleExportWithConfig,
     generateBOM,
   };
 }

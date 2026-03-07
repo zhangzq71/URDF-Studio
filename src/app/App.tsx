@@ -9,6 +9,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { AIModal } from '@/features/ai-assistant';
 import { URDFGallery } from '@/features/urdf-gallery';
+import { ExportDialog } from '@/features/file-io/components/ExportDialog';
 import { useFileImport, useFileExport } from './hooks';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
@@ -59,6 +60,8 @@ function AppContent() {
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isURDFGalleryOpen, setIsURDFGalleryOpen] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [viewConfig, setViewConfig] = useState({
     showToolbar: true,
     showOptionsPanel: true,
@@ -183,7 +186,7 @@ function AppContent() {
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
-  const { handleExport, handleExportURDF, handleExportMJCF, handleExportProject } = useFileExport();
+  const { handleExportProject, handleExportWithConfig } = useFileExport();
 
   // AI changes handler
   const handleApplyAIChanges = useCallback((data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => {
@@ -209,17 +212,13 @@ function AppContent() {
     };
   }, [handleImport]);
 
-  const t = translations[lang];
-
   return (
     <>
       <AppLayout
         importInputRef={importInputRef}
         importFolderInputRef={importFolderInputRef}
         onFileDrop={(files) => handleImport(files as any)}
-        onExport={handleExport}
-        onExportURDF={handleExportURDF}
-        onExportMJCF={handleExportMJCF}
+        onOpenExport={() => setIsExportDialogOpen(true)}
         onExportProject={handleExportProject}
         showToast={showToast}
         onOpenAI={() => setIsAIModalOpen(true)}
@@ -248,6 +247,24 @@ function AppContent() {
           focusOn(id);
         }}
       />
+
+      {/* Export Dialog */}
+      {isExportDialogOpen && (
+        <ExportDialog
+          onClose={() => setIsExportDialogOpen(false)}
+          onExport={async (config) => {
+            setIsExporting(true);
+            try {
+              await handleExportWithConfig(config);
+            } finally {
+              setIsExporting(false);
+              setIsExportDialogOpen(false);
+            }
+          }}
+          lang={lang}
+          isExporting={isExporting}
+        />
+      )}
 
       {/* URDF Gallery */}
       {isURDFGalleryOpen && (

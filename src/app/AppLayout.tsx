@@ -23,9 +23,7 @@ interface AppLayoutProps {
   importInputRef: React.RefObject<HTMLInputElement>;
   importFolderInputRef: React.RefObject<HTMLInputElement>;
   onFileDrop: (files: File[]) => void;
-  onExport: () => void;
-  onExportURDF: () => void;
-  onExportMJCF: () => void;
+  onOpenExport: () => void;
   onExportProject: () => void;
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
@@ -57,9 +55,7 @@ export function AppLayout({
   importInputRef,
   importFolderInputRef,
   onFileDrop,
-  onExport,
-  onExportURDF,
-  onExportMJCF,
+  onOpenExport,
   onExportProject,
   showToast,
   onOpenAI,
@@ -937,9 +933,7 @@ export function AppLayout({
       <Header
         onImportFile={() => importInputRef.current?.click()}
         onImportFolder={() => importFolderInputRef.current?.click()}
-        onExport={onExport}
-        onExportURDF={onExportURDF}
-        onExportMJCF={onExportMJCF}
+        onOpenExport={onOpenExport}
         onExportProject={onExportProject}
         onOpenAI={onOpenAI}
         onOpenCodeViewer={handleOpenCodeViewer}

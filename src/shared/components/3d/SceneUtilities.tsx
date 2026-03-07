@@ -459,19 +459,19 @@ export function NeutralStudioEnvironment({
 // ============================================================
 export const LIGHTING_CONFIG = {
   // Ambient: increased for softer look
-  ambientIntensity: 0.5,
+  ambientIntensity: 0.65,
 
   // Hemisphere: softer sky/ground blend
-  hemisphereIntensity: 0.4,
+  hemisphereIntensity: 0.5,
   hemisphereSky: '#ffffff',
   hemisphereGround: '#d4d4d8', // Light gray ground
 
   // Main front light: reduced intensity, balanced
-  mainLightIntensity: 0.5,
+  mainLightIntensity: 0.6,
   mainLightPosition: [5, 5, 5] as [number, number, number],
 
   // Left front fill light: left-front to balance main light
-  leftFillIntensity: 0.4,
+  leftFillIntensity: 0.5,
   leftFillPosition: [-5, 5, 5] as [number, number, number],
 
   // Pure left side light: directly from left to illuminate left side

@@ -15,7 +15,6 @@ import {
   ScanSearch,
   Info,
   ChevronDown,
-  ChevronRight,
   FileText,
   RefreshCw,
   Sun,
@@ -72,9 +71,7 @@ interface HeaderProps {
   // Import actions
   onImportFile: () => void;
   onImportFolder: () => void;
-  onExport: () => void;
-  onExportURDF: () => void;
-  onExportMJCF: () => void;
+  onOpenExport: () => void;
   onExportProject: () => void;
   // Modal actions
   onOpenAI: () => void;
@@ -104,9 +101,7 @@ interface HeaderProps {
 export function Header({
   onImportFile,
   onImportFolder,
-  onExport,
-  onExportURDF,
-  onExportMJCF,
+  onOpenExport,
   onExportProject,
   onOpenAI,
   onOpenCodeViewer,
@@ -136,13 +131,6 @@ export function Header({
   const canRedo = useCanRedo();
 
   const t = translations[lang];
-  const [isExportSubmenuOpen, setIsExportSubmenuOpen] = React.useState(false);
-
-  React.useEffect(() => {
-    if (activeMenu !== 'file') {
-      setIsExportSubmenuOpen(false);
-    }
-  }, [activeMenu]);
 
   return (
     <header className="h-12 border-b shrink-0 bg-panel-bg dark:bg-panel-bg border-border-black grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3">
@@ -160,11 +148,7 @@ export function Header({
             <HeaderButton
               isActive={activeMenu === 'file'}
               onClick={() => {
-                const nextMenu = activeMenu === 'file' ? null : 'file';
-                setActiveMenu(nextMenu);
-                if (nextMenu !== 'file') {
-                  setIsExportSubmenuOpen(false);
-                }
+                setActiveMenu(activeMenu === 'file' ? null : 'file');
               }}
             >
               <FileText className="w-3.5 h-3.5" />
@@ -174,7 +158,7 @@ export function Header({
 
             {activeMenu === 'file' && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => { setActiveMenu(null); setIsExportSubmenuOpen(false); }} />
+                <div className="fixed inset-0 z-40" onClick={() => { setActiveMenu(null); }} />
                 <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
                   <button
                     onClick={() => { setActiveMenu(null); setTimeout(onImportFolder, 0); }}
@@ -191,45 +175,13 @@ export function Header({
                     {lang === 'zh' ? '导入 USP / ZIP / 文件' : 'Import USP / ZIP / File'}
                   </button>
                   <div className="h-px bg-element-bg dark:bg-border-black my-1" />
-                  <div
-                    className="relative"
-                    onMouseEnter={() => setIsExportSubmenuOpen(true)}
-                    onMouseLeave={() => setIsExportSubmenuOpen(false)}
+                  <button
+                    onClick={() => { setActiveMenu(null); onOpenExport(); }}
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
-                    <button
-                      onClick={() => setIsExportSubmenuOpen((prev) => !prev)}
-                      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center justify-between"
-                    >
-                      <span className="flex items-center gap-2.5">
-                        <Upload className="w-4 h-4 text-slate-400" />
-                        {t.export}
-                      </span>
-                      <ChevronRight className={`w-3 h-3 opacity-60 transition-transform ${isExportSubmenuOpen ? 'text-system-blue dark:text-system-blue-light' : ''}`} />
-                    </button>
-
-                    {isExportSubmenuOpen && (
-                      <div className="absolute top-0 left-full ml-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-[60] py-1">
-                        <button
-                          onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExportURDF(); }}
-                          className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
-                        >
-                          {lang === 'zh' ? 'URDF 导出 (ZIP)' : 'Export URDF (ZIP)'}
-                        </button>
-                        <button
-                          onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExportMJCF(); }}
-                          className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
-                        >
-                          {lang === 'zh' ? 'MJCF 导出 (ZIP)' : 'Export MJCF (ZIP)'}
-                        </button>
-                        <button
-                          onClick={() => { setIsExportSubmenuOpen(false); setActiveMenu(null); onExport(); }}
-                          className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200"
-                        >
-                          {lang === 'zh' ? '全部导出' : 'Export All'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                    <Upload className="w-4 h-4 text-slate-400" />
+                    {t.export}
+                  </button>
                   <button
                     onClick={() => { setActiveMenu(null); onExportProject(); }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"

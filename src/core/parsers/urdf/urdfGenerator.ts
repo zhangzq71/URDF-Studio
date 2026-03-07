@@ -176,3 +176,96 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
   xml += `</robot>`;
   return xml;
 };
+
+export type RosHardwareInterface = 'effort' | 'position' | 'velocity';
+
+/**
+ * Generate ROS1 <transmission> tags for non-fixed joints.
+ * These are appended inside the <robot> element before the closing tag.
+ */
+export const generateRos1Transmissions = (
+  robot: RobotState,
+  hwInterface: RosHardwareInterface = 'effort',
+): string => {
+  const { joints } = robot;
+  const ifName = hwInterface === 'effort'
+    ? 'hardware_interface/EffortJointInterface'
+    : hwInterface === 'position'
+    ? 'hardware_interface/PositionJointInterface'
+    : 'hardware_interface/VelocityJointInterface';
+
+  let xml = '';
+  Object.values(joints).forEach((j) => {
+    const jType = String(j.type).toLowerCase();
+    if (jType === 'fixed') return;
+    xml += `  <transmission name="${j.name}_trans">\n`;
+    xml += `    <type>transmission_interface/SimpleTransmission</type>\n`;
+    xml += `    <joint name="${j.name}">\n`;
+    xml += `      <hardwareInterface>${ifName}</hardwareInterface>\n`;
+    xml += `    </joint>\n`;
+    xml += `    <actuator name="${j.name}_motor">\n`;
+    xml += `      <hardwareInterface>${ifName}</hardwareInterface>\n`;
+    xml += `      <mechanicalReduction>1</mechanicalReduction>\n`;
+    xml += `    </actuator>\n`;
+    xml += `  </transmission>\n\n`;
+  });
+  return xml;
+};
+
+/**
+ * Generate ROS2 <ros2_control> block + Gazebo plugin tag.
+ * These are appended inside the <robot> element before the closing tag.
+ */
+export const generateRos2Control = (
+  robot: RobotState,
+  hwInterface: RosHardwareInterface = 'effort',
+  robotName?: string,
+): string => {
+  const { joints, name } = robot;
+  const ctrlName = robotName || name || 'robot';
+  const cmdIf = hwInterface === 'position' ? 'position' : hwInterface === 'velocity' ? 'velocity' : 'effort';
+
+  let xml = `  <ros2_control name="${ctrlName}" type="system">\n`;
+  xml += `    <hardware>\n`;
+  xml += `      <plugin>mock_components/GenericSystem</plugin>\n`;
+  xml += `    </hardware>\n`;
+
+  Object.values(joints).forEach((j) => {
+    const jType = String(j.type).toLowerCase();
+    if (jType === 'fixed') return;
+    xml += `    <joint name="${j.name}">\n`;
+    xml += `      <command_interface name="${cmdIf}"/>\n`;
+    xml += `      <state_interface name="position"/>\n`;
+    xml += `      <state_interface name="velocity"/>\n`;
+    if (cmdIf === 'effort') {
+      xml += `      <state_interface name="effort"/>\n`;
+    }
+    xml += `    </joint>\n`;
+  });
+
+  xml += `  </ros2_control>\n\n`;
+
+  xml += `  <gazebo>\n`;
+  xml += `    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">\n`;
+  xml += `      <robot_sim_type>gazebo_ros2_control/GazeboSystem</robot_sim_type>\n`;
+  xml += `    </plugin>\n`;
+  xml += `  </gazebo>\n`;
+
+  return xml;
+};
+
+/**
+ * Inject ROS1 or ROS2 Gazebo tags into an already-generated URDF string.
+ * Inserts the extra XML just before the closing </robot> tag.
+ */
+export const injectGazeboTags = (
+  urdfXml: string,
+  robot: RobotState,
+  rosVersion: 'ros1' | 'ros2',
+  hwInterface: RosHardwareInterface = 'effort',
+): string => {
+  const extra = rosVersion === 'ros1'
+    ? generateRos1Transmissions(robot, hwInterface)
+    : generateRos2Control(robot, hwInterface);
+  return urdfXml.replace(/(<\/robot>)\s*$/, `\n${extra}</robot>`);
+};
