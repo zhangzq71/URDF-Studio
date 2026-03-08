@@ -55,8 +55,7 @@ export function ReportChatOverlay({
           : `Current robot structure:\n${JSON.stringify(robot, null, 2)}\n\nInspection report summary:\n${inspectionReport.summary}\n\nIssues:\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\nUser question: ${userMessage}`
 
       const response = await generateRobotFromPrompt(contextPrompt, robot, motorLibrary, lang)
-      const assistantMessage =
-        response?.explanation || (lang === 'zh' ? '抱歉，无法生成回复。' : 'Sorry, unable to generate response.')
+      const assistantMessage = response?.explanation || t.reportChatNoReply
       setReportChatMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }])
     } catch (error) {
       console.error('Chat Error', error)
@@ -64,7 +63,7 @@ export function ReportChatOverlay({
         ...prev,
         {
           role: 'assistant',
-          content: lang === 'zh' ? '发送消息时出错，请重试。' : 'Error sending message, please try again.'
+          content: t.reportChatSendError
         }
       ])
     } finally {

@@ -431,7 +431,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   return (
     <div
       className={`bg-panel-bg rounded-xl border border-border-black flex flex-col shadow-xl overflow-hidden relative @container ${className}`}
-      style={{ width: panelSize.width, height: currentHeight, maxHeight: constrainedMaxHeight }}
+      style={{ width: panelSize.width, height: currentHeight, maxHeight: constrainedMaxHeight ?? maxHeight }}
     >
       {children}
       {resizable && !isCollapsed && (
@@ -575,9 +575,11 @@ interface OptionsPanelProps {
   zIndex?: number;
   width?: number | string;
   height?: number | string;
+  maxHeight?: number;
   resizable?: boolean;
   additionalControls?: ReactNode;
   resizeTitle?: string;
+  panelClassName?: string;
 }
 
 export const OptionsPanel: React.FC<OptionsPanelProps> = ({
@@ -594,9 +596,11 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
   zIndex = 10,
   width,
   height,
+  maxHeight,
   resizable,
   additionalControls,
   resizeTitle,
+  panelClassName = '',
 }) => {
   if (!show) return null;
 
@@ -606,15 +610,25 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
     ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto', transform: 'none' }
     : defaultPosition;
 
+  const stopPanelEventPropagation = (event: React.SyntheticEvent) => {
+    event.stopPropagation();
+  };
+
   return (
     <div
       ref={panelRef}
-      className={`absolute z-${zIndex} pointer-events-auto`}
+      className={`absolute z-${zIndex} pointer-events-auto ${panelClassName}`.trim()}
       style={style as React.CSSProperties}
+      onClick={stopPanelEventPropagation}
+      onContextMenu={stopPanelEventPropagation}
+      onDoubleClick={stopPanelEventPropagation}
+      onPointerDown={stopPanelEventPropagation}
+      onWheel={stopPanelEventPropagation}
     >
       <OptionsPanelContainer
         width={width}
         height={height}
+        maxHeight={maxHeight}
         resizable={resizable}
         isCollapsed={isCollapsed}
         resizeTitle={resizeTitle}

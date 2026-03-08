@@ -16,8 +16,8 @@ import {
 } from '../utils/collisionTransformMath';
 import { CollisionPendingEditOverlay } from './CollisionPendingEditOverlay';
 
-const COLLISION_TRANSLATE_GIZMO_SIZE = 1.4;
-const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.22;
+const COLLISION_TRANSLATE_GIZMO_SIZE = 1.48;
+const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.3;
 
 const isTransformAxis = (axis: unknown): axis is CollisionTransformAxis =>
     axis === 'X' || axis === 'Y' || axis === 'Z';

@@ -237,6 +237,16 @@ export class URDFLoader {
                         primitive.scale.set(radius, length, radius);
                         primitive.rotation.set(Math.PI / 2, 0, 0);
                         group.add(primitive);
+                    } else if (geoType === 'capsule') {
+                        const primitive = new THREE.Mesh();
+                        const radius = parseFloat(n.children[0].getAttribute('radius') || '0');
+                        const length = parseFloat(n.children[0].getAttribute('length') || '0');
+                        const bodyLength = Math.max(length - 2 * radius, 0);
+
+                        primitive.geometry = new THREE.CapsuleGeometry(radius, bodyLength, 8, 16);
+                        primitive.material = material;
+                        primitive.rotation.set(Math.PI / 2, 0, 0);
+                        group.add(primitive);
                     }
                 } else if (type === 'origin') {
                     const xyz = processTuple(n.getAttribute('xyz'));

@@ -13,7 +13,7 @@ import {
   Sparkles
 } from 'lucide-react'
 import type { InspectionReport, RobotState } from '@/types'
-import type { Language, TranslationKeys } from '@/shared/i18n'
+import { translations, type Language, type TranslationKeys } from '@/shared/i18n'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
 import { getScoreBgColor, getScoreColor } from '../utils/scoreHelpers'
 
@@ -52,10 +52,11 @@ function getCategoryIcon(categoryId: string) {
 }
 
 function getIssueMeta(issueType: string, lang: Language) {
+  const t = translations[lang]
   if (issueType === 'error') {
     return {
       Icon: AlertCircle,
-      label: lang === 'zh' ? '错误' : 'Error',
+      label: t.issueError,
       rowClass: 'border-red-200/80 dark:border-red-900/60',
       stripeClass: 'bg-red-500',
       iconClass: 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/60 border-red-200/80 dark:border-red-900/60',
@@ -66,7 +67,7 @@ function getIssueMeta(issueType: string, lang: Language) {
   if (issueType === 'warning') {
     return {
       Icon: AlertTriangle,
-      label: lang === 'zh' ? '警告' : 'Warning',
+      label: t.issueWarning,
       rowClass: 'border-amber-200/80 dark:border-amber-900/60',
       stripeClass: 'bg-amber-500',
       iconClass: 'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border-amber-200/80 dark:border-amber-900/60',
@@ -77,7 +78,7 @@ function getIssueMeta(issueType: string, lang: Language) {
   if (issueType === 'suggestion') {
     return {
       Icon: Sparkles,
-      label: lang === 'zh' ? '建议' : 'Suggestion',
+      label: t.issueSuggestion,
       rowClass: 'border-system-blue/30 dark:border-system-blue/35',
       stripeClass: 'bg-system-blue',
       iconClass: 'text-system-blue bg-system-blue/10 dark:bg-system-blue/20 border-system-blue/30 dark:border-system-blue/35',
@@ -88,7 +89,7 @@ function getIssueMeta(issueType: string, lang: Language) {
   if (issueType === 'pass') {
     return {
       Icon: Check,
-      label: lang === 'zh' ? '通过' : 'Pass',
+      label: t.issuePass,
       rowClass: 'border-emerald-200/80 dark:border-emerald-900/60',
       stripeClass: 'bg-emerald-500',
       iconClass: 'text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200/80 dark:border-emerald-900/60',
@@ -98,7 +99,7 @@ function getIssueMeta(issueType: string, lang: Language) {
 
   return {
     Icon: Info,
-    label: lang === 'zh' ? '信息' : 'Info',
+    label: t.issueInfo,
     rowClass: 'border-border-black',
     stripeClass: 'bg-border-strong',
     iconClass: 'text-text-tertiary bg-element-bg border-border-black',
@@ -150,18 +151,18 @@ export function InspectionReportView({
   const scoreBand =
     scorePercentage >= 90
       ? {
-          label: lang === 'zh' ? '稳定' : 'Stable',
+          label: t.inspectionStable,
           className:
             'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/60'
         }
       : scorePercentage >= 70
         ? {
-            label: lang === 'zh' ? '需关注' : 'Attention',
+            label: t.inspectionAttention,
             className:
               'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-200/80 dark:border-amber-900/60'
           }
         : {
-            label: lang === 'zh' ? '高风险' : 'High Risk',
+            label: t.inspectionHighRisk,
             className:
               'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-200/80 dark:border-red-900/60'
           }
@@ -169,25 +170,25 @@ export function InspectionReportView({
   const summaryMetrics = [
     {
       key: 'error',
-      label: lang === 'zh' ? '错误' : 'Errors',
+      label: t.issueErrors,
       value: issueStats.error,
       className: 'text-red-600 dark:text-red-300 border-red-200/80 dark:border-red-900/60'
     },
     {
       key: 'warning',
-      label: lang === 'zh' ? '警告' : 'Warnings',
+      label: t.issueWarnings,
       value: issueStats.warning,
       className: 'text-amber-600 dark:text-amber-300 border-amber-200/80 dark:border-amber-900/60'
     },
     {
       key: 'suggestion',
-      label: lang === 'zh' ? '建议' : 'Suggestions',
+      label: t.issueSuggestions,
       value: issueStats.suggestion,
       className: 'text-system-blue border-system-blue/30 dark:border-system-blue/35'
     },
     {
       key: 'pass',
-      label: lang === 'zh' ? '通过' : 'Passed',
+      label: t.issuePassed,
       value: issueStats.pass,
       className: 'text-emerald-600 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/60'
     }
@@ -203,7 +204,7 @@ export function InspectionReportView({
               <span className="text-[10px] font-medium tracking-wide">{t.inspectorSummary}</span>
             </div>
             <h2 className="text-xl font-semibold tracking-tight text-text-primary">
-              {lang === 'zh' ? 'URDF 审阅结论' : 'URDF Inspection Result'}
+              {t.inspectionResultTitle}
             </h2>
             <p className="text-sm text-text-secondary max-w-xl leading-relaxed">{report.summary}</p>
           </div>
@@ -290,18 +291,18 @@ export function InspectionReportView({
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-text-primary truncate">{categoryName}</span>
                       <span className="text-[10px] font-medium text-text-tertiary tracking-wide">
-                        {lang === 'zh' ? '权重' : 'Weight'} {category.weight * 100}%
+                        {t.weight} {category.weight * 100}%
                       </span>
                     </div>
                     <div className="text-[10px] text-text-tertiary font-medium flex items-center gap-2">
-                      {categoryIssues.length} {lang === 'zh' ? '项检查' : 'checks'}
+                      {t.checksCount.replace('{count}', String(categoryIssues.length))}
                       {hasProblems ? (
                         <span className="px-1.5 py-0.5 rounded border border-amber-200/80 dark:border-amber-900/60 text-amber-700 dark:text-amber-300">
-                          {lang === 'zh' ? `${nonPassCount} 项待处理` : `${nonPassCount} attention`}
+                          {t.itemsNeedAttention.replace('{count}', String(nonPassCount))}
                         </span>
                       ) : (
                         <span className="px-1.5 py-0.5 rounded border border-emerald-200/80 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300">
-                          {lang === 'zh' ? '全部通过' : 'all passed'}
+                          {t.allPassedShort}
                         </span>
                       )}
                     </div>
@@ -338,7 +339,7 @@ export function InspectionReportView({
                         <Check className="w-4 h-4" />
                       </div>
                       <div className="text-xs font-semibold">
-                        {lang === 'zh' ? '该章节所有检查项均通过' : 'All checks in this category passed'}
+                        {t.allChecksPassedForCategory}
                       </div>
                     </div>
                   ) : (
@@ -381,11 +382,11 @@ export function InspectionReportView({
                                         {issueScore.toFixed(1)}
                                       </div>
                                       {issue.category && issue.itemId && issue.type !== 'pass' && (
-                                        <button
+                                      <button
                                           onClick={() => onRetestItem(issue.category!, issue.itemId!)}
                                           disabled={isRetesting || isGeneratingAI}
                                           className="p-1.5 bg-element-bg border border-border-black hover:bg-element-hover hover:text-system-blue rounded-lg transition-colors disabled:opacity-30"
-                                          title={lang === 'zh' ? '重新检查该项' : 'Retest this item'}
+                                          title={t.retestThisItem}
                                         >
                                           {isRetesting ? (
                                             <Loader2 className="w-3.5 h-3.5 animate-spin" />

@@ -10,11 +10,12 @@ import { generateURDF, generateMujocoXML, injectGazeboTags } from '@/core/parser
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { compressSTLBlob } from '@/core/stl-compressor';
 import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
-import { exportProject } from '@/features/file-io/utils';
-import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog';
+import { exportProject, type ExportDialogConfig } from '@/features/file-io';
+import { translations } from '@/shared/i18n';
 
 export function useFileExport() {
   const lang = useUIStore((state) => state.lang);
+  const t = translations[lang];
   const theme = useUIStore((state) => state.theme);
   const appMode = useUIStore((state) => state.appMode);
   const sidebarTab = useUIStore((state) => state.sidebarTab);
@@ -150,9 +151,7 @@ export function useFileExport() {
 
   // Generate BOM (Bill of Materials) CSV
   const generateBOM = useCallback((robot: RobotState): string => {
-    const headers = lang === 'zh'
-      ? ['关节名称', '类型', '电机型号', '电机 ID', '方向', '电枢', '下限', '上限']
-      : ['Joint Name', 'Type', 'Motor Type', 'Motor ID', 'Direction', 'Armature', 'Lower Limit', 'Upper Limit'];
+    const headers = [t.jointName, t.type, t.motorType, t.motorId, t.direction, t.armature, t.lower, t.upper];
 
     const rows = Object.values(robot.joints).map(j => {
       if (j.type === 'fixed') return null;
@@ -171,7 +170,7 @@ export function useFileExport() {
     }).filter(row => row !== null);
 
     return [headers.join(','), ...rows].join('\n');
-  }, [lang]);
+  }, [t]);
 
   const handleExportURDF = useCallback(async () => {
     const robot = buildRobotForExport();

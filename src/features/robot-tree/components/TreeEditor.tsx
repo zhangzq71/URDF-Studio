@@ -138,6 +138,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
   const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
   const namePlaceholder = sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName;
+  const showStructureFilePath = Boolean(currentFileName && sidebarTab === 'structure');
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
 
@@ -414,7 +415,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             </div>
           </div>
 
-          <div className="px-4 pt-3 pb-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
+          <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
             <div className="flex items-center gap-2">
               <label className="shrink-0 text-[10px] text-text-tertiary uppercase font-bold tracking-wider">
                 {nameLabel}
@@ -447,18 +448,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                 </button>
               )}
             </div>
-
-            {currentFileName && sidebarTab === 'structure' && (
-              <div className="mt-2 flex items-center gap-1.5">
-                <FileCode className="w-3.5 h-3.5 text-system-blue shrink-0" />
-                <span
-                  className="text-[11px] text-text-secondary dark:text-text-tertiary truncate"
-                  title={currentFileName}
-                >
-                  {currentFileName}
-                </span>
-              </div>
-            )}
           </div>
 
           <div
@@ -558,15 +547,26 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
               className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none border-b border-border-black dark:border-border-black"
               onClick={() => setIsStructureOpen(!isStructureOpen)}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 {isStructureOpen ? (
                   <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
                 ) : (
                   <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
                 )}
-                <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">
+                <span className="shrink-0 text-xs font-bold text-text-secondary uppercase tracking-wider">
                   {isAssemblyView ? t.assemblyTree : t.structureTree}
                 </span>
+                {showStructureFilePath && (
+                  <div
+                    className="flex min-w-0 items-center gap-1 rounded-md border border-border-black bg-white px-1.5 py-0.5 dark:bg-panel-bg"
+                    title={currentFileName}
+                  >
+                    <FileCode className="h-3 w-3 shrink-0 text-system-blue" />
+                    <span className="truncate text-[10px] font-medium text-text-secondary dark:text-text-tertiary">
+                      {currentFileName}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-1">

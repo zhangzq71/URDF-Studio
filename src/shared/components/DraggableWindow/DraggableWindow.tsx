@@ -184,7 +184,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                 data-window-control
                 onClick={toggleMinimize}
                 className={controlButtonClassName}
-                title={minimizeTitle}
+                aria-label={minimizeTitle}
               >
                 {minimizeIcon}
               </button>
@@ -195,7 +195,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                 data-window-control
                 onClick={toggleMaximize}
                 className={controlButtonClassName}
-                title={isMaximized ? restoreTitle : maximizeTitle}
+                aria-label={isMaximized ? restoreTitle : maximizeTitle}
               >
                 {isMaximized ? restoreIcon : maximizeIcon}
               </button>
@@ -206,7 +206,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                 data-window-control
                 onClick={onClose}
                 className={closeButtonClassName}
-                title={closeTitle}
+                aria-label={closeTitle}
               >
                 {closeIcon}
               </button>

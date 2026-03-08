@@ -29,6 +29,7 @@ import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 
 import { useViewerSettings } from '../hooks/useViewerSettings';
 import { usePanelDrag } from '../hooks/usePanelDrag';
+import { useResponsivePanelLayout } from '../hooks/useResponsivePanelLayout';
 
 const createEmptyMeasureState = (): MeasureState => ({
     measurements: [],
@@ -118,6 +119,15 @@ export function URDFViewer({
     } = usePanelDrag(containerRef, optionsPanelRef, jointPanelRef, measurePanelRef);
 
     const transformMode = (['translate', 'rotate', 'universal'].includes(toolMode) ? toolMode : 'select') as 'select' | 'translate' | 'rotate' | 'universal';
+    const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
+        containerRef,
+        optionsPanelRef,
+        jointPanelRef,
+        showOptionsPanel,
+        showJointPanel,
+        showJointControls,
+        showToolbar,
+    });
 
     useEffect(() => {
         if (selection?.subType === 'collision') {
@@ -450,6 +460,7 @@ export function URDFViewer({
                 showOptionsPanel={showOptionsPanel}
                 optionsPanelRef={optionsPanelRef}
                 optionsPanelPos={optionsPanelPos}
+                defaultPosition={optionsDefaultPosition}
                 onMouseDown={(e) => handleMouseDown('options', e)}
                 mode={mode}
                 t={t}
@@ -499,6 +510,8 @@ export function URDFViewer({
                 robot={robot}
                 jointPanelRef={jointPanelRef}
                 jointPanelPos={jointPanelPos}
+                defaultPosition={jointsDefaultPosition}
+                maxHeight={jointsPanelMaxHeight}
                 onMouseDown={(e) => handleMouseDown('joints', e)}
                 t={t}
                 handleResetJoints={handleResetJoints}

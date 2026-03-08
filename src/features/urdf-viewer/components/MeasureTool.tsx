@@ -13,6 +13,7 @@ const _pooledRay = new THREE.Ray();
 const MOUSE_MOVE_THRESHOLD = 2;
 // Throttle interval in ms (~30fps)
 const THROTTLE_INTERVAL = 33;
+const BOUNDING_BOX_CACHE_MS = 33;
 
 // Memoized measurement item to avoid creating new Vector3 on each render
 const MeasurementItem = memo(({
@@ -118,23 +119,41 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     const lastMousePosRef = useRef({ x: 0, y: 0 });
     // PERFORMANCE: Cached robot bounding box for two-phase detection
     const robotBoundingBoxRef = useRef<THREE.Box3 | null>(null);
+    const robotBoundingBoxUpdatedAtRef = useRef(0);
 
     const { measurements, currentPoints, tempPoint } = measureState;
 
     // PERFORMANCE: Get/update robot bounding box (cached)
-    const getRobotBoundingBox = useCallback(() => {
+    useEffect(() => {
+        robotBoundingBoxRef.current = null;
+        robotBoundingBoxUpdatedAtRef.current = 0;
+    }, [robot]);
+
+    const getRobotBoundingBox = useCallback((forceRefresh = false) => {
         if (!robot) return null;
+
         if (!robotBoundingBoxRef.current) {
             robotBoundingBoxRef.current = new THREE.Box3();
         }
-        robotBoundingBoxRef.current.setFromObject(robot);
-        robotBoundingBoxRef.current.expandByScalar(0.05);
+
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const needsRefresh =
+            forceRefresh ||
+            robotBoundingBoxUpdatedAtRef.current === 0 ||
+            now - robotBoundingBoxUpdatedAtRef.current >= BOUNDING_BOX_CACHE_MS;
+
+        if (needsRefresh) {
+            robotBoundingBoxRef.current.setFromObject(robot);
+            robotBoundingBoxRef.current.expandByScalar(0.05);
+            robotBoundingBoxUpdatedAtRef.current = now;
+        }
+
         return robotBoundingBoxRef.current;
     }, [robot]);
 
     // PERFORMANCE: Two-phase detection - check bounding box first
-    const rayIntersectsBoundingBox = useCallback((raycasterInstance: THREE.Raycaster): boolean => {
-        const bbox = getRobotBoundingBox();
+    const rayIntersectsBoundingBox = useCallback((raycasterInstance: THREE.Raycaster, forceRefresh = false): boolean => {
+        const bbox = getRobotBoundingBox(forceRefresh);
         if (!bbox) return false;
         _pooledRay.copy(raycasterInstance.ray);
         return _pooledRay.intersectsBox(bbox);
@@ -238,10 +257,15 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
                  (event.target as HTMLElement).closest('.measure-context-menu') ||
                  (event.target as HTMLElement).closest('.measure-panel')) return;
 
+             const rect = gl.domElement.getBoundingClientRect();
+             mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+             mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+             lastMousePosRef.current.x = event.clientX;
+             lastMousePosRef.current.y = event.clientY;
              raycaster.setFromCamera(mouse.current, camera);
 
              // PERFORMANCE: Two-phase detection - check bounding box first
-             if (!rayIntersectsBoundingBox(raycaster)) {
+             if (!rayIntersectsBoundingBox(raycaster, true)) {
                  return; // Click missed robot entirely
              }
 

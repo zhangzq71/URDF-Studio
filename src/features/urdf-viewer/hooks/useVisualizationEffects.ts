@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { MathUtils } from '@/shared/utils';
+import { MathUtils as SharedMathUtils } from '@/shared/utils';
+import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import { collisionBaseMaterial, emptyRaycast } from '../utils/materials';
 import {
     createJointAxisVisualization,
@@ -12,6 +13,7 @@ import {
 } from '../utils/visualizationFactories';
 import type { UrdfLink } from '@/types';
 import type { ToolMode, URDFViewerProps } from '../types';
+import type { HighlightedMeshSnapshot } from './useHighlightManager';
 
 export interface UseVisualizationEffectsOptions {
     robot: THREE.Object3D | null;
@@ -41,7 +43,7 @@ export interface UseVisualizationEffectsOptions {
         subType?: 'visual' | 'collision',
         meshToHighlight?: THREE.Object3D | null | number
     ) => void;
-    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, THREE.Material | THREE.Material[]>>;
+    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
 }
 
 function resolveLinkNameFromObject(object: THREE.Object3D | null): string | null {
@@ -63,8 +65,7 @@ function resolveLinkNameFromObject(object: THREE.Object3D | null): string | null
 
 function getCollisionGeometryByIndex(linkData: UrdfLink | undefined, colliderIndex: number) {
     if (!linkData) return undefined;
-    if (colliderIndex <= 0) return linkData.collision;
-    return linkData.collisionBodies?.[colliderIndex - 1];
+    return getCollisionGeometryByObjectIndex(linkData, colliderIndex)?.geometry;
 }
 
 function isVisualGeometryVisible(linkData: UrdfLink | undefined, showVisual: boolean): boolean {
@@ -89,6 +90,12 @@ function getColliderIndex(collider: THREE.Object3D): number {
     const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
     const colliderIndex = colliders.indexOf(collider);
     return colliderIndex >= 0 ? colliderIndex : 0;
+}
+
+interface VisualMaterialState {
+    opacity: number;
+    transparent: boolean;
+    depthWrite: boolean;
 }
 
 export function useVisualizationEffects({
@@ -121,10 +128,29 @@ export function useVisualizationEffects({
     // Track current selection/hover for cleanup
     const currentSelectionRef = useRef<{ id: string | null; subType: string | null; objectIndex?: number }>({ id: null, subType: null });
     const currentHoverRef = useRef<{ id: string | null; subType: string | null; objectIndex?: number }>({ id: null, subType: null });
+    const visualMaterialStateRef = useRef<Map<THREE.Material, VisualMaterialState>>(new Map());
 
     // Refs for visibility state
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
+
+    useEffect(() => {
+        visualMaterialStateRef.current.clear();
+    }, [robot]);
+
+    const getVisualMaterialState = (material: THREE.Material): VisualMaterialState => {
+        const cachedState = visualMaterialStateRef.current.get(material);
+        if (cachedState) return cachedState;
+
+        const state: VisualMaterialState = {
+            opacity: material.opacity ?? 1,
+            transparent: material.transparent,
+            depthWrite: material.depthWrite,
+        };
+
+        visualMaterialStateRef.current.set(material, state);
+        return state;
+    };
 
     const resolveHighlightTarget = (
         candidate?: URDFViewerProps['selection']
@@ -156,8 +182,9 @@ export function useVisualizationEffects({
     // Clean up all tracked highlights on unmount
     useEffect(() => {
         return () => {
-            highlightedMeshesRef.current.forEach((origMaterial, mesh) => {
-                mesh.material = origMaterial;
+            highlightedMeshesRef.current.forEach((snapshot, mesh) => {
+                mesh.material = snapshot.material;
+                mesh.renderOrder = snapshot.renderOrder;
             });
             highlightedMeshesRef.current.clear();
         };
@@ -312,11 +339,21 @@ export function useVisualizationEffects({
                             !mat.userData?.isSharedMaterial &&
                             !mat.userData?.isCollisionMaterial &&
                             mat.depthTest !== false) {
-                            const isTransparent = modelOpacity < 1.0;
-                            mat.transparent = isTransparent;
-                            mat.opacity = modelOpacity;
-                            mat.depthWrite = true;
-                            mat.needsUpdate = true;
+                            const baseState = getVisualMaterialState(mat);
+                            const nextOpacity = THREE.MathUtils.clamp(baseState.opacity * modelOpacity, 0, 1);
+                            const nextTransparent = baseState.transparent || nextOpacity < 1.0;
+                            const nextDepthWrite = baseState.depthWrite;
+
+                            if (
+                                mat.transparent !== nextTransparent ||
+                                mat.opacity !== nextOpacity ||
+                                mat.depthWrite !== nextDepthWrite
+                            ) {
+                                mat.transparent = nextTransparent;
+                                mat.opacity = nextOpacity;
+                                mat.depthWrite = nextDepthWrite;
+                                mat.needsUpdate = true;
+                            }
                         }
                     });
                 }
@@ -390,7 +427,7 @@ export function useVisualizationEffects({
                         maxLinkSize = undefined;
                     }
 
-                    const boxData = MathUtils.computeInertiaBox(inertialData, maxLinkSize);
+                    const boxData = SharedMathUtils.computeInertiaBox(inertialData, maxLinkSize);
 
                     if (boxData) {
                         const { width, height, depth, rotation } = boxData;

@@ -10,6 +10,8 @@ interface JointsPanelProps {
     robot: any;
     jointPanelRef: React.RefObject<HTMLDivElement>;
     jointPanelPos: { x: number; y: number } | null;
+    defaultPosition?: { top?: string; right?: string; left?: string; bottom?: string; transform?: string };
+    maxHeight?: number;
     onMouseDown: (e: React.MouseEvent) => void;
     t: any;
     handleResetJoints: () => void;
@@ -33,6 +35,8 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     robot,
     jointPanelRef,
     jointPanelPos,
+    defaultPosition,
+    maxHeight,
     onMouseDown,
     t,
     handleResetJoints,
@@ -102,15 +106,17 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             show={!!shouldShow}
             panelRef={jointPanelRef}
             position={jointPanelPos}
-            defaultPosition={{ top: '50%', left: '16px', transform: 'translateY(-50%)' }}
+            defaultPosition={defaultPosition ?? { top: '50%', left: '16px', transform: 'translateY(-50%)' }}
             isCollapsed={isJointsCollapsed}
             onToggleCollapse={toggleJointsCollapsed}
             onClose={() => setShowJointPanel && setShowJointPanel(false)}
             onMouseDown={onMouseDown}
             resizable={true}
+            maxHeight={maxHeight}
             additionalControls={additionalControls}
             zIndex={40}
             resizeTitle={t.resize}
+            panelClassName="urdf-joint-panel"
         >
             <div className="p-2 space-y-2" onMouseLeave={() => onHover?.(null, null)}>
                 {robot?.joints && Object.entries(robot.joints)

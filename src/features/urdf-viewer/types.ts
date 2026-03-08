@@ -118,4 +118,5 @@ export interface JointInteractionProps {
     value: number;
     onChange: (val: number) => void;
     onCommit?: (val: number) => void;
+    setIsDragging?: (dragging: boolean) => void;
 }

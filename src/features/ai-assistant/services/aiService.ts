@@ -4,7 +4,7 @@
 
 import OpenAI from 'openai'
 import type { RobotState, MotorSpec, InspectionReport } from '@/types'
-import type { Language } from '@/shared/i18n'
+import { translations, type Language } from '@/shared/i18n'
 import type { AIResponse } from '../types'
 import { getEasterEggResponse } from '../config/easterEggs'
 import { getGenerationSystemPrompt, getInspectionSystemPrompt } from '../config/prompts'
@@ -12,56 +12,40 @@ import { normalizeAIRobotResponse } from '../utils/normalizeRobotData'
 import { processInspectionResults } from '../utils/processInspectionResults'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
 
-const getAiServiceTexts = (lang: Language) => ({
-  apiKeyMissing:
-    lang === 'zh'
-      ? 'API Key 缺失，请先完成环境配置。'
-      : 'API Key is missing. Please configure the environment.',
-  noContentFromApi:
-    lang === 'zh'
-      ? 'API 返回了空内容，请重试。'
-      : 'The API returned empty content. Please try again.',
-  rawResponse: lang === 'zh' ? '原始响应' : 'Raw response',
-  jsonParseFailed: (message: string) =>
-    lang === 'zh'
-      ? `JSON 解析失败: ${message || '未知错误'}`
-      : `Failed to parse JSON: ${message || 'unknown error'}`,
-  unknown: lang === 'zh' ? '未知' : 'Unknown',
-  suggestedMotorOptions: lang === 'zh' ? '建议的电机选项：' : 'Suggested motor options:',
-  generatedRobotSummary: (linkCount: number, jointCount: number) =>
-    lang === 'zh'
-      ? `已生成机器人结构。包含 ${linkCount} 个链接和 ${jointCount} 个关节。`
-      : `Generated robot structure with ${linkCount} links and ${jointCount} joints.`,
-  modifiedRobotSummary: (linkCount: number, jointCount: number) =>
-    lang === 'zh'
-      ? `已修改机器人结构。包含 ${linkCount} 个链接和 ${jointCount} 个关节。`
-      : `Modified robot structure with ${linkCount} links and ${jointCount} joints.`,
-  processedRequestNoRobotData:
-    lang === 'zh'
-      ? 'AI 已处理您的请求，但未返回机器人数据。'
-      : 'AI processed your request but did not return robot data.',
-  apiCallFailed: (message?: string, status?: number) =>
-    lang === 'zh'
-      ? `API 调用失败: ${message || '未知错误'}${status ? ` (状态码: ${status})` : ''}`
-      : `API request failed: ${message || 'unknown error'}${status ? ` (status: ${status})` : ''}`,
-  configurationError: lang === 'zh' ? '配置错误' : 'Configuration Error',
-  inspectionError: lang === 'zh' ? '检查错误' : 'Inspection Error',
-  parseError: lang === 'zh' ? '解析错误' : 'Parse Error',
-  failedToGetInspectionResponse:
-    lang === 'zh' ? '未能获取检查响应。' : 'Failed to get inspection response.',
-  failedToParseInspectionResults:
-    lang === 'zh' ? '未能解析检查结果。' : 'Failed to parse inspection results.',
-  failedToCompleteInspection:
-    lang === 'zh'
-      ? '由于 AI 错误，检查未能完成。'
-      : 'Failed to complete inspection due to an AI error.',
-  inspectionEmptyContent:
-    lang === 'zh' ? 'AI 服务返回了空内容。' : 'The AI service returned empty content.',
-  aiServiceRequestFailed: (message?: string) =>
-    lang === 'zh'
-      ? `AI 服务无法处理该请求：${message || '未知错误'}`
-      : `The AI service could not process the request: ${message || 'unknown error'}`,
-})
+const getAiServiceTexts = (lang: Language) => {
+  const t = translations[lang]
+  return {
+    apiKeyMissing: t.apiKeyMissing,
+    noContentFromApi: t.apiReturnedEmptyContent,
+    rawResponse: t.rawResponse,
+    jsonParseFailed: (message: string) =>
+      t.failedToParseJson.replace('{message}', message || t.unknownError.toLowerCase()),
+    unknown: t.unknown,
+    suggestedMotorOptions: t.suggestedMotorOptions,
+    generatedRobotSummary: (linkCount: number, jointCount: number) =>
+      t.generatedRobotStructureSummary
+        .replace('{linkCount}', String(linkCount))
+        .replace('{jointCount}', String(jointCount)),
+    modifiedRobotSummary: (linkCount: number, jointCount: number) =>
+      t.modifiedRobotStructureSummary
+        .replace('{linkCount}', String(linkCount))
+        .replace('{jointCount}', String(jointCount)),
+    processedRequestNoRobotData: t.processedRequestNoRobotData,
+    apiCallFailed: (message?: string, status?: number) =>
+      t.apiRequestFailed
+        .replace('{message}', message || t.unknownError.toLowerCase())
+        .replace('{statusSuffix}', status ? ` (${t.statusCodeLabel}: ${status})` : ''),
+    configurationError: t.configurationError,
+    inspectionError: t.inspectionError,
+    parseError: t.parseError,
+    failedToGetInspectionResponse: t.failedToGetInspectionResponse,
+    failedToParseInspectionResults: t.failedToParseInspectionResults,
+    failedToCompleteInspection: t.failedToCompleteInspection,
+    inspectionEmptyContent: t.aiServiceReturnedEmptyContent,
+    aiServiceRequestFailed: (message?: string) =>
+      t.aiServiceCouldNotProcessRequest.replace('{message}', message || t.unknownError.toLowerCase()),
+  }
+}
 
 /**
  * Create OpenAI client instance

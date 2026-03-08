@@ -5,6 +5,7 @@ import { ViewerOptionsPanel } from './ViewerOptionsPanel';
 import { ViewerToolbar } from './ViewerToolbar';
 import { translations, type Language } from '@/shared/i18n';
 import type { URDFViewerController } from '../hooks/useURDFViewerController';
+import { useResponsivePanelLayout } from '../hooks/useResponsivePanelLayout';
 
 interface URDFViewerPanelsProps {
   lang: Language;
@@ -30,6 +31,15 @@ export const URDFViewerPanels = ({
   setShowJointPanel,
 }: URDFViewerPanelsProps) => {
   const t = translations[lang];
+  const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
+    containerRef: controller.containerRef,
+    optionsPanelRef: controller.optionsPanelRef,
+    jointPanelRef: controller.jointPanelRef,
+    showOptionsPanel,
+    showJointPanel,
+    showJointControls: controller.showJointControls,
+    showToolbar,
+  });
 
   return (
     <>
@@ -43,6 +53,7 @@ export const URDFViewerPanels = ({
         showOptionsPanel={showOptionsPanel}
         optionsPanelRef={controller.optionsPanelRef}
         optionsPanelPos={controller.optionsPanelPos}
+        defaultPosition={optionsDefaultPosition}
         onMouseDown={(event) => controller.handleMouseDown('options', event)}
         mode={mode}
         t={t}
@@ -91,6 +102,8 @@ export const URDFViewerPanels = ({
         robot={controller.robot}
         jointPanelRef={controller.jointPanelRef}
         jointPanelPos={controller.jointPanelPos}
+        defaultPosition={jointsDefaultPosition}
+        maxHeight={jointsPanelMaxHeight}
         onMouseDown={(event) => controller.handleMouseDown('joints', event)}
         t={t}
         handleResetJoints={controller.handleResetJoints}

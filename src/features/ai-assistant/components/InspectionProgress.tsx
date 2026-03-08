@@ -50,7 +50,7 @@ export function InspectionProgress({
                 <span className="text-system-blue font-semibold">{t.generatingReport}</span>
               </div>
               <span className="text-xs text-text-tertiary mt-1 block">
-                {lang === 'zh' ? '这可能需要 30 秒...' : 'This may take up to 30 seconds...'}
+                {t.inspectionMayTake30Seconds}
               </span>
             </>
           )}
@@ -69,7 +69,7 @@ export function InspectionProgress({
       {!progress.currentCategory && reportGenerationTimer && (
         <div className="w-full space-y-2 pt-2">
           <div className="flex justify-between text-[10px] text-text-tertiary font-medium">
-            <span>{lang === 'zh' ? 'AI 分析中' : 'AI Analyzing'}</span>
+            <span>{t.aiAnalyzing}</span>
             <span>{reportGenerationTimer}s</span>
           </div>
           <div className="w-full bg-element-bg rounded-full h-1.5 overflow-hidden">

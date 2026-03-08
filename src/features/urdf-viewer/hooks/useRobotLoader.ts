@@ -11,7 +11,6 @@ import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
 import { parseURDF } from '@/core/parsers/urdf/parser';
-import { processCapsuleGeometries } from '../utils/capsulePostProcessor';
 import { GeometryType } from '@/types';
 import type { UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
 import { isSingleDofJoint } from '../utils/jointTypes';
@@ -62,6 +61,16 @@ function sameGeometry(a: LinkGeometry | undefined, b: LinkGeometry | undefined):
     );
 }
 
+function sameGeometryList(a: LinkGeometry[] | undefined, b: LinkGeometry[] | undefined): boolean {
+    const listA = a || [];
+    const listB = b || [];
+
+    return (
+        listA.length === listB.length &&
+        listA.every((geometry, index) => sameGeometry(geometry, listB[index]))
+    );
+}
+
 function sameInertial(a: UrdfLink['inertial'] | undefined, b: UrdfLink['inertial'] | undefined): boolean {
     if (!a || !b) return a === b;
 
@@ -84,7 +93,8 @@ function isSameLink(prev: UrdfLink, next: UrdfLink): boolean {
         prev.visible === next.visible &&
         sameInertial(prev.inertial, next.inertial) &&
         sameGeometry(prev.visual, next.visual) &&
-        sameGeometry(prev.collision, next.collision)
+        sameGeometry(prev.collision, next.collision) &&
+        sameGeometryList(prev.collisionBodies, next.collisionBodies)
     );
 }
 
@@ -95,7 +105,8 @@ function getGeometryPatchForLink(prev: UrdfLink, next: UrdfLink): GeometryPatchC
         prev.id !== next.id ||
         prev.name !== next.name ||
         prev.visible !== next.visible ||
-        !sameInertial(prev.inertial, next.inertial)
+        !sameInertial(prev.inertial, next.inertial) ||
+        !sameGeometryList(prev.collisionBodies, next.collisionBodies)
     ) {
         return null;
     }
@@ -319,6 +330,7 @@ interface PatchCategoryOptions {
     showCollision: boolean;
     linkMeshMapRef: React.MutableRefObject<Map<string, THREE.Mesh[]>>;
     invalidate: () => void;
+    isPatchTargetValid?: () => boolean;
 }
 
 function patchGeometryCategory({
@@ -332,6 +344,7 @@ function patchGeometryCategory({
     showCollision,
     linkMeshMapRef,
     invalidate,
+    isPatchTargetValid,
 }: PatchCategoryOptions): void {
     const isCollision = category === 'collision';
 
@@ -419,7 +432,10 @@ function patchGeometryCategory({
         meshLoader(geometry.meshPath, manager, (obj, err) => {
             if (!obj) return;
 
-            if ((targetGroup!.userData.__patchToken as number) !== patchToken) {
+            if (
+                (targetGroup!.userData.__patchToken as number) !== patchToken ||
+                (isPatchTargetValid && !isPatchTargetValid())
+            ) {
                 disposeObject3D(obj, true, SHARED_MATERIALS);
                 return;
             }
@@ -459,6 +475,7 @@ interface ApplyGeometryPatchOptions {
     showCollision: boolean;
     linkMeshMapRef: React.MutableRefObject<Map<string, THREE.Mesh[]>>;
     invalidate: () => void;
+    isPatchTargetValid?: () => boolean;
 }
 
 function applyGeometryPatchInPlace({
@@ -469,6 +486,7 @@ function applyGeometryPatchInPlace({
     showCollision,
     linkMeshMapRef,
     invalidate,
+    isPatchTargetValid,
 }: ApplyGeometryPatchOptions): boolean {
     const linkObject = findRobotLinkObject(robotModel, patch.linkName);
     if (!linkObject) return false;
@@ -485,6 +503,7 @@ function applyGeometryPatchInPlace({
             showCollision,
             linkMeshMapRef,
             invalidate,
+            isPatchTargetValid,
         });
     }
 
@@ -500,6 +519,7 @@ function applyGeometryPatchInPlace({
             showCollision,
             linkMeshMapRef,
             invalidate,
+            isPatchTargetValid,
         });
     }
 
@@ -623,22 +643,24 @@ export function useRobotLoader({
         if (!robotLinks) return;
 
         const previousLinks = prevRobotLinksRef.current;
+        const currentRobot = robotRef.current;
         prevRobotLinksRef.current = robotLinks;
 
-        if (!previousLinks || !robotRef.current) return;
+        if (!previousLinks || !currentRobot) return;
         if (isMJCFContent(urdfContent)) return;
 
         const patch = detectSingleGeometryPatch(previousLinks, robotLinks);
         if (!patch) return;
 
         const applied = applyGeometryPatchInPlace({
-            robotModel: robotRef.current,
+            robotModel: currentRobot,
             patch,
             assets,
             showVisual: showVisualRef.current,
             showCollision: showCollisionRef.current,
             linkMeshMapRef,
             invalidate,
+            isPatchTargetValid: () => isMountedRef.current && robotRef.current === currentRobot,
         });
 
         if (!applied) return;
@@ -694,6 +716,9 @@ export function useRobotLoader({
 
                 const finalizeLoadedRobot = (loadedRobot: THREE.Object3D) => {
                     if (abortController.aborted || !isMountedRef.current) {
+                        if (robotRef.current !== loadedRobot) {
+                            disposeObject3D(loadedRobot, true, SHARED_MATERIALS);
+                        }
                         return;
                     }
 
@@ -705,7 +730,6 @@ export function useRobotLoader({
                             disposeTempMaterialMap(materials);
                         }
 
-                        processCapsuleGeometries(loadedRobot, urdfContent);
                     }
 
                     enhanceMaterials(loadedRobot);
@@ -725,6 +749,16 @@ export function useRobotLoader({
 
                         if (child.isURDFCollider) {
                             child.visible = showCollisionRef.current;
+                            if (parentLink) {
+                                markCollisionObject(child, parentLink.name);
+                            } else {
+                                child.traverse((inner: any) => {
+                                    if (!inner.isMesh) return;
+                                    inner.userData.isCollisionMesh = true;
+                                    inner.material = collisionBaseMaterial;
+                                    inner.renderOrder = 999;
+                                });
+                            }
                             child.traverse((inner: any) => {
                                 if (!inner.isMesh) return;
 

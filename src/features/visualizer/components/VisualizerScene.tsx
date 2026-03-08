@@ -1,8 +1,8 @@
 import React from 'react';
 import * as THREE from 'three';
-import type { RobotState } from '@/types';
+import type { RobotState, UrdfJoint } from '@/types';
 import type { Language } from '@/shared/i18n';
-import { UnifiedTransformControls } from '@/shared/components/3d';
+import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { RobotNode } from './nodes';
 import { JointTransformControls } from './controls';
 import type { VisualizerController } from '../hooks/useVisualizerController';
@@ -47,6 +47,19 @@ export const VisualizerScene = React.memo(({
     transformControlsState,
     handleCollisionTransformEnd,
   } = controller;
+  const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
+    const grouped: Record<string, UrdfJoint[]> = {};
+
+    Object.values(robot.joints).forEach((joint) => {
+      if (!grouped[joint.parentLinkId]) {
+        grouped[joint.parentLinkId] = [];
+      }
+
+      grouped[joint.parentLinkId].push(joint);
+    });
+
+    return grouped;
+  }, [robot.joints]);
 
   return (
     <>
@@ -76,6 +89,7 @@ export const VisualizerScene = React.memo(({
           depth={0}
           assets={assets}
           lang={lang}
+          childJointsByParent={childJointsByParent}
           onRegisterJointPivot={handleRegisterJointPivot}
           onRegisterCollisionRef={handleRegisterCollisionRef}
         />
@@ -101,7 +115,7 @@ export const VisualizerScene = React.memo(({
               ref={collisionTransformControlRef}
               object={selectedCollisionRef}
               mode={state.transformMode === 'select' ? 'translate' : state.transformMode}
-              size={0.7}
+              size={VISUALIZER_UNIFIED_GIZMO_SIZE}
               space="local"
               onMouseUp={handleCollisionTransformEnd}
             />

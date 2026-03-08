@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { UnifiedTransformControls } from '@/shared/components/3d';
 import type { JointInteractionProps } from '../types';
 
-export const JointInteraction: React.FC<JointInteractionProps> = ({ joint, value, onChange, onCommit }) => {
+export const JointInteraction: React.FC<JointInteractionProps> = ({ joint, value, onChange, onCommit, setIsDragging }) => {
     const transformRef = useRef<any>(null);
     const dummyRef = useRef<THREE.Object3D>(new THREE.Object3D());
     const lastRotation = useRef<number>(value);
@@ -84,6 +84,12 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({ joint, value
         invalidate();
     }, [updateDummyTransform, invalidate]);
 
+    useEffect(() => {
+        return () => {
+            setIsDragging?.(false);
+        };
+    }, [setIsDragging]);
+
     const handleChange = useCallback(() => {
         if (!dummyRef.current || !isDragging.current) return;
 
@@ -152,8 +158,15 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({ joint, value
                 showZ={rotationAxis === 'Z'}
                 size={1.2}
                 space="local"
-                onMouseDown={() => { isDragging.current = true; }}
-                onMouseUp={() => { isDragging.current = false; if (onCommit) onCommit(lastRotation.current); }}
+                onMouseDown={() => {
+                    isDragging.current = true;
+                    setIsDragging?.(true);
+                }}
+                onMouseUp={() => {
+                    isDragging.current = false;
+                    setIsDragging?.(false);
+                    if (onCommit) onCommit(lastRotation.current);
+                }}
                 onObjectChange={handleChange}
             />
         </>

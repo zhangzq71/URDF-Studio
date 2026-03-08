@@ -94,6 +94,12 @@ export const collisionHighlightMaterial = new THREE.MeshStandardMaterial({
     depthTest: false,
     depthWrite: false,
 });
+highlightMaterial.userData.isSharedMaterial = true;
+highlightMaterial.userData.isHighlightMaterial = true;
+highlightFaceMaterial.userData.isSharedMaterial = true;
+highlightFaceMaterial.userData.isHighlightMaterial = true;
+collisionHighlightMaterial.userData.isSharedMaterial = true;
+collisionHighlightMaterial.userData.isHighlightMaterial = true;
 
 export const collisionBaseMaterial = new THREE.MeshStandardMaterial({
     color: 0xa855f7, // Purple-500

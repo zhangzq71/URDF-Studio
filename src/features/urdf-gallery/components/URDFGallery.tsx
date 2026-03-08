@@ -277,7 +277,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       const path = parts.slice(4).join('/');
 
       if (!(window as any).showDirectoryPicker) {
-        throw new Error(lang === 'zh' ? '您的浏览器不支持文件系统访问 API' : 'Your browser does not support File System Access API');
+        throw new Error(t.galleryFileSystemAccessUnsupported);
       }
       const dirHandle = await (window as any).showDirectoryPicker({
         mode: 'readwrite',
@@ -287,7 +287,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
       const response = await fetch(apiUrl);
       if (!response.ok) {
-        throw new Error(lang === 'zh' ? 'GitHub API 请求失败' : 'GitHub API request failed');
+        throw new Error(t.galleryGithubApiRequestFailed);
       }
       const contents = await response.json();
 
@@ -312,16 +312,16 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       await downloadRecursive(Array.isArray(contents) ? contents : [contents], dirHandle);
       
       setIsDownloading(false);
-      if (confirm(lang === 'zh' ? '下载完成！是否立即从本地文件夹加载该模型？' : 'Download complete! Would you like to load the model from the local folder now?')) {
+      if (confirm(t.downloadComplete)) {
         onClose();
-        alert(lang === 'zh' ? '请点击主界面的"导入本地 URDF"并选择刚才下载的文件夹。' : 'Please click "Import Local URDF" on the main screen and select the folder you just downloaded.');
+        alert(t.loadFromLocal);
       }
       
     } catch (err: any) {
       setIsDownloading(false);
       console.error('Github download failed:', err);
       if (err.name !== 'AbortError') {
-        alert(lang === 'zh' ? `下载失败: ${err.message}` : `Download failed: ${err.message}`);
+        alert(t.galleryDownloadFailed.replace('{message}', err.message));
       }
     }
   };
@@ -382,7 +382,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
     } catch (err) {
       setIsDownloading(false);
       console.error('Failed to import model:', err);
-      alert(lang === 'zh' ? '加载模型文件失败，请确保 manifest.json 存在。' : 'Failed to load model files. Please ensure manifest.json exists.');
+      alert(t.loadFailed);
     }
   };
 

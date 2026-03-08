@@ -1,6 +1,6 @@
 import React, { memo, Suspense, useEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { Theme } from '@/types';
 import {
@@ -8,6 +8,7 @@ import {
   SnapshotManager,
   ReferenceGrid,
   CanvasResizeSync,
+  NeutralStudioEnvironment,
   WORKSPACE_CANVAS_BACKGROUND,
   WorldOriginAxes,
 } from '@/shared/components/3d';
@@ -70,10 +71,7 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
         <OrbitControls makeDefault enableDamping={false} />
         {/* Pass effective theme to SceneLighting and ReferenceGrid */}
         <SceneLighting theme={effectiveTheme} />
-        <Environment
-          files="/potsdamer_platz_1k.hdr"
-          environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0}
-        />
+        <NeutralStudioEnvironment intensity={effectiveTheme === 'light' ? 0.38 : 0.46} />
         <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
 
         {/* Render robot and controls passed as children */}

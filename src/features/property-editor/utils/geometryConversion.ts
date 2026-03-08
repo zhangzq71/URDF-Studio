@@ -6,7 +6,8 @@
 import * as THREE from 'three';
 import type { RobotState } from '@/types';
 import { GeometryType } from '@/types';
-import { disposeObject3D } from '@/features/urdf-viewer/utils/dispose';
+import { createLoadingManager, createMeshLoader } from '@/core/loaders/meshLoader';
+import { disposeObject3D } from '@/shared/utils/three/dispose';
 
 // Reusable THREE objects - avoid allocation in render/compute paths
 const _tempVec3A = new THREE.Vector3();
@@ -185,7 +186,6 @@ export async function computeMeshAnalysisFromAssets(
   meshScale?: { x: number; y: number; z: number }
 ): Promise<MeshAnalysis | null> {
   try {
-    const { createLoadingManager, createMeshLoader } = await import('@/core/loaders/meshLoader');
     const manager = createLoadingManager(assets);
     const meshLoader = createMeshLoader(assets, manager);
 
@@ -424,6 +424,29 @@ function subtractBlockedInterval(intervals: ScalarInterval[], blockedStart: numb
   return nextIntervals.filter((interval) => interval.end - interval.start > 1e-8);
 }
 
+function mergeIntervals(intervals: ScalarInterval[]): ScalarInterval[] {
+  if (intervals.length === 0) return [];
+
+  const sorted = [...intervals].sort((left, right) =>
+    left.start - right.start || left.end - right.end
+  );
+  const merged: ScalarInterval[] = [{ ...sorted[0] }];
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    const last = merged[merged.length - 1];
+
+    if (current.start <= last.end + 1e-8) {
+      last.end = Math.max(last.end, current.end);
+      continue;
+    }
+
+    merged.push({ ...current });
+  }
+
+  return merged;
+}
+
 function choosePreferredInterval(intervals: ScalarInterval[]): ScalarInterval | null {
   if (intervals.length === 0) return null;
 
@@ -502,33 +525,19 @@ function computeBroadPhaseRadius(geometry: GeomData): number | null {
   }
 }
 
-function applySiblingCollisionClearance(
-  primitiveRadius: number,
-  primitiveLength: number,
-  axisInLinkSpace: Point3,
-  newType: GeometryType,
+function collectSiblingBroadPhaseSpheres(
   siblingGeometries: GeomData[] | undefined,
-  centerOrigin: ConversionResult['origin'],
-): { radius: number; length: number } {
-  if ((newType !== GeometryType.CYLINDER && newType !== GeometryType.CAPSULE) || !siblingGeometries?.length) {
-    return {
-      radius: primitiveRadius,
-      length: primitiveLength,
-    };
+): { center: THREE.Vector3; radius: number }[] {
+  if (!siblingGeometries?.length) {
+    return [];
   }
 
-  const axis = canonicalizeAxis(axisInLinkSpace);
-  if (!axis) {
-    return {
-      radius: primitiveRadius,
-      length: primitiveLength,
-    };
-  }
-
-  const siblingSpheres = siblingGeometries
+  return siblingGeometries
     .map((geometry) => {
       const radius = computeBroadPhaseRadius(geometry);
-      if (!radius || radius <= 1e-8) return null;
+      if (!radius || radius <= 1e-8) {
+        return null;
+      }
 
       const origin = normalizeOrigin(geometry.origin);
       return {
@@ -537,11 +546,191 @@ function applySiblingCollisionClearance(
       };
     })
     .filter((sphere): sphere is { center: THREE.Vector3; radius: number } => sphere !== null);
+}
 
+function buildBlockedCenterIntervals(
+  candidateCenter: THREE.Vector3,
+  axisVector: THREE.Vector3,
+  primitiveRadius: number,
+  siblingSpheres: { center: THREE.Vector3; radius: number }[],
+  clearance: number,
+): ScalarInterval[] {
+  const blockedIntervals: ScalarInterval[] = [];
+
+  siblingSpheres.forEach((sibling) => {
+    _tempVec3A.copy(sibling.center).sub(candidateCenter);
+    const projection = _tempVec3A.dot(axisVector);
+    _tempVec3B.copy(axisVector).multiplyScalar(projection);
+    _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+
+    const radialDistance = _tempVec3C.length();
+    const combinedRadius = primitiveRadius + sibling.radius + clearance;
+    if (radialDistance >= combinedRadius) {
+      return;
+    }
+
+    const axialPadding = Math.sqrt(Math.max(combinedRadius * combinedRadius - radialDistance * radialDistance, 0));
+    blockedIntervals.push({
+      start: projection - axialPadding,
+      end: projection + axialPadding,
+    });
+  });
+
+  return mergeIntervals(blockedIntervals);
+}
+
+function findNearestSafeCenterShift(
+  candidateCenter: THREE.Vector3,
+  axisVector: THREE.Vector3,
+  primitiveRadius: number,
+  siblingSpheres: { center: THREE.Vector3; radius: number }[],
+  clearance: number,
+): number {
+  const blockedIntervals = buildBlockedCenterIntervals(
+    candidateCenter,
+    axisVector,
+    primitiveRadius,
+    siblingSpheres,
+    clearance,
+  );
+
+  const blockingInterval = blockedIntervals.find((interval) =>
+    interval.start <= 0 + 1e-8 && interval.end >= 0 - 1e-8
+  );
+
+  if (!blockingInterval) {
+    return 0;
+  }
+
+  const leftMagnitude = Math.abs(blockingInterval.start);
+  const rightMagnitude = Math.abs(blockingInterval.end);
+
+  if (leftMagnitude < rightMagnitude - 1e-8) {
+    return blockingInterval.start;
+  }
+
+  if (rightMagnitude < leftMagnitude - 1e-8) {
+    return blockingInterval.end;
+  }
+
+  return blockingInterval.end;
+}
+
+function resolveAvailableSweepInterval(
+  candidateCenter: THREE.Vector3,
+  axisVector: THREE.Vector3,
+  sweepHalfExtent: number,
+  primitiveRadius: number,
+  siblingSpheres: { center: THREE.Vector3; radius: number }[],
+  clearance: number,
+): { centerShift: number; sweepHalfExtent: number } | null {
+  if (sweepHalfExtent <= 1e-8) {
+    const hasOverlapAtCenter = siblingSpheres.some((sibling) => {
+      _tempVec3A.copy(sibling.center).sub(candidateCenter);
+      const projection = _tempVec3A.dot(axisVector);
+      _tempVec3B.copy(axisVector).multiplyScalar(projection);
+      _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+      const radialDistance = _tempVec3C.length();
+      return radialDistance + 1e-8 < primitiveRadius + sibling.radius + clearance
+        && Math.abs(projection) <= 1e-8;
+    });
+
+    return hasOverlapAtCenter
+      ? null
+      : {
+          centerShift: 0,
+          sweepHalfExtent: 0,
+        };
+  }
+
+  let intervals: ScalarInterval[] = [{ start: -sweepHalfExtent, end: sweepHalfExtent }];
+
+  siblingSpheres.forEach((sibling) => {
+    _tempVec3A.copy(sibling.center).sub(candidateCenter);
+    const projection = _tempVec3A.dot(axisVector);
+    _tempVec3B.copy(axisVector).multiplyScalar(projection);
+    _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+
+    const radialDistance = _tempVec3C.length();
+    const combinedRadius = primitiveRadius + sibling.radius + clearance;
+    if (radialDistance >= combinedRadius) {
+      return;
+    }
+
+    const axialPadding = Math.sqrt(Math.max(combinedRadius * combinedRadius - radialDistance * radialDistance, 0));
+    intervals = subtractBlockedInterval(intervals, projection - axialPadding, projection + axialPadding);
+  });
+
+  const preferredInterval = choosePreferredInterval(intervals);
+  if (!preferredInterval) {
+    return null;
+  }
+
+  return {
+    centerShift: (preferredInterval.start + preferredInterval.end) / 2,
+    sweepHalfExtent: Math.max((preferredInterval.end - preferredInterval.start) / 2, 0),
+  };
+}
+
+function collectRadiusCandidates(
+  primitiveRadius: number,
+  candidateCenter: THREE.Vector3,
+  axisVector: THREE.Vector3,
+  siblingSpheres: { center: THREE.Vector3; radius: number }[],
+  clearance: number,
+  minRadius: number,
+): number[] {
+  const candidates = new Set<number>([
+    primitiveRadius,
+    minRadius,
+  ]);
+
+  siblingSpheres.forEach((sibling) => {
+    _tempVec3A.copy(sibling.center).sub(candidateCenter);
+    const projection = _tempVec3A.dot(axisVector);
+    _tempVec3B.copy(axisVector).multiplyScalar(projection);
+    _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+
+    const radialDistance = _tempVec3C.length();
+    candidates.add(Math.max(radialDistance - sibling.radius - clearance, minRadius));
+  });
+
+  return Array.from(candidates)
+    .filter((value) => Number.isFinite(value) && value >= minRadius)
+    .sort((left, right) => right - left);
+}
+
+function applySiblingCollisionClearance(
+  primitiveRadius: number,
+  primitiveLength: number,
+  axisInLinkSpace: Point3,
+  newType: GeometryType,
+  siblingGeometries: GeomData[] | undefined,
+  centerOrigin: ConversionResult['origin'],
+): { radius: number; length: number; centerShift: number } {
+  if ((newType !== GeometryType.CYLINDER && newType !== GeometryType.CAPSULE) || !siblingGeometries?.length) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+      centerShift: 0,
+    };
+  }
+
+  const axis = canonicalizeAxis(axisInLinkSpace);
+  if (!axis) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+      centerShift: 0,
+    };
+  }
+
+  const siblingSpheres = collectSiblingBroadPhaseSpheres(siblingGeometries);
   if (siblingSpheres.length === 0) {
     return {
       radius: primitiveRadius,
       length: primitiveLength,
+      centerShift: 0,
     };
   }
 
@@ -551,54 +740,210 @@ function applySiblingCollisionClearance(
     centerOrigin.xyz.z,
   );
   const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
-
-  let radius = toPositive(primitiveRadius, 0.05);
-  let segmentHalfExtent = newType === GeometryType.CAPSULE
-    ? Math.max(toPositive(primitiveLength, 0.1) / 2 - radius, 0)
-    : toPositive(primitiveLength, 0.1) / 2;
+  const radius = toPositive(primitiveRadius, 0.05);
   const minSize = 1e-4;
   const clearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+  const minRadius = Math.min(Math.max(radius * 0.15, minSize), radius);
+  const radiusCandidates = collectRadiusCandidates(
+    radius,
+    candidateCenter,
+    axisVector,
+    siblingSpheres,
+    clearance,
+    minRadius,
+  );
 
-  for (let iteration = 0; iteration < 4; iteration += 1) {
-    let nextRadius = radius;
-    let nextSegmentHalfExtent = segmentHalfExtent;
+  let bestCandidate: { radius: number; sweepHalfExtent: number; centerShift: number; volume: number } | null = null;
 
-    siblingSpheres.forEach((sibling) => {
-      _tempVec3A.copy(sibling.center).sub(candidateCenter);
-      const projection = _tempVec3A.dot(axisVector);
-      _tempVec3B.copy(axisVector).multiplyScalar(projection);
-      _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+  radiusCandidates.forEach((radiusCandidate) => {
+    const sweepHalfExtent = computeSweepHalfExtent(radiusCandidate, primitiveLength, newType);
+    const safeInterval = resolveAvailableSweepInterval(
+      candidateCenter,
+      axisVector,
+      sweepHalfExtent,
+      radiusCandidate,
+      siblingSpheres,
+      clearance,
+    );
 
-      const radialDistance = _tempVec3C.length();
-      const combinedRadius = radius + sibling.radius + clearance;
+    if (!safeInterval) {
+      return;
+    }
 
-      if (Math.abs(projection) <= segmentHalfExtent + 1e-8) {
-        nextRadius = Math.min(nextRadius, Math.max(radialDistance - sibling.radius - clearance, 0));
-      }
+    const length = composePrimitiveLength(safeInterval.sweepHalfExtent, radiusCandidate, newType);
+    const volume = computePrimitiveVolume(newType, radiusCandidate, length);
+    if (!Number.isFinite(volume) || volume <= 0) {
+      return;
+    }
 
-      if (radialDistance >= combinedRadius) {
+    const nextCandidate = {
+      radius: radiusCandidate,
+      sweepHalfExtent: safeInterval.sweepHalfExtent,
+      centerShift: safeInterval.centerShift,
+      volume,
+    };
+
+    if (!bestCandidate) {
+      bestCandidate = nextCandidate;
+      return;
+    }
+
+    const volumeTolerance = Math.max(bestCandidate.volume * 0.01, 1e-8);
+    if (nextCandidate.volume > bestCandidate.volume + volumeTolerance) {
+      bestCandidate = nextCandidate;
+      return;
+    }
+
+    if (Math.abs(nextCandidate.volume - bestCandidate.volume) <= volumeTolerance) {
+      if (nextCandidate.sweepHalfExtent > bestCandidate.sweepHalfExtent + 1e-8) {
+        bestCandidate = nextCandidate;
         return;
       }
 
-      const axialPadding = Math.sqrt(Math.max(combinedRadius * combinedRadius - radialDistance * radialDistance, 0));
-      nextSegmentHalfExtent = Math.min(
-        nextSegmentHalfExtent,
-        Math.max(0, Math.abs(projection) - axialPadding),
-      );
-    });
+      if (
+        Math.abs(nextCandidate.sweepHalfExtent - bestCandidate.sweepHalfExtent) <= 1e-8
+        && Math.abs(nextCandidate.centerShift) < Math.abs(bestCandidate.centerShift) - 1e-8
+      ) {
+        bestCandidate = nextCandidate;
+      }
+    }
+  });
 
-    radius = Math.max(Math.min(radius, nextRadius), minSize);
-    segmentHalfExtent = newType === GeometryType.CAPSULE
-      ? Math.max(nextSegmentHalfExtent, 0)
-      : Math.max(nextSegmentHalfExtent, minSize);
+  if (bestCandidate) {
+    return {
+      radius: bestCandidate.radius,
+      length: composePrimitiveLength(bestCandidate.sweepHalfExtent, bestCandidate.radius, newType),
+      centerShift: bestCandidate.centerShift,
+    };
+  }
+
+  let fallbackCandidate: { radius: number; length: number; centerShift: number; volume: number } | null = null;
+
+  radiusCandidates.forEach((radiusCandidate) => {
+    const centerShift = findNearestSafeCenterShift(
+      candidateCenter,
+      axisVector,
+      radiusCandidate,
+      siblingSpheres,
+      clearance,
+    );
+    const length = composePrimitiveLength(newType === GeometryType.CAPSULE ? 0 : minSize / 2, radiusCandidate, newType);
+    const volume = computePrimitiveVolume(newType, radiusCandidate, length);
+    if (!Number.isFinite(volume) || volume <= 0) {
+      return;
+    }
+
+    const nextCandidate = {
+      radius: radiusCandidate,
+      length,
+      centerShift,
+      volume,
+    };
+
+    if (!fallbackCandidate) {
+      fallbackCandidate = nextCandidate;
+      return;
+    }
+
+    const shiftDelta = Math.abs(nextCandidate.centerShift) - Math.abs(fallbackCandidate.centerShift);
+    if (shiftDelta < -1e-8) {
+      fallbackCandidate = nextCandidate;
+      return;
+    }
+
+    if (Math.abs(shiftDelta) <= 1e-8) {
+      const volumeTolerance = Math.max(fallbackCandidate.volume * 0.01, 1e-8);
+      if (nextCandidate.volume > fallbackCandidate.volume + volumeTolerance) {
+        fallbackCandidate = nextCandidate;
+      }
+    }
+  });
+
+  if (fallbackCandidate) {
+    return {
+      radius: fallbackCandidate.radius,
+      length: fallbackCandidate.length,
+      centerShift: fallbackCandidate.centerShift,
+    };
   }
 
   return {
     radius,
-    length: newType === GeometryType.CAPSULE
-      ? segmentHalfExtent * 2 + radius * 2
-      : segmentHalfExtent * 2,
+    length: composePrimitiveLength(newType === GeometryType.CAPSULE ? 0 : minSize / 2, radius, newType),
+    centerShift: 0,
   };
+}
+
+function applySiblingBoxClearance(
+  boxDimensions: { x: number; y: number; z: number },
+  origin: ConversionResult['origin'],
+  siblingGeometries: GeomData[] | undefined,
+): ConversionResult['origin'] {
+  if (!siblingGeometries?.length) {
+    return origin;
+  }
+
+  const siblingSpheres = collectSiblingBroadPhaseSpheres(siblingGeometries);
+  if (siblingSpheres.length === 0) {
+    return origin;
+  }
+
+  const boxRadius = computeBroadPhaseRadius({
+    type: GeometryType.BOX,
+    dimensions: boxDimensions,
+    origin,
+  });
+  if (!boxRadius || boxRadius <= 1e-8) {
+    return origin;
+  }
+
+  const center = new THREE.Vector3(origin.xyz.x, origin.xyz.y, origin.xyz.z);
+  const clearance = Math.min(Math.max(boxRadius * 0.05, 0.002), 0.01);
+  const axisPriority = ([
+    { axis: 'x' as const, size: boxDimensions.x },
+    { axis: 'y' as const, size: boxDimensions.y },
+    { axis: 'z' as const, size: boxDimensions.z },
+  ]).sort((left, right) => right.size - left.size);
+
+  let bestShift: { localAxis: Point3; centerShift: number } | null = null;
+
+  axisPriority.forEach(({ axis }) => {
+    const localAxis = getAxisVectorForPrimaryAxis(axis);
+    const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
+    const centerShift = findNearestSafeCenterShift(
+      center,
+      _tempVec3A.set(axisInLinkSpace.x, axisInLinkSpace.y, axisInLinkSpace.z).normalize(),
+      boxRadius,
+      siblingSpheres,
+      clearance,
+    );
+
+    if (!bestShift) {
+      bestShift = { localAxis, centerShift };
+      return;
+    }
+
+    const nextShiftMagnitude = Math.abs(centerShift);
+    const bestShiftMagnitude = Math.abs(bestShift.centerShift);
+    if (nextShiftMagnitude < bestShiftMagnitude - 1e-8) {
+      bestShift = { localAxis, centerShift };
+      return;
+    }
+
+    if (Math.abs(nextShiftMagnitude - bestShiftMagnitude) <= 1e-8 && axis === axisPriority[0].axis) {
+      bestShift = { localAxis, centerShift };
+    }
+  });
+
+  if (!bestShift || Math.abs(bestShift.centerShift) <= 1e-8) {
+    return origin;
+  }
+
+  return offsetOriginByLocalVector(origin, {
+    x: bestShift.localAxis.x * bestShift.centerShift,
+    y: bestShift.localAxis.y * bestShift.centerShift,
+    z: bestShift.localAxis.z * bestShift.centerShift,
+  });
 }
 
 function addCandidateAxis(axes: Point3[], axis: Point3): void {
@@ -1238,6 +1583,13 @@ function selectBestPrimitiveFitCandidate(
         siblingGeometries,
         centeredOrigin,
       );
+      const shiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(centeredOrigin, {
+            x: fit.axis.x * clearanceAdjustedSize.centerShift,
+            y: fit.axis.y * clearanceAdjustedSize.centerShift,
+            z: fit.axis.z * clearanceAdjustedSize.centerShift,
+          })
+        : centeredOrigin;
       const radius = toPositive(clearanceAdjustedSize.radius, 0.05);
       const length = toPositive(
         newType === GeometryType.CAPSULE
@@ -1248,7 +1600,7 @@ function selectBestPrimitiveFitCandidate(
 
       return {
         fit,
-        centeredOrigin,
+        centeredOrigin: shiftedOrigin,
         radius,
         length,
         adjustedVolume: computePrimitiveVolume(newType, radius, length),
@@ -1347,6 +1699,18 @@ export function convertGeometryType(
     const targetVolume = computeBoxVolume(meshAnalysis.bounds);
 
     if (newType === GeometryType.BOX) {
+      const boxOrigin = context?.siblingGeometries?.length
+        ? applySiblingBoxClearance(
+            {
+              x: toPositive(bx, DEFAULT_DIMENSIONS.x),
+              y: toPositive(by, DEFAULT_DIMENSIONS.y),
+              z: toPositive(bz, DEFAULT_DIMENSIONS.z),
+            },
+            centeredOrigin,
+            context.siblingGeometries,
+          )
+        : centeredOrigin;
+
       return {
         type: newType,
         dimensions: {
@@ -1354,7 +1718,7 @@ export function convertGeometryType(
           y: toPositive(by, DEFAULT_DIMENSIONS.y),
           z: toPositive(bz, DEFAULT_DIMENSIONS.z),
         },
-        origin: centeredOrigin,
+        origin: boxOrigin,
       };
     }
 
@@ -1369,11 +1733,12 @@ export function convertGeometryType(
 
     if (newType === GeometryType.CYLINDER) {
       const primaryAxis = getPrimaryAxis(meshAnalysis.bounds);
+      const localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
       const { length } = getCrossSectionDimensions(meshAnalysis.bounds, primaryAxis);
       const rawRadius = computeEquivalentCylinderRadius(length, targetVolume);
       const radius = toPositive(rawRadius, 0.05);
       const safeLength = toPositive(length, 0.5);
-      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, getAxisVectorForPrimaryAxis(primaryAxis));
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
       const clearanceAdjustedSize = applySiblingCollisionClearance(
         radius,
         safeLength,
@@ -1382,6 +1747,13 @@ export function convertGeometryType(
         context?.siblingGeometries,
         centeredOrigin,
       );
+      const shiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(centeredOrigin, {
+            x: localAxis.x * clearanceAdjustedSize.centerShift,
+            y: localAxis.y * clearanceAdjustedSize.centerShift,
+            z: localAxis.z * clearanceAdjustedSize.centerShift,
+          })
+        : centeredOrigin;
 
       return {
         type: newType,
@@ -1390,17 +1762,18 @@ export function convertGeometryType(
           y: clearanceAdjustedSize.length,
           z: clearanceAdjustedSize.radius,
         },
-        origin: alignOriginToPrimaryAxis(centeredOrigin, primaryAxis),
+        origin: alignOriginToPrimaryAxis(shiftedOrigin, primaryAxis),
       };
     }
 
     if (newType === GeometryType.CAPSULE) {
       const primaryAxis = getPrimaryAxis(meshAnalysis.bounds);
+      const localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
       const { length } = getCrossSectionDimensions(meshAnalysis.bounds, primaryAxis);
       const safeLength = toPositive(length, 0.5);
       const rawRadius = computeEquivalentCapsuleRadius(safeLength, targetVolume);
       const radius = toPositive(rawRadius, 0.05);
-      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, getAxisVectorForPrimaryAxis(primaryAxis));
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
       const clearanceAdjustedSize = applySiblingCollisionClearance(
         radius,
         Math.max(safeLength, radius * 2),
@@ -1409,6 +1782,13 @@ export function convertGeometryType(
         context?.siblingGeometries,
         centeredOrigin,
       );
+      const shiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(centeredOrigin, {
+            x: localAxis.x * clearanceAdjustedSize.centerShift,
+            y: localAxis.y * clearanceAdjustedSize.centerShift,
+            z: localAxis.z * clearanceAdjustedSize.centerShift,
+          })
+        : centeredOrigin;
 
       return {
         type: newType,
@@ -1417,7 +1797,7 @@ export function convertGeometryType(
           y: Math.max(clearanceAdjustedSize.length, clearanceAdjustedSize.radius * 2),
           z: clearanceAdjustedSize.radius,
         },
-        origin: alignOriginToPrimaryAxis(centeredOrigin, primaryAxis),
+        origin: alignOriginToPrimaryAxis(shiftedOrigin, primaryAxis),
       };
     }
   }
@@ -1426,22 +1806,57 @@ export function convertGeometryType(
   if (newType === GeometryType.CYLINDER || newType === GeometryType.CAPSULE) {
     let radius = 0.05;
     let length = 0.5;
+    let localAxis: Point3 = { x: 0, y: 0, z: 1 };
+    let nextOrigin = origin;
+    let primaryAxis: MeshPrimaryAxis | null = null;
 
     if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
       radius = toPositive(currentDims.x, 0.05);
       length = toPositive(currentDims.y, 0.5);
     } else if (currentType === GeometryType.BOX) {
-      radius = toPositive(Math.max(currentDims.x, currentDims.y) / 2, 0.05);
-      length = toPositive(currentDims.z, 0.5);
+      primaryAxis = getPrimaryAxis(currentDims);
+      localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
+      const crossSection = getCrossSectionDimensions(currentDims, primaryAxis);
+      radius = toPositive(Math.max(crossSection.crossA, crossSection.crossB) / 2, 0.05);
+      length = toPositive(crossSection.length, 0.5);
     } else if (currentType === GeometryType.SPHERE) {
       radius = toPositive(currentDims.x, 0.05);
       length = radius * 2;
     }
 
+    if (context?.siblingGeometries?.length) {
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
+      const clearanceAdjustedSize = applySiblingCollisionClearance(
+        radius,
+        length,
+        axisInLinkSpace,
+        newType,
+        context.siblingGeometries,
+        origin,
+      );
+      radius = clearanceAdjustedSize.radius;
+      length = clearanceAdjustedSize.length;
+      nextOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(origin, {
+            x: localAxis.x * clearanceAdjustedSize.centerShift,
+            y: localAxis.y * clearanceAdjustedSize.centerShift,
+            z: localAxis.z * clearanceAdjustedSize.centerShift,
+          })
+        : origin;
+    }
+
+    if (primaryAxis) {
+      nextOrigin = alignOriginToPrimaryAxis(nextOrigin, primaryAxis);
+    }
+
     return {
       type: newType,
-      dimensions: { x: radius, y: length, z: radius },
-      origin,
+      dimensions: {
+        x: radius,
+        y: newType === GeometryType.CAPSULE ? Math.max(length, radius * 2) : length,
+        z: radius,
+      },
+      origin: nextOrigin,
     };
   }
 
@@ -1465,16 +1880,20 @@ export function convertGeometryType(
 
   if (newType === GeometryType.BOX) {
     let newDims = { ...currentDims };
+    let nextOrigin = origin;
     if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
       newDims = { x: currentDims.x * 2, y: currentDims.x * 2, z: currentDims.y };
     } else if (currentType === GeometryType.SPHERE) {
       const diameter = currentDims.x * 2;
       newDims = { x: diameter, y: diameter, z: diameter };
     }
+    if (context?.siblingGeometries?.length) {
+      nextOrigin = applySiblingBoxClearance(newDims, origin, context.siblingGeometries);
+    }
     return {
       type: newType,
       dimensions: newDims,
-      origin,
+      origin: nextOrigin,
     };
   }
 

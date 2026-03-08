@@ -94,6 +94,7 @@ export const URDFViewerScene = ({
           value={controller.jointAngles[controller.activeJoint] || 0}
           onChange={(value) => controller.handleJointAngleChange(controller.activeJoint!, value)}
           onCommit={(value) => controller.handleJointChangeCommit(controller.activeJoint!, value)}
+          setIsDragging={controller.setIsDragging}
         />
       )}
     </>

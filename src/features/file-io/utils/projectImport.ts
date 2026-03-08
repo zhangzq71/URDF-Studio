@@ -7,7 +7,7 @@ import {
   JointType,
   UrdfJoint
 } from '@/types';
-import type { Language } from '@/shared/i18n';
+import { translations, type Language } from '@/shared/i18n';
 import { ProjectManifest } from './projectExport';
 
 export interface ImportResult {
@@ -100,16 +100,13 @@ function parseBridgeXml(xmlContent: string): Record<string, BridgeJoint> {
  * Main function to import the project from a .usp (ZIP) file
  */
 export async function importProject(file: File, lang: Language = 'en'): Promise<ImportResult> {
+  const t = translations[lang];
   const zip = await JSZip.loadAsync(file);
   
   // 1. Read Manifest
   const manifestContent = await zip.file('project.json')?.async('string');
   if (!manifestContent) {
-    throw new Error(
-      lang === 'zh'
-        ? '无效的工程文件：缺少 project.json'
-        : 'Invalid project file: project.json not found'
-    );
+    throw new Error(t.projectImportMissingProjectJson);
   }
   const manifest = JSON.parse(manifestContent) as ProjectManifest;
 
