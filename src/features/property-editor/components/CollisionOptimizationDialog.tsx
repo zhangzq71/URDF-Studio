@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   Boxes,
   CheckSquare2,
-  Info,
   Loader2,
   MousePointerClick,
   RefreshCw,
@@ -17,6 +16,7 @@ import { useDraggableWindow } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 import { GeometryType } from '@/types';
 import type {
+  CollisionOptimizationBaseAnalysis,
   CollisionOptimizationSource,
   CollisionOptimizationScope,
   CylinderOptimizationStrategy,
@@ -24,10 +24,10 @@ import type {
   RodBoxOptimizationStrategy,
 } from '../utils/collisionOptimization';
 import {
-  analyzeCollisionOptimization,
+  buildCollisionOptimizationAnalysis,
   buildCollisionOptimizationOperations,
-  collectCollisionTargets,
   countSameLinkOverlapWarnings,
+  prepareCollisionOptimizationBaseAnalysis,
   type CollisionOptimizationCandidate,
   type CollisionOptimizationOperation,
   type CollisionTargetRef,
@@ -186,14 +186,14 @@ function StrategyField({
   children,
 }: {
   label: string;
-  desc: string;
+  desc?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2.5">
       <div className="text-[11px] font-medium leading-tight text-text-primary">{label}</div>
-      <div className="mt-0.5 text-[10px] leading-snug text-text-tertiary">{desc}</div>
-      <div className="mt-2 flex flex-wrap gap-1">{children}</div>
+      {desc ? <div className="mt-0.5 text-[10px] leading-snug text-text-tertiary">{desc}</div> : null}
+      <div className={`${desc ? 'mt-2' : 'mt-1.5'} flex flex-wrap gap-1`}>{children}</div>
     </div>
   );
 }
@@ -210,7 +210,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const t = translations[lang];
   const copy = {
     title: t.collisionOptimizerDialog,
-    subtitle: t.collisionOptimizerDesc,
     scope: t.collisionOptimizerScope,
     scopeAll: t.collisionOptimizerScopeAll,
     scopeMesh: t.collisionOptimizerScopeMesh,
@@ -226,11 +225,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     strategyCylinder: t.cylinder,
     strategyCapsule: t.capsule,
     meshStrategyLabel: t.collisionOptimizerMeshStrategyLabel,
-    meshStrategyDesc: t.collisionOptimizerMeshStrategyDesc,
     cylinderStrategyLabel: t.collisionOptimizerCylinderStrategyLabel,
-    cylinderStrategyDesc: t.collisionOptimizerCylinderStrategyDesc,
     rodBoxStrategyLabel: t.collisionOptimizerRodBoxStrategyLabel,
-    rodBoxStrategyDesc: t.collisionOptimizerRodBoxStrategyDesc,
     rules: t.collisionOptimizerRules,
     avoidSiblingOverlap: t.collisionOptimizerAvoidSiblingOverlap,
     avoidSiblingOverlapDesc: t.collisionOptimizerAvoidSiblingOverlapDesc,
@@ -238,37 +234,22 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     selectAll: t.collisionOptimizerSelectAll,
     clearAll: t.collisionOptimizerClearSelection,
     selectedCount: t.selected,
-    current: t.collisionOptimizerCurrent,
-    suggested: t.collisionOptimizerSuggested,
-    reason: t.collisionOptimizerReason,
-    status: t.collisionOptimizerStatus,
     noCandidates: t.collisionOptimizerNoSuggestion,
     noSelectedCollision: t.collisionOptimizerNoSelectedCollision,
     analyzing: t.collisionOptimizerLoading,
     apply: t.collisionOptimizerApplyAction,
-    applySummary: t.collisionOptimizerApplySummary,
     warningTitle: t.collisionOptimizerWarningTitle,
     warningBefore: t.collisionOptimizerWarningBefore,
     warningAfter: t.collisionOptimizerWarningAfter,
-    tips: t.collisionOptimizerTips,
-    tipMesh: t.collisionOptimizerTipMeshes,
-    tipCapsule: t.collisionOptimizerTipCapsules,
-    tipOverlap: t.collisionOptimizerTipClearance,
     ready: t.collisionOptimizerReady,
     disabled: t.collisionOptimizerDisabled,
     missingMeshPath: t.collisionOptimizerMissingMeshPath,
     meshAnalysisFailed: t.collisionOptimizerMeshAnalysisFailed,
     noRuleMatch: t.collisionOptimizerNoRuleMatch,
-    reasonMeshSmart: t.collisionOptimizerReasonMeshSmart,
-    reasonMeshManual: t.collisionOptimizerReasonMeshManual,
-    reasonCylinder: t.collisionOptimizerReasonCylinder,
-    reasonRodBox: t.collisionOptimizerReasonRodBox,
-    reasonRodBoxCylinder: t.collisionOptimizerReasonRodBoxCylinder,
     totalCollisions: t.collisionOptimizerStatsTotal,
     meshCollisions: t.collisionOptimizerStatsMeshes,
     eligible: t.collisionOptimizerStatsOptimizable,
     warnings: t.collisionOptimizerStatsWarnings,
-    clickToLocate: t.collisionOptimizerClickToLocate,
     collisionIndex: t.collisionOptimizerCollisionIndex,
     primary: t.collisionOptimizerPrimary,
     component: t.collisionOptimizerComponent,
@@ -280,9 +261,10 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const [rodBoxStrategy, setRodBoxStrategy] = useState<RodBoxOptimizationStrategy>('capsule');
   const [avoidSiblingOverlap, setAvoidSiblingOverlap] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(true);
-  const [analysis, setAnalysis] = useState<Awaited<ReturnType<typeof analyzeCollisionOptimization>> | null>(null);
+  const [baseAnalysis, setBaseAnalysis] = useState<CollisionOptimizationBaseAnalysis | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [stackedPanel, setStackedPanel] = useState<'candidates' | 'settings'>('candidates');
+  const hasCustomCheckedSelectionRef = useRef(false);
 
   const windowState = useDraggableWindow({
     defaultSize: { width: 1120, height: 720 },
@@ -297,33 +279,29 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const isDenseLayout = dialogWidth < 760;
 
   const selectedTargetId = useMemo(() => {
-    if (selection?.type !== 'link' || selection.subType !== 'collision' || !selection.id) {
+    if (selection?.type !== 'link' || selection.subType !== 'collision' || !selection.id || !baseAnalysis) {
       return null;
     }
 
-    const matches = collectCollisionTargets(source).filter((target) =>
+    const matches = baseAnalysis.targets.filter((target) =>
       target.linkId === selection.id && (selection.objectIndex ?? 0) === target.objectIndex
     );
 
     return matches.length === 1 ? matches[0].id : null;
-  }, [selection, source]);
+  }, [baseAnalysis, selection]);
+
+  const effectiveSelectedTargetId = scope === 'selected' ? selectedTargetId : null;
 
   useEffect(() => {
     let isMounted = true;
     setIsAnalyzing(true);
+    hasCustomCheckedSelectionRef.current = false;
+    setCheckedIds(new Set());
 
-    void analyzeCollisionOptimization(source, assets, {
-      scope,
-      meshStrategy,
-      cylinderStrategy,
-      rodBoxStrategy,
-      avoidSiblingOverlap,
-      selectedTargetId,
-    })
+    void prepareCollisionOptimizationBaseAnalysis(source, assets)
       .then((result) => {
         if (!isMounted) return;
-        setAnalysis(result);
-        setCheckedIds(new Set(result.candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id)));
+        setBaseAnalysis(result);
       })
       .finally(() => {
         if (isMounted) {
@@ -334,16 +312,37 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     return () => {
       isMounted = false;
     };
-  }, [
-    assets,
-    avoidSiblingOverlap,
-    cylinderStrategy,
-    meshStrategy,
-    rodBoxStrategy,
-    selectedTargetId,
-    scope,
-    source,
-  ]);
+  }, [assets, source]);
+
+  const analysis = useMemo(
+    () => (baseAnalysis
+      ? buildCollisionOptimizationAnalysis(baseAnalysis, {
+        scope,
+        meshStrategy,
+        cylinderStrategy,
+        rodBoxStrategy,
+        avoidSiblingOverlap,
+        selectedTargetId: effectiveSelectedTargetId,
+      })
+      : null),
+    [
+      avoidSiblingOverlap,
+      baseAnalysis,
+      cylinderStrategy,
+      effectiveSelectedTargetId,
+      meshStrategy,
+      rodBoxStrategy,
+      scope,
+    ],
+  );
+
+  useEffect(() => {
+    if (!analysis || hasCustomCheckedSelectionRef.current) {
+      return;
+    }
+
+    setCheckedIds(new Set(analysis.candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id)));
+  }, [analysis]);
 
   const activeOperations = useMemo(
     () => buildCollisionOptimizationOperations(analysis?.candidates ?? [], checkedIds),
@@ -379,6 +378,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   );
 
   const toggleCandidate = useCallback((targetId: string) => {
+    hasCustomCheckedSelectionRef.current = true;
     setCheckedIds((previous) => {
       const next = new Set(previous);
       if (next.has(targetId)) {
@@ -391,10 +391,12 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   }, []);
 
   const handleSelectAll = useCallback(() => {
+    hasCustomCheckedSelectionRef.current = true;
     setCheckedIds(new Set(analysis?.candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id) ?? []));
   }, [analysis?.candidates]);
 
   const handleClearAll = useCallback(() => {
+    hasCustomCheckedSelectionRef.current = true;
     setCheckedIds(new Set());
   }, []);
 
@@ -438,33 +440,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     }
   }, [copy]);
 
-  const getReasonLabel = useCallback((candidate: CollisionOptimizationCandidate) => {
-    switch (candidate.reason) {
-      case 'mesh-smart-fit':
-        return copy.reasonMeshSmart;
-      case 'mesh-manual-fit':
-        return copy.reasonMeshManual;
-      case 'cylinder-to-capsule':
-        return copy.reasonCylinder;
-      case 'rod-box-to-capsule':
-        return copy.reasonRodBox;
-      case 'rod-box-to-cylinder':
-        return copy.reasonRodBoxCylinder;
-      default:
-        return candidate.status === 'disabled'
-          ? copy.disabled
-          : candidate.status === 'missing-mesh-path'
-            ? copy.missingMeshPath
-            : candidate.status === 'mesh-analysis-failed'
-              ? copy.meshAnalysisFailed
-              : copy.noRuleMatch;
-    }
-  }, [copy]);
-
   const isSelectedScopeWithoutSelection = scope === 'selected'
     && (!selection?.id || selection.subType !== 'collision' || selection.type !== 'link');
 
   const footerLabel = `${copy.selectedCount} ${activeOperations.length} / ${eligibleCount}`;
+  const hasOverlapWarnings = warningBefore > 0 || warningAfter > 0;
   const showCandidatesPanel = !isStackedLayout || stackedPanel === 'candidates';
   const showSettingsPanel = !isStackedLayout || stackedPanel === 'settings';
 
@@ -499,7 +479,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
           </div>
           <div className="min-w-0">
             <div className="text-[11px] font-semibold text-text-primary">{copy.title}</div>
-            <div className="truncate text-[9px] text-text-tertiary">{copy.subtitle}</div>
           </div>
         </div>
       }
@@ -579,7 +558,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                     </div>
                   </div>
 
-                  <div className={`mt-1 flex flex-wrap gap-1 ${isDenseLayout ? '' : 'items-center justify-between'}`}>
+                  <div className="mt-1 flex flex-wrap gap-1">
                     <div className="flex flex-wrap gap-1 rounded-md border border-border-black bg-segmented-bg p-0.5">
                       {([
                         ['all', copy.scopeAll],
@@ -595,9 +574,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                           {label}
                         </OptionButton>
                       ))}
-                    </div>
-                    <div className={`min-w-0 text-[9px] leading-snug text-text-tertiary ${isDenseLayout ? '' : 'max-w-[220px] truncate text-right'}`}>
-                      {copy.clickToLocate}
                     </div>
                   </div>
                 </div>
@@ -671,7 +647,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                               <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1 text-[9px] text-text-secondary">
                                 {candidate.target.componentName && (
                                   <span className="inline-flex max-w-[14rem] items-center rounded-md border border-border-black bg-element-bg px-1.5 py-0.5">
-                                    <span className="truncate">{copy.component}: {candidate.target.componentName}</span>
+                                    <span className="truncate">{candidate.target.componentName}</span>
                                   </span>
                                 )}
                                 <span className="inline-flex items-center gap-1 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 font-medium text-text-secondary">
@@ -679,21 +655,17 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                                   <ArrowRight className="h-2.5 w-2.5 text-text-tertiary" />
                                   <span className="text-text-primary">{candidate.suggestedType ? formatGeometryType(candidate.suggestedType) : '—'}</span>
                                 </span>
-                                <span className="min-w-0 flex-1 truncate text-text-tertiary">
-                                  {getReasonLabel(candidate)}
-                                </span>
                               </div>
                             </div>
                           </button>
 
-                          <div className="pt-0.5 text-[9px]">
-                            <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 ${candidate.eligible
-                              ? 'border-system-blue/20 bg-system-blue/10 text-system-blue'
-                              : 'border-border-black bg-element-bg text-text-tertiary'
-                            }`}>
-                              {getStatusLabel(candidate)}
-                            </span>
-                          </div>
+                          {!candidate.eligible ? (
+                            <div className="pt-0.5 text-[9px]">
+                              <span className="inline-flex items-center rounded-full border border-border-black bg-element-bg px-1.5 py-0.5 text-text-tertiary">
+                                {getStatusLabel(candidate)}
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -706,14 +678,13 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
               <div className="min-h-0 flex flex-col overflow-hidden rounded-xl border border-border-black bg-element-bg">
                 <div className="shrink-0 border-b border-border-black bg-panel-bg px-2.5 py-2">
                   <div className="text-[11px] font-semibold text-text-primary">{copy.panelSettings}</div>
-                  <div className="mt-0.5 text-[10px] leading-snug text-text-tertiary">{copy.subtitle}</div>
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 space-y-2.5">
                   <div>
                     <SectionLabel>{copy.strategies}</SectionLabel>
 
-                    <StrategyField label={copy.meshStrategyLabel} desc={copy.meshStrategyDesc}>
+                    <StrategyField label={copy.meshStrategyLabel}>
                       {meshStrategyOptions.map((option) => (
                         <OptionButton
                           key={option.value}
@@ -725,7 +696,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                       ))}
                     </StrategyField>
 
-                    <StrategyField label={copy.cylinderStrategyLabel} desc={copy.cylinderStrategyDesc}>
+                    <StrategyField label={copy.cylinderStrategyLabel}>
                       {cylinderStrategyOptions.map((option) => (
                         <OptionButton
                           key={option.value}
@@ -737,7 +708,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                       ))}
                     </StrategyField>
 
-                    <StrategyField label={copy.rodBoxStrategyLabel} desc={copy.rodBoxStrategyDesc}>
+                    <StrategyField label={copy.rodBoxStrategyLabel}>
                       {rodBoxStrategyOptions.map((option) => (
                         <OptionButton
                           key={option.value}
@@ -761,32 +732,21 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-border-black bg-element-bg px-2.5 py-2.5">
-                    <SectionLabel>{copy.warningTitle}</SectionLabel>
-                    <div className={`grid gap-1.5 ${isDenseLayout ? 'grid-cols-1' : 'grid-cols-2'}`}>
-                      <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">
-                        <div className="text-[9px] uppercase tracking-[0.14em] text-text-tertiary">{copy.warningBefore}</div>
-                        <div className="mt-0.5 text-sm font-semibold text-text-primary">{warningBefore}</div>
+                  {hasOverlapWarnings && (
+                    <div className="rounded-xl border border-border-black bg-element-bg px-2.5 py-2.5">
+                      <SectionLabel>{copy.warningTitle}</SectionLabel>
+                      <div className={`grid gap-1.5 ${isDenseLayout ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                        <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">
+                          <div className="text-[9px] uppercase tracking-[0.14em] text-text-tertiary">{copy.warningBefore}</div>
+                          <div className="mt-0.5 text-sm font-semibold text-text-primary">{warningBefore}</div>
+                        </div>
+                        <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">
+                          <div className="text-[9px] uppercase tracking-[0.14em] text-text-tertiary">{copy.warningAfter}</div>
+                          <div className="mt-0.5 text-sm font-semibold text-text-primary">{warningAfter}</div>
+                        </div>
                       </div>
-                      <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">
-                        <div className="text-[9px] uppercase tracking-[0.14em] text-text-tertiary">{copy.warningAfter}</div>
-                        <div className="mt-0.5 text-sm font-semibold text-text-primary">{warningAfter}</div>
-                      </div>
                     </div>
-                    <div className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-text-tertiary">
-                      <Info className="mt-0.5 h-3 w-3 shrink-0" />
-                      <span>{copy.tipOverlap}</span>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-border-black bg-element-bg px-2.5 py-2.5">
-                    <SectionLabel>{copy.tips}</SectionLabel>
-                    <div className="space-y-1.5 text-[10px] leading-relaxed text-text-secondary">
-                      <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">{copy.tipMesh}</div>
-                      <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">{copy.tipCapsule}</div>
-                      <div className="rounded-lg border border-border-black bg-panel-bg px-2.5 py-2">{copy.tipOverlap}</div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
             )}
@@ -799,7 +759,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
           <RefreshCw className="h-3 w-3" />
           <span>{footerLabel}</span>
         </div>
-        <div className={`text-[9px] text-text-tertiary ${isCompactLayout ? 'order-4 basis-full leading-relaxed' : 'flex-1 truncate'}`}>{copy.applySummary}</div>
+        <div className="flex-1" />
         <button
           type="button"
           onClick={onClose}

@@ -21,7 +21,7 @@ export interface UseHoverDetectionOptions {
     isOrbitDragging?: React.MutableRefObject<boolean>;
     justSelectedRef?: React.MutableRefObject<boolean>;
     isSelectionLockedRef?: React.MutableRefObject<boolean>;
-    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster) => boolean;
+    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster, forceRefresh?: boolean) => boolean;
     highlightGeometry: (
         linkName: string | null,
         revert: boolean,
@@ -191,7 +191,6 @@ export function useHoverDetection({
 
         // Skip raycast if no update needed
         if (!needsRaycastRef.current) return;
-        needsRaycastRef.current = false;
 
         const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
         const isCollisionMode = highlightMode === 'collision';
@@ -228,6 +227,10 @@ export function useHoverDetection({
             return;
         }
 
+        if (justSelectedRef?.current) return;
+
+        needsRaycastRef.current = false;
+
         // Handle Face Selection Mode
         if (toolMode === 'face') {
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
@@ -240,7 +243,7 @@ export function useHoverDetection({
             }
 
             // PERFORMANCE: Two-phase detection - check bounding box first
-            if (!rayIntersectsBoundingBox(raycasterRef.current)) {
+            if (!rayIntersectsBoundingBox(raycasterRef.current) && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
                 if (highlightedFace) setHighlightedFace(null);
                 return;
             }
@@ -275,8 +278,6 @@ export function useHoverDetection({
             setHighlightedFace(null);
         }
 
-        if (justSelectedRef?.current) return;
-
         if (!isStandardMode) {
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
                 clearHoverHighlight();
@@ -304,7 +305,7 @@ export function useHoverDetection({
         }
 
         // PERFORMANCE: Two-phase detection - check bounding box first
-        if (!rayIntersectsBoundingBox(raycasterRef.current)) {
+        if (!rayIntersectsBoundingBox(raycasterRef.current) && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
             // Ray misses robot entirely - clear hover state if needed
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
                 clearHoverHighlight();
@@ -348,32 +349,34 @@ export function useHoverDetection({
             });
 
             if (validHits.length > 0) {
-                // Keep behavior aligned with click selection: strict nearest hit first.
                 validHits.sort((a, b) => a.distance - b.distance);
-                const hit = validHits[0];
 
-                let current: THREE.Object3D | null = hit.object;
-                let linkObj: THREE.Object3D | null = null;
-                while (current) {
-                    if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
-                        newHoveredLink = current.name;
-                        linkObj = current;
-                        break;
+                for (const hit of validHits) {
+                    let current: THREE.Object3D | null = hit.object;
+                    let linkObj: THREE.Object3D | null = null;
+                    while (current) {
+                        if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+                            newHoveredLink = current.name;
+                            linkObj = current;
+                            break;
+                        }
+                        if ((robot as any).links && (robot as any).links[current.name]) {
+                            newHoveredLink = current.name;
+                            linkObj = current;
+                            break;
+                        }
+                        if (current === robot) break;
+                        current = current.parent;
                     }
-                    if ((robot as any).links && (robot as any).links[current.name]) {
-                        newHoveredLink = current.name;
-                        linkObj = current;
-                        break;
-                    }
-                    if (current === robot) break;
-                    current = current.parent;
-                }
 
-                let newHoveredObjectIndex = 0;
-                if (linkObj) {
+                    if (!linkObj || !newHoveredLink) {
+                        newHoveredLink = null;
+                        continue;
+                    }
+
                     const resolvedTarget = resolveSelectionTarget(hit.object, linkObj);
-                    newHoveredObjectIndex = resolvedTarget.objectIndex;
                     newHoveredMesh = resolvedTarget.highlightTarget;
+                    break;
                 }
             }
         }

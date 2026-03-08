@@ -61,6 +61,7 @@ export function useMouseInteraction({
     highlightGeometry
 }: UseMouseInteractionOptions): UseMouseInteractionResult {
     const { camera, gl, scene, invalidate } = useThree();
+    const orbitControls = useThree((state) => state.controls as { enabled?: boolean } | undefined);
 
     const mouseRef = useRef(new THREE.Vector2(-1000, -1000));
     const raycasterRef = useRef(new THREE.Raycaster());
@@ -75,6 +76,7 @@ export function useMouseInteraction({
     const dragJoint = useRef<any>(null);
     const dragHitDistance = useRef(0);
     const lastRayRef = useRef(new THREE.Ray());
+    const lastDragPointerRef = useRef({ x: 0, y: 0 });
     const lastRotationPointRef = useRef(new THREE.Vector3());
     const hasLastRotationPointRef = useRef(false);
     const selectionResetTimerRef = useRef<number | null>(null);
@@ -96,6 +98,46 @@ export function useMouseInteraction({
 
     // Mouse tracking for hover detection AND joint dragging
     useEffect(() => {
+        const setOrbitControlsEnabled = (enabled: boolean) => {
+            if (orbitControls && typeof orbitControls.enabled === 'boolean') {
+                orbitControls.enabled = enabled;
+            }
+
+            if (!enabled && isOrbitDragging) {
+                isOrbitDragging.current = false;
+            }
+        };
+
+        const updatePointerFromClient = (clientX: number, clientY: number) => {
+            const rect = gl.domElement.getBoundingClientRect();
+            mouseRef.current.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            mouseRef.current.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+            raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        };
+
+        const shouldBlockOrbitForPointer = (clientX: number, clientY: number) => {
+            if (!robot) return false;
+
+            const isStandardSelectionMode = ['select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
+            if (!isStandardSelectionMode) return false;
+
+            updatePointerFromClient(clientX, clientY);
+
+            const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
+            const nearestSceneHit = sceneHits[0];
+            if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+                return true;
+            }
+
+            return raycasterRef.current.intersectObject(robot, true).length > 0;
+        };
+
+        const handlePointerDownCapture = (event: PointerEvent) => {
+            if (shouldBlockOrbitForPointer(event.clientX, event.clientY)) {
+                setOrbitControlsEnabled(false);
+            }
+        };
+
         const tempWorldQuat = new THREE.Quaternion();
         const tempAxisWorld = new THREE.Vector3();
         const tempPivotPoint = new THREE.Vector3();
@@ -106,6 +148,67 @@ export function useMouseInteraction({
         const tempDelta = new THREE.Vector3();
         const tempPrevHitPoint = new THREE.Vector3();
         const tempNewHitPoint = new THREE.Vector3();
+        const tempTangentWorld = new THREE.Vector3();
+        const tempScreenPointWorld = new THREE.Vector3();
+        const tempScreenTangentWorldPoint = new THREE.Vector3();
+        const tempProjectedPoint = new THREE.Vector3();
+        const tempScreenPoint = new THREE.Vector2();
+        const tempScreenTangentPoint = new THREE.Vector2();
+        const tempScreenTangent = new THREE.Vector2();
+
+        const projectWorldToCanvas = (point: THREE.Vector3, target: THREE.Vector2) => {
+            const rect = gl.domElement.getBoundingClientRect();
+
+            tempProjectedPoint.copy(point).project(camera);
+            target.set(
+                ((tempProjectedPoint.x + 1) * 0.5) * rect.width,
+                ((1 - tempProjectedPoint.y) * 0.5) * rect.height
+            );
+
+            return Number.isFinite(target.x) && Number.isFinite(target.y);
+        };
+
+        const getScreenAlignedDirection = (
+            radialVector: THREE.Vector3,
+            pointerDeltaX: number,
+            pointerDeltaY: number
+        ): number => {
+            if (pointerDeltaX === 0 && pointerDeltaY === 0) {
+                return 0;
+            }
+
+            tempTangentWorld.crossVectors(tempAxisWorld, radialVector);
+            const tangentLengthSq = tempTangentWorld.lengthSq();
+            if (tangentLengthSq <= JOINT_DRAG_EPSILON) {
+                return 0;
+            }
+
+            const tangentScale = Math.max(radialVector.length(), 0.05);
+            tempTangentWorld.normalize().multiplyScalar(tangentScale);
+
+            tempScreenPointWorld.copy(tempPivotPoint).add(radialVector);
+            tempScreenTangentWorldPoint.copy(tempScreenPointWorld).add(tempTangentWorld);
+
+            const hasScreenPoint = projectWorldToCanvas(tempScreenPointWorld, tempScreenPoint);
+            const hasScreenTangentPoint = projectWorldToCanvas(tempScreenTangentWorldPoint, tempScreenTangentPoint);
+
+            if (!hasScreenPoint || !hasScreenTangentPoint) {
+                return 0;
+            }
+
+            tempScreenTangent.subVectors(tempScreenTangentPoint, tempScreenPoint);
+            const tangentScreenLengthSq = tempScreenTangent.lengthSq();
+            if (tangentScreenLengthSq <= JOINT_DRAG_EPSILON) {
+                return 0;
+            }
+
+            const pointerAlignment = tempScreenTangent.x * pointerDeltaX + tempScreenTangent.y * pointerDeltaY;
+            if (Math.abs(pointerAlignment) <= JOINT_DRAG_EPSILON) {
+                return 0;
+            }
+
+            return Math.sign(pointerAlignment);
+        };
 
         const syncJointWorldFrame = (joint: any) => {
             const axis = joint.axis || new THREE.Vector3(0, 0, 1);
@@ -181,7 +284,13 @@ export function useMouseInteraction({
             return null;
         };
 
-        const getRevoluteDelta = (joint: any, startPt: THREE.Vector3, endPt: THREE.Vector3): number => {
+        const getRevoluteDelta = (
+            joint: any,
+            startPt: THREE.Vector3,
+            endPt: THREE.Vector3,
+            pointerDeltaX: number,
+            pointerDeltaY: number
+        ): number => {
             syncJointWorldFrame(joint);
             tempPlane.setFromNormalAndCoplanarPoint(tempAxisWorld, tempPivotPoint);
 
@@ -192,7 +301,9 @@ export function useMouseInteraction({
             tempProjEnd.sub(tempPivotPoint);
 
             tempCross.crossVectors(tempProjStart, tempProjEnd);
-            const direction = Math.sign(tempCross.dot(tempAxisWorld));
+            const worldDirection = Math.sign(tempCross.dot(tempAxisWorld));
+            const screenDirection = getScreenAlignedDirection(tempProjStart, pointerDeltaX, pointerDeltaY);
+            const direction = screenDirection || worldDirection;
             return direction * tempProjStart.angleTo(tempProjEnd);
         };
 
@@ -224,7 +335,7 @@ export function useMouseInteraction({
             return true;
         };
 
-        const moveRay = (toRay: THREE.Ray) => {
+        const moveRay = (toRay: THREE.Ray, pointerDeltaX: number, pointerDeltaY: number) => {
             if (!isDraggingJoint.current || !dragJoint.current) return;
 
             let delta = 0;
@@ -239,7 +350,13 @@ export function useMouseInteraction({
                 );
 
                 if (hasCurrentPoint && hasLastRotationPointRef.current) {
-                    delta = getRevoluteDelta(dragJoint.current, lastRotationPointRef.current, tempNewHitPoint);
+                    delta = getRevoluteDelta(
+                        dragJoint.current,
+                        lastRotationPointRef.current,
+                        tempNewHitPoint,
+                        pointerDeltaX,
+                        pointerDeltaY
+                    );
                 }
 
                 if (hasCurrentPoint) {
@@ -279,14 +396,8 @@ export function useMouseInteraction({
             lastMousePosRef.current.x = e.clientX;
             lastMousePosRef.current.y = e.clientY;
 
-            const rect = gl.domElement.getBoundingClientRect();
-            mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-            mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-            // OPTIMIZATION: Signal that raycast is needed on next frame
+            updatePointerFromClient(e.clientX, e.clientY);
             needsRaycastRef.current = true;
-
-            raycasterRef.current.setFromCamera(mouseRef.current, camera);
 
             if (!isOrbitDragging?.current) {
                 invalidateRef.current();
@@ -300,11 +411,13 @@ export function useMouseInteraction({
         const handleMouseMove = (e: MouseEvent) => {
             // Joint dragging needs immediate response - bypass throttle
             if (isDraggingJoint.current && dragJoint.current) {
-                const rect = gl.domElement.getBoundingClientRect();
-                mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-                mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-                raycasterRef.current.setFromCamera(mouseRef.current, camera);
-                moveRay(raycasterRef.current.ray);
+                const pointerDeltaX = e.clientX - lastDragPointerRef.current.x;
+                const pointerDeltaY = e.clientY - lastDragPointerRef.current.y;
+
+                updatePointerFromClient(e.clientX, e.clientY);
+                moveRay(raycasterRef.current.ray, pointerDeltaX, pointerDeltaY);
+                lastDragPointerRef.current.x = e.clientX;
+                lastDragPointerRef.current.y = e.clientY;
                 invalidateRef.current();
             } else {
                 // Throttled for normal hover detection
@@ -326,10 +439,7 @@ export function useMouseInteraction({
                 return;
             }
 
-            const rect = gl.domElement.getBoundingClientRect();
-            mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-            mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-            raycasterRef.current.setFromCamera(mouseRef.current, camera);
+            updatePointerFromClient(e.clientX, e.clientY);
 
             // IMPORTANT:
             // TransformControls gizmo is not a child of `robot`.
@@ -426,6 +536,8 @@ export function useMouseInteraction({
                     isDraggingJoint.current = true;
                     dragJoint.current = joint;
                     dragHitDistance.current = hit.distance;
+                    lastDragPointerRef.current.x = e.clientX;
+                    lastDragPointerRef.current.y = e.clientY;
                     lastRayRef.current.copy(raycasterRef.current.ray);
                     if (joint.jointType === 'revolute' || joint.jointType === 'continuous') {
                         hasLastRotationPointRef.current = resolveRevoluteDragPoint(
@@ -467,8 +579,14 @@ export function useMouseInteraction({
                 selectionResetTimerRef.current = window.setTimeout(() => {
                     justSelectedRef.current = false;
                     selectionResetTimerRef.current = null;
+                    needsRaycastRef.current = true;
+                    invalidateRef.current();
                 }, 100);
             }
+
+            setOrbitControlsEnabled(true);
+            needsRaycastRef.current = true;
+            invalidateRef.current();
         };
 
         const handleWindowBlur = () => {
@@ -494,6 +612,7 @@ export function useMouseInteraction({
             handleMouseUp();
         };
 
+        gl.domElement.addEventListener('pointerdown', handlePointerDownCapture, true);
         gl.domElement.addEventListener('mousemove', handleMouseMove);
         gl.domElement.addEventListener('mousedown', handleMouseDown);
         gl.domElement.addEventListener('mouseup', handleMouseUp);
@@ -510,6 +629,8 @@ export function useMouseInteraction({
                 clearTimeout(selectionResetTimerRef.current);
                 selectionResetTimerRef.current = null;
             }
+            setOrbitControlsEnabled(true);
+            gl.domElement.removeEventListener('pointerdown', handlePointerDownCapture, true);
             gl.domElement.removeEventListener('mousemove', handleMouseMove);
             gl.domElement.removeEventListener('mousedown', handleMouseDown);
             gl.domElement.removeEventListener('mouseup', handleMouseUp);
@@ -519,7 +640,7 @@ export function useMouseInteraction({
             window.removeEventListener('blur', handleWindowBlur);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
-    }, [gl, camera, scene, robot, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual]);
+    }, [gl, camera, scene, robot, orbitControls, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual]);
 
     return {
         mouseRef,

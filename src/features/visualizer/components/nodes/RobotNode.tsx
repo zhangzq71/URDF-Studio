@@ -6,6 +6,7 @@ import {
   getCollisionGeometryEntries,
   updateCollisionGeometryByObjectIndex,
 } from '@/core/robot';
+import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
 import { Language, translations } from '@/shared/i18n';
 import { GeometryRenderer } from './GeometryRenderer';
@@ -111,8 +112,8 @@ export const RobotNode = memo(function RobotNode({
   const isSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const selectionSubType = robot.selection.subType;
   const isRoot = linkId === robot.rootLinkId;
-
-  const [isHovered, setIsHovered] = useState(false);
+  const isHovered = useSelectionStore((state) => state.hoveredSelection.type === 'link' && state.hoveredSelection.id === linkId);
+  const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
 
   // Refs for dragging geometry in Detail mode
   const [visualRef, setVisualRef] = useState<THREE.Group | null>(null);
@@ -188,6 +189,17 @@ export const RobotNode = memo(function RobotNode({
     }
   };
 
+  const handleLinkHoverEnter = useCallback(() => {
+    setHoveredSelection({ type: 'link', id: linkId });
+  }, [linkId, setHoveredSelection]);
+
+  const handleLinkHoverLeave = useCallback(() => {
+    const hovered = useSelectionStore.getState().hoveredSelection;
+    if (hovered.type === 'link' && hovered.id === linkId && !hovered.subType) {
+      useSelectionStore.getState().clearHover();
+    }
+  }, [linkId]);
+
   const showRootAxes = isRoot && ((mode === 'skeleton' && showSkeletonOrigin) || (mode === 'detail' && showDetailOrigin) || (mode === 'hardware' && showHardwareOrigin));
   const shouldRenderGeometry = !(mode === 'skeleton' && !showGeometry && !showCollision);
   const showLinkLabel = (mode === 'detail' && showDetailLabels) || (mode === 'hardware' && showHardwareLabels);
@@ -203,8 +215,8 @@ export const RobotNode = memo(function RobotNode({
                     <div
                         style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
                         className="pointer-events-auto cursor-pointer select-none"
-                        onMouseEnter={() => setIsHovered(true)}
-                        onMouseLeave={() => setIsHovered(false)}
+                        onMouseEnter={handleLinkHoverEnter}
+                        onMouseLeave={handleLinkHoverLeave}
                         onClick={handleLinkClick}
                     >
                       {(isSelected || isHovered) ? (
@@ -242,6 +254,7 @@ export const RobotNode = memo(function RobotNode({
             selectionSubType={selectionSubType}
             onLinkClick={handleLinkClick}
             setVisualRef={setVisualRef}
+            objectIndex={0}
           />
 
           {collisionEntries.map((entry) => (
@@ -259,6 +272,7 @@ export const RobotNode = memo(function RobotNode({
               setCollisionRef={getCollisionRefHandler(entry.objectIndex)}
               geometryData={entry.bodyIndex === null ? undefined : entry.geometry}
               geometryId={entry.bodyIndex === null ? '0' : `extra-${entry.bodyIndex + 1}`}
+              objectIndex={entry.objectIndex}
             />
           ))}
         </>
@@ -288,8 +302,8 @@ export const RobotNode = memo(function RobotNode({
           <div
             style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
             className="pointer-events-auto cursor-pointer select-none"
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
+            onMouseEnter={handleLinkHoverEnter}
+            onMouseLeave={handleLinkHoverLeave}
             onClick={handleLinkClick}
           >
             {(isSelected || isHovered) ? (

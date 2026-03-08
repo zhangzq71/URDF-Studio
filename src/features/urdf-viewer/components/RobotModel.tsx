@@ -90,7 +90,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     const {
         highlightGeometry,
         rayIntersectsBoundingBox,
-        highlightedMeshesRef
+        highlightedMeshesRef,
+        boundingBoxNeedsUpdateRef
     } = useHighlightManager({
         robot,
         robotVersion,
@@ -205,8 +206,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
             }
         });
 
+        robot.updateMatrixWorld(true);
+        boundingBoxNeedsUpdateRef.current = true;
+        needsRaycastRef.current = true;
         invalidate();
-    }, [robot, jointAngles, invalidate]);
+    }, [robot, jointAngles, invalidate, boundingBoxNeedsUpdateRef, needsRaycastRef]);
 
     // ============================================================
     // RENDER

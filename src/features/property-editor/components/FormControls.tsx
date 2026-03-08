@@ -206,12 +206,13 @@ const InlineNumberInput = ({
   );
 };
 
-export const Vec3Input = ({ value, onChange, labels, keys = ['x', 'y', 'z'], compact = false }: {
+export const Vec3Input = ({ value, onChange, labels, keys = ['x', 'y', 'z'], compact = false, step, precision = MAX_PROPERTY_DECIMALS }: {
   value: Vec3Value;
   onChange: (v: Vec3Value) => void;
   labels: string[];
   keys?: string[];
   compact?: boolean;
+  step?: number;
   precision?: number;
 }) => (
   <div className="grid grid-cols-3 gap-2">
@@ -220,28 +221,35 @@ export const Vec3Input = ({ value, onChange, labels, keys = ['x', 'y', 'z'], com
         value={(value as Record<string, number>)[keys[0]] ?? 0}
         onChange={(v: number) => onChange({ ...value, [keys[0]]: v })}
         compact={compact}
+        step={step}
+        precision={precision}
     />
     <NumberInput
         label={labels[1]}
         value={(value as Record<string, number>)[keys[1]] ?? 0}
         onChange={(v: number) => onChange({ ...value, [keys[1]]: v })}
         compact={compact}
+        step={step}
+        precision={precision}
     />
     <NumberInput
         label={labels[2]}
         value={(value as Record<string, number>)[keys[2]] ?? 0}
         onChange={(v: number) => onChange({ ...value, [keys[2]]: v })}
         compact={compact}
+        step={step}
+        precision={precision}
     />
   </div>
 );
 
-export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'], compact = false, precision = MAX_PROPERTY_DECIMALS }: {
+export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'], compact = false, step, precision = MAX_PROPERTY_DECIMALS }: {
   value: Vec3Value;
   onChange: (v: Vec3Value) => void;
   labels: string[];
   keys?: string[];
   compact?: boolean;
+  step?: number;
   precision?: number;
 }) => (
   <div className="grid grid-cols-3 gap-2">
@@ -250,6 +258,7 @@ export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'
       value={(value as Record<string, number>)[keys[0]] ?? 0}
       onChange={(v: number) => onChange({ ...value, [keys[0]]: v })}
       compact={compact}
+      step={step}
       precision={precision}
     />
     <InlineNumberInput
@@ -257,6 +266,7 @@ export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'
       value={(value as Record<string, number>)[keys[1]] ?? 0}
       onChange={(v: number) => onChange({ ...value, [keys[1]]: v })}
       compact={compact}
+      step={step}
       precision={precision}
     />
     <InlineNumberInput
@@ -264,6 +274,7 @@ export const Vec3InlineInput = ({ value, onChange, labels, keys = ['x', 'y', 'z'
       value={(value as Record<string, number>)[keys[2]] ?? 0}
       onChange={(v: number) => onChange({ ...value, [keys[2]]: v })}
       compact={compact}
+      step={step}
       precision={precision}
     />
   </div>

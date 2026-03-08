@@ -10,6 +10,10 @@ import { Eye, Box } from 'lucide-react';
 import type { RobotState, AppMode, UrdfLink } from '@/types';
 import { translations } from '@/shared/i18n';
 import {
+  MAX_TRANSFORM_DECIMALS,
+  TRANSFORM_STEP,
+} from '@/core/utils/numberPrecision';
+import {
   InputGroup,
   CollapsibleSection,
   NumberInput,
@@ -163,6 +167,8 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
                 })}
                 labels={['X', 'Y', 'Z']}
                 compact
+                step={TRANSFORM_STEP}
+                precision={MAX_TRANSFORM_DECIMALS}
               />
               <Vec3InlineInput
                 value={data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
@@ -179,6 +185,8 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
                 labels={[t.roll, t.pitch, t.yaw]}
                 keys={['r', 'p', 'y']}
                 compact
+                step={TRANSFORM_STEP}
+                precision={MAX_TRANSFORM_DECIMALS}
               />
             </div>
           </InputGroup>

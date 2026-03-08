@@ -10,6 +10,10 @@ import { ExternalLink } from 'lucide-react';
 import { JointType, type AppMode, type MotorSpec } from '@/types';
 import { translations } from '@/shared/i18n';
 import {
+  MAX_TRANSFORM_DECIMALS,
+  TRANSFORM_STEP,
+} from '@/core/utils/numberPrecision';
+import {
   InputGroup,
   CollapsibleSection,
   NumberInput,
@@ -205,6 +209,8 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                 })}
                 labels={['X', 'Y', 'Z']}
                 compact
+                step={TRANSFORM_STEP}
+                precision={MAX_TRANSFORM_DECIMALS}
               />
             </InputGroup>
             <InputGroup label={t.originRelativeParent + " (RPY)"}>
@@ -216,6 +222,8 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                 labels={[t.roll, t.pitch, t.yaw]}
                 keys={['r', 'p', 'y']}
                 compact
+                step={TRANSFORM_STEP}
+                precision={MAX_TRANSFORM_DECIMALS}
               />
             </InputGroup>
 
@@ -225,6 +233,8 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   value={data.axis || DEFAULT_AXIS}
                   onChange={(v) => updateJoint({ axis: toXYZ(v, data.axis || DEFAULT_AXIS) })}
                   labels={['X', 'Y', 'Z']}
+                  step={TRANSFORM_STEP}
+                  precision={MAX_TRANSFORM_DECIMALS}
                 />
               </InputGroup>
             )}

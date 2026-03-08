@@ -282,6 +282,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                 rotateRef={rotateTransformRef}
                 object={targetObject}
                 mode={transformMode}
+                gizmoPreset="collision-precise"
                 size={COLLISION_TRANSLATE_GIZMO_SIZE}
                 rotateSize={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
                 space="local"

@@ -60,9 +60,20 @@ export interface MeshBounds {
   cz: number; // bounding box center z
 }
 
+export interface MeshClearanceObstaclePoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface MeshClearanceObstacle {
+  points: MeshClearanceObstaclePoint[];
+}
+
 export interface MeshAnalysis {
   bounds: MeshBounds;
   representativeColor?: string;
+  surfacePoints?: MeshClearanceObstaclePoint[];
   primitiveFits?: {
     cylinder?: PrimitiveFit;
     capsule?: PrimitiveFit;
@@ -84,11 +95,7 @@ interface ScalarInterval {
   end: number;
 }
 
-interface Point3 {
-  x: number;
-  y: number;
-  z: number;
-}
+interface Point3 extends MeshClearanceObstaclePoint {}
 
 interface ProjectedPoint {
   t: number;
@@ -206,6 +213,7 @@ export async function computeMeshAnalysisFromAssets(
           return;
         }
         const points = collectMeshPoints(obj);
+        const surfacePoints = sampleMeshPoints(points);
         const primitiveFits = computeBestPrimitiveFits(points);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -220,6 +228,7 @@ export async function computeMeshAnalysisFromAssets(
             cz: center.z,
           },
           representativeColor,
+          surfacePoints,
           primitiveFits,
         });
       });
@@ -262,6 +271,7 @@ interface ConversionResult {
 
 interface ConversionContext {
   siblingGeometries?: GeomData[];
+  meshClearanceObstacles?: MeshClearanceObstacle[];
 }
 
 const DEFAULT_DIMENSIONS = { x: 0.1, y: 0.5, z: 0.1 };
@@ -336,6 +346,36 @@ function collectMeshPoints(object: THREE.Object3D): Point3[] {
   });
 
   return points;
+}
+
+function sampleMeshPoints(
+  points: Point3[],
+  maxPoints: number = 1536,
+): MeshClearanceObstaclePoint[] {
+  if (points.length <= maxPoints) {
+    return points.map((point) => ({ x: point.x, y: point.y, z: point.z }));
+  }
+
+  const step = Math.max(Math.floor(points.length / maxPoints), 1);
+  const sampled: MeshClearanceObstaclePoint[] = [];
+
+  for (let index = 0; index < points.length && sampled.length < maxPoints; index += step) {
+    const point = points[index];
+    sampled.push({ x: point.x, y: point.y, z: point.z });
+  }
+
+  const lastPoint = points[points.length - 1];
+  if (
+    lastPoint &&
+    (sampled.length === 0
+      || sampled[sampled.length - 1].x !== lastPoint.x
+      || sampled[sampled.length - 1].y !== lastPoint.y
+      || sampled[sampled.length - 1].z !== lastPoint.z)
+  ) {
+    sampled.push({ x: lastPoint.x, y: lastPoint.y, z: lastPoint.z });
+  }
+
+  return sampled;
 }
 
 function canonicalizeAxis(axis: Point3): Point3 | null {
@@ -698,6 +738,485 @@ function collectRadiusCandidates(
   return Array.from(candidates)
     .filter((value) => Number.isFinite(value) && value >= minRadius)
     .sort((left, right) => right - left);
+}
+
+function collectMeshObstaclePoints(
+  meshClearanceObstacles: MeshClearanceObstacle[] | undefined,
+): Point3[] {
+  if (!meshClearanceObstacles?.length) {
+    return [];
+  }
+
+  const points: Point3[] = [];
+  meshClearanceObstacles.forEach((obstacle) => {
+    obstacle.points.forEach((point) => {
+      points.push({ x: point.x, y: point.y, z: point.z });
+    });
+  });
+
+  return points;
+}
+
+function resolveAvailableSweepIntervalFromBlockedIntervals(
+  sweepHalfExtent: number,
+  blockedIntervals: ScalarInterval[],
+): { centerShift: number; sweepHalfExtent: number } | null {
+  if (sweepHalfExtent <= 1e-8) {
+    const blockingInterval = blockedIntervals.find((interval) =>
+      interval.start <= 0 + 1e-8 && interval.end >= 0 - 1e-8
+    );
+
+    return blockingInterval
+      ? null
+      : {
+          centerShift: 0,
+          sweepHalfExtent: 0,
+        };
+  }
+
+  let intervals: ScalarInterval[] = [{ start: -sweepHalfExtent, end: sweepHalfExtent }];
+  blockedIntervals.forEach((interval) => {
+    intervals = subtractBlockedInterval(intervals, interval.start, interval.end);
+  });
+
+  const preferredInterval = choosePreferredInterval(intervals);
+  if (!preferredInterval) {
+    return null;
+  }
+
+  return {
+    centerShift: (preferredInterval.start + preferredInterval.end) / 2,
+    sweepHalfExtent: Math.max((preferredInterval.end - preferredInterval.start) / 2, 0),
+  };
+}
+
+function findNearestSafeCenterShiftFromBlockedIntervals(
+  blockedIntervals: ScalarInterval[],
+): number {
+  const blockingInterval = blockedIntervals.find((interval) =>
+    interval.start <= 0 + 1e-8 && interval.end >= 0 - 1e-8
+  );
+
+  if (!blockingInterval) {
+    return 0;
+  }
+
+  const leftMagnitude = Math.abs(blockingInterval.start);
+  const rightMagnitude = Math.abs(blockingInterval.end);
+
+  if (leftMagnitude < rightMagnitude - 1e-8) {
+    return blockingInterval.start;
+  }
+
+  if (rightMagnitude < leftMagnitude - 1e-8) {
+    return blockingInterval.end;
+  }
+
+  return blockingInterval.end;
+}
+
+function buildMeshPointBlockedIntervals(
+  candidateCenter: THREE.Vector3,
+  axisVector: THREE.Vector3,
+  sweepHalfExtent: number,
+  primitiveRadius: number,
+  meshObstaclePoints: Point3[],
+  clearance: number,
+  newType: GeometryType,
+): ScalarInterval[] {
+  const blockedIntervals: ScalarInterval[] = [];
+  const radialLimit = primitiveRadius + clearance;
+
+  meshObstaclePoints.forEach((point) => {
+    _tempVec3A.set(point.x, point.y, point.z).sub(candidateCenter);
+    const projection = _tempVec3A.dot(axisVector);
+    _tempVec3B.copy(axisVector).multiplyScalar(projection);
+    _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+
+    const radialDistance = _tempVec3C.length();
+    if (radialDistance >= radialLimit) {
+      return;
+    }
+
+    const axialPadding = newType === GeometryType.CAPSULE
+      ? Math.sqrt(Math.max(radialLimit * radialLimit - radialDistance * radialDistance, 0))
+      : 0;
+
+    blockedIntervals.push({
+      start: projection - sweepHalfExtent - axialPadding,
+      end: projection + sweepHalfExtent + axialPadding,
+    });
+  });
+
+  return mergeIntervals(blockedIntervals);
+}
+
+function collectRadiusCandidatesFromMeshPoints(
+  primitiveRadius: number,
+  candidateCenter: THREE.Vector3,
+  axisVector: THREE.Vector3,
+  meshObstaclePoints: Point3[],
+  clearance: number,
+  minRadius: number,
+): number[] {
+  const candidates = new Set<number>([
+    primitiveRadius,
+    minRadius,
+  ]);
+
+  meshObstaclePoints.forEach((point) => {
+    _tempVec3A.set(point.x, point.y, point.z).sub(candidateCenter);
+    const projection = _tempVec3A.dot(axisVector);
+    _tempVec3B.copy(axisVector).multiplyScalar(projection);
+    _tempVec3C.copy(_tempVec3A).sub(_tempVec3B);
+    const radialDistance = _tempVec3C.length();
+    candidates.add(Math.max(radialDistance - clearance, minRadius));
+  });
+
+  return Array.from(candidates)
+    .filter((value) => Number.isFinite(value) && value >= minRadius)
+    .sort((left, right) => right - left);
+}
+
+function applyMeshPointCollisionClearance(
+  primitiveRadius: number,
+  primitiveLength: number,
+  axisInLinkSpace: Point3,
+  newType: GeometryType,
+  meshClearanceObstacles: MeshClearanceObstacle[] | undefined,
+  centerOrigin: ConversionResult['origin'],
+): { radius: number; length: number; centerShift: number } {
+  if ((newType !== GeometryType.CYLINDER && newType !== GeometryType.CAPSULE) || !meshClearanceObstacles?.length) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+      centerShift: 0,
+    };
+  }
+
+  const axis = canonicalizeAxis(axisInLinkSpace);
+  if (!axis) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+      centerShift: 0,
+    };
+  }
+
+  const meshObstaclePoints = collectMeshObstaclePoints(meshClearanceObstacles);
+  if (meshObstaclePoints.length === 0) {
+    return {
+      radius: primitiveRadius,
+      length: primitiveLength,
+      centerShift: 0,
+    };
+  }
+
+  const candidateCenter = new THREE.Vector3(
+    centerOrigin.xyz.x,
+    centerOrigin.xyz.y,
+    centerOrigin.xyz.z,
+  );
+  const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
+  const radius = toPositive(primitiveRadius, 0.05);
+  const minSize = 1e-4;
+  const clearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+  const minRadius = Math.min(Math.max(radius * 0.15, minSize), radius);
+  const radiusCandidates = collectRadiusCandidatesFromMeshPoints(
+    radius,
+    candidateCenter,
+    axisVector,
+    meshObstaclePoints,
+    clearance,
+    minRadius,
+  );
+
+  let bestCandidate: { radius: number; sweepHalfExtent: number; centerShift: number; volume: number } | null = null;
+
+  radiusCandidates.forEach((radiusCandidate) => {
+    const sweepHalfExtent = computeSweepHalfExtent(radiusCandidate, primitiveLength, newType);
+    const blockedIntervals = buildMeshPointBlockedIntervals(
+      candidateCenter,
+      axisVector,
+      sweepHalfExtent,
+      radiusCandidate,
+      meshObstaclePoints,
+      clearance,
+      newType,
+    );
+    const safeInterval = resolveAvailableSweepIntervalFromBlockedIntervals(sweepHalfExtent, blockedIntervals);
+
+    if (!safeInterval) {
+      return;
+    }
+
+    const length = composePrimitiveLength(safeInterval.sweepHalfExtent, radiusCandidate, newType);
+    const volume = computePrimitiveVolume(newType, radiusCandidate, length);
+    if (!Number.isFinite(volume) || volume <= 0) {
+      return;
+    }
+
+    const nextCandidate = {
+      radius: radiusCandidate,
+      sweepHalfExtent: safeInterval.sweepHalfExtent,
+      centerShift: safeInterval.centerShift,
+      volume,
+    };
+
+    if (!bestCandidate) {
+      bestCandidate = nextCandidate;
+      return;
+    }
+
+    const volumeTolerance = Math.max(bestCandidate.volume * 0.01, 1e-8);
+    if (nextCandidate.volume > bestCandidate.volume + volumeTolerance) {
+      bestCandidate = nextCandidate;
+      return;
+    }
+
+    if (Math.abs(nextCandidate.volume - bestCandidate.volume) <= volumeTolerance) {
+      if (nextCandidate.sweepHalfExtent > bestCandidate.sweepHalfExtent + 1e-8) {
+        bestCandidate = nextCandidate;
+        return;
+      }
+
+      if (
+        Math.abs(nextCandidate.sweepHalfExtent - bestCandidate.sweepHalfExtent) <= 1e-8
+        && Math.abs(nextCandidate.centerShift) < Math.abs(bestCandidate.centerShift) - 1e-8
+      ) {
+        bestCandidate = nextCandidate;
+      }
+    }
+  });
+
+  if (bestCandidate) {
+    return {
+      radius: bestCandidate.radius,
+      length: composePrimitiveLength(bestCandidate.sweepHalfExtent, bestCandidate.radius, newType),
+      centerShift: bestCandidate.centerShift,
+    };
+  }
+
+  let fallbackCandidate: { radius: number; length: number; centerShift: number; volume: number } | null = null;
+
+  radiusCandidates.forEach((radiusCandidate) => {
+    const fallbackHalfExtent = computeSweepHalfExtent(
+      radiusCandidate,
+      newType === GeometryType.CAPSULE ? radiusCandidate * 2 : minSize,
+      newType,
+    );
+    const blockedIntervals = buildMeshPointBlockedIntervals(
+      candidateCenter,
+      axisVector,
+      fallbackHalfExtent,
+      radiusCandidate,
+      meshObstaclePoints,
+      clearance,
+      newType,
+    );
+    const centerShift = findNearestSafeCenterShiftFromBlockedIntervals(blockedIntervals);
+    const length = composePrimitiveLength(fallbackHalfExtent, radiusCandidate, newType);
+    const volume = computePrimitiveVolume(newType, radiusCandidate, length);
+    if (!Number.isFinite(volume) || volume <= 0) {
+      return;
+    }
+
+    const nextCandidate = {
+      radius: radiusCandidate,
+      length,
+      centerShift,
+      volume,
+    };
+
+    if (!fallbackCandidate) {
+      fallbackCandidate = nextCandidate;
+      return;
+    }
+
+    const shiftDelta = Math.abs(nextCandidate.centerShift) - Math.abs(fallbackCandidate.centerShift);
+    if (shiftDelta < -1e-8) {
+      fallbackCandidate = nextCandidate;
+      return;
+    }
+
+    if (Math.abs(shiftDelta) <= 1e-8) {
+      const volumeTolerance = Math.max(fallbackCandidate.volume * 0.01, 1e-8);
+      if (nextCandidate.volume > fallbackCandidate.volume + volumeTolerance) {
+        fallbackCandidate = nextCandidate;
+      }
+    }
+  });
+
+  if (fallbackCandidate) {
+    return {
+      radius: fallbackCandidate.radius,
+      length: fallbackCandidate.length,
+      centerShift: fallbackCandidate.centerShift,
+    };
+  }
+
+  return {
+    radius,
+    length: composePrimitiveLength(newType === GeometryType.CAPSULE ? 0 : minSize / 2, radius, newType),
+    centerShift: 0,
+  };
+}
+
+function buildBoxPointBlockedIntervals(
+  points: Point3[],
+  center: THREE.Vector3,
+  inverseRotation: THREE.Quaternion,
+  majorAxis: MeshPrimaryAxis,
+  halfMajor: number,
+  halfCrossA: number,
+  halfCrossB: number,
+  clearance: number,
+): ScalarInterval[] {
+  const blockedIntervals: ScalarInterval[] = [];
+
+  points.forEach((point) => {
+    _tempVec3A.set(point.x, point.y, point.z).sub(center).applyQuaternion(inverseRotation);
+    const majorCoord = majorAxis === 'x'
+      ? _tempVec3A.x
+      : majorAxis === 'y'
+        ? _tempVec3A.y
+        : _tempVec3A.z;
+    const crossA = majorAxis === 'x'
+      ? _tempVec3A.y
+      : majorAxis === 'y'
+        ? _tempVec3A.x
+        : _tempVec3A.x;
+    const crossB = majorAxis === 'x'
+      ? _tempVec3A.z
+      : majorAxis === 'y'
+        ? _tempVec3A.z
+        : _tempVec3A.y;
+
+    if (Math.abs(crossA) >= halfCrossA + clearance || Math.abs(crossB) >= halfCrossB + clearance) {
+      return;
+    }
+
+    blockedIntervals.push({
+      start: majorCoord - halfMajor - clearance,
+      end: majorCoord + halfMajor + clearance,
+    });
+  });
+
+  return mergeIntervals(blockedIntervals);
+}
+
+function applyMeshPointBoxClearance(
+  boxDimensions: { x: number; y: number; z: number },
+  origin: ConversionResult['origin'],
+  meshClearanceObstacles: MeshClearanceObstacle[] | undefined,
+): { dimensions: { x: number; y: number; z: number }; origin: ConversionResult['origin'] } {
+  if (!meshClearanceObstacles?.length) {
+    return {
+      dimensions: boxDimensions,
+      origin,
+    };
+  }
+
+  const points = collectMeshObstaclePoints(meshClearanceObstacles);
+  if (points.length === 0) {
+    return {
+      dimensions: boxDimensions,
+      origin,
+    };
+  }
+
+  const majorAxis = getPrimaryAxis(boxDimensions);
+  const localAxis = getAxisVectorForPrimaryAxis(majorAxis);
+  const halfMajor = Math.max(
+    (majorAxis === 'x' ? boxDimensions.x : majorAxis === 'y' ? boxDimensions.y : boxDimensions.z) / 2,
+    1e-4,
+  );
+  const halfCrossA = majorAxis === 'x'
+    ? boxDimensions.y / 2
+    : majorAxis === 'y'
+      ? boxDimensions.x / 2
+      : boxDimensions.x / 2;
+  const halfCrossB = majorAxis === 'x'
+    ? boxDimensions.z / 2
+    : majorAxis === 'y'
+      ? boxDimensions.z / 2
+      : boxDimensions.y / 2;
+  const boxRadius = Math.hypot(boxDimensions.x, boxDimensions.y, boxDimensions.z) / 2;
+  const clearance = Math.min(Math.max(boxRadius * 0.05, 0.002), 0.01);
+  const center = new THREE.Vector3(origin.xyz.x, origin.xyz.y, origin.xyz.z);
+  const inverseRotation = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(origin.rpy.r, origin.rpy.p, origin.rpy.y, 'ZYX'))
+    .invert();
+  const blockedIntervals = buildBoxPointBlockedIntervals(
+    points,
+    center,
+    inverseRotation,
+    majorAxis,
+    halfMajor,
+    halfCrossA,
+    halfCrossB,
+    clearance,
+  );
+  const safeInterval = resolveAvailableSweepIntervalFromBlockedIntervals(halfMajor, blockedIntervals);
+
+  if (safeInterval) {
+    const nextOrigin = Math.abs(safeInterval.centerShift) > 1e-8
+      ? offsetOriginByLocalVector(origin, {
+          x: localAxis.x * safeInterval.centerShift,
+          y: localAxis.y * safeInterval.centerShift,
+          z: localAxis.z * safeInterval.centerShift,
+        })
+      : origin;
+    const nextDimensions = { ...boxDimensions };
+    const nextMajorSize = Math.max(safeInterval.sweepHalfExtent * 2, 1e-4);
+
+    if (majorAxis === 'x') {
+      nextDimensions.x = nextMajorSize;
+    } else if (majorAxis === 'y') {
+      nextDimensions.y = nextMajorSize;
+    } else {
+      nextDimensions.z = nextMajorSize;
+    }
+
+    return {
+      dimensions: nextDimensions,
+      origin: nextOrigin,
+    };
+  }
+
+  const fallbackHalfExtent = 5e-5;
+  const fallbackBlockedIntervals = buildBoxPointBlockedIntervals(
+    points,
+    center,
+    inverseRotation,
+    majorAxis,
+    fallbackHalfExtent,
+    halfCrossA,
+    halfCrossB,
+    clearance,
+  );
+  const fallbackShift = findNearestSafeCenterShiftFromBlockedIntervals(fallbackBlockedIntervals);
+  const fallbackOrigin = Math.abs(fallbackShift) > 1e-8
+    ? offsetOriginByLocalVector(origin, {
+        x: localAxis.x * fallbackShift,
+        y: localAxis.y * fallbackShift,
+        z: localAxis.z * fallbackShift,
+      })
+    : origin;
+  const fallbackDimensions = { ...boxDimensions };
+
+  if (majorAxis === 'x') {
+    fallbackDimensions.x = 1e-4;
+  } else if (majorAxis === 'y') {
+    fallbackDimensions.y = 1e-4;
+  } else {
+    fallbackDimensions.z = 1e-4;
+  }
+
+  return {
+    dimensions: fallbackDimensions,
+    origin: fallbackOrigin,
+  };
 }
 
 function applySiblingCollisionClearance(
@@ -1555,6 +2074,7 @@ function selectBestPrimitiveFitCandidate(
   newType: GeometryType,
   origin: ConversionResult['origin'],
   siblingGeometries?: GeomData[],
+  meshClearanceObstacles?: MeshClearanceObstacle[],
 ): {
   fit: PrimitiveFit;
   centeredOrigin: ConversionResult['origin'];
@@ -1583,18 +2103,33 @@ function selectBestPrimitiveFitCandidate(
         siblingGeometries,
         centeredOrigin,
       );
-      const shiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+      const siblingShiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(centeredOrigin, {
             x: fit.axis.x * clearanceAdjustedSize.centerShift,
             y: fit.axis.y * clearanceAdjustedSize.centerShift,
             z: fit.axis.z * clearanceAdjustedSize.centerShift,
           })
         : centeredOrigin;
-      const radius = toPositive(clearanceAdjustedSize.radius, 0.05);
+      const meshAdjustedSize = applyMeshPointCollisionClearance(
+        clearanceAdjustedSize.radius,
+        clearanceAdjustedSize.length,
+        axisInLinkSpace,
+        newType,
+        meshClearanceObstacles,
+        siblingShiftedOrigin,
+      );
+      const shiftedOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(siblingShiftedOrigin, {
+            x: fit.axis.x * meshAdjustedSize.centerShift,
+            y: fit.axis.y * meshAdjustedSize.centerShift,
+            z: fit.axis.z * meshAdjustedSize.centerShift,
+          })
+        : siblingShiftedOrigin;
+      const radius = toPositive(meshAdjustedSize.radius, 0.05);
       const length = toPositive(
         newType === GeometryType.CAPSULE
-          ? Math.max(clearanceAdjustedSize.length, radius * 2)
-          : clearanceAdjustedSize.length,
+          ? Math.max(meshAdjustedSize.length, radius * 2)
+          : meshAdjustedSize.length,
         0.1,
       );
 
@@ -1680,6 +2215,7 @@ export function convertGeometryType(
       newType,
       origin,
       context?.siblingGeometries,
+      context?.meshClearanceObstacles,
     );
 
     if (fittedPrimitive) {
@@ -1699,7 +2235,7 @@ export function convertGeometryType(
     const targetVolume = computeBoxVolume(meshAnalysis.bounds);
 
     if (newType === GeometryType.BOX) {
-      const boxOrigin = context?.siblingGeometries?.length
+      const siblingAdjustedOrigin = context?.siblingGeometries?.length
         ? applySiblingBoxClearance(
             {
               x: toPositive(bx, DEFAULT_DIMENSIONS.x),
@@ -1710,15 +2246,20 @@ export function convertGeometryType(
             context.siblingGeometries,
           )
         : centeredOrigin;
-
-      return {
-        type: newType,
-        dimensions: {
+      const meshAdjustedBox = applyMeshPointBoxClearance(
+        {
           x: toPositive(bx, DEFAULT_DIMENSIONS.x),
           y: toPositive(by, DEFAULT_DIMENSIONS.y),
           z: toPositive(bz, DEFAULT_DIMENSIONS.z),
         },
-        origin: boxOrigin,
+        siblingAdjustedOrigin,
+        context?.meshClearanceObstacles,
+      );
+
+      return {
+        type: newType,
+        dimensions: meshAdjustedBox.dimensions,
+        origin: meshAdjustedBox.origin,
       };
     }
 
@@ -1747,20 +2288,35 @@ export function convertGeometryType(
         context?.siblingGeometries,
         centeredOrigin,
       );
-      const shiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+      const siblingShiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(centeredOrigin, {
             x: localAxis.x * clearanceAdjustedSize.centerShift,
             y: localAxis.y * clearanceAdjustedSize.centerShift,
             z: localAxis.z * clearanceAdjustedSize.centerShift,
           })
         : centeredOrigin;
+      const meshAdjustedSize = applyMeshPointCollisionClearance(
+        clearanceAdjustedSize.radius,
+        clearanceAdjustedSize.length,
+        axisInLinkSpace,
+        newType,
+        context?.meshClearanceObstacles,
+        siblingShiftedOrigin,
+      );
+      const shiftedOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(siblingShiftedOrigin, {
+            x: localAxis.x * meshAdjustedSize.centerShift,
+            y: localAxis.y * meshAdjustedSize.centerShift,
+            z: localAxis.z * meshAdjustedSize.centerShift,
+          })
+        : siblingShiftedOrigin;
 
       return {
         type: newType,
         dimensions: {
-          x: clearanceAdjustedSize.radius,
-          y: clearanceAdjustedSize.length,
-          z: clearanceAdjustedSize.radius,
+          x: meshAdjustedSize.radius,
+          y: meshAdjustedSize.length,
+          z: meshAdjustedSize.radius,
         },
         origin: alignOriginToPrimaryAxis(shiftedOrigin, primaryAxis),
       };
@@ -1782,20 +2338,35 @@ export function convertGeometryType(
         context?.siblingGeometries,
         centeredOrigin,
       );
-      const shiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
+      const siblingShiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(centeredOrigin, {
             x: localAxis.x * clearanceAdjustedSize.centerShift,
             y: localAxis.y * clearanceAdjustedSize.centerShift,
             z: localAxis.z * clearanceAdjustedSize.centerShift,
           })
         : centeredOrigin;
+      const meshAdjustedSize = applyMeshPointCollisionClearance(
+        clearanceAdjustedSize.radius,
+        Math.max(clearanceAdjustedSize.length, clearanceAdjustedSize.radius * 2),
+        axisInLinkSpace,
+        newType,
+        context?.meshClearanceObstacles,
+        siblingShiftedOrigin,
+      );
+      const shiftedOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(siblingShiftedOrigin, {
+            x: localAxis.x * meshAdjustedSize.centerShift,
+            y: localAxis.y * meshAdjustedSize.centerShift,
+            z: localAxis.z * meshAdjustedSize.centerShift,
+          })
+        : siblingShiftedOrigin;
 
       return {
         type: newType,
         dimensions: {
-          x: clearanceAdjustedSize.radius,
-          y: Math.max(clearanceAdjustedSize.length, clearanceAdjustedSize.radius * 2),
-          z: clearanceAdjustedSize.radius,
+          x: meshAdjustedSize.radius,
+          y: Math.max(meshAdjustedSize.length, meshAdjustedSize.radius * 2),
+          z: meshAdjustedSize.radius,
         },
         origin: alignOriginToPrimaryAxis(shiftedOrigin, primaryAxis),
       };
@@ -1845,6 +2416,27 @@ export function convertGeometryType(
         : origin;
     }
 
+    if (context?.meshClearanceObstacles?.length) {
+      const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
+      const meshAdjustedSize = applyMeshPointCollisionClearance(
+        radius,
+        length,
+        axisInLinkSpace,
+        newType,
+        context.meshClearanceObstacles,
+        nextOrigin,
+      );
+      radius = meshAdjustedSize.radius;
+      length = meshAdjustedSize.length;
+      nextOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
+        ? offsetOriginByLocalVector(nextOrigin, {
+            x: localAxis.x * meshAdjustedSize.centerShift,
+            y: localAxis.y * meshAdjustedSize.centerShift,
+            z: localAxis.z * meshAdjustedSize.centerShift,
+          })
+        : nextOrigin;
+    }
+
     if (primaryAxis) {
       nextOrigin = alignOriginToPrimaryAxis(nextOrigin, primaryAxis);
     }
@@ -1890,14 +2482,29 @@ export function convertGeometryType(
     if (context?.siblingGeometries?.length) {
       nextOrigin = applySiblingBoxClearance(newDims, origin, context.siblingGeometries);
     }
+    const meshAdjustedBox = applyMeshPointBoxClearance(
+      newDims,
+      nextOrigin,
+      context?.meshClearanceObstacles,
+    );
     return {
       type: newType,
-      dimensions: newDims,
-      origin: nextOrigin,
+      dimensions: meshAdjustedBox.dimensions,
+      origin: meshAdjustedBox.origin,
     };
   }
 
-  // MESH, NONE, or any other type
+  if (newType === GeometryType.MESH) {
+    return {
+      type: newType,
+      dimensions: currentType === GeometryType.MESH
+        ? currentDims
+        : { x: 1, y: 1, z: 1 },
+      origin,
+    };
+  }
+
+  // NONE, or any other type
   return {
     type: newType,
     dimensions: currentDims,
