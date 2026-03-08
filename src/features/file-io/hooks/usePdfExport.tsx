@@ -6,6 +6,7 @@
 
 import { useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
+import { translations } from '@/shared/i18n';
 import { useUIStore, useRobotStore } from '@/store';
 import type { InspectionReport } from '@/types';
 import { InspectionReportTemplate } from '../components/InspectionReportTemplate';
@@ -17,6 +18,7 @@ interface UsePdfExportReturn {
 
 export function usePdfExport(): UsePdfExportReturn {
   const lang = useUIStore((s) => s.lang);
+  const t = translations[lang];
   const robotName = useRobotStore((s) => s.name);
 
   const handleDownloadPDF = useCallback((inspectionReport: InspectionReport | null) => {
@@ -56,15 +58,10 @@ export function usePdfExport(): UsePdfExportReturn {
         hour: '2-digit',
         minute: '2-digit',
       });
-      const fileName =
-        lang === 'zh'
-          ? `${robotName}_检查报告_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`
-          : `${robotName}_inspection_report_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`;
+      const fileName = `${robotName}_${t.inspectionReportFileSuffix}_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`;
 
       // Use browser's print dialog to generate PDF
       // This ensures proper Chinese character support
-      const printTitle = lang === 'zh' ? 'URDF 机器人检查报告' : 'URDF Robot Inspection Report';
-
       // Create a clean printable version
       const element = document.getElementById('pdf-report-container')?.firstElementChild;
       if (element) {
@@ -103,11 +100,6 @@ export function usePdfExport(): UsePdfExportReturn {
         `;
         document.head.appendChild(styleElement);
 
-        // Show user instruction
-        const instruction = lang === 'zh'
-          ? '正在打开打印对话框，请选择"另存为 PDF"来保存报告...'
-          : 'Opening print dialog, please select "Save as PDF" to save the report...';
-
         // Small delay before opening print dialog
         setTimeout(() => {
           window.print();
@@ -138,7 +130,7 @@ export function usePdfExport(): UsePdfExportReturn {
         }
       }, 6000);
     }, 200);
-  }, [lang, robotName]);
+  }, [lang, robotName, t]);
 
   return {
     handleDownloadPDF,

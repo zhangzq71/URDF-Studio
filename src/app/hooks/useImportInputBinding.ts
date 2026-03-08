@@ -1,0 +1,37 @@
+import { useEffect, type RefObject } from 'react';
+
+interface UseImportInputBindingOptions {
+  importInputRef: RefObject<HTMLInputElement>;
+  importFolderInputRef: RefObject<HTMLInputElement>;
+  onImport: (files: FileList | null) => void | Promise<void>;
+}
+
+export function useImportInputBinding({
+  importInputRef,
+  importFolderInputRef,
+  onImport,
+}: UseImportInputBindingOptions) {
+  useEffect(() => {
+    const input = importInputRef.current;
+    const folderInput = importFolderInputRef.current;
+    const handleChange = (event: Event) => onImport((event.target as HTMLInputElement).files);
+
+    if (input) {
+      input.addEventListener('change', handleChange as EventListener);
+    }
+
+    if (folderInput) {
+      folderInput.addEventListener('change', handleChange as EventListener);
+    }
+
+    return () => {
+      if (input) {
+        input.removeEventListener('change', handleChange as EventListener);
+      }
+
+      if (folderInput) {
+        folderInput.removeEventListener('change', handleChange as EventListener);
+      }
+    };
+  }, [importFolderInputRef, importInputRef, onImport]);
+}

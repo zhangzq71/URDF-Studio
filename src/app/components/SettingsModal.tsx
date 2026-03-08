@@ -1,14 +1,14 @@
 /**
  * Settings Modal Component
- * Draggable settings panel for UI configuration (Theme, Language, Scale)
+ * Draggable settings panel for UI configuration (Theme, Language, Text Size)
  */
 import React from 'react';
 import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useUIStore } from '@/store';
+import { translations } from '@/shared/i18n';
 import { 
   SegmentedControl, 
   Switch, 
-  Slider, 
   Button, 
   Separator, 
   Label 
@@ -19,10 +19,7 @@ export function SettingsModal() {
   const settingsPos = useUIStore((state) => state.settingsPos);
   const closeSettings = useUIStore((state) => state.closeSettings);
   const setSettingsPos = useUIStore((state) => state.setSettingsPos);
-  
-  const uiScale = useUIStore((state) => state.uiScale);
-  const setUiScale = useUIStore((state) => state.setUiScale);
-  
+
   const lang = useUIStore((state) => state.lang);
   const setLang = useUIStore((state) => state.setLang);
   
@@ -37,6 +34,7 @@ export function SettingsModal() {
 
   const fontSize = useUIStore((state) => state.fontSize);
   const setFontSize = useUIStore((state) => state.setFontSize);
+  const t = translations[lang];
 
   const handleDragStart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -72,30 +70,30 @@ export function SettingsModal() {
       {/* Header */}
       <div
         onMouseDown={handleDragStart}
-        className="bg-element-bg px-4 py-3 border-b border-border-black flex items-center justify-between cursor-move select-none"
+        className="bg-element-bg px-3.5 py-2.5 border-b border-border-black flex items-center justify-between cursor-move select-none"
       >
         <div className="flex items-center gap-2">
-          <Settings className="w-4 h-4 text-text-tertiary" />
-          <h2 className="text-sm font-semibold text-text-primary">
-            {lang === 'zh' ? '设置' : 'Settings'}
+          <Settings className="w-3.5 h-3.5 text-text-tertiary" />
+          <h2 className="text-[13px] font-semibold text-text-primary">
+            {t.settings}
           </h2>
         </div>
         <button
           onClick={closeSettings}
-          className="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
+          className="p-1 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
         >
-          <X className="w-4 h-4" />
+          <X className="w-3.5 h-3.5" />
         </button>
       </div>
 
       {/* Content */}
-      <div className="p-4 space-y-5">
+      <div className="p-3.5 space-y-4">
         
         {/* Language Setting */}
-        <div className="space-y-2">
-          <Label className="flex items-center gap-2">
-            <Languages className="w-3.5 h-3.5" />
-            {lang === 'zh' ? '语言' : 'Language'}
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1.5 text-[11px]">
+            <Languages className="w-3 h-3" />
+            {t.language}
           </Label>
           <SegmentedControl
             options={[
@@ -104,23 +102,25 @@ export function SettingsModal() {
             ]}
             value={lang}
             onChange={(val) => setLang(val as 'en' | 'zh')}
+            size="xs"
           />
         </div>
 
         {/* Theme Setting */}
-        <div className="space-y-2">
-          <Label className="flex items-center gap-2">
-            {theme === 'light' ? <Sun className="w-3.5 h-3.5" /> : theme === 'dark' ? <Moon className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
-            {lang === 'zh' ? '主题' : 'Theme'}
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1.5 text-[11px]">
+            {theme === 'light' ? <Sun className="w-3 h-3" /> : theme === 'dark' ? <Moon className="w-3 h-3" /> : <Monitor className="w-3 h-3" />}
+            {t.theme}
           </Label>
           <SegmentedControl
             options={[
-              { value: 'light', label: lang === 'zh' ? '亮色' : 'Light', icon: <Sun className="w-3 h-3" /> },
-              { value: 'dark', label: lang === 'zh' ? '暗色' : 'Dark', icon: <Moon className="w-3 h-3" /> },
-              { value: 'system', label: lang === 'zh' ? '系统' : 'System', icon: <Monitor className="w-3 h-3" /> },
+              { value: 'light', label: t.light, icon: <Sun className="w-3 h-3" /> },
+              { value: 'dark', label: t.dark, icon: <Moon className="w-3 h-3" /> },
+              { value: 'system', label: t.system, icon: <Monitor className="w-3 h-3" /> },
             ]}
             value={theme}
             onChange={(val) => setTheme(val as 'light' | 'dark' | 'system')}
+            size="xs"
           />
         </div>
 
@@ -129,53 +129,35 @@ export function SettingsModal() {
 
         {/* Import Warning Setting */}
         <div className="flex items-center justify-between">
-          <Label className="flex items-center gap-2 mb-0">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            {lang === 'zh' ? '导入时提示' : 'Import Warning'}
+          <Label className="flex items-center gap-1.5 mb-0 text-[11px]">
+            <AlertTriangle className="w-3 h-3" />
+            {t.importWarning}
           </Label>
           <Switch
             checked={showImportWarning}
             onChange={setShowImportWarning}
+            size="sm"
           />
         </div>
 
         {/* Divider */}
         <Separator />
 
-        {/* UI Scale Setting */}
-        <div className="space-y-2">
-          <Slider
-            label={lang === 'zh' ? '界面缩放' : 'Interface Scale'}
-            icon={<Type className="w-3.5 h-3.5" />}
-            min={0.8}
-            max={1.5}
-            step={0.05}
-            value={uiScale}
-            onChange={setUiScale}
-            showValue={true}
-            formatValue={(val) => `${(val * 100).toFixed(0)}%`}
-          />
-          <div className="relative h-4 text-[10px] text-text-tertiary select-none px-1">
-            <span className="absolute left-0">80%</span>
-            <span className="absolute left-[28.57%] -translate-x-1/2">100%</span>
-            <span className="absolute right-0">150%</span>
-          </div>
-        </div>
-
         {/* Font Size Setting (Global Text Size) */}
-        <div className="space-y-2">
-          <Label className="flex items-center gap-2">
-             <Type className="w-3.5 h-3.5" />
-             {lang === 'zh' ? '字体大小' : 'Font Size'}
+        <div className="space-y-1.5">
+          <Label className="flex items-center gap-1.5 text-[11px]">
+             <Type className="w-3 h-3" />
+             {t.fontSize}
           </Label>
           <SegmentedControl
             options={[
-              { value: 'small', label: lang === 'zh' ? '小' : 'Small' },
-              { value: 'medium', label: lang === 'zh' ? '中' : 'Medium' },
-              { value: 'large', label: lang === 'zh' ? '大' : 'Large' },
+              { value: 'small', label: t.small },
+              { value: 'medium', label: t.medium },
+              { value: 'large', label: t.large },
             ]}
             value={fontSize}
             onChange={(val) => setFontSize(val as 'small' | 'medium' | 'large')}
+            size="xs"
           />
         </div>
 
@@ -184,13 +166,12 @@ export function SettingsModal() {
           variant="secondary"
           size="sm"
           onClick={() => {
-            setUiScale(1.0);
             setFontSize('medium');
           }}
           className="w-full justify-center"
           icon={<RotateCcw className="w-3 h-3" />}
         >
-          {lang === 'zh' ? '重置缩放' : 'Reset Scale'}
+          {t.resetFontSize}
         </Button>
       </div>
     </div>

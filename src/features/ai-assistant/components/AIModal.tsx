@@ -116,16 +116,13 @@ export function AIModal({
       const response = await generateRobotFromPrompt(aiPrompt, robot, motorLibrary, lang)
       if (response) {
         setAiResponse({
-          explanation: response.explanation || (lang === 'zh' ? '未收到有效回复。' : 'No valid response received.'),
+          explanation: response.explanation || t.aiNoValidResponse,
           type: response.actionType || 'advice',
           data: response.robotData
         })
       } else {
         setAiResponse({
-          explanation:
-            lang === 'zh'
-              ? 'AI 服务未返回响应，请重试。'
-              : 'AI service did not return a response, please try again.',
+          explanation: t.aiNoServiceResponseRetry,
           type: 'advice',
           data: undefined
         })
@@ -133,10 +130,7 @@ export function AIModal({
     } catch (error: any) {
       console.error('AI Generation Error', error)
       setAiResponse({
-        explanation:
-          lang === 'zh'
-            ? `生成失败：${error?.message || '未知错误'}`
-            : `Generation failed: ${error?.message || 'Unknown error'}`,
+        explanation: t.aiGenerationFailed.replace('{message}', error?.message || t.unknownError),
         type: 'advice',
         data: undefined
       })
@@ -364,7 +358,7 @@ export function AIModal({
     if (aiResponse?.data) {
       const generated = aiResponse.data
       if (!generated.links || Object.keys(generated.links).length === 0) {
-        alert(lang === 'zh' ? '生成的机器人数据中没有链接，无法应用更改。' : 'No links in generated data, cannot apply changes.')
+        alert(t.aiNoLinksGenerated)
         return
       }
 
@@ -379,7 +373,7 @@ export function AIModal({
       setAiPrompt('')
       setAiResponse(null)
     } else {
-      alert(lang === 'zh' ? '没有可应用的数据。' : 'No data to apply.')
+      alert(t.aiNoDataToApply)
     }
   }
 
@@ -461,7 +455,7 @@ export function AIModal({
                         <div className="flex items-center gap-2 text-text-secondary dark:text-system-blue mb-2">
                           <Sparkles className="w-4 h-4" />
                           <h3 className="text-sm font-semibold">
-                            {lang === 'zh' ? '智能分析' : 'AI Analysis'}
+                            {t.aiAnalysis}
                           </h3>
                         </div>
                         <p className="text-xs text-text-secondary leading-relaxed">
@@ -472,7 +466,7 @@ export function AIModal({
                         <div className="flex items-center gap-2 text-text-secondary mb-2">
                           <Info className="w-4 h-4" />
                           <h3 className="text-sm font-semibold">
-                            {lang === 'zh' ? '常用示例' : 'Examples'}
+                            {t.examples}
                           </h3>
                         </div>
                         <p className="text-[11px] text-text-tertiary leading-relaxed">{t.aiExamples}</p>
@@ -488,7 +482,7 @@ export function AIModal({
                       />
                       <div className="mt-4 flex justify-between items-center">
                         <span className="text-[10px] text-text-tertiary font-medium">
-                          {lang === 'zh' ? '按 Enter 发送，Shift+Enter 换行' : 'Press Enter to send, Shift+Enter for newline'}
+                          {t.sendOnEnterHint}
                         </span>
                         <button
                           onClick={handleGenerateAI}
@@ -529,7 +523,7 @@ export function AIModal({
                             className="h-8 flex items-center gap-2 px-4 bg-panel-bg dark:bg-element-bg border border-border-black text-system-blue rounded-lg text-xs font-medium hover:bg-element-bg transition-colors shadow-sm"
                           >
                             <MessageCircle className="w-4 h-4" />
-                            {lang === 'zh' ? '针对报告进行对话' : 'Discuss Report with AI'}
+                            {t.discussReportWithAI}
                           </button>
                         </div>
                       </div>
@@ -556,7 +550,7 @@ export function AIModal({
                             {aiResponse.data && (
                               <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded-lg text-[10px] font-medium border border-emerald-100 dark:border-emerald-800">
                                 <Check className="w-3 h-3" />
-                                {lang === 'zh' ? '建议可应用' : 'Actionable'}
+                                {t.actionable}
                               </div>
                             )}
                           </div>
@@ -572,7 +566,7 @@ export function AIModal({
                             </div>
                             <div className="space-y-1">
                               <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-                                {lang === 'zh' ? '应用更改提示' : 'Apply Changes'}
+                                {t.applyChangesHintTitle}
                               </p>
                               <p className="text-[11px] text-amber-700 dark:text-amber-300 leading-relaxed">
                                 {t.actionWarning}

@@ -136,12 +136,13 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
       loopFrameRef.current = null;
       const frameNow = performance.now();
       const changed = syncCanvasSize();
+      const flushed = flushPendingBufferSize();
       if (changed) {
         beginSmoothResize();
         // Keep watching for a short settle window while animated width/height changes continue.
         resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, frameNow + 160);
-      } else if (pendingBufferSizeRef.current) {
-        flushPendingBufferSize();
+      } else if (flushed) {
+        resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, frameNow + 80);
       }
 
       if (frameNow < resizeWatchUntilRef.current || pendingBufferSizeRef.current) {
@@ -163,6 +164,8 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
     let resizeObserver: ResizeObserver | null = null;
     if (parent && typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
+        syncCanvasSize();
+        flushPendingBufferSize();
         beginSmoothResize();
         ensureResizeWatch();
       });
@@ -170,6 +173,8 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
     }
 
     const handleWindowResize = () => {
+      syncCanvasSize();
+      flushPendingBufferSize();
       beginSmoothResize();
       ensureResizeWatch();
     };
@@ -561,7 +566,7 @@ export function SceneLighting({
     gl.toneMapping = cameraFollowPrimary ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = cameraFollowPrimary
       ? (effectiveTheme === 'light' ? 1.02 : 1.06)
-      : (effectiveTheme === 'light' ? 1.0 : 1.1);
+      : (effectiveTheme === 'light' ? 1.08 : 1.16);
 
     // Ensure proper sRGB output color space
     gl.outputColorSpace = THREE.SRGBColorSpace;

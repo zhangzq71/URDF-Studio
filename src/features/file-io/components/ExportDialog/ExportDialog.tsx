@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Upload, Package, FileCode, Layers, Lock, Braces } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
-import { translations } from '@/shared/i18n';
+import { translations, type TranslationKeys } from '@/shared/i18n';
 import type { MjcfActuatorType } from '@/core/parsers/mjcf/mjcfGenerator';
 
 export type ExportFormat = 'mjcf' | 'urdf' | 'xacro' | 'usd';
@@ -194,10 +194,10 @@ function TextField({
 }
 
 const STL_QUALITY_PRESETS = [
-  { key: 'none',   zh: '不压缩', en: 'Original', quality: 100, compress: false },
-  { key: 'light',  zh: '低压缩', en: 'Light',    quality: 75,  compress: true  },
-  { key: 'medium', zh: '中等',   en: 'Medium',   quality: 50,  compress: true  },
-  { key: 'high',   zh: '高压缩', en: 'High',     quality: 25,  compress: true  },
+  { key: 'none', quality: 100, compress: false },
+  { key: 'light', quality: 75, compress: true },
+  { key: 'medium', quality: 50, compress: true },
+  { key: 'high', quality: 25, compress: true },
 ] as const;
 
 type StlPresetKey = typeof STL_QUALITY_PRESETS[number]['key'];
@@ -212,26 +212,30 @@ function getStlPreset(compressSTL: boolean, stlQuality: number): StlPresetKey {
 function STLQualitySelector({
   compressSTL,
   stlQuality,
-  lang,
+  t,
   onCompressChange,
   onQualityChange,
 }: {
   compressSTL: boolean;
   stlQuality: number;
-  lang: 'zh' | 'en';
+  t: TranslationKeys;
   onCompressChange: (v: boolean) => void;
   onQualityChange: (v: number) => void;
 }) {
   const active = getStlPreset(compressSTL, stlQuality);
+  const presetLabels: Record<StlPresetKey, string> = {
+    none: t.stlQualityOriginal,
+    light: t.stlQualityLight,
+    medium: t.stlQualityMedium,
+    high: t.stlQualityHigh,
+  };
   return (
     <div className="py-2">
       <div className="text-xs text-text-primary mb-0.5">
-        {lang === 'zh' ? 'STL 网格质量' : 'STL Mesh Quality'}
+        {t.stlMeshQuality}
       </div>
       <div className="text-[10px] text-text-tertiary mb-2">
-        {lang === 'zh'
-          ? '高压缩可减小文件体积，但会降低几何精度'
-          : 'Higher compression reduces file size but lowers mesh detail'}
+        {t.stlMeshQualityDesc}
       </div>
       <div className="flex gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black">
         {STL_QUALITY_PRESETS.map((p) => (
@@ -247,7 +251,7 @@ function STLQualitySelector({
                 : 'text-text-secondary hover:text-text-primary hover:bg-element-hover'
             }`}
           >
-            {lang === 'zh' ? p.zh : p.en}
+            {presetLabels[p.key]}
           </button>
         ))}
       </div>
@@ -439,7 +443,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   <STLQualitySelector
                     compressSTL={config.urdf.compressSTL}
                     stlQuality={config.urdf.stlQuality}
-                    lang={lang}
+                    t={t}
                     onCompressChange={(v) => updateUrdf('compressSTL', v)}
                     onQualityChange={(v) => updateUrdf('stlQuality', v)}
                   />
@@ -453,7 +457,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             <>
               <SectionLabel>{t.exportOptionsSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={lang === 'zh' ? 'ROS 版本' : 'ROS Version'}>
+                <Row label={t.rosVersion}>
                   <div className="flex gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black">
                     {(['ros1', 'ros2'] as RosVersion[]).map((v) => (
                       <button
@@ -471,15 +475,15 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   </div>
                 </Row>
                 <Row
-                  label={lang === 'zh' ? '控制接口' : 'Hardware Interface'}
+                  label={t.hardwareInterface}
                   desc={config.xacro.rosVersion === 'ros1' ? 'hardware_interface/...' : 'command_interface name'}
                 >
                   <SelectField
                     value={config.xacro.rosHardwareInterface}
                     options={[
-                      { value: 'effort', label: lang === 'zh' ? '力矩 (effort)' : 'Effort' },
-                      { value: 'position', label: lang === 'zh' ? '位置 (position)' : 'Position' },
-                      { value: 'velocity', label: lang === 'zh' ? '速度 (velocity)' : 'Velocity' },
+                      { value: 'effort', label: t.hardwareInterfaceEffort },
+                      { value: 'position', label: t.hardwareInterfacePosition },
+                      { value: 'velocity', label: t.hardwareInterfaceVelocity },
                     ]}
                     onChange={(v) => updateXacro('rosHardwareInterface', v as RosHwInterface)}
                   />
@@ -494,7 +498,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   <STLQualitySelector
                     compressSTL={config.xacro.compressSTL}
                     stlQuality={config.xacro.stlQuality}
-                    lang={lang}
+                    t={t}
                     onCompressChange={(v) => updateXacro('compressSTL', v)}
                     onQualityChange={(v) => updateXacro('stlQuality', v)}
                   />
@@ -518,7 +522,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               className="flex items-center gap-2 px-4 py-2 bg-system-blue-solid hover:bg-system-blue text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Upload className="w-3.5 h-3.5" />
-              {isExporting ? (lang === 'zh' ? '导出中...' : 'Exporting...') : t.exportDoExport}
+              {isExporting ? t.exporting : t.exportDoExport}
             </button>
           </div>
         </div>

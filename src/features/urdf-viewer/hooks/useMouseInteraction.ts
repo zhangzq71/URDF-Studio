@@ -7,6 +7,8 @@ import type { ToolMode } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
 
+const JOINT_DRAG_EPSILON = 1e-5;
+
 export interface UseMouseInteractionOptions {
     robot: THREE.Object3D | null;
     toolMode: ToolMode;
@@ -73,6 +75,8 @@ export function useMouseInteraction({
     const dragJoint = useRef<any>(null);
     const dragHitDistance = useRef(0);
     const lastRayRef = useRef(new THREE.Ray());
+    const lastRotationPointRef = useRef(new THREE.Vector3());
+    const hasLastRotationPointRef = useRef(false);
     const selectionResetTimerRef = useRef<number | null>(null);
 
     // Keep refs up to date
@@ -102,6 +106,21 @@ export function useMouseInteraction({
         const tempDelta = new THREE.Vector3();
         const tempPrevHitPoint = new THREE.Vector3();
         const tempNewHitPoint = new THREE.Vector3();
+
+        const syncJointWorldFrame = (joint: any) => {
+            const axis = joint.axis || new THREE.Vector3(0, 0, 1);
+
+            if (joint.bodyOffsetGroup) {
+                joint.bodyOffsetGroup.getWorldQuaternion(tempWorldQuat);
+            } else if (joint.parent) {
+                joint.parent.getWorldQuaternion(tempWorldQuat);
+            } else {
+                joint.getWorldQuaternion(tempWorldQuat);
+            }
+
+            tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
+            tempPivotPoint.setFromMatrixPosition(joint.matrixWorld);
+        };
 
         /**
          * Find the parent link of the clicked object
@@ -163,18 +182,7 @@ export function useMouseInteraction({
         };
 
         const getRevoluteDelta = (joint: any, startPt: THREE.Vector3, endPt: THREE.Vector3): number => {
-            const axis = joint.axis || new THREE.Vector3(0, 0, 1);
-
-            if (joint.bodyOffsetGroup) {
-                joint.bodyOffsetGroup.getWorldQuaternion(tempWorldQuat);
-            } else if (joint.parent) {
-                joint.parent.getWorldQuaternion(tempWorldQuat);
-            } else {
-                joint.getWorldQuaternion(tempWorldQuat);
-            }
-
-            tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
-            tempPivotPoint.setFromMatrixPosition(joint.matrixWorld);
+            syncJointWorldFrame(joint);
             tempPlane.setFromNormalAndCoplanarPoint(tempAxisWorld, tempPivotPoint);
 
             tempPlane.projectPoint(startPt, tempProjStart);
@@ -189,37 +197,62 @@ export function useMouseInteraction({
         };
 
         const getPrismaticDelta = (joint: any, startPt: THREE.Vector3, endPt: THREE.Vector3): number => {
-            const axis = joint.axis || new THREE.Vector3(0, 0, 1);
-
-            if (joint.bodyOffsetGroup) {
-                joint.bodyOffsetGroup.getWorldQuaternion(tempWorldQuat);
-            } else if (joint.parent) {
-                joint.parent.getWorldQuaternion(tempWorldQuat);
-            } else {
-                joint.getWorldQuaternion(tempWorldQuat);
-            }
-
-            tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
+            syncJointWorldFrame(joint);
             tempDelta.subVectors(endPt, startPt);
             return tempDelta.dot(tempAxisWorld);
+        };
+
+        const resolveRevoluteDragPoint = (
+            joint: any,
+            ray: THREE.Ray,
+            fallbackDistance: number,
+            target: THREE.Vector3
+        ): boolean => {
+            syncJointWorldFrame(joint);
+            tempPlane.setFromNormalAndCoplanarPoint(tempAxisWorld, tempPivotPoint);
+
+            if (ray.intersectPlane(tempPlane, target)) {
+                return true;
+            }
+
+            if (!Number.isFinite(fallbackDistance)) {
+                return false;
+            }
+
+            ray.at(fallbackDistance, target);
+            tempPlane.projectPoint(target, target);
+            return true;
         };
 
         const moveRay = (toRay: THREE.Ray) => {
             if (!isDraggingJoint.current || !dragJoint.current) return;
 
-            lastRayRef.current.at(dragHitDistance.current, tempPrevHitPoint);
-            toRay.at(dragHitDistance.current, tempNewHitPoint);
-
             let delta = 0;
             const jt = dragJoint.current.jointType;
 
             if (jt === 'revolute' || jt === 'continuous') {
-                delta = getRevoluteDelta(dragJoint.current, tempPrevHitPoint, tempNewHitPoint);
+                const hasCurrentPoint = resolveRevoluteDragPoint(
+                    dragJoint.current,
+                    toRay,
+                    dragHitDistance.current,
+                    tempNewHitPoint
+                );
+
+                if (hasCurrentPoint && hasLastRotationPointRef.current) {
+                    delta = getRevoluteDelta(dragJoint.current, lastRotationPointRef.current, tempNewHitPoint);
+                }
+
+                if (hasCurrentPoint) {
+                    lastRotationPointRef.current.copy(tempNewHitPoint);
+                    hasLastRotationPointRef.current = true;
+                }
             } else if (jt === 'prismatic') {
+                lastRayRef.current.at(dragHitDistance.current, tempPrevHitPoint);
+                toRay.at(dragHitDistance.current, tempNewHitPoint);
                 delta = getPrismaticDelta(dragJoint.current, tempPrevHitPoint, tempNewHitPoint);
             }
 
-            if (delta !== 0) {
+            if (Math.abs(delta) > JOINT_DRAG_EPSILON) {
                 const currentAngle = dragJoint.current.angle ?? dragJoint.current.jointValue ?? 0;
                 let newAngle = currentAngle + delta;
 
@@ -228,13 +261,13 @@ export function useMouseInteraction({
                     newAngle = Math.max(limit.lower, Math.min(limit.upper, newAngle));
                 }
 
-                if (dragJoint.current.setJointValue) {
+                if (Math.abs(newAngle - currentAngle) > JOINT_DRAG_EPSILON && dragJoint.current.setJointValue) {
                     dragJoint.current.setJointValue(newAngle);
                     invalidateRef.current();
-                }
 
-                if (onJointChangeRef.current) {
-                    onJointChangeRef.current(dragJoint.current.name, newAngle);
+                    if (onJointChangeRef.current) {
+                        onJointChangeRef.current(dragJoint.current.name, newAngle);
+                    }
                 }
             }
 
@@ -394,6 +427,16 @@ export function useMouseInteraction({
                     dragJoint.current = joint;
                     dragHitDistance.current = hit.distance;
                     lastRayRef.current.copy(raycasterRef.current.ray);
+                    if (joint.jointType === 'revolute' || joint.jointType === 'continuous') {
+                        hasLastRotationPointRef.current = resolveRevoluteDragPoint(
+                            joint,
+                            raycasterRef.current.ray,
+                            hit.distance,
+                            lastRotationPointRef.current
+                        );
+                    } else {
+                        hasLastRotationPointRef.current = false;
+                    }
                     setIsDraggingRef.current?.(true);
                     if (setActiveJointRef.current) {
                         setActiveJointRef.current(joint.name);
@@ -413,6 +456,7 @@ export function useMouseInteraction({
 
                 isDraggingJoint.current = false;
                 dragJoint.current = null;
+                hasLastRotationPointRef.current = false;
                 setIsDraggingRef.current?.(false);
             }
 

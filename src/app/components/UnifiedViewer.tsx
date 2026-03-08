@@ -5,12 +5,8 @@ import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
-import { useVisualizerController } from '@/features/visualizer/hooks';
-import { VisualizerPanels } from '@/features/visualizer/components/VisualizerPanels';
-import { VisualizerScene } from '@/features/visualizer/components/VisualizerScene';
-import { useURDFViewerController } from '@/features/urdf-viewer/hooks';
-import { URDFViewerPanels } from '@/features/urdf-viewer/components/URDFViewerPanels';
-import { URDFViewerScene } from '@/features/urdf-viewer/components/URDFViewerScene';
+import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
+import { useURDFViewerController, URDFViewerPanels, URDFViewerScene } from '@/features/urdf-viewer';
 
 interface FilePreviewState {
   urdfContent: string;

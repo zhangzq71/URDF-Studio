@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import * as THREE from 'three';
 import { JointType, RobotState } from '@/types';
-import { UnifiedTransformControls } from '@/shared/components/3d';
+import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { TransformControlsState } from '../../hooks/useTransformControls';
 import { TransformConfirmUI } from './TransformConfirmUI';
 
@@ -67,7 +67,7 @@ export const JointTransformControls = memo(function JointTransformControls({
         ref={transformControlRef}
         object={selectedJointPivot}
         mode={transformMode}
-        size={0.7}
+        size={VISUALIZER_UNIFIED_GIZMO_SIZE}
         space="local"
         enabled={!pendingEdit}
         onChange={handleObjectChange}

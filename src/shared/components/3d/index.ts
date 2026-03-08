@@ -22,7 +22,7 @@ export {
   LIGHTING_CONFIG,
   WORKSPACE_CANVAS_BACKGROUND
 } from './SceneUtilities';
-export { UnifiedTransformControls } from './UnifiedTransformControls';
+export { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from './UnifiedTransformControls';
 
 // Visualization Helpers
 export * from './helpers';

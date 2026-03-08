@@ -82,7 +82,7 @@ interface HeaderProps {
   onOpenURDFGallery: () => void;
   // Snapshot
   onSnapshot: () => void;
-  onOptimizeCollisionCylinders: () => void;
+  onOpenCollisionOptimizer: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -110,7 +110,7 @@ export function Header({
   onOpenAbout,
   onOpenURDFGallery,
   onSnapshot,
-  onOptimizeCollisionCylinders,
+  onOpenCollisionOptimizer,
   viewConfig,
   setViewConfig,
 }: HeaderProps) {
@@ -262,7 +262,7 @@ export function Header({
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
                   >
                     <Download className="w-4 h-4 text-slate-400" />
-                    {lang === 'zh' ? '导入 USP / ZIP / 文件' : 'Import USP / ZIP / File'}
+                    {t.importUspZipFile}
                   </button>
                   <div className="h-px bg-element-bg dark:bg-border-black my-1" />
                   <button
@@ -291,7 +291,7 @@ export function Header({
               onClick={() => setActiveMenu(activeMenu === 'edit' ? null : 'edit')}
             >
               <Pencil className="w-3.5 h-3.5" />
-              {showMenuLabels && <span>{lang === 'zh' ? '编辑' : 'Edit'}</span>}
+              {showMenuLabels && <span>{t.edit}</span>}
               {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'edit' ? 'rotate-180' : ''}`} />}
             </HeaderButton>
 
@@ -309,7 +309,7 @@ export function Header({
                   >
                     <span className="flex items-center gap-2.5">
                       <Undo className="w-4 h-4 text-slate-400" />
-                      {lang === 'zh' ? '撤销' : 'Undo'}
+                      {t.undo}
                     </span>
                     <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Z</span>
                   </button>
@@ -323,33 +323,22 @@ export function Header({
                   >
                     <span className="flex items-center gap-2.5">
                       <Redo className="w-4 h-4 text-slate-400" />
-                      {lang === 'zh' ? '重做' : 'Redo'}
+                      {t.redo}
                     </span>
                     <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Shift+Z</span>
                   </button>
                   <div className="h-px bg-element-bg dark:bg-border-black my-1" />
-                  <div className="relative group">
-                    <button
-                      onClick={() => {
-                        onOptimizeCollisionCylinders();
-                        setActiveMenu(null);
-                      }}
-                      title={lang === 'zh'
-                        ? '将所有 cylinder 碰撞体一键转换为 capsule'
-                        : 'One-click convert all cylinder collision bodies to capsule'}
-                      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
-                    >
-                      <RefreshCw className="w-4 h-4 text-slate-400" />
-                      {lang === 'zh' ? '碰撞体优化' : 'Collision Optimization'}
-                    </button>
-                    <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block z-[60]">
-                      <div className="rounded-md border border-border-black bg-panel-bg dark:bg-panel-bg px-2 py-1 text-[10px] text-text-secondary whitespace-nowrap shadow-md dark:shadow-xl">
-                        {lang === 'zh'
-                          ? '一键将所有 Cylinder 碰撞体转换为 Capsule'
-                          : 'Convert all cylinder collisions to capsule'}
-                      </div>
-                    </div>
-                  </div>
+                  <button
+                    onClick={() => {
+                      onOpenCollisionOptimizer();
+                      setActiveMenu(null);
+                    }}
+                    aria-label={t.collisionOptimizerDialog}
+                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
+                  >
+                    <RefreshCw className="w-4 h-4 text-slate-400" />
+                    {t.collisionOptimizerDialog}
+                  </button>
                 </div>
               </>
             )}
@@ -435,7 +424,7 @@ export function Header({
               onClick={() => setActiveMenu(activeMenu === 'view' ? null : 'view')}
             >
               <Eye className="w-3.5 h-3.5" />
-              {showMenuLabels && <span>{lang === 'zh' ? '视图' : 'View'}</span>}
+              {showMenuLabels && <span>{t.view}</span>}
               {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'view' ? 'rotate-180' : ''}`} />}
             </HeaderButton>
 
@@ -445,22 +434,22 @@ export function Header({
                 <div className="absolute top-full left-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
                   <ViewMenuItem
                     checked={viewConfig.showToolbar}
-                    label={lang === 'zh' ? '工具栏' : 'Toolbar'}
+                    label={t.toolbar}
                     onClick={() => setViewConfig(prev => ({ ...prev, showToolbar: !prev.showToolbar }))}
                   />
                   <ViewMenuItem
                     checked={viewConfig.showOptionsPanel}
-                    label={lang === 'zh' ? '细节选项' : 'Detail Options'}
+                    label={t.detailOptions}
                     onClick={() => setViewConfig(prev => ({ ...prev, showOptionsPanel: !prev.showOptionsPanel }))}
                   />
                   <ViewMenuItem
                     checked={viewConfig.showSkeletonOptionsPanel}
-                    label={lang === 'zh' ? '骨架/硬件选项' : 'Skeleton/Hardware Options'}
+                    label={t.skeletonHardwareOptions}
                     onClick={() => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: !prev.showSkeletonOptionsPanel }))}
                   />
                   <ViewMenuItem
                     checked={viewConfig.showJointPanel}
-                    label={lang === 'zh' ? '关节控制' : 'Joint Controls'}
+                    label={t.jointControls}
                     onClick={() => setViewConfig(prev => ({ ...prev, showJointPanel: !prev.showJointPanel }))}
                   />
                 </div>
@@ -476,10 +465,10 @@ export function Header({
                 onFocus={onPrefetchCodeViewer}
                 onPointerDown={onPrefetchCodeViewer}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md whitespace-nowrap text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white"
-                title={lang === 'zh' ? '源代码' : 'Source Code'}
+                title={t.sourceCode}
               >
                 <Code className="w-3.5 h-3.5" />
-                {showSourceText && <span>{lang === 'zh' ? '源代码' : 'Source Code'}</span>}
+                {showSourceText && <span>{t.sourceCode}</span>}
               </button>
             </div>
           )}
@@ -496,7 +485,7 @@ export function Header({
                     ? 'text-slate-300 dark:text-element-hover cursor-not-allowed'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
                 }`}
-                title={lang === 'zh' ? '撤销 (Ctrl+Z)' : 'Undo (Ctrl+Z)'}
+                title={`${t.undo} (Ctrl+Z)`}
               >
                 <Undo className="w-4 h-4" />
               </button>
@@ -508,7 +497,7 @@ export function Header({
                     ? 'text-slate-300 dark:text-element-hover cursor-not-allowed'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
                 }`}
-                title={lang === 'zh' ? '重做 (Ctrl+Shift+Z)' : 'Redo (Ctrl+Shift+Z)'}
+                title={`${t.redo} (Ctrl+Shift+Z)`}
               >
                 <Redo className="w-4 h-4" />
               </button>
@@ -540,7 +529,7 @@ export function Header({
           <button
             onClick={onSnapshot}
             className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={lang === 'zh' ? '快照' : 'Snapshot'}
+            title={t.snapshot}
           >
             <Camera className="w-4 h-4" />
           </button>
@@ -550,7 +539,7 @@ export function Header({
           <button
             onClick={onOpenSettings}
             className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={lang === 'zh' ? '设置' : 'Settings'}
+            title={t.settings}
           >
             <Settings className="w-4 h-4" />
           </button>
@@ -560,7 +549,7 @@ export function Header({
           <button
             onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
             className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={lang === 'zh' ? '切换语言' : 'Switch Language'}
+            title={t.switchLanguage}
           >
             <Globe className="w-3.5 h-3.5" />
             <span className="text-[10px] font-semibold">{lang === 'en' ? 'EN' : '中'}</span>
@@ -578,7 +567,7 @@ export function Header({
               }
             }}
             className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={lang === 'zh' ? '切换主题' : 'Toggle Theme'}
+            title={t.toggleTheme}
           >
             {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
@@ -624,7 +613,7 @@ export function Header({
           <button
             onClick={onOpenAbout}
             className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={lang === 'zh' ? '关于' : 'About'}
+            title={t.about}
           >
             <Info className="w-4 h-4" />
           </button>
@@ -828,7 +817,7 @@ function HeaderOverflowMenu({
             ? 'bg-element-bg dark:bg-element-active text-text-primary dark:text-white'
             : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg'
         }`}
-        title={lang === 'zh' ? '更多' : 'More'}
+        title={t.more}
       >
         <MoreHorizontal className="w-5 h-5" />
       </button>
@@ -893,7 +882,7 @@ function HeaderOverflowMenu({
                     onTouchStart={onPrefetchCodeViewer}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    <Code className="w-4 h-4" /> {lang === 'zh' ? '源代码' : 'Source Code'}
+                    <Code className="w-4 h-4" /> {t.sourceCode}
                   </button>
                 )}
                 {showUndoRedo && (
@@ -903,14 +892,14 @@ function HeaderOverflowMenu({
                       disabled={!canUndo}
                       className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
                     >
-                      <Undo className="w-4 h-4" /> {lang === 'zh' ? '撤销' : 'Undo'}
+                      <Undo className="w-4 h-4" /> {t.undo}
                     </button>
                     <button
                       onClick={() => { redo(); setActiveMenu(null); }}
                       disabled={!canRedo}
                       className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
                     >
-                      <Redo className="w-4 h-4" /> {lang === 'zh' ? '重做' : 'Redo'}
+                      <Redo className="w-4 h-4" /> {t.redo}
                     </button>
                   </>
                 )}
@@ -928,7 +917,7 @@ function HeaderOverflowMenu({
                     onClick={() => { onSnapshot(); setActiveMenu(null); }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    <Camera className="w-4 h-4" /> {lang === 'zh' ? '快照' : 'Snapshot'}
+                    <Camera className="w-4 h-4" /> {t.snapshot}
                   </button>
                 )}
                 {showSettings && (
@@ -936,7 +925,7 @@ function HeaderOverflowMenu({
                     onClick={() => { onOpenSettings(); setActiveMenu(null); }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    <Settings className="w-4 h-4" /> {lang === 'zh' ? '设置' : 'Settings'}
+                    <Settings className="w-4 h-4" /> {t.settings}
                   </button>
                 )}
                 {showLanguage && (
@@ -944,7 +933,7 @@ function HeaderOverflowMenu({
                     onClick={() => { setLang(lang === 'en' ? 'zh' : 'en'); setActiveMenu(null); }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    <Globe className="w-4 h-4" /> {lang === 'zh' ? '切换语言' : 'Switch Language'}
+                    <Globe className="w-4 h-4" /> {t.switchLanguage}
                   </button>
                 )}
                 {showTheme && (
@@ -960,7 +949,7 @@ function HeaderOverflowMenu({
                     }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {lang === 'zh' ? '切换主题' : 'Toggle Theme'}
+                    {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {t.toggleTheme}
                   </button>
                 )}
                 {showAbout && (
@@ -968,7 +957,7 @@ function HeaderOverflowMenu({
                     onClick={() => { onOpenAbout(); setActiveMenu(null); }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    <Info className="w-4 h-4" /> {lang === 'zh' ? '关于' : 'About'}
+                    <Info className="w-4 h-4" /> {t.about}
                   </button>
                 )}
               </>

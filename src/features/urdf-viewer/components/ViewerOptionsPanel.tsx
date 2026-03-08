@@ -15,6 +15,7 @@ interface ViewerOptionsPanelProps {
     showOptionsPanel: boolean;
     optionsPanelRef: React.RefObject<HTMLDivElement>;
     optionsPanelPos: { x: number; y: number } | null;
+    defaultPosition?: { top?: string; right?: string; left?: string; bottom?: string; transform?: string };
     onMouseDown: (e: React.MouseEvent) => void;
     mode: 'detail' | 'hardware';
     t: any;
@@ -61,6 +62,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     showOptionsPanel,
     optionsPanelRef,
     optionsPanelPos,
+    defaultPosition,
     onMouseDown,
     mode,
     t,
@@ -113,14 +115,23 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
 
     if (!showOptionsPanel) return null;
 
+    const stopPanelEventPropagation = (event: React.SyntheticEvent) => {
+        event.stopPropagation();
+    };
+
     return (
         <div
             ref={optionsPanelRef}
-            className="absolute z-40 pointer-events-auto"
+            className="urdf-options-panel absolute z-40 pointer-events-auto"
             style={optionsPanelPos
-                ? { left: optionsPanelPos.x, top: optionsPanelPos.y, right: 'auto' }
-                : { top: '16px', right: '16px' }
+                ? { left: optionsPanelPos.x, top: optionsPanelPos.y, right: 'auto', bottom: 'auto', transform: 'none' }
+                : defaultPosition ?? { top: '16px', right: '16px' }
             }
+            onClick={stopPanelEventPropagation}
+            onContextMenu={stopPanelEventPropagation}
+            onDoubleClick={stopPanelEventPropagation}
+            onPointerDown={stopPanelEventPropagation}
+            onWheel={stopPanelEventPropagation}
         >
             <OptionsPanelContainer resizable={true} isCollapsed={isOptionsCollapsed} resizeTitle={t.resize}>
                 <OptionsPanelHeader
@@ -157,7 +168,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                             {/* Model Transparency */}
                             <div className="pt-2">
                                 <SliderOption
-                                    label={lang === 'zh' ? '模型不透明度' : 'Model Opacity'}
+                                    label={t.modelOpacity}
                                     value={modelOpacity}
                                     onChange={setModelOpacity}
                                     min={0.1}
@@ -171,7 +182,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
 
                         {/* Coordinate Axes Section */}
                         <CollapsibleSection
-                            title={lang === 'zh' ? '坐标系显示' : 'Coordinate Axes'}
+                            title={t.coordinateAxes}
                             isCollapsed={panelSections['viewer_coords'] ?? true}
                             onToggle={() => setPanelSection('viewer_coords', !(panelSections['viewer_coords'] ?? true))}
                         >
@@ -186,7 +197,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     <button
                                         className={`p-0.5 rounded transition-colors ${showOriginsOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
                                         onClick={() => setShowOriginsOverlay(!showOriginsOverlay)}
-                                        title={lang === 'zh' ? "显示在最前" : "Always on top"}
+                                        title={t.alwaysOnTop}
                                     >
                                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -210,7 +221,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     <button
                                         className={`p-0.5 rounded transition-colors ${showJointAxesOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
                                         onClick={() => setShowJointAxesOverlay(!showJointAxesOverlay)}
-                                        title={lang === 'zh' ? "显示在最前" : "Always on top"}
+                                        title={t.alwaysOnTop}
                                     >
                                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -226,7 +237,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
 
                         {/* Physics Visualization Section */}
                         <CollapsibleSection
-                            title={lang === 'zh' ? '物理可视化' : 'Physics'}
+                            title={t.physics}
                             isCollapsed={panelSections['viewer_physics'] ?? true}
                             onToggle={() => setPanelSection('viewer_physics', !(panelSections['viewer_physics'] ?? true))}
                         >
@@ -241,7 +252,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     <button
                                         className={`p-0.5 rounded transition-colors ${showCoMOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
                                         onClick={() => setShowCoMOverlay(!showCoMOverlay)}
-                                        title={lang === 'zh' ? "显示在最前" : "Always on top"}
+                                        title={t.alwaysOnTop}
                                     >
                                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -264,7 +275,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     <button
                                         className={`p-0.5 rounded transition-colors ${showInertiaOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
                                         onClick={() => setShowInertiaOverlay(!showInertiaOverlay)}
-                                        title={lang === 'zh' ? "显示在最前" : "Always on top"}
+                                        title={t.alwaysOnTop}
                                     >
                                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />

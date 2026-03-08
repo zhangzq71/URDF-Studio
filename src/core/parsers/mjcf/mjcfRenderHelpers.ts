@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createMatteMaterial } from '@/shared/utils/materialFactory';
+import { createMatteMaterial } from '@/core/utils/materialFactory';
 
 // Uses unified material factory for consistent URDF/MJCF appearance
 export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, number, number]): void {

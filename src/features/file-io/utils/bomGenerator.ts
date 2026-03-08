@@ -5,6 +5,7 @@
 
 import type { RobotState } from '@/types';
 import type { Language } from '@/store';
+import { translations } from '@/shared/i18n';
 
 /**
  * Generate BOM CSV string from robot state
@@ -13,9 +14,8 @@ import type { Language } from '@/store';
  * @returns CSV formatted string
  */
 export function generateBOM(robot: RobotState, lang: Language = 'en'): string {
-  const headers = lang === 'zh'
-    ? ['关节名称', '类型', '电机型号', '电机 ID', '方向', '电枢', '下限', '上限']
-    : ['Joint Name', 'Type', 'Motor Type', 'Motor ID', 'Direction', 'Armature', 'Lower Limit', 'Upper Limit'];
+  const t = translations[lang];
+  const headers = [t.jointName, t.type, t.motorType, t.motorId, t.direction, t.armature, t.lower, t.upper];
 
   const rows = Object.values(robot.joints).map(j => {
     if (j.type === 'fixed') return null;

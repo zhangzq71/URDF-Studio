@@ -5,6 +5,7 @@
 
 // Components
 export { PropertyEditor } from './components/PropertyEditor';
+export { CollisionOptimizationDialog } from './components/CollisionOptimizationDialog';
 
 // Types
 export type { PropertyEditorProps } from './components/PropertyEditor';

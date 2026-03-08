@@ -12,6 +12,12 @@ export type {
   ExportOptions,
   PdfExportOptions,
 } from './types';
+export type {
+  ExportDialogConfig,
+  ExportFormat,
+  MjcfExportConfig,
+  UrdfExportConfig,
+} from './components/ExportDialog';
 
 // Utilities
 export {
@@ -19,12 +25,17 @@ export {
   isRobotDefinitionFile,
   isAssetFile,
   isMotorLibraryFile,
+  isMeshFile,
   shouldSkipPath,
   generateBOM,
   createAssetUrls,
   collectReferencedMeshes,
   fetchMeshBlobs,
   downloadBlob,
+  exportLibraryRobotFile,
+  getDroppedFiles,
+  exportProject,
+  importProject,
 } from './utils';
 
 // Hooks
@@ -34,3 +45,5 @@ export {
   useSnapshot,
   usePdfExport,
 } from './hooks';
+
+export { ExportDialog } from './components/ExportDialog';

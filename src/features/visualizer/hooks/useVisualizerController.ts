@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import type { RobotState } from '@/types';
+import { updateCollisionGeometryByObjectIndex } from '@/core/robot';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
@@ -40,7 +41,8 @@ export const useVisualizerController = ({
   const { handleRegisterCollisionRef, selectedCollisionRef } = useCollisionRefs(
     robot.selection.type,
     robot.selection.id ?? undefined,
-    robot.selection.subType
+    robot.selection.subType,
+    robot.selection.objectIndex ?? 0,
   );
 
   const transformControlsState = useTransformControls(
@@ -78,16 +80,15 @@ export const useVisualizerController = ({
 
     const pos = selectedCollisionRef.position;
     const rot = selectedCollisionRef.rotation;
+    const objectIndex = robot.selection.objectIndex ?? 0;
 
     onUpdate('link', linkId, {
-      ...link,
-      collision: {
-        ...link.collision,
+      ...updateCollisionGeometryByObjectIndex(link, objectIndex, {
         origin: {
           xyz: { x: pos.x, y: pos.y, z: pos.z },
           rpy: { r: rot.x, p: rot.y, y: rot.z },
         },
-      },
+      }),
     });
   }, [onUpdate, robot, selectedCollisionRef]);
 
@@ -111,7 +112,7 @@ export const useVisualizerController = ({
 
   useEffect(() => {
     state.setTransformMode('translate');
-  }, [mode, state]);
+  }, [mode, state.setTransformMode]);
 
   return {
     clearSelection,

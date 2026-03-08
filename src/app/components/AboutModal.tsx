@@ -6,6 +6,7 @@ import React from 'react';
 import { ArrowRight, Github } from 'lucide-react';
 import { useUIStore } from '@/store';
 import { Dialog } from '@/shared/components/ui';
+import { translations } from '@/shared/i18n';
 
 interface AboutModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ interface AboutModalProps {
 
 export function AboutModal({ isOpen, onClose }: AboutModalProps) {
   const lang = useUIStore((state) => state.lang);
+  const t = translations[lang];
 
   return (
     <Dialog
@@ -24,10 +26,10 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
       footer={
         <div className="text-center">
           <p className="text-xs text-text-tertiary">
-            {lang === 'zh' ? '© 2025-2026 OpenLegged.' : '© 2025-2026 OpenLegged.'}
+            {t.aboutCopyright}
           </p>
           <p className="text-xs text-text-tertiary mt-1">
-            {lang === 'zh' ? '基于 Apache License 2.0 协议开源。' : 'Open sourced under Apache License 2.0.'}
+            {t.aboutOpenSource}
           </p>
         </div>
       }
@@ -42,9 +44,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
         </div>
 
         <p className="text-sm text-text-secondary leading-relaxed">
-          {lang === 'zh'
-            ? '专业的机器人 URDF 设计与可视化工作站，支持快速编辑，碰撞优化，参数配置，AI审阅和实用工具。'
-            : 'Professional robot URDF design and visualization workstation, supporting fast editing, collision optimization, parameter configuration, AI review and utility tools.'}
+          {t.aboutDescription}
         </p>
 
         {/* Links */}
@@ -88,7 +88,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
                 Motphys
               </div>
               <div className="text-xs text-text-tertiary">
-                {lang === 'zh' ? '超越物理，进化不止' : 'Evolution Beyond Physics'}
+                {t.aboutMotphysTagline}
               </div>
             </div>
             <ArrowRight className="w-4 h-4 text-text-tertiary group-hover:text-system-blue group-hover:translate-x-0.5 transition-all" />
@@ -105,10 +105,10 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
             </div>
             <div className="flex-1">
               <div className="text-sm font-medium text-text-primary group-hover:text-orange-500 transition-colors">
-                {lang === 'zh' ? '地瓜机器人' : 'D-Robotics'}
+                {t.aboutDRoboticsName}
               </div>
               <div className="text-xs text-text-tertiary">
-                {lang === 'zh' ? '感谢支持' : 'Thanks for support'}
+                {t.aboutDRoboticsTagline}
               </div>
             </div>
             <ArrowRight className="w-4 h-4 text-text-tertiary group-hover:text-orange-500 group-hover:translate-x-0.5 transition-all" />

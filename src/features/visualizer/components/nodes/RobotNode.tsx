@@ -1,15 +1,20 @@
-import React, { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
-import { RobotState } from '@/types';
+import { RobotState, UrdfJoint } from '@/types';
+import {
+  getCollisionGeometryEntries,
+  updateCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
-import { Language } from '@/shared/i18n';
+import { Language, translations } from '@/shared/i18n';
 import { GeometryRenderer } from './GeometryRenderer';
 import { JointNode } from './JointNode';
 
 // Type definitions
 interface CommonVisualizerProps {
   robot: RobotState;
+  childJointsByParent: Record<string, UrdfJoint[]>;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   mode: 'skeleton' | 'detail' | 'hardware';
@@ -33,15 +38,17 @@ interface CommonVisualizerProps {
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
-  onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void;
+  onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
 
 interface RobotNodeProps extends CommonVisualizerProps {
   linkId: string;
   depth: number;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
-  onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void;
+  onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
+
+const EMPTY_CHILD_JOINTS: UrdfJoint[] = [];
 
 /**
  * RobotNode - Renders a link in the robot hierarchy
@@ -56,6 +63,7 @@ interface RobotNodeProps extends CommonVisualizerProps {
 export const RobotNode = memo(function RobotNode({
   linkId,
   robot,
+  childJointsByParent,
   onSelect,
   onUpdate,
   mode,
@@ -82,6 +90,7 @@ export const RobotNode = memo(function RobotNode({
   onRegisterJointPivot,
   onRegisterCollisionRef
 }: RobotNodeProps) {
+  const t = translations[lang];
 
   if (depth > 50) return null;
 
@@ -98,7 +107,7 @@ export const RobotNode = memo(function RobotNode({
     onSelect('link', linkId, targetSubType);
   };
 
-  const childJoints = Object.values(robot.joints).filter(j => j.parentLinkId === linkId);
+  const childJoints = childJointsByParent[linkId] ?? EMPTY_CHILD_JOINTS;
   const isSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const selectionSubType = robot.selection.subType;
   const isRoot = linkId === robot.rootLinkId;
@@ -107,23 +116,48 @@ export const RobotNode = memo(function RobotNode({
 
   // Refs for dragging geometry in Detail mode
   const [visualRef, setVisualRef] = useState<THREE.Group | null>(null);
-  const [collisionRef, setCollisionRef] = useState<THREE.Group | null>(null);
+  const [collisionRefs, setCollisionRefs] = useState<Record<number, THREE.Group | null>>({});
+  const collisionRefHandlersRef = useRef<Record<number, (ref: THREE.Group | null) => void>>({});
+  const collisionEntries = getCollisionGeometryEntries(link);
+  const isCollisionSelected = isSelected && selectionSubType === 'collision';
+  const selectedCollisionObjectIndex = isCollisionSelected ? robot.selection.objectIndex ?? 0 : null;
+  const selectedCollisionRef =
+    selectedCollisionObjectIndex !== null ? collisionRefs[selectedCollisionObjectIndex] ?? null : null;
+
+  const getCollisionRefHandler = useCallback((objectIndex: number) => {
+    if (!collisionRefHandlersRef.current[objectIndex]) {
+      collisionRefHandlersRef.current[objectIndex] = (ref: THREE.Group | null) => {
+        setCollisionRefs((prev) => {
+          if (prev[objectIndex] === ref) return prev;
+          return { ...prev, [objectIndex]: ref };
+        });
+      };
+    }
+
+    return collisionRefHandlersRef.current[objectIndex];
+  }, []);
 
   // Register collision ref with parent when selected
-  const isCollisionSelected = isSelected && selectionSubType === 'collision';
   useEffect(() => {
-    if (onRegisterCollisionRef && isCollisionSelected) {
-      onRegisterCollisionRef(linkId, collisionRef);
+    if (
+      onRegisterCollisionRef &&
+      selectedCollisionObjectIndex !== null
+    ) {
+      onRegisterCollisionRef(linkId, selectedCollisionObjectIndex, selectedCollisionRef);
     }
+
     return () => {
-      if (onRegisterCollisionRef && isCollisionSelected) {
-        onRegisterCollisionRef(linkId, null);
+      if (
+        onRegisterCollisionRef &&
+        selectedCollisionObjectIndex !== null
+      ) {
+        onRegisterCollisionRef(linkId, selectedCollisionObjectIndex, null);
       }
     };
-  }, [collisionRef, linkId, isCollisionSelected, onRegisterCollisionRef]);
+  }, [linkId, onRegisterCollisionRef, selectedCollisionObjectIndex, selectedCollisionRef]);
 
   // Dragging logic for Detail Mode
-  const activeGeometryRef = showCollision ? collisionRef : visualRef;
+  const activeGeometryRef = showCollision ? selectedCollisionRef : visualRef;
   const geometryTargetType = showCollision ? 'collision' : 'visual';
 
   const handleGeometryTransformEnd = () => {
@@ -131,18 +165,25 @@ export const RobotNode = memo(function RobotNode({
       const pos = activeGeometryRef.position;
       const rot = activeGeometryRef.rotation;
 
-      const currentData = geometryTargetType === 'collision' ? link.collision : link.visual;
-      const newData = {
-        ...currentData,
-        origin: {
-          xyz: { x: pos.x, y: pos.y, z: pos.z },
-          rpy: { r: rot.x, p: rot.y, y: rot.z }
-        }
+      const nextOrigin = {
+        xyz: { x: pos.x, y: pos.y, z: pos.z },
+        rpy: { r: rot.x, p: rot.y, y: rot.z }
       };
 
+      const nextLink = geometryTargetType === 'collision'
+        ? updateCollisionGeometryByObjectIndex(link, selectedCollisionObjectIndex ?? 0, {
+            origin: nextOrigin,
+          })
+        : {
+            ...link,
+            visual: {
+              ...link.visual,
+              origin: nextOrigin,
+            },
+          };
+
       onUpdate('link', linkId, {
-        ...link,
-        [geometryTargetType]: newData
+        ...nextLink
       });
     }
   };
@@ -176,7 +217,7 @@ export const RobotNode = memo(function RobotNode({
                             }
                           `}
                         >
-                          {link.name} {lang === 'zh' ? '（基座）' : '(Base)'}
+                          {link.name} {t.baseLabelSuffix}
                         </div>
                       ) : (
                         <div className="w-2 h-2 rounded-full bg-slate-400/80 hover:scale-150 transition-transform" />
@@ -203,24 +244,9 @@ export const RobotNode = memo(function RobotNode({
             setVisualRef={setVisualRef}
           />
 
-          {/* Collision Geometry */}
-          <GeometryRenderer
-            isCollision={true}
-            link={link}
-            mode={mode}
-            showGeometry={showGeometry}
-            showCollision={showCollision}
-            assets={assets}
-            isSelected={isSelected}
-            selectionSubType={selectionSubType}
-            onLinkClick={handleLinkClick}
-            setCollisionRef={setCollisionRef}
-            geometryId="0"
-          />
-
-          {(link.collisionBodies || []).map((collisionBody, index) => (
+          {collisionEntries.map((entry) => (
             <GeometryRenderer
-              key={`collision-body-${linkId}-${index}`}
+              key={`collision-body-${linkId}-${entry.objectIndex}`}
               isCollision={true}
               link={link}
               mode={mode}
@@ -230,8 +256,9 @@ export const RobotNode = memo(function RobotNode({
               isSelected={isSelected}
               selectionSubType={selectionSubType}
               onLinkClick={handleLinkClick}
-              geometryData={collisionBody}
-              geometryId={`extra-${index + 1}`}
+              setCollisionRef={getCollisionRefHandler(entry.objectIndex)}
+              geometryData={entry.bodyIndex === null ? undefined : entry.geometry}
+              geometryId={entry.bodyIndex === null ? '0' : `extra-${entry.bodyIndex + 1}`}
             />
           ))}
         </>
@@ -289,6 +316,7 @@ export const RobotNode = memo(function RobotNode({
           key={joint.id}
           joint={joint}
           robot={robot}
+          childJointsByParent={childJointsByParent}
           onSelect={onSelect}
           onUpdate={onUpdate}
           mode={mode}
