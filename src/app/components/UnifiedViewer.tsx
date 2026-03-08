@@ -171,7 +171,14 @@ export const UnifiedViewer = React.memo(({
       onPointerMissed={isViewerMode ? viewerController.handlePointerMissed : visualizerController.clearSelection}
       onMouseMove={isViewerMode ? viewerController.handleMouseMove : visualizerController.panel.handleMouseMove}
       onMouseUp={isViewerMode ? viewerController.handleMouseUp : visualizerController.panel.handleMouseUp}
-      onMouseLeave={isViewerMode ? viewerController.handleMouseUp : visualizerController.panel.handleMouseUp}
+      onMouseLeave={
+        isViewerMode
+          ? viewerController.handleMouseUp
+          : (event) => {
+              visualizerController.panel.handleMouseUp(event);
+              visualizerController.clearHover();
+            }
+      }
       environment={isViewerMode ? 'studio' : 'hdr'}
       environmentIntensity={0.36}
       cameraFollowPrimary={isViewerMode}

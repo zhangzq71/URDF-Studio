@@ -115,6 +115,7 @@ export const VisualizerScene = React.memo(({
               ref={collisionTransformControlRef}
               object={selectedCollisionRef}
               mode={state.transformMode === 'select' ? 'translate' : state.transformMode}
+              gizmoPreset="collision-precise"
               size={VISUALIZER_UNIFIED_GIZMO_SIZE}
               space="local"
               onMouseUp={handleCollisionTransformEnd}

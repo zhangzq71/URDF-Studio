@@ -647,6 +647,7 @@ export function URDFViewer({
                         value={jointAngles[activeJoint] || 0}
                         onChange={(val) => handleJointAngleChange(activeJoint, val)}
                         onCommit={(val) => handleJointChangeCommit(activeJoint, val)}
+                        onInteractionLockChange={handleTransformPending}
                     />
                 )}
 

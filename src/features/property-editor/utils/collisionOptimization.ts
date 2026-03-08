@@ -1,7 +1,13 @@
-import { getCollisionGeometryEntries, updateCollisionGeometryByObjectIndex } from '@/core/robot';
-import type { AssemblyState, GeometryType as GeometryTypeValue, RobotData, UrdfLink, UrdfVisual } from '@/types';
+import * as THREE from 'three';
+import { getCollisionGeometryEntries, mergeAssembly, updateCollisionGeometryByObjectIndex } from '@/core/robot';
+import type { AssemblyState, GeometryType as GeometryTypeValue, RobotData, UrdfJoint, UrdfLink, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
-import { computeMeshAnalysisFromAssets, convertGeometryType, type MeshAnalysis } from './geometryConversion';
+import {
+  computeMeshAnalysisFromAssets,
+  convertGeometryType,
+  type MeshAnalysis,
+  type MeshClearanceObstacle,
+} from './geometryConversion';
 
 export type CollisionOptimizationSource =
   | { kind: 'robot'; robot: RobotData }
@@ -76,6 +82,25 @@ export interface CollisionOptimizationAnalysis {
   meshAnalysisByTargetId: Record<string, MeshAnalysis | null>;
 }
 
+export interface CollisionOptimizationBaseAnalysis {
+  targets: CollisionTargetRef[];
+  meshAnalysisByTargetId: Record<string, MeshAnalysis | null>;
+  clearanceWorld: CollisionOptimizationClearanceWorld | null;
+}
+
+interface CollisionOptimizationClearanceWorld {
+  robot: RobotData;
+  linkWorldMatrices: Record<string, THREE.Matrix4>;
+  broadPhaseByTargetId: Record<string, { center: THREE.Vector3; radius: number }>;
+}
+
+interface CollisionClearanceContext {
+  siblingGeometries?: UrdfVisual[];
+  meshClearanceObstacles?: MeshClearanceObstacle[];
+}
+
+const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+
 function createTargetId(componentId: string | undefined, linkId: string, objectIndex: number): string {
   return `${componentId ?? 'robot'}::${linkId}::${objectIndex}`;
 }
@@ -115,6 +140,137 @@ function normalizeGeometry(geometry: UrdfVisual): UrdfVisual {
         y: Number.isFinite(geometry.origin?.rpy?.y) ? geometry.origin.rpy.y : 0,
       },
     },
+  };
+}
+
+function createOriginMatrix(origin?: UrdfVisual['origin']): THREE.Matrix4 {
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3(
+    origin?.xyz?.x ?? 0,
+    origin?.xyz?.y ?? 0,
+    origin?.xyz?.z ?? 0,
+  );
+  const quaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      origin?.rpy?.r ?? 0,
+      origin?.rpy?.p ?? 0,
+      origin?.rpy?.y ?? 0,
+      'ZYX',
+    ),
+  );
+  matrix.compose(position, quaternion, UNIT_SCALE);
+  return matrix;
+}
+
+function createJointMotionMatrix(joint: UrdfJoint): THREE.Matrix4 {
+  const matrix = new THREE.Matrix4().identity();
+  const angle = Number.isFinite(joint.angle) ? joint.angle! : 0;
+
+  if (joint.type === 'revolute' || joint.type === 'continuous') {
+    const axisVector = new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z);
+    if (axisVector.lengthSq() > 1e-12 && Math.abs(angle) > 1e-12) {
+      axisVector.normalize();
+      matrix.makeRotationAxis(axisVector, angle);
+    }
+    return matrix;
+  }
+
+  if (joint.type === 'prismatic') {
+    const axisVector = new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z);
+    if (axisVector.lengthSq() > 1e-12 && Math.abs(angle) > 1e-12) {
+      axisVector.normalize().multiplyScalar(angle);
+      matrix.makeTranslation(axisVector.x, axisVector.y, axisVector.z);
+    }
+  }
+
+  return matrix;
+}
+
+function computeLinkWorldMatrices(robot: RobotData): Record<string, THREE.Matrix4> {
+  const linkMatrices: Record<string, THREE.Matrix4> = {};
+  const jointsByParent = new Map<string, UrdfJoint[]>();
+
+  Object.values(robot.joints).forEach((joint) => {
+    const siblings = jointsByParent.get(joint.parentLinkId) ?? [];
+    siblings.push(joint);
+    jointsByParent.set(joint.parentLinkId, siblings);
+  });
+
+  const visit = (linkId: string, parentMatrix: THREE.Matrix4) => {
+    if (linkMatrices[linkId]) {
+      return;
+    }
+
+    linkMatrices[linkId] = parentMatrix.clone();
+    const childJoints = jointsByParent.get(linkId) ?? [];
+
+    childJoints.forEach((joint) => {
+      const childMatrix = parentMatrix.clone()
+        .multiply(createOriginMatrix(joint.origin))
+        .multiply(createJointMotionMatrix(joint));
+      visit(joint.childLinkId, childMatrix);
+    });
+  };
+
+  if (robot.rootLinkId) {
+    visit(robot.rootLinkId, new THREE.Matrix4().identity());
+  }
+
+  return linkMatrices;
+}
+
+function transformGeometryToTargetLinkFrame(
+  geometry: UrdfVisual,
+  sourceLinkMatrix: THREE.Matrix4,
+  targetLinkInverseMatrix: THREE.Matrix4,
+): UrdfVisual {
+  const relativeMatrix = targetLinkInverseMatrix.clone()
+    .multiply(sourceLinkMatrix)
+    .multiply(createOriginMatrix(geometry.origin));
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  relativeMatrix.decompose(position, quaternion, scale);
+  const rotation = new THREE.Euler().setFromQuaternion(quaternion, 'ZYX');
+
+  return {
+    ...geometry,
+    dimensions: geometry.dimensions ? { ...geometry.dimensions } : geometry.dimensions,
+    origin: {
+      xyz: {
+        x: position.x,
+        y: position.y,
+        z: position.z,
+      },
+      rpy: {
+        r: rotation.x,
+        p: rotation.y,
+        y: rotation.z,
+      },
+    },
+  };
+}
+
+function transformMeshObstaclePointsToTargetLinkFrame(
+  points: NonNullable<MeshAnalysis['surfacePoints']>,
+  sourceLinkMatrix: THREE.Matrix4,
+  geometryOrigin: UrdfVisual['origin'],
+  targetLinkInverseMatrix: THREE.Matrix4,
+): MeshClearanceObstacle {
+  const transformMatrix = targetLinkInverseMatrix.clone()
+    .multiply(sourceLinkMatrix)
+    .multiply(createOriginMatrix(geometryOrigin));
+  const transformedPoint = new THREE.Vector3();
+
+  return {
+    points: points.map((point) => {
+      transformedPoint.set(point.x, point.y, point.z).applyMatrix4(transformMatrix);
+      return {
+        x: transformedPoint.x,
+        y: transformedPoint.y,
+        z: transformedPoint.z,
+      };
+    }),
   };
 }
 
@@ -260,11 +416,154 @@ function buildSiblingGeometries(
     });
 }
 
+function computeWorldBroadPhaseSphere(
+  geometry: UrdfVisual,
+  meshAnalysis: MeshAnalysis | null | undefined,
+  sourceLinkMatrix: THREE.Matrix4 | undefined,
+): { center: THREE.Vector3; radius: number } | null {
+  if (!sourceLinkMatrix) {
+    return null;
+  }
+
+  const radius = computeBroadPhaseRadius(geometry, meshAnalysis);
+  if (!radius || radius <= 1e-8) {
+    return null;
+  }
+
+  const localCenter = computeBroadPhaseCenter(geometry, meshAnalysis);
+  const worldCenter = new THREE.Vector3(localCenter.x, localCenter.y, localCenter.z)
+    .applyMatrix4(sourceLinkMatrix);
+
+  return {
+    center: worldCenter,
+    radius,
+  };
+}
+
+function buildCollisionOptimizationClearanceWorld(
+  source: CollisionOptimizationSource,
+  targets: CollisionTargetRef[],
+  meshAnalysisByTargetId: Record<string, MeshAnalysis | null>,
+): CollisionOptimizationClearanceWorld | null {
+  const robot = source.kind === 'robot' ? source.robot : mergeAssembly(source.assembly);
+  if (!robot.rootLinkId || Object.keys(robot.links).length === 0) {
+    return null;
+  }
+
+  const linkWorldMatrices = computeLinkWorldMatrices(robot);
+  if (Object.keys(linkWorldMatrices).length === 0) {
+    return null;
+  }
+
+  const broadPhaseByTargetId: Record<string, { center: THREE.Vector3; radius: number }> = {};
+  targets.forEach((target) => {
+    const sphere = computeWorldBroadPhaseSphere(
+      target.geometry,
+      meshAnalysisByTargetId[target.id],
+      linkWorldMatrices[target.linkId],
+    );
+    if (sphere) {
+      broadPhaseByTargetId[target.id] = sphere;
+    }
+  });
+
+  return {
+    robot,
+    linkWorldMatrices,
+    broadPhaseByTargetId,
+  };
+}
+
+function buildNearbyCollisionClearanceContext(
+  targets: CollisionTargetRef[],
+  target: CollisionTargetRef,
+  meshAnalysisByTargetId: Record<string, MeshAnalysis | null>,
+  clearanceWorld: CollisionOptimizationClearanceWorld | null,
+): CollisionClearanceContext {
+  if (!clearanceWorld) {
+    const siblingGeometries = buildSiblingGeometries(targets, target, meshAnalysisByTargetId);
+    return {
+      siblingGeometries: siblingGeometries.length > 0 ? siblingGeometries : undefined,
+    };
+  }
+
+  const currentLinkMatrix = clearanceWorld.linkWorldMatrices[target.linkId];
+  if (!currentLinkMatrix) {
+    const siblingGeometries = buildSiblingGeometries(targets, target, meshAnalysisByTargetId);
+    return {
+      siblingGeometries: siblingGeometries.length > 0 ? siblingGeometries : undefined,
+    };
+  }
+
+  const currentLinkInverseMatrix = currentLinkMatrix.clone().invert();
+  const targetSphere = clearanceWorld.broadPhaseByTargetId[target.id] ?? null;
+  const siblingGeometries: UrdfVisual[] = [];
+  const meshClearanceObstacles: MeshClearanceObstacle[] = [];
+
+  targets.forEach((candidate) => {
+    if (candidate.id === target.id) {
+      return;
+    }
+
+    const sourceLinkMatrix = clearanceWorld.linkWorldMatrices[candidate.linkId];
+    if (!sourceLinkMatrix) {
+      return;
+    }
+
+    const obstacleSphere = clearanceWorld.broadPhaseByTargetId[candidate.id] ?? null;
+    if (targetSphere && obstacleSphere) {
+      const maxInfluenceDistance = targetSphere.radius + obstacleSphere.radius + 0.05;
+      if (targetSphere.center.distanceTo(obstacleSphere.center) > maxInfluenceDistance) {
+        return;
+      }
+    }
+
+    const geometry = candidate.geometry;
+    const analysis = meshAnalysisByTargetId[candidate.id];
+    const meshObstacle = analysis?.surfacePoints?.length && geometry.type === GeometryType.MESH
+      ? transformMeshObstaclePointsToTargetLinkFrame(
+          analysis.surfacePoints,
+          sourceLinkMatrix,
+          geometry.origin,
+          currentLinkInverseMatrix,
+        )
+      : null;
+
+    if (meshObstacle?.points.length) {
+      meshClearanceObstacles.push(meshObstacle);
+    }
+
+    if (geometry.type !== GeometryType.MESH || !analysis) {
+      siblingGeometries.push(
+        transformGeometryToTargetLinkFrame(geometry, sourceLinkMatrix, currentLinkInverseMatrix),
+      );
+      return;
+    }
+
+    const boxedGeometry = convertGeometryType(geometry, GeometryType.BOX, analysis);
+    siblingGeometries.push(transformGeometryToTargetLinkFrame({
+      ...geometry,
+      type: GeometryType.BOX,
+      dimensions: { ...boxedGeometry.dimensions },
+      origin: {
+        xyz: { ...boxedGeometry.origin.xyz },
+        rpy: { ...boxedGeometry.origin.rpy },
+      },
+      meshPath: undefined,
+    }, sourceLinkMatrix, currentLinkInverseMatrix));
+  });
+
+  return {
+    siblingGeometries: siblingGeometries.length > 0 ? siblingGeometries : undefined,
+    meshClearanceObstacles: meshClearanceObstacles.length > 0 ? meshClearanceObstacles : undefined,
+  };
+}
+
 function buildMeshCandidate(
   target: CollisionTargetRef,
   settings: CollisionOptimizationSettings,
   analysis: MeshAnalysis | null | undefined,
-  siblingGeometries: UrdfVisual[] | undefined,
+  clearanceContext: CollisionClearanceContext,
 ): CollisionOptimizationCandidate {
   if (settings.meshStrategy === 'keep') {
     return {
@@ -304,9 +603,7 @@ function buildMeshCandidate(
     target.geometry,
     suggestedType,
     analysis,
-    {
-      siblingGeometries: settings.avoidSiblingOverlap ? siblingGeometries : undefined,
-    },
+    settings.avoidSiblingOverlap ? clearanceContext : undefined,
   );
 
   const nextGeometry: UrdfVisual = {
@@ -334,7 +631,7 @@ function buildMeshCandidate(
 function buildPrimitiveCandidate(
   target: CollisionTargetRef,
   settings: CollisionOptimizationSettings,
-  siblingGeometries: UrdfVisual[] | undefined,
+  clearanceContext: CollisionClearanceContext,
 ): CollisionOptimizationCandidate {
   if (target.geometry.type === GeometryType.CYLINDER) {
     if (settings.cylinderStrategy === 'keep') {
@@ -351,9 +648,7 @@ function buildPrimitiveCandidate(
       target.geometry,
       GeometryType.CAPSULE,
       undefined,
-      {
-        siblingGeometries: settings.avoidSiblingOverlap ? siblingGeometries : undefined,
-      },
+      settings.avoidSiblingOverlap ? clearanceContext : undefined,
     );
 
     return {
@@ -383,9 +678,7 @@ function buildPrimitiveCandidate(
       target.geometry,
       suggestedType,
       undefined,
-      {
-        siblingGeometries: settings.avoidSiblingOverlap ? siblingGeometries : undefined,
-      },
+      settings.avoidSiblingOverlap ? clearanceContext : undefined,
     );
 
     return {
@@ -421,21 +714,49 @@ function buildCandidate(
   targets: CollisionTargetRef[],
   settings: CollisionOptimizationSettings,
   meshAnalysisByTargetId: Record<string, MeshAnalysis | null>,
+  clearanceWorld: CollisionOptimizationClearanceWorld | null,
 ): CollisionOptimizationCandidate {
-  const siblingGeometries = buildSiblingGeometries(targets, target, meshAnalysisByTargetId);
+  const clearanceContext = buildNearbyCollisionClearanceContext(
+    targets,
+    target,
+    meshAnalysisByTargetId,
+    clearanceWorld,
+  );
 
   if (target.geometry.type === GeometryType.MESH) {
-    return buildMeshCandidate(target, settings, meshAnalysisByTargetId[target.id], siblingGeometries);
+    return buildMeshCandidate(target, settings, meshAnalysisByTargetId[target.id], clearanceContext);
   }
 
-  return buildPrimitiveCandidate(target, settings, siblingGeometries);
+  return buildPrimitiveCandidate(target, settings, clearanceContext);
 }
 
-export async function analyzeCollisionOptimization(
+export function buildCollisionOptimizationAnalysis(
+  baseAnalysis: CollisionOptimizationBaseAnalysis,
+  settings: CollisionOptimizationSettings,
+): CollisionOptimizationAnalysis {
+  const filteredTargets = filterTargets(baseAnalysis.targets, settings);
+  const candidates = filteredTargets.map((target) =>
+    buildCandidate(
+      target,
+      baseAnalysis.targets,
+      settings,
+      baseAnalysis.meshAnalysisByTargetId,
+      baseAnalysis.clearanceWorld,
+    ),
+  );
+
+  return {
+    targets: baseAnalysis.targets,
+    filteredTargets,
+    candidates,
+    meshAnalysisByTargetId: baseAnalysis.meshAnalysisByTargetId,
+  };
+}
+
+export async function prepareCollisionOptimizationBaseAnalysis(
   source: CollisionOptimizationSource,
   assets: Record<string, string>,
-  settings: CollisionOptimizationSettings,
-): Promise<CollisionOptimizationAnalysis> {
+): Promise<CollisionOptimizationBaseAnalysis> {
   const targets = collectCollisionTargets(source);
 
   const meshTargets = targets.filter((target) => target.geometry.type === GeometryType.MESH && Boolean(target.geometry.meshPath));
@@ -455,17 +776,26 @@ export async function analyzeCollisionOptimization(
     meshAnalysisByTargetId[targetId] = analysis;
   });
 
-  const filteredTargets = filterTargets(targets, settings);
-  const candidates = filteredTargets.map((target) =>
-    buildCandidate(target, targets, settings, meshAnalysisByTargetId),
+  const clearanceWorld = buildCollisionOptimizationClearanceWorld(
+    source,
+    targets,
+    meshAnalysisByTargetId,
   );
 
   return {
     targets,
-    filteredTargets,
-    candidates,
     meshAnalysisByTargetId,
+    clearanceWorld,
   };
+}
+
+export async function analyzeCollisionOptimization(
+  source: CollisionOptimizationSource,
+  assets: Record<string, string>,
+  settings: CollisionOptimizationSettings,
+): Promise<CollisionOptimizationAnalysis> {
+  const baseAnalysis = await prepareCollisionOptimizationBaseAnalysis(source, assets);
+  return buildCollisionOptimizationAnalysis(baseAnalysis, settings);
 }
 
 function computeBroadPhaseRadius(
@@ -594,4 +924,3 @@ export function applyCollisionOptimizationOperationsToLinks(
 
   return nextLinks;
 }
-

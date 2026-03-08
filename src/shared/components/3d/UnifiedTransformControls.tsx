@@ -7,6 +7,7 @@ type DreiTransformControlsProps = React.ComponentProps<typeof DreiTransformContr
 type SharedControlRef = React.MutableRefObject<any | null> | React.RefObject<any | null>;
 
 export type UnifiedTransformMode = 'translate' | 'rotate' | 'scale' | 'universal';
+type UnifiedGizmoPreset = 'default' | 'collision-precise';
 export const VISUALIZER_UNIFIED_GIZMO_SIZE = 0.82;
 
 interface UnifiedTransformControlsProps extends Omit<DreiTransformControlsProps, 'mode'> {
@@ -16,15 +17,33 @@ interface UnifiedTransformControlsProps extends Omit<DreiTransformControlsProps,
   rotateEnabled?: boolean;
   onRotateChange?: DreiTransformControlsProps['onChange'];
   enableUniversalPriority?: boolean;
+  gizmoPreset?: UnifiedGizmoPreset;
 }
 
 type UniversalOwner = 'translate' | 'rotate' | null;
 type ControlsWithEnabled = THREE.EventDispatcher & { enabled: boolean };
+const AXIS_NAMES = new Set(['X', 'Y', 'Z']);
+const TRANSLATE_PICKER_REMOVE_NAMES = new Set(['XY', 'YZ', 'XZ', 'XYZ']);
+const TRANSLATE_VISUAL_REMOVE_NAMES = new Set(['X', 'Y', 'Z', 'XY', 'YZ', 'XZ', 'XYZ']);
 const OFFICIAL_ACTIVE_COLOR = new THREE.Color(0xffff00);
 const THICK_TRANSLATE_SHAFT_RADIUS = 0.032;
 const THICK_TRANSLATE_TIP_RADIUS = 0.085;
 const THICK_ROTATE_ARC_RADIUS = 0.017;
 const THICK_ROTATE_PICKER_RADIUS = 0.14;
+const COLLISION_ROTATE_ARC_SPAN = (Math.PI * 2) / 3;
+const COLLISION_ROTATE_PICKER_RADIUS = 0.1;
+const COLLISION_ROTATE_KNOB_RADIUS = 0.072;
+const COLLISION_ROTATE_REMAINDER_OPACITY = 0.48;
+const COLLISION_ROTATE_REMAINDER_DASH_SIZE = 0.12;
+const COLLISION_ROTATE_REMAINDER_GAP_SIZE = 0.075;
+const COLLISION_ROTATE_VISIBLE_OPACITY = 0.92;
+const COLLISION_PICKER_OPACITY = 0.001;
+const COLLISION_ROTATE_START_ANGLE: Record<'X' | 'Y' | 'Z', number> = {
+  X: -0.2 * Math.PI,
+  Y: 0.52 * Math.PI,
+  Z: 1.2 * Math.PI,
+};
+const ROTATE_HANDLE_NAMES = new Set(['X', 'Y', 'Z', 'E', 'XYZE']);
 
 const hasEnabledFlag = (controls: unknown): controls is ControlsWithEnabled =>
   typeof controls === 'object' &&
@@ -43,24 +62,128 @@ const getSingleHandleMaterial = (handle: any) => {
   return Array.isArray(material) ? material[0] : material;
 };
 
-const cloneAxisMaterial = (sourceMaterial: any) => {
+const rememberHandleMaterialState = <T extends THREE.Material>(
+  material: T,
+  color: THREE.Color,
+  opacity: number,
+  extraUserData: Record<string, unknown> = {}
+) => {
+  (material as any).tempColor = color.clone();
+  (material as any).tempOpacity = opacity;
+  material.userData = {
+    ...material.userData,
+    urdfBaseColor: color.clone(),
+    urdfBaseOpacity: opacity,
+    ...extraUserData,
+  };
+  return material;
+};
+
+const getHandleBaseColor = (material: any) => {
+  if (material?.userData?.urdfBaseColor instanceof THREE.Color) {
+    return material.userData.urdfBaseColor as THREE.Color;
+  }
+  if (material?.tempColor instanceof THREE.Color) {
+    return material.tempColor as THREE.Color;
+  }
+  if (material?.color instanceof THREE.Color) {
+    return material.color as THREE.Color;
+  }
+  return null;
+};
+
+const getHandleBaseOpacity = (material: any) => {
+  if (typeof material?.userData?.urdfBaseOpacity === 'number') {
+    return material.userData.urdfBaseOpacity as number;
+  }
+  if (typeof material?.tempOpacity === 'number') {
+    return material.tempOpacity as number;
+  }
+  if (typeof material?.opacity === 'number') {
+    return material.opacity as number;
+  }
+  return null;
+};
+
+const resolveHandleColor = (sourceMaterial: any) => {
   const color = new THREE.Color(0xffffff);
-  if (sourceMaterial?.color) {
+  const baseColor = getHandleBaseColor(sourceMaterial);
+  if (baseColor) {
+    color.copy(baseColor);
+  } else if (sourceMaterial?.color) {
     color.copy(sourceMaterial.color);
   }
+  return color;
+};
 
+const cloneAxisMaterial = (
+  sourceMaterial: any,
+  options: {
+    color?: THREE.ColorRepresentation;
+    opacity?: number;
+    extraUserData?: Record<string, unknown>;
+  } = {}
+) => {
+  const color = options.color !== undefined
+    ? new THREE.Color(options.color)
+    : resolveHandleColor(sourceMaterial);
+  const opacity = typeof options.opacity === 'number'
+    ? options.opacity
+    : typeof getHandleBaseOpacity(sourceMaterial) === 'number'
+      ? (getHandleBaseOpacity(sourceMaterial) as number)
+      : 1;
+
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+
+  return rememberHandleMaterialState(material, color, opacity, options.extraUserData);
+};
+
+const createCollisionPickerMaterial = () => {
+  const color = new THREE.Color(0xffffff);
   return new THREE.MeshBasicMaterial({
     color,
     transparent: true,
-    opacity: typeof sourceMaterial?.opacity === 'number' ? sourceMaterial.opacity : 1,
+    opacity: COLLISION_PICKER_OPACITY,
     depthTest: false,
     depthWrite: false,
     toneMapped: false,
   });
 };
 
+const createCollisionRemainderMaterial = (sourceMaterial: any) => {
+  const color = resolveHandleColor(sourceMaterial);
+  const material = new THREE.LineDashedMaterial({
+    color,
+    transparent: true,
+    opacity: 0,
+    dashSize: COLLISION_ROTATE_REMAINDER_DASH_SIZE,
+    gapSize: COLLISION_ROTATE_REMAINDER_GAP_SIZE,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+
+  return rememberHandleMaterialState(material, color, 0, {
+    urdfCollisionRemainder: true,
+  });
+};
+
 const matchesHighlightedAxis = (handleName: string, axis: string) =>
   handleName === axis || axis.split('').some((part) => handleName === part);
+
+const getHandleAxisName = (handle: any) => {
+  if (typeof handle?.userData?.urdfAxisName === 'string') {
+    return handle.userData.urdfAxisName as string;
+  }
+  return typeof handle?.name === 'string' ? handle.name : '';
+};
 
 const applyOfficialHoverAppearance = (controls: any) => {
   const gizmo = controls?.gizmo;
@@ -72,22 +195,46 @@ const applyOfficialHoverAppearance = (controls: any) => {
   ];
 
   for (const handle of handles) {
-    const handleName = typeof handle?.name === 'string' ? handle.name : '';
+    const handleAxisName = getHandleAxisName(handle);
 
     for (const material of getHandleMaterials(handle)) {
-      const baseColor = material?.tempColor;
-      const baseOpacity = material?.tempOpacity;
+      const baseColor = getHandleBaseColor(material);
+      const baseOpacity = getHandleBaseOpacity(material);
       if (!baseColor || typeof baseOpacity !== 'number') continue;
 
       material.color.copy(baseColor);
       material.opacity = baseOpacity;
+
+      if (material.userData?.urdfCollisionPicker) {
+        material.opacity = gizmo.enabled ? COLLISION_PICKER_OPACITY : COLLISION_PICKER_OPACITY * 0.5;
+        continue;
+      }
+
+      if (material.userData?.urdfCollisionVisibleArc) {
+        material.opacity = gizmo.enabled ? baseOpacity : baseOpacity * 0.5;
+        continue;
+      }
+
+      if (material.userData?.urdfCollisionStaticVisual) {
+        material.opacity = gizmo.enabled ? baseOpacity : baseOpacity * 0.5;
+        continue;
+      }
+
+      if (material.userData?.urdfCollisionRemainder) {
+        const shouldShowRemainder =
+          gizmo.enabled &&
+          typeof gizmo.axis === 'string' &&
+          matchesHighlightedAxis(handleAxisName, gizmo.axis);
+        material.opacity = shouldShowRemainder ? COLLISION_ROTATE_REMAINDER_OPACITY : 0;
+        continue;
+      }
 
       if (!gizmo.enabled) {
         material.opacity *= 0.5;
         continue;
       }
 
-      if (typeof gizmo.axis === 'string' && matchesHighlightedAxis(handleName, gizmo.axis)) {
+      if (typeof gizmo.axis === 'string' && matchesHighlightedAxis(handleAxisName, gizmo.axis)) {
         material.color.copy(OFFICIAL_ACTIVE_COLOR);
         material.opacity = 1;
       }
@@ -120,6 +267,271 @@ const getLineEndpoint = (line: THREE.Line) => {
     position.getY(farthestIndex),
     position.getZ(farthestIndex)
   );
+};
+
+const setRotateAxisOrientation = (object: THREE.Object3D, axis: 'X' | 'Y' | 'Z') => {
+  if (axis === 'X') {
+    object.rotation.y = Math.PI / 2;
+  } else if (axis === 'Y') {
+    object.rotation.x = Math.PI / 2;
+  }
+};
+
+const createPlanarArcPoints = (
+  radius: number,
+  startAngle: number,
+  endAngle: number,
+  segments: number
+) => {
+  const points: THREE.Vector3[] = [];
+  for (let index = 0; index <= segments; index += 1) {
+    const alpha = index / segments;
+    const angle = startAngle + (endAngle - startAngle) * alpha;
+    points.push(new THREE.Vector3(
+      Math.cos(angle) * radius,
+      Math.sin(angle) * radius,
+      0
+    ));
+  }
+  return points;
+};
+
+const createArcPoint = (radius: number, angle: number) =>
+  new THREE.Vector3(
+    Math.cos(angle) * radius,
+    Math.sin(angle) * radius,
+    0
+  );
+
+const collectAxisMaterials = (group: THREE.Object3D | undefined) => {
+  const materials = new Map<'X' | 'Y' | 'Z', any>();
+  if (!group) return materials;
+
+  group.traverse((node) => {
+    if (!AXIS_NAMES.has(node.name)) return;
+    const axis = node.name as 'X' | 'Y' | 'Z';
+    if (materials.has(axis)) return;
+
+    const material = getSingleHandleMaterial(node);
+    if (material) {
+      materials.set(axis, material);
+    }
+  });
+
+  return materials;
+};
+
+const collectTranslateAxisTips = (group: THREE.Object3D | undefined) => {
+  const tips = new Map<'X' | 'Y' | 'Z', THREE.Vector3>();
+  if (!group) return tips;
+
+  group.traverse((node) => {
+    const line = node as THREE.Line;
+    if (!line.isLine || !AXIS_NAMES.has(line.name)) return;
+    if (tips.has(line.name as 'X' | 'Y' | 'Z')) return;
+
+    const tip = getLineEndpoint(line);
+    if (!tip) return;
+    tips.set(line.name as 'X' | 'Y' | 'Z', tip.clone());
+  });
+
+  return tips;
+};
+
+const removeHandlesByNames = (group: THREE.Object3D | undefined, names: Set<string>) => {
+  if (!group) return;
+
+  const nodesToRemove: THREE.Object3D[] = [];
+  group.traverse((node) => {
+    if (node === group) return;
+    if (!names.has(node.name)) return;
+    if ((node as any).isLine || (node as any).isMesh || (node as any).isObject3D) {
+      nodesToRemove.push(node);
+    }
+  });
+
+  for (const node of nodesToRemove) {
+    node.parent?.remove(node);
+  }
+};
+
+const removeRotateAxisHandles = (group: THREE.Object3D | undefined) => {
+  if (!group) return;
+
+  const nodesToRemove: THREE.Object3D[] = [];
+  group.traverse((node) => {
+    if (node === group) return;
+    if (!ROTATE_HANDLE_NAMES.has(node.name)) return;
+    if ((node as any).isLine || (node as any).isMesh) {
+      nodesToRemove.push(node);
+    }
+  });
+
+  for (const node of nodesToRemove) {
+    node.parent?.remove(node);
+  }
+};
+
+const patchCollisionRotateVisuals = (group: THREE.Object3D | undefined) => {
+  if (!group || group.userData?.urdfCollisionRotateVisualsPatched) return;
+
+  const axisMaterials = collectAxisMaterials(group);
+  removeRotateAxisHandles(group);
+
+  for (const axis of ['X', 'Y', 'Z'] as const) {
+    const startAngle = COLLISION_ROTATE_START_ANGLE[axis];
+    const sourceMaterial = axisMaterials.get(axis) ?? null;
+    const knobPoint = createArcPoint(1, startAngle + COLLISION_ROTATE_ARC_SPAN * 0.5);
+
+    const visibleGeometry = new THREE.TorusGeometry(
+      1,
+      THICK_ROTATE_ARC_RADIUS,
+      10,
+      72,
+      COLLISION_ROTATE_ARC_SPAN
+    );
+    visibleGeometry.rotateZ(startAngle);
+
+    const visibleMaterial = cloneAxisMaterial(sourceMaterial, {
+      opacity: COLLISION_ROTATE_VISIBLE_OPACITY,
+      extraUserData: { urdfCollisionVisibleArc: true, urdfCollisionStaticVisual: true },
+    });
+    const visibleArc = new THREE.Mesh(visibleGeometry, visibleMaterial);
+    visibleArc.name = `URDF_ROTATE_ARC_${axis}`;
+    visibleArc.userData.isGizmo = true;
+    visibleArc.userData.urdfCollisionPreciseHandle = true;
+    visibleArc.userData.urdfAxisName = axis;
+    setRotateAxisOrientation(visibleArc, axis);
+    group.add(visibleArc);
+
+    const remainderGeometry = new THREE.BufferGeometry().setFromPoints(
+      createPlanarArcPoints(
+        1,
+        startAngle + COLLISION_ROTATE_ARC_SPAN,
+        startAngle + Math.PI * 2,
+        80
+      )
+    );
+    const remainderArc = new THREE.Line(
+      remainderGeometry,
+      createCollisionRemainderMaterial(sourceMaterial)
+    );
+    remainderArc.computeLineDistances();
+    remainderArc.name = `URDF_ROTATE_REMAINDER_${axis}`;
+    remainderArc.userData.isGizmo = true;
+    remainderArc.userData.urdfCollisionPreciseHandle = true;
+    remainderArc.userData.urdfAxisName = axis;
+    setRotateAxisOrientation(remainderArc, axis);
+    group.add(remainderArc);
+
+    const knobGeometry = new THREE.SphereGeometry(COLLISION_ROTATE_KNOB_RADIUS, 20, 16);
+    knobGeometry.translate(knobPoint.x, knobPoint.y, knobPoint.z);
+    const knob = new THREE.Mesh(
+      knobGeometry,
+      cloneAxisMaterial(sourceMaterial, {
+        opacity: COLLISION_ROTATE_VISIBLE_OPACITY,
+        extraUserData: { urdfCollisionVisibleKnob: true, urdfCollisionStaticVisual: true },
+      })
+    );
+    knob.name = `URDF_ROTATE_KNOB_${axis}`;
+    knob.userData.isGizmo = true;
+    knob.userData.urdfCollisionPreciseHandle = true;
+    knob.userData.urdfAxisName = axis;
+    setRotateAxisOrientation(knob, axis);
+    group.add(knob);
+  }
+
+  group.userData.urdfCollisionRotateVisualsPatched = true;
+};
+
+const patchCollisionRotatePickers = (group: THREE.Object3D | undefined) => {
+  if (!group || group.userData?.urdfCollisionRotatePickersPatched) return;
+
+  removeRotateAxisHandles(group);
+
+  for (const axis of ['X', 'Y', 'Z'] as const) {
+    const startAngle = COLLISION_ROTATE_START_ANGLE[axis];
+    const knobPoint = createArcPoint(1, startAngle + COLLISION_ROTATE_ARC_SPAN * 0.5);
+    const geometry = new THREE.SphereGeometry(COLLISION_ROTATE_PICKER_RADIUS, 12, 10);
+    geometry.translate(knobPoint.x, knobPoint.y, knobPoint.z);
+
+    const material = rememberHandleMaterialState(
+      createCollisionPickerMaterial(),
+      new THREE.Color(0xffffff),
+      COLLISION_PICKER_OPACITY,
+      { urdfCollisionPicker: true }
+    );
+    const picker = new THREE.Mesh(geometry, material);
+    picker.name = axis;
+    picker.userData.isGizmo = true;
+    picker.userData.urdfCollisionPrecisePicker = true;
+    setRotateAxisOrientation(picker, axis);
+    group.add(picker);
+  }
+
+  group.userData.urdfCollisionRotatePickersPatched = true;
+};
+
+const createTranslateShaftGeometry = (axis: 'X' | 'Y' | 'Z') => {
+  const geometry = new THREE.CylinderGeometry(
+    THICK_TRANSLATE_SHAFT_RADIUS,
+    THICK_TRANSLATE_SHAFT_RADIUS,
+    0.82,
+    12
+  );
+
+  if (axis === 'X') {
+    geometry.rotateZ(-Math.PI / 2);
+    geometry.translate(0.41, 0, 0);
+  } else if (axis === 'Y') {
+    geometry.translate(0, 0.41, 0);
+  } else {
+    geometry.rotateX(Math.PI / 2);
+    geometry.translate(0, 0, 0.41);
+  }
+
+  return geometry;
+};
+
+const patchCollisionTranslateVisuals = (group: THREE.Object3D | undefined) => {
+  if (!group || group.userData?.urdfCollisionTranslateVisualsPatched) return;
+
+  const axisMaterials = collectAxisMaterials(group);
+  const axisTips = collectTranslateAxisTips(group);
+  removeHandlesByNames(group, TRANSLATE_VISUAL_REMOVE_NAMES);
+
+  for (const axis of ['X', 'Y', 'Z'] as const) {
+    const sourceMaterial = axisMaterials.get(axis) ?? null;
+
+    const shaft = new THREE.Mesh(
+      createTranslateShaftGeometry(axis),
+      cloneAxisMaterial(sourceMaterial, {
+        extraUserData: { urdfCollisionStaticVisual: true },
+      })
+    );
+    shaft.name = `URDF_TRANSLATE_SHAFT_${axis}`;
+    shaft.userData.isGizmo = true;
+    shaft.userData.urdfAxisName = axis;
+    group.add(shaft);
+
+    const tip = axisTips.get(axis);
+    if (!tip) continue;
+
+    const tipGeometry = new THREE.SphereGeometry(THICK_TRANSLATE_TIP_RADIUS, 18, 14);
+    tipGeometry.translate(tip.x, tip.y, tip.z);
+    const tipMesh = new THREE.Mesh(
+      tipGeometry,
+      cloneAxisMaterial(sourceMaterial, {
+        extraUserData: { urdfCollisionStaticVisual: true },
+      })
+    );
+    tipMesh.name = `URDF_TRANSLATE_TIP_${axis}`;
+    tipMesh.userData.isGizmo = true;
+    tipMesh.userData.urdfAxisName = axis;
+    group.add(tipMesh);
+  }
+
+  group.userData.urdfCollisionTranslateVisualsPatched = true;
 };
 
 const enhanceTranslateThickness = (group: THREE.Object3D | undefined) => {
@@ -256,6 +668,18 @@ const patchGizmoThickness = (controls: any) => {
   gizmo.userData.urdfThicknessPatched = true;
 };
 
+const patchCollisionPreciseGizmo = (controls: any) => {
+  const gizmo = controls?.gizmo;
+  if (!gizmo || gizmo.userData?.urdfCollisionPrecisePatched) return;
+
+  removeHandlesByNames(gizmo.picker?.translate, TRANSLATE_PICKER_REMOVE_NAMES);
+  patchCollisionTranslateVisuals(gizmo.gizmo?.translate);
+  patchCollisionRotateVisuals(gizmo.gizmo?.rotate);
+  patchCollisionRotatePickers(gizmo.picker?.rotate);
+
+  gizmo.userData.urdfCollisionPrecisePatched = true;
+};
+
 const patchOfficialHoverBehavior = (controls: any) => {
   const gizmo = controls?.gizmo;
   if (!gizmo || gizmo.userData?.urdfOfficialHoverPatched) return;
@@ -306,6 +730,7 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       onChange,
       onRotateChange,
       enableUniversalPriority = true,
+      gizmoPreset = 'default',
       enabled = true,
       space = 'local',
       size,
@@ -324,11 +749,16 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     useImperativeHandle(ref, () => translateRef.current);
 
     useEffect(() => {
-      patchGizmoThickness(translateRef.current);
-      patchGizmoThickness(effectiveRotateRef.current);
+      if (gizmoPreset === 'collision-precise') {
+        patchCollisionPreciseGizmo(translateRef.current);
+        patchCollisionPreciseGizmo(effectiveRotateRef.current);
+      } else {
+        patchGizmoThickness(translateRef.current);
+        patchGizmoThickness(effectiveRotateRef.current);
+      }
       patchOfficialHoverBehavior(translateRef.current);
       patchOfficialHoverBehavior(effectiveRotateRef.current);
-    }, [effectiveRotateRef, mode]);
+    }, [effectiveRotateRef, gizmoPreset, mode]);
 
     useEffect(() => {
       return () => {

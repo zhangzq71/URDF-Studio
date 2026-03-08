@@ -26,8 +26,8 @@ export interface UseHighlightManagerResult {
         meshToHighlight?: THREE.Object3D | null | number
     ) => void;
     revertAllHighlights: () => void;
-    getRobotBoundingBox: () => THREE.Box3 | null;
-    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster) => boolean;
+    getRobotBoundingBox: (forceRefresh?: boolean) => THREE.Box3 | null;
+    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster, forceRefresh?: boolean) => boolean;
     highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
     boundingBoxNeedsUpdateRef: React.MutableRefObject<boolean>;
     getTriangleVertices: (
@@ -61,8 +61,10 @@ export function useHighlightManager({
     robotLinks,
     linkMeshMapRef
 }: UseHighlightManagerOptions): UseHighlightManagerResult {
+    const BOUNDING_BOX_CACHE_MS = 33;
     // PERFORMANCE: Cached robot bounding box for two-phase detection
     const robotBoundingBoxRef = useRef<THREE.Box3 | null>(null);
+    const robotBoundingBoxUpdatedAtRef = useRef(0);
     const boundingBoxNeedsUpdateRef = useRef(true);
 
     // Map to track currently highlighted meshes for O(1) revert instead of traverse
@@ -87,6 +89,7 @@ export function useHighlightManager({
     useEffect(() => {
         if (robot) {
             boundingBoxNeedsUpdateRef.current = true;
+            robotBoundingBoxUpdatedAtRef.current = 0;
         }
     }, [robot, robotVersion]);
 
@@ -95,6 +98,7 @@ export function useHighlightManager({
     useEffect(() => {
         if (robot) {
             boundingBoxNeedsUpdateRef.current = true;
+            robotBoundingBoxUpdatedAtRef.current = 0;
         }
     }, [robot, showCollision, showVisual, highlightMode, robotLinks]);
 
@@ -135,23 +139,33 @@ export function useHighlightManager({
     }, [getColliderIndex, getCollisionGeometryByIndex]);
 
     // Helper to get/update robot bounding box (cached)
-    const getRobotBoundingBox = useCallback(() => {
+    const getRobotBoundingBox = useCallback((forceRefresh = false) => {
         if (!robot) return null;
-        if (boundingBoxNeedsUpdateRef.current || !robotBoundingBoxRef.current) {
-            if (!robotBoundingBoxRef.current) {
-                robotBoundingBoxRef.current = new THREE.Box3();
-            }
+
+        if (!robotBoundingBoxRef.current) {
+            robotBoundingBoxRef.current = new THREE.Box3();
+        }
+
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const shouldRefresh =
+            forceRefresh
+            || boundingBoxNeedsUpdateRef.current
+            || robotBoundingBoxUpdatedAtRef.current === 0
+            || now - robotBoundingBoxUpdatedAtRef.current >= BOUNDING_BOX_CACHE_MS;
+
+        if (shouldRefresh) {
             robotBoundingBoxRef.current.setFromObject(robot);
-            // Expand slightly to account for animation/movement
             robotBoundingBoxRef.current.expandByScalar(0.05);
             boundingBoxNeedsUpdateRef.current = false;
+            robotBoundingBoxUpdatedAtRef.current = now;
         }
+
         return robotBoundingBoxRef.current;
     }, [robot]);
 
     // PERFORMANCE: Two-phase detection - check bounding box first
-    const rayIntersectsBoundingBox = useCallback((raycaster: THREE.Raycaster): boolean => {
-        const bbox = getRobotBoundingBox();
+    const rayIntersectsBoundingBox = useCallback((raycaster: THREE.Raycaster, forceRefresh = false): boolean => {
+        const bbox = getRobotBoundingBox(forceRefresh);
         if (!bbox) return false;
         // Use pooled ray to avoid allocation
         _pooledRay.copy(raycaster.ray);

@@ -28,6 +28,7 @@ export const useVisualizerController = ({
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
   const clearSelection = useSelectionStore((state) => state.clearSelection);
+  const clearHover = useSelectionStore((state) => state.clearHover);
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const robotRootRef = useRef<THREE.Group | null>(null);
@@ -116,6 +117,7 @@ export const useVisualizerController = ({
 
   return {
     clearSelection,
+    clearHover,
     sceneRef,
     robotRootRef,
     state,

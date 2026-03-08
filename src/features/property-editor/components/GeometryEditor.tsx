@@ -5,7 +5,7 @@
  */
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Upload, File, Wand, Check, Trash2 } from 'lucide-react';
-import type { RobotState, UrdfLink } from '@/types';
+import type { RobotState, UrdfLink, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 import { useSelectionStore } from '@/store';
@@ -32,10 +32,12 @@ import {
   convertGeometryType,
   computeMeshAnalysisFromAssets,
 } from '../utils/geometryConversion';
-import type { MeshAnalysis } from '../utils/geometryConversion';
+import type { MeshAnalysis, MeshClearanceObstacle } from '../utils/geometryConversion';
 import {
+  GEOMETRY_DIMENSION_STEP,
   MAX_GEOMETRY_DIMENSION_DECIMALS,
-  MAX_PROPERTY_DECIMALS,
+  MAX_TRANSFORM_DECIMALS,
+  TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
 
 interface GeometryEditorProps {
@@ -63,6 +65,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
     const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
     const meshAnalysisKeyRef = useRef<string | null>(null);
+    const meshAnalysisCacheRef = useRef<Record<string, MeshAnalysis | null>>({});
+    const typeChangeRequestRef = useRef(0);
     const setSelection = useSelectionStore((state) => state.setSelection);
 
     const selectedCollisionObjectIndex = category === 'collision'
@@ -116,6 +120,24 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
     const normalizeColor = (value?: string) => value?.trim().toLowerCase();
 
+    const createMeshAnalysisKey = (geometry: Pick<UrdfVisual, 'meshPath' | 'dimensions'>) =>
+      `${geometry.meshPath ?? ''}:${geometry.dimensions?.x ?? 1}:${geometry.dimensions?.y ?? 1}:${geometry.dimensions?.z ?? 1}`;
+
+    const cloneGeometry = (geometry: UrdfVisual): UrdfVisual => ({
+      ...geometry,
+      dimensions: geometry.dimensions
+        ? { ...geometry.dimensions }
+        : geometry.dimensions,
+      origin: geometry.origin
+        ? {
+            xyz: { ...geometry.origin.xyz },
+            rpy: { ...geometry.origin.rpy },
+          }
+        : geometry.origin,
+      meshPath: geometry.meshPath,
+      color: geometry.color,
+    });
+
     const update = (newData: Partial<typeof geomData>) => {
         if (category === 'collision') {
             if (selectedCollisionGeometry) {
@@ -154,7 +176,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       if (geomData.type !== GeometryType.MESH || !geomData.meshPath) {
         return;
       }
-      const analysisKey = `${geomData.meshPath}:${geomData.dimensions?.x ?? 1}:${geomData.dimensions?.y ?? 1}:${geomData.dimensions?.z ?? 1}`;
+      const analysisKey = createMeshAnalysisKey(geomData);
       if (meshAnalysisKeyRef.current === analysisKey && meshAnalysisRef.current) {
         return;
       }
@@ -168,6 +190,90 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       });
       return () => { cancelled = true; };
     }, [geomData.meshPath, geomData.type, geomData.dimensions?.x, geomData.dimensions?.y, geomData.dimensions?.z, assets]);
+
+    const resolveMeshAnalysisForGeometry = async (geometry: UrdfVisual): Promise<MeshAnalysis | null> => {
+        if (geometry.type !== GeometryType.MESH || !geometry.meshPath) {
+          return null;
+        }
+
+        const analysisKey = createMeshAnalysisKey(geometry);
+        if (analysisKey in meshAnalysisCacheRef.current) {
+          return meshAnalysisCacheRef.current[analysisKey];
+        }
+        if (meshAnalysisKeyRef.current === analysisKey && meshAnalysisRef.current) {
+          meshAnalysisCacheRef.current[analysisKey] = meshAnalysisRef.current;
+          return meshAnalysisRef.current;
+        }
+
+        const analysis = await computeMeshAnalysisFromAssets(geometry.meshPath, assets, geometry.dimensions);
+        meshAnalysisCacheRef.current[analysisKey] = analysis;
+
+        if (geometry.meshPath === geomData.meshPath && analysisKey === createMeshAnalysisKey(geomData)) {
+          meshAnalysisKeyRef.current = analysisKey;
+          meshAnalysisRef.current = analysis;
+        }
+
+        return analysis;
+    };
+
+    const resolveCollisionClearanceContext = async (): Promise<{
+      siblingGeometries?: UrdfVisual[];
+      meshClearanceObstacles?: MeshClearanceObstacle[];
+    }> => {
+        if (category !== 'collision') {
+          return {};
+        }
+
+        const siblingEntries = getCollisionGeometryEntries(data)
+          .filter((entry) => entry.objectIndex !== selectedCollisionObjectIndex);
+
+        if (siblingEntries.length === 0) {
+          return {};
+        }
+
+        const resolvedEntries = await Promise.all(siblingEntries.map(async ({ geometry }) => {
+          const analysis = await resolveMeshAnalysisForGeometry(geometry);
+          const meshObstacle = analysis?.surfacePoints?.length && geometry.type === GeometryType.MESH
+            ? {
+                points: analysis.surfacePoints.map((point) => ({ ...point })),
+              }
+            : null;
+
+          if (!analysis || geometry.type !== GeometryType.MESH) {
+            return {
+              siblingGeometry: cloneGeometry(geometry),
+              meshObstacle,
+            };
+          }
+
+          const boxedGeometry = convertGeometryType(geometry, GeometryType.BOX, analysis);
+          return {
+            siblingGeometry: {
+              ...geometry,
+              type: GeometryType.BOX,
+              dimensions: { ...boxedGeometry.dimensions },
+              origin: {
+                xyz: { ...boxedGeometry.origin.xyz },
+                rpy: { ...boxedGeometry.origin.rpy },
+              },
+              meshPath: undefined,
+            },
+            meshObstacle,
+          };
+        }));
+
+        const siblingGeometries = resolvedEntries
+          .map((entry) => entry?.siblingGeometry ?? null)
+          .filter((entry): entry is UrdfVisual => entry !== null);
+        const meshClearanceObstacles = resolvedEntries
+          .map((entry) => entry?.meshObstacle ?? null)
+          .filter((entry): entry is MeshClearanceObstacle => entry !== null && entry.points.length > 0);
+
+        return {
+          siblingGeometries: siblingGeometries.length > 0 ? siblingGeometries : undefined,
+          meshClearanceObstacles: meshClearanceObstacles.length > 0 ? meshClearanceObstacles : undefined,
+        };
+    };
 
     const handleApplyMesh = () => {
         if (previewMeshPath) {
@@ -237,25 +343,37 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           return;
         }
 
-        const meshAnalysis =
-          currentType === GeometryType.MESH
-            ? (meshAnalysisRef.current ?? undefined)
+        const requestId = ++typeChangeRequestRef.current;
+
+        void (async () => {
+          const meshAnalysis =
+            currentType === GeometryType.MESH
+              ? await resolveMeshAnalysisForGeometry(geomData)
+              : undefined;
+          const resolvedRepresentativeMeshColor =
+            currentType === GeometryType.MESH && newType !== GeometryType.MESH
+              ? meshAnalysis?.representativeColor
+              : undefined;
+          const clearanceContext = newType !== GeometryType.MESH
+            ? await resolveCollisionClearanceContext()
             : undefined;
-        const siblingGeometries = category === 'collision'
-          ? getCollisionGeometryEntries(data)
-              .filter((entry) => entry.objectIndex !== selectedCollisionObjectIndex)
-              .map((entry) => entry.geometry)
-          : undefined;
-        const converted = convertGeometryType(geomData, newType, meshAnalysis, { siblingGeometries });
-        const nextGeom = {
-          ...converted,
-          meshPath: newType === GeometryType.MESH ? geomData.meshPath : undefined,
-          color: newType === GeometryType.MESH
-            ? geomData.color
-            : representativeMeshColor || geomData.color,
-        };
-        cacheByType[newType] = createSnapshot(nextGeom);
-        update(nextGeom);
+
+          if (typeChangeRequestRef.current !== requestId) {
+            return;
+          }
+
+          const converted = convertGeometryType(geomData, newType, meshAnalysis ?? undefined, clearanceContext);
+          const nextGeom = {
+            ...converted,
+            meshPath: newType === GeometryType.MESH ? geomData.meshPath : undefined,
+            color: newType === GeometryType.MESH
+              ? geomData.color
+              : resolvedRepresentativeMeshColor || geomData.color,
+          };
+
+          cacheByType[newType] = createSnapshot(nextGeom);
+          update(nextGeom);
+        })();
     };
 
     const handleDeleteCollision = () => {
@@ -433,19 +551,22 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                             label={t.width || 'Width (X)'}
                             value={geomData.dimensions?.x || 0.1}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
+                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                         <NumberInput
                             label={t.depth || 'Depth (Y)'}
                             value={geomData.dimensions?.y || 0.1}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
+                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                         <NumberInput
                             label={t.height || 'Height (Z)'}
                             value={geomData.dimensions?.z || 0.1}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, z: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
+                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                     </div>
                 </InputGroup>
@@ -458,7 +579,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         label={t.radius || 'Radius'}
                         value={geomData.dimensions?.x || 0.1}
                         onChange={(v: number) => update({ dimensions: { x: v, y: v, z: v } })}
-                        step={0.01}
+                        step={GEOMETRY_DIMENSION_STEP}
                         precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                     />
                 </InputGroup>
@@ -472,14 +593,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                             label={t.radius || 'Radius'}
                             value={geomData.dimensions?.x || 0.05}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
                             precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                         <NumberInput
                             label={t.height || 'Height'}
                             value={geomData.dimensions?.y || 0.5}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
                             precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                     </div>
@@ -494,14 +615,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                             label={t.radius || 'Radius'}
                             value={geomData.dimensions?.x || 0.05}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
                             precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                         <NumberInput
                             label={t.totalLength || 'Total Length'}
                             value={geomData.dimensions?.y || 0.5}
                             onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
-                            step={0.01}
+                            step={GEOMETRY_DIMENSION_STEP}
                             precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
                         />
                     </div>
@@ -518,7 +639,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         })}
                         labels={['X', 'Y', 'Z']}
                         compact
-                        precision={MAX_PROPERTY_DECIMALS}
+                        step={TRANSFORM_STEP}
+                        precision={MAX_TRANSFORM_DECIMALS}
                     />
                     <Vec3InlineInput
                         value={geomData.origin?.rpy || {r:0, p:0, y:0}}
@@ -528,7 +650,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         labels={[t.roll, t.pitch, t.yaw]}
                         keys={['r', 'p', 'y']}
                         compact
-                        precision={MAX_PROPERTY_DECIMALS}
+                        step={TRANSFORM_STEP}
+                        precision={MAX_TRANSFORM_DECIMALS}
                     />
                     </div>
                 </InputGroup>
