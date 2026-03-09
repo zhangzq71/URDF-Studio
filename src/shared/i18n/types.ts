@@ -15,14 +15,12 @@ export interface TranslationKeys {
   noModelsFound: string;
   changeSearchKeywords: string;
   categories: string;
-  tags: string;
   allModels: string;
-  // New Categories
-  fullRobots: string;
-  endEffectors: string;
-  sensors: string;
-  articulatedObjects: string;
-  dataAssets: string;
+  quadruped: string;
+  manipulators: string;
+  humanoids: string;
+  mobileBases: string;
+  unitreeTech: string;
   fetchingResources: string;
   minimize: string;
   maximize: string;
