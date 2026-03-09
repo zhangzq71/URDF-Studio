@@ -16,3 +16,5 @@ AGENTS.md
 .vscode/
 
 test/
+.tmp/
+.uv-cache/

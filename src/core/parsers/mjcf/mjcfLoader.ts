@@ -1,19 +1,25 @@
-/**
+﻿/**
  * MJCF Loader entrypoint.
  * Parses MJCF XML and delegates hierarchy construction to shared builders.
  */
 
 import * as THREE from 'three';
 import {
+    parseMJCFDefaults,
+    parseMeshAssets,
     parseCompilerSettings,
+    parseMaterialAssets,
     parseNumbers,
     parsePosAsTuple as parsePos,
     parseQuatAsTuple as parseQuat,
+    resolveDefaultClassQName,
+    resolveElementAttributes,
     type MJCFCompilerSettings,
     type MJCFMesh
 } from './mjcfUtils';
 import { type MJCFMeshCache } from './mjcfGeometry';
 import { buildMJCFHierarchy } from './mjcfHierarchyBuilder';
+import { parseMJCFModel } from './mjcfModel';
 
 interface MJCFBody {
     name: string;
@@ -37,6 +43,7 @@ interface MJCFGeom {
     contype?: number;
     conaffinity?: number;
     group?: number;
+    material?: string;
 }
 
 interface MJCFJoint {
@@ -47,63 +54,38 @@ interface MJCFJoint {
     pos?: [number, number, number];
 }
 
-function parseMeshAssets(doc: Document, settings?: MJCFCompilerSettings): Map<string, MJCFMesh> {
-    const meshMap = new Map<string, MJCFMesh>();
-    const asset = doc.querySelector('asset');
-    if (!asset) return meshMap;
-
-    const meshes = asset.querySelectorAll('mesh');
-    meshes.forEach((meshEl, index) => {
-        let name = meshEl.getAttribute('name');
-        let file = meshEl.getAttribute('file');
-
-        if (file) {
-            if (settings?.meshdir && !file.startsWith('/') && !file.includes(':')) {
-                const prefix = settings.meshdir.endsWith('/') ? settings.meshdir : `${settings.meshdir}/`;
-                file = `${prefix}${file}`;
-            }
-
-            if (!name) {
-                const fileName = file.split('/').pop()?.split('\\').pop() || '';
-                name = fileName.split('.')[0] || `mesh_${index}`;
-            }
-
-            const scaleStr = meshEl.getAttribute('scale');
-            const scale = scaleStr ? parseNumbers(scaleStr) : undefined;
-
-            console.debug(`[MJCFLoader] Parsed mesh asset: name="${name}", file="${file}"`);
-            meshMap.set(name, { name, file, scale: scale && scale.length >= 3 ? scale : undefined });
-        }
-    });
-
-    return meshMap;
-}
-
-function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
-    const name = bodyEl.getAttribute('name') || `body_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const pos = parsePos(bodyEl.getAttribute('pos'));
-    const quat = parseQuat(bodyEl.getAttribute('quat'));
-    const eulerStr = bodyEl.getAttribute('euler');
-    const euler = eulerStr ? parseNumbers(eulerStr) as [number, number, number] : undefined;
+function parseBody(
+    bodyEl: Element,
+    meshMap: Map<string, MJCFMesh>,
+    defaults: ReturnType<typeof parseMJCFDefaults>,
+    activeClassQName?: string,
+): MJCFBody {
+    const bodyAttrs = resolveElementAttributes(defaults, 'body', bodyEl, activeClassQName);
+    const name = bodyEl.getAttribute('name') || bodyAttrs.name || `body_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    const pos = parsePos(bodyAttrs.pos || null);
+    const quat = parseQuat(bodyAttrs.quat || null);
+    const euler = bodyAttrs.euler ? parseNumbers(bodyAttrs.euler) as [number, number, number] : undefined;
+    const nextActiveClassQName = resolveDefaultClassQName(defaults, bodyEl.getAttribute('childclass'), activeClassQName) || activeClassQName;
 
     const geoms: MJCFGeom[] = [];
     const geomElements = bodyEl.querySelectorAll(':scope > geom');
     geomElements.forEach(geomEl => {
-        const sizeArr = parseNumbers(geomEl.getAttribute('size'));
-        const fromtoStr = geomEl.getAttribute('fromto');
+        const geomAttrs = resolveElementAttributes(defaults, 'geom', geomEl, activeClassQName);
+        const sizeArr = parseNumbers(geomAttrs.size || null);
+        const fromtoStr = geomAttrs.fromto;
         const fromtoArr = fromtoStr ? parseNumbers(fromtoStr) : undefined;
-        const meshAttr = geomEl.getAttribute('mesh');
+        const meshAttr = geomAttrs.mesh;
         
         // Infer geometry type according to MJCF specification:
         // 1. Explicit type attribute takes priority (must be non-empty and trimmed)
-        // 2. If mesh attribute exists → 'mesh'
-        // 3. If fromto attribute exists → 'capsule' (MJCF default for fromto)
+        // 2. If mesh attribute exists 鈫?'mesh'
+        // 3. If fromto attribute exists 鈫?'capsule' (MJCF default for fromto)
         // 4. Based on size array length (MJCF defaults):
-        //    - 1 element → sphere (radius)
-        //    - 2 elements → capsule (radius, half-length) - MJCF default for 2-element size
-        //    - 3 elements → ellipsoid (semi-axes) - MJCF default for 3-element size
-        // 5. Default → sphere
-        const explicitType = geomEl.getAttribute('type')?.trim() || null;
+        //    - 1 element 鈫?sphere (radius)
+        //    - 2 elements 鈫?capsule (radius, half-length) - MJCF default for 2-element size
+        //    - 3 elements 鈫?ellipsoid (semi-axes) - MJCF default for 3-element size
+        // 5. Default 鈫?sphere
+        const explicitType = geomAttrs.type?.trim() || null;
         let inferredType: string;
         
         if (explicitType) {
@@ -123,16 +105,17 @@ function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
         }
         
         const geom: MJCFGeom = {
-            name: geomEl.getAttribute('name') || undefined,
+            name: geomEl.getAttribute('name') || geomAttrs.name || undefined,
             type: inferredType,
             size: sizeArr,
             mesh: meshAttr || undefined,
-            pos: geomEl.getAttribute('pos') ? parsePos(geomEl.getAttribute('pos')) : undefined,
-            quat: parseQuat(geomEl.getAttribute('quat')),
+            material: geomAttrs.material || undefined,
+            pos: geomAttrs.pos ? parsePos(geomAttrs.pos) : undefined,
+            quat: parseQuat(geomAttrs.quat || null),
             fromto: fromtoArr,
         };
 
-        const rgbaStr = geomEl.getAttribute('rgba');
+        const rgbaStr = geomAttrs.rgba;
         if (rgbaStr) {
             const rgba = parseNumbers(rgbaStr);
             if (rgba.length >= 3) {
@@ -140,9 +123,9 @@ function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
             }
         }
 
-        const contypeStr = geomEl.getAttribute('contype');
-        const conaffinityStr = geomEl.getAttribute('conaffinity');
-        const groupStr = geomEl.getAttribute('group');
+        const contypeStr = geomAttrs.contype;
+        const conaffinityStr = geomAttrs.conaffinity;
+        const groupStr = geomAttrs.group;
 
         if (contypeStr) geom.contype = parseInt(contypeStr);
         if (conaffinityStr) geom.conaffinity = parseInt(conaffinityStr);
@@ -154,12 +137,13 @@ function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
     const joints: MJCFJoint[] = [];
     const jointElements = bodyEl.querySelectorAll(':scope > joint');
     jointElements.forEach(jointEl => {
+        const jointAttrs = resolveElementAttributes(defaults, 'joint', jointEl, activeClassQName);
         const joint: MJCFJoint = {
-            name: jointEl.getAttribute('name') || `joint_${Date.now()}`,
-            type: jointEl.getAttribute('type') || 'hinge',
+            name: jointEl.getAttribute('name') || jointAttrs.name || `joint_${Date.now()}`,
+            type: jointAttrs.type || 'hinge',
         };
 
-        const axisStr = jointEl.getAttribute('axis');
+        const axisStr = jointAttrs.axis;
         if (axisStr) {
             const axisNums = parseNumbers(axisStr);
             joint.axis = [
@@ -171,7 +155,7 @@ function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
             joint.axis = [0, 0, 1];
         }
 
-        const rangeStr = jointEl.getAttribute('range');
+        const rangeStr = jointAttrs.range;
         if (rangeStr) {
             const rangeNums = parseNumbers(rangeStr);
             joint.range = [
@@ -180,7 +164,7 @@ function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
             ];
         }
 
-        const posStr = jointEl.getAttribute('pos');
+        const posStr = jointAttrs.pos;
         if (posStr) {
             joint.pos = parsePos(posStr);
         }
@@ -191,7 +175,7 @@ function parseBody(bodyEl: Element, meshMap: Map<string, MJCFMesh>): MJCFBody {
     const children: MJCFBody[] = [];
     const childBodyElements = bodyEl.querySelectorAll(':scope > body');
     childBodyElements.forEach(childEl => {
-        children.push(parseBody(childEl, meshMap));
+        children.push(parseBody(childEl, meshMap, defaults, nextActiveClassQName));
     });
 
     return { name, pos, quat, euler, geoms, joints, children };
@@ -203,39 +187,18 @@ export async function loadMJCFToThreeJS(
     assets: Record<string, string>
 ): Promise<THREE.Object3D | null> {
     try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlContent, 'text/xml');
-
-        const parseError = doc.querySelector('parsererror');
-        if (parseError) {
-            console.error('[MJCFLoader] XML parsing error:', parseError.textContent);
+        const parsedModel = parseMJCFModel(xmlContent);
+        if (!parsedModel) {
             return null;
         }
 
-        const mujocoEl = doc.querySelector('mujoco');
-        if (!mujocoEl) {
-            console.error('[MJCFLoader] No <mujoco> root element found');
-            return null;
-        }
-
-        const modelName = mujocoEl.getAttribute('model') || 'mjcf_robot';
-
-        const compilerSettings = parseCompilerSettings(doc);
+        const modelName = parsedModel.modelName;
+        const compilerSettings = parsedModel.compilerSettings;
         console.log(`[MJCFLoader] Compiler settings: angle=${compilerSettings.angleUnit}, meshdir=${compilerSettings.meshdir}`);
 
-        const meshMap = parseMeshAssets(doc, compilerSettings);
-
-        const worldbodyEl = mujocoEl.querySelector('worldbody');
-        if (!worldbodyEl) {
-            console.error('[MJCFLoader] No <worldbody> element found');
-            return null;
-        }
-
-        const bodies: MJCFBody[] = [];
-        const bodyElements = worldbodyEl.querySelectorAll(':scope > body');
-        bodyElements.forEach(bodyEl => {
-            bodies.push(parseBody(bodyEl, meshMap));
-        });
+        const meshMap = parsedModel.meshMap;
+        const materialMap = parsedModel.materialMap;
+        const bodies: MJCFBody[] = [parsedModel.worldBody as MJCFBody];
 
         const rootGroup = new THREE.Group();
         rootGroup.name = modelName;
@@ -249,7 +212,8 @@ export async function loadMJCFToThreeJS(
             meshMap,
             assets,
             meshCache,
-            compilerSettings
+            compilerSettings,
+            materialMap
         });
 
         (rootGroup as any).links = linksMap;
@@ -276,3 +240,7 @@ export function isMJCFContent(content: string): boolean {
         return false;
     }
 }
+
+
+
+

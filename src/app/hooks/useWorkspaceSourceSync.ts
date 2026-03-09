@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { computePreviewUrdf, generateMujocoXML, generateURDF } from '@/core/parsers';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { DEFAULT_LINK, GeometryType, type AssemblyState, type RobotData, type RobotFile, type RobotState, type UrdfJoint, type UrdfLink } from '@/types';
 
 interface UseWorkspaceSourceSyncOptions {
@@ -11,6 +12,7 @@ interface UseWorkspaceSourceSyncOptions {
   robotLinks: Record<string, UrdfLink>;
   robotJoints: Record<string, UrdfJoint>;
   rootLinkId: string;
+  isCodeViewerOpen: boolean;
   selectedFile: RobotFile | null;
   availableFiles: RobotFile[];
   originalUrdfContent: string | null;
@@ -28,6 +30,7 @@ export function useWorkspaceSourceSync({
   robotLinks,
   robotJoints,
   rootLinkId,
+  isCodeViewerOpen,
   selectedFile,
   availableFiles,
   originalUrdfContent,
@@ -105,23 +108,6 @@ export function useWorkspaceSourceSync({
     return Object.values(robot.links).some((link) => link.visible !== false);
   }, [robot.links]);
 
-  const urdfContentForViewer = useMemo(() => {
-    if (isWorkspaceAssembly) {
-      return generateURDF({
-        ...(mergedRobotData ?? emptyRobot),
-        selection: { type: null, id: null },
-      }, false);
-    }
-
-    return generateURDF({
-      name: robotName,
-      links: robotLinks,
-      joints: robotJoints,
-      rootLinkId,
-      selection: { type: null, id: null },
-    }, false);
-  }, [emptyRobot, isWorkspaceAssembly, mergedRobotData, robotJoints, robotLinks, robotName, rootLinkId]);
-
   const currentRobotSourceState = useMemo<RobotState>(() => ({
     name: robotName,
     links: robotLinks,
@@ -139,15 +125,42 @@ export function useWorkspaceSourceSync({
       return generateURDF(currentRobotSourceState, false);
     }
 
-    if (selectedFile.format === 'mjcf') {
+    if (selectedFile.format === 'mjcf' && isCodeViewerOpen) {
       return generateMujocoXML(currentRobotSourceState, { meshdir: 'meshes/' });
     }
 
     return null;
-  }, [currentRobotSourceState, isWorkspaceAssembly, selectedFile]);
+  }, [currentRobotSourceState, isCodeViewerOpen, isWorkspaceAssembly, selectedFile]);
+
+  const urdfContentForViewer = useMemo(() => {
+    if (isWorkspaceAssembly) {
+      return generateURDF({
+        ...(mergedRobotData ?? emptyRobot),
+        selection: { type: null, id: null },
+      }, false);
+    }
+
+    if (selectedFile?.format === 'mjcf') {
+      if (syncedSourceContent) {
+        return syncedSourceContent;
+      }
+
+      return resolveMJCFSource(selectedFile, availableFiles).content;
+    }
+
+    return generateURDF(currentRobotSourceState, false);
+  }, [
+    availableFiles,
+    currentRobotSourceState,
+    emptyRobot,
+    isWorkspaceAssembly,
+    mergedRobotData,
+    selectedFile,
+    syncedSourceContent,
+  ]);
 
   useEffect(() => {
-    if (!selectedFile || !syncedSourceContent) {
+    if (!selectedFile || !syncedSourceContent || selectedFile.format !== 'urdf') {
       return;
     }
 
@@ -172,7 +185,7 @@ export function useWorkspaceSourceSync({
       );
     }
 
-    if (selectedFile.format === 'urdf' && originalUrdfContent !== syncedSourceContent) {
+    if (originalUrdfContent !== syncedSourceContent) {
       setOriginalUrdfContent(syncedSourceContent);
     }
   }, [

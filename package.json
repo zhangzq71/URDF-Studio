@@ -21,7 +21,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "mjcf:compare": "esbuild scripts/mjcf_compare.ts --bundle --platform=node --format=cjs --alias:@=./src --external:jsdom --outfile=.tmp/mjcf_compare.cjs && node .tmp/mjcf_compare.cjs"
   },
   "license": "Apache-2.0",
   "dependencies": {

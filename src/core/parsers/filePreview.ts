@@ -6,6 +6,7 @@ import {
   parseUSDA,
 } from '@/core/parsers';
 import { GeometryType, type RobotFile, type RobotState } from '@/types';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 function buildMeshPreviewState(file: RobotFile): RobotState {
   const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
@@ -70,8 +71,7 @@ export function computePreviewUrdf(
     }
 
     if (file.format === 'mjcf') {
-      const parsed = parseMJCF(file.content);
-      return parsed ? generateURDF(parsed, false) : '';
+      return resolveMJCFSource(file, availableFiles).content;
     }
 
     if (file.format === 'usd') {

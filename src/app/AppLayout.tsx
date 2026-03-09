@@ -26,6 +26,7 @@ import type {
   CollisionTargetRef,
 } from '@/features/property-editor/utils';
 import { applyCollisionOptimizationOperationsToLinks } from '@/features/property-editor/utils';
+import { processMJCFIncludes } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 const loadSourceCodeEditorModule = () => import('@/features/code-editor/components/SourceCodeEditor');
 const loadCollisionOptimizationDialogModule = () => import('@/features/property-editor/components/CollisionOptimizationDialog');
@@ -199,8 +200,6 @@ export function AppLayout({
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
   const {
-    isWorkspaceAssembly,
-    mergedRobotData,
     emptyRobot,
     robot,
     jointAngleState,
@@ -220,9 +219,10 @@ export function AppLayout({
     robotLinks,
     robotJoints,
     rootLinkId,
+    isCodeViewerOpen,
     selectedFile,
-    availableFiles,
     setSelectedFile,
+    availableFiles,
     setAvailableFiles,
     originalUrdfContent,
     setOriginalUrdfContent,
@@ -742,14 +742,17 @@ export function AppLayout({
   }, [setJointAngle]);
 
   const handleCodeChange = useCallback((newCode: string) => {
+    const mjcfBasePath = selectedFile?.name
+      ? selectedFile.name.split('/').slice(0, -1).join('/')
+      : '';
     const newState = selectedFile?.format === 'mjcf'
-      ? parseMJCF(newCode)
+      ? parseMJCF(processMJCFIncludes(newCode, availableFiles, mjcfBasePath))
       : parseURDF(newCode);
     if (newState) {
       const { selection: _, ...newData } = newState;
       setRobot(newData);
     }
-  }, [selectedFile?.format, setRobot]);
+  }, [availableFiles, selectedFile?.format, selectedFile?.name, setRobot]);
 
   const handleSnapshot = useCallback(() => {
     if (snapshotActionRef.current) {
