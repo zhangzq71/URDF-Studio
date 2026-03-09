@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { disposeMaterial } from './dispose';
 
 // ============================================================
 // URDF Material Parser - Extract rgba colors from URDF XML
@@ -104,8 +105,13 @@ export function parseURDFMaterials(urdfContent: string): Map<string, THREE.Mater
 export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string, THREE.Material>) {
   if (materials.size === 0) return;
 
+  const replacedMaterials = new Set<THREE.Material>();
+
   robot.traverse((child: any) => {
     if (!child.isMesh) return;
+
+    const originalMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
+    let didReplace = false;
 
     // Process each material on this mesh
     const processMaterial = (mat: THREE.Material): THREE.Material => {
@@ -114,6 +120,7 @@ export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string,
       const urdfMat = materials.get(matName);
 
       if (urdfMat) {
+        didReplace = true;
         const cloned = urdfMat.clone();
         cloned.userData.urdfColorApplied = true;
         if ((urdfMat as THREE.MeshStandardMaterial).color) {
@@ -130,6 +137,16 @@ export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string,
       child.material = child.material.map(processMaterial);
     } else if (child.material) {
       child.material = processMaterial(child.material);
+    }
+
+    if (didReplace && originalMaterial) {
+      const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
+      for (const mat of mats) {
+        if (!mat || replacedMaterials.has(mat)) continue;
+        // New materials don't reuse old textures here, dispose fully.
+        disposeMaterial(mat, true);
+        replacedMaterials.add(mat);
+      }
     }
   });
 }

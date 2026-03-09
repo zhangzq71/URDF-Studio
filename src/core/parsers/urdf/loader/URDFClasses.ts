@@ -22,33 +22,34 @@ class URDFBase extends Object3D {
 
 export class URDFCollider extends URDFBase {
     isURDFCollider = true;
+    override readonly type: string = 'URDFCollider';
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFCollider';
     }
 }
 
 export class URDFVisual extends URDFBase {
     isURDFVisual = true;
+    override readonly type: string = 'URDFVisual';
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFVisual';
     }
 }
 
 export class URDFLink extends URDFBase {
     isURDFLink = true;
+    override readonly type: string = 'URDFLink';
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFLink';
     }
 }
 
 export class URDFJoint extends URDFBase {
     isURDFJoint = true;
+    override readonly type: string = 'URDFJoint';
     jointValue: number[] | null = null;
     axis = new Vector3(1, 0, 0);
     limit: { lower: number; upper: number; effort?: number; velocity?: number } = { lower: 0, upper: 0 };
@@ -98,7 +99,6 @@ export class URDFJoint extends URDFBase {
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFJoint';
         this.jointType = 'fixed';
     }
 
@@ -188,19 +188,28 @@ export class URDFJoint extends URDFBase {
             }
 
             case 'floating': {
+                const isUnchanged = (incoming: number | null | undefined, current: number) =>
+                    incoming == null || Number.isNaN(incoming) || incoming === current;
+
                 if (
                     currentValues.length === 6 &&
-                    currentValues.every((value, index) => values[index] === value || values[index] === null)
+                    currentValues.every((value, index) => isUnchanged(values[index], value))
                 ) {
                     return didUpdate;
                 }
 
-                currentValues[0] = values[0] !== null ? values[0]! : currentValues[0];
-                currentValues[1] = values[1] !== null ? values[1]! : currentValues[1];
-                currentValues[2] = values[2] !== null ? values[2]! : currentValues[2];
-                currentValues[3] = values[3] !== null ? values[3]! : currentValues[3];
-                currentValues[4] = values[4] !== null ? values[4]! : currentValues[4];
-                currentValues[5] = values[5] !== null ? values[5]! : currentValues[5];
+                const applyIfFinite = (index: number) => {
+                    const next = values[index];
+                    if (typeof next === 'number' && Number.isFinite(next)) {
+                        currentValues[index] = next;
+                    }
+                };
+                applyIfFinite(0);
+                applyIfFinite(1);
+                applyIfFinite(2);
+                applyIfFinite(3);
+                applyIfFinite(4);
+                applyIfFinite(5);
                 this.jointValue = currentValues;
 
                 _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
@@ -217,16 +226,25 @@ export class URDFJoint extends URDFBase {
             }
 
             case 'planar': {
+                const isUnchanged = (incoming: number | null | undefined, current: number) =>
+                    incoming == null || Number.isNaN(incoming) || incoming === current;
+
                 if (
                     currentValues.length === 3 &&
-                    currentValues.every((value, index) => values[index] === value || values[index] === null)
+                    currentValues.every((value, index) => isUnchanged(values[index], value))
                 ) {
                     return didUpdate;
                 }
 
-                currentValues[0] = values[0] !== null ? values[0]! : currentValues[0];
-                currentValues[1] = values[1] !== null ? values[1]! : currentValues[1];
-                currentValues[2] = values[2] !== null ? values[2]! : currentValues[2];
+                const applyIfFinite = (index: number) => {
+                    const next = values[index];
+                    if (typeof next === 'number' && Number.isFinite(next)) {
+                        currentValues[index] = next;
+                    }
+                };
+                applyIfFinite(0);
+                applyIfFinite(1);
+                applyIfFinite(2);
                 this.jointValue = currentValues;
 
                 _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
@@ -250,13 +268,13 @@ export class URDFJoint extends URDFBase {
 
 export class URDFMimicJoint extends URDFJoint {
     isURDFMimicJoint = true;
+    override readonly type: string = 'URDFMimicJoint';
     mimicJoint: string | null = null;
     offset = 0;
     multiplier = 1;
 
     constructor(...args: ConstructorParameters<typeof Object3D>) {
         super(...args);
-        this.type = 'URDFMimicJoint';
     }
 
     updateFromMimickedJoint(...values: (number | null)[]) {
@@ -315,7 +333,10 @@ export class URDFRobot extends URDFLink {
         });
 
         Object.keys(this.joints).forEach(jointName => {
-            this.joints[jointName].mimicJoints = this.joints[jointName].mimicJoints.map((mimicJoint: any) => this.joints[mimicJoint.name]);
+            this.joints[jointName].mimicJoints = this.joints[jointName].mimicJoints.flatMap((mimicJoint: any) => {
+                const mappedJoint = this.joints[mimicJoint.name];
+                return mappedJoint instanceof URDFMimicJoint ? [mappedJoint] : [];
+            });
         });
 
         this.frames = {

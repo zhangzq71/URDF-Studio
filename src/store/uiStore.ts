@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppMode, Theme } from '@/types';
+import { translations } from '@/shared/i18n';
 
 // Language type
 export type Language = 'en' | 'zh';
@@ -52,10 +53,6 @@ interface UIState {
   lang: Language;
   setLang: (lang: Language) => void;
 
-  // UI Scale
-  uiScale: number;
-  setUiScale: (scale: number) => void;
-
   // View configuration
   viewConfig: ViewConfig;
   setViewConfig: <K extends keyof ViewConfig>(key: K, value: ViewConfig[K]) => void;
@@ -90,8 +87,8 @@ interface UIState {
   setSettingsPos: (pos: { x: number; y: number }) => void;
 
   // Menu state
-  activeMenu: 'file' | 'toolbox' | 'view' | 'more' | null;
-  setActiveMenu: (menu: 'file' | 'toolbox' | 'view' | 'more' | null) => void;
+  activeMenu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
+  setActiveMenu: (menu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null) => void;
 
   // OS detection
   os: 'mac' | 'win';
@@ -184,15 +181,6 @@ const getSavedSidebar = (): SidebarState => {
   return defaultSidebar;
 };
 
-// Get saved UI scale
-const getSavedUiScale = (): number => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('uiScale');
-    return saved ? parseFloat(saved) : 1.0;
-  }
-  return 1.0;
-};
-
 // Helper to apply font size (affects text size via CSS variable)
 const applyFontSize = (fontSize: 'small' | 'medium' | 'large') => {
   if (typeof window === 'undefined') return;
@@ -239,18 +227,8 @@ export const useUIStore = create<UIState>()(
       lang: getSystemLang(),
       setLang: (lang) => {
         // Update document title
-        document.title = lang === 'zh'
-          ? "URDF Studio - 专业机器人设计与可视化工具"
-          : "URDF Studio - Professional Robot Design & Visualization Tool";
+        document.title = translations[lang].documentTitle;
         set({ lang });
-      },
-
-      // UI Scale
-      uiScale: getSavedUiScale(),
-      setUiScale: (scale) => {
-        // Apply scale to root element
-        document.documentElement.style.fontSize = `${scale * 100}%`;
-        set({ uiScale: scale });
       },
 
       // View configuration
@@ -369,20 +347,16 @@ export const useUIStore = create<UIState>()(
       partialize: (state) => ({
         theme: state.theme,
         lang: state.lang,
-        uiScale: state.uiScale,
         sidebar: state.sidebar,
         showImportWarning: state.showImportWarning,
         panelSections: state.panelSections,
         fontSize: state.fontSize,
       }),
       onRehydrateStorage: () => (state) => {
-        // Re-apply theme, UI scale and font size on hydration
+        // Re-apply theme and font size on hydration
         if (state) {
           applyTheme(state.theme);
-          // Re-apply UI scale
-          if (state.uiScale) {
-            document.documentElement.style.fontSize = `${state.uiScale * 100}%`;
-          }
+          document.documentElement.style.fontSize = '100%';
           // Re-apply font size
           applyFontSize(state.fontSize || 'medium');
         }

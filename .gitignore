@@ -7,8 +7,14 @@ dist/
 build/
 test/
 
+output/
+
 .claude/
+.codex/
+AGENTS.md
 
 .vscode/
 
 test/
+.tmp/
+.uv-cache/

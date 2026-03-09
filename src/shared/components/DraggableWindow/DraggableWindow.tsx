@@ -49,9 +49,11 @@ export interface DraggableWindowProps {
   closeTitle?: string;
   onHeaderDoubleClick?: () => void;
   showResizeHandles?: boolean;
+  leftResizeHandleClassName?: string;
   rightResizeHandleClassName?: string;
   bottomResizeHandleClassName?: string;
   cornerResizeHandleClassName?: string;
+  leftResizeDirection?: ResizeDirection;
   rightResizeDirection?: ResizeDirection;
   bottomResizeDirection?: ResizeDirection;
   cornerResizeDirection?: ResizeDirection;
@@ -60,15 +62,17 @@ export interface DraggableWindowProps {
 }
 
 const DEFAULT_CONTROL_BUTTON_CLASS =
-  'p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors';
+  'p-1.5 hover:bg-element-hover rounded-md transition-colors';
 const DEFAULT_CLOSE_BUTTON_CLASS =
-  'p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors';
+  'p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors';
+const DEFAULT_LEFT_RESIZE_CLASS =
+  'absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-system-blue/20 active:bg-system-blue/30 transition-colors z-20';
 const DEFAULT_RIGHT_RESIZE_CLASS =
-  'absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 transition-colors z-20';
+  'absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-system-blue/20 active:bg-system-blue/30 transition-colors z-20';
 const DEFAULT_BOTTOM_RESIZE_CLASS =
-  'absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 transition-colors z-20';
+  'absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-system-blue/20 active:bg-system-blue/30 transition-colors z-20';
 const DEFAULT_CORNER_RESIZE_CLASS =
-  'absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-[#0060FA]/30 transition-colors z-30';
+  'absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-system-blue/30 active:bg-system-blue/40 transition-colors z-30';
 
 const joinClassNames = (...classes: Array<string | undefined | false>) =>
   classes.filter(Boolean).join(' ');
@@ -99,9 +103,11 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   closeTitle,
   onHeaderDoubleClick,
   showResizeHandles = true,
+  leftResizeHandleClassName = DEFAULT_LEFT_RESIZE_CLASS,
   rightResizeHandleClassName = DEFAULT_RIGHT_RESIZE_CLASS,
   bottomResizeHandleClassName = DEFAULT_BOTTOM_RESIZE_CLASS,
   cornerResizeHandleClassName = DEFAULT_CORNER_RESIZE_CLASS,
+  leftResizeDirection = 'left',
   rightResizeDirection = 'right',
   bottomResizeDirection = 'bottom',
   cornerResizeDirection = 'corner',
@@ -134,15 +140,19 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   );
 
   const shouldRenderResizeHandles = showResizeHandles && !isMaximized && !isMinimized;
-  const minimizeIcon = controlIcons?.minimize ?? <Minus className="w-4 h-4 text-slate-500" />;
-  const maximizeIcon = controlIcons?.maximize ?? <Maximize2 className="w-4 h-4 text-slate-500" />;
-  const restoreIcon = controlIcons?.restore ?? <Minimize2 className="w-4 h-4 text-slate-500" />;
+  const minimizeIcon = controlIcons?.minimize ?? <Minus className="w-4 h-4 text-text-tertiary" />;
+  const maximizeIcon = controlIcons?.maximize ?? <Maximize2 className="w-4 h-4 text-text-tertiary" />;
+  const restoreIcon = controlIcons?.restore ?? <Minimize2 className="w-4 h-4 text-text-tertiary" />;
   const closeIcon = controlIcons?.close ?? <X className="w-4 h-4" />;
 
   return (
     <div ref={containerRef} style={windowStyle} className={rootClassName}>
       {shouldRenderResizeHandles && (
         <>
+          <div
+            className={leftResizeHandleClassName}
+            onMouseDown={(e) => handleResizeStart(e, leftResizeDirection)}
+          />
           <div
             className={rightResizeHandleClassName}
             onMouseDown={(e) => handleResizeStart(e, rightResizeDirection)}
@@ -174,7 +184,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                 data-window-control
                 onClick={toggleMinimize}
                 className={controlButtonClassName}
-                title={minimizeTitle}
+                aria-label={minimizeTitle}
               >
                 {minimizeIcon}
               </button>
@@ -185,7 +195,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                 data-window-control
                 onClick={toggleMaximize}
                 className={controlButtonClassName}
-                title={isMaximized ? restoreTitle : maximizeTitle}
+                aria-label={isMaximized ? restoreTitle : maximizeTitle}
               >
                 {isMaximized ? restoreIcon : maximizeIcon}
               </button>
@@ -196,7 +206,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
                 data-window-control
                 onClick={onClose}
                 className={closeButtonClassName}
-                title={closeTitle}
+                aria-label={closeTitle}
               >
                 {closeIcon}
               </button>

@@ -1,14 +1,15 @@
 import React, { memo, useState, useEffect } from 'react';
 import * as THREE from 'three';
 import { Html, Line } from '@react-three/drei';
-import { UrdfJoint } from '@/types';
+import { RobotState, UrdfJoint } from '@/types';
 import { ThickerAxes, JointAxesVisual } from '@/shared/components/3d';
 import { Language } from '@/shared/i18n';
 import { RobotNode } from './RobotNode';
 
 // Type definitions
 interface CommonVisualizerProps {
-  robot: any; // RobotState type
+  robot: RobotState;
+  childJointsByParent: Record<string, UrdfJoint[]>;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   mode: 'skeleton' | 'detail' | 'hardware';
@@ -28,11 +29,11 @@ interface CommonVisualizerProps {
   showHardwareLabels: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
-  transformMode: 'translate' | 'rotate';
+  transformMode: 'translate' | 'rotate' | 'select';
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
-  onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void;
+  onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
 
 interface JointNodeProps extends CommonVisualizerProps {
@@ -54,6 +55,7 @@ interface JointNodeProps extends CommonVisualizerProps {
 export const JointNode = memo(function JointNode({
   joint,
   robot,
+  childJointsByParent,
   onSelect,
   onUpdate,
   mode,
@@ -79,7 +81,7 @@ export const JointNode = memo(function JointNode({
   lang,
   onRegisterJointPivot,
   onRegisterCollisionRef
-}: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, ref: THREE.Group | null) => void }) {
+}: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void }) {
 
   if (depth > 50) return null;
 
@@ -208,6 +210,7 @@ export const JointNode = memo(function JointNode({
           <RobotNode
             linkId={joint.childLinkId}
             robot={robot}
+            childJointsByParent={childJointsByParent}
             onSelect={onSelect}
             onUpdate={onUpdate}
             mode={mode}

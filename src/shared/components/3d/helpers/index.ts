@@ -3,7 +3,7 @@
  * Components for visualizing coordinate axes, joint axes, inertia, and center of mass
  */
 
-export { ThickerAxes, CoordinateAxes } from './CoordinateAxes';
+export { ThickerAxes, CoordinateAxes, WorldOriginAxes } from './CoordinateAxes';
 export { JointAxesVisual, JointAxis } from './JointAxis';
 export { InertiaBox } from './InertiaBox';
 export { LinkCenterOfMass, CenterOfMass } from './CenterOfMass';

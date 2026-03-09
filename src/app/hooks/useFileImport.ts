@@ -7,11 +7,12 @@ import JSZip from 'jszip';
 import type { RobotFile, MotorSpec, RobotState } from '@/types';
 import { GeometryType } from '@/types';
 import { parseURDF, parseMJCF, isMJCF, parseUSDA, isUSDA, parseXacro, isXacro } from '@/core/parsers';
-import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
+import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 import { useAssetsStore, useRobotStore, useUIStore, useAssemblyStore } from '@/store';
-import { importProject, isMeshFile } from '@/features/file-io/utils';
+import { importProject, isMeshFile } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 interface UseFileImportOptions {
   onLoadRobot?: (file: RobotFile) => void;
@@ -30,12 +31,14 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   // Assets store
   const setAssets = useAssetsStore((state) => state.setAssets);
   const addAssets = useAssetsStore((state) => state.addAssets);
+  const clearAssets = useAssetsStore((state) => state.clearAssets);
   const setAvailableFiles = useAssetsStore((state) => state.setAvailableFiles);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const assets = useAssetsStore((state) => state.assets);
   const showImportWarning = useUIStore((state) => state.showImportWarning);
+  const t = translations[lang];
 
   // Robot store
   const robotName = useRobotStore((state) => state.name);
@@ -80,9 +83,11 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       case 'urdf':
         newState = parseURDF(file.content);
         break;
-      case 'mjcf':
-        newState = parseMJCF(file.content);
+      case 'mjcf': {
+        const resolved = resolveMJCFSource(file, availableFiles);
+        newState = parseMJCF(resolved.content);
         break;
+      }
       case 'usd':
         newState = parseUSDA(file.content);
         break;
@@ -153,24 +158,20 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
     // Show privacy toast
     if (onShowToast && showImportWarning) {
-      onShowToast(
-        lang === 'zh'
-          ? "提示：所有数据仅在您的本地浏览器中处理，不会上传到云端服务器，您的数据是安全的。"
-          : "Note: All data is processed locally in your browser and will NOT be uploaded to any cloud server. Your data is safe.",
-        'success'
-      );
+      onShowToast(t.privacyNoticeLocalProcessing, 'success');
     }
 
     try {
       // Mode 0: .usp Project File
       if (files.length === 1 && files[0].name.toLowerCase().endsWith('.usp')) {
-        const result = await importProject(files[0]);
+        const result = await importProject(files[0], lang);
         const { manifest, assets: newAssetUrls, availableFiles: newFiles, assemblyState: newAssembly } = result;
         if (manifest.ui) {
           if (manifest.ui.appMode) setAppMode(manifest.ui.appMode as any);
           if (manifest.ui.theme) setTheme(manifest.ui.theme as any);
           if (manifest.ui.lang) setLang(manifest.ui.lang as any);
         }
+        clearAssets();
         addAssets(newAssetUrls);
         setAvailableFiles(newFiles);
         if (newAssembly) {
@@ -185,11 +186,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           setOriginalFileFormat(manifest.assets.originalFileFormat as any);
         }
         if (onShowToast) {
-          const t = translations[lang];
-          onShowToast(
-            t.importUsp + (lang === 'zh' ? "成功" : " Successful"),
-            'success'
-          );
+          onShowToast(t.importUspSuccess, 'success');
         }
         return;
       }
@@ -335,32 +332,28 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             || newRobotFiles[0];
           addComponent(preferredFile, { availableFiles: mergedFiles, assets: { ...assets, ...newAssets } });
           setSidebarTab('structure');
-          const robotState = loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
-          if (robotState && onLoadRobot) {
-            onLoadRobot(preferredFile);
-          }
+          loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
           setAppMode('detail');
         } else {
           // Subsequent import: notify user
           if (onShowToast) {
-            const t = translations[lang];
             onShowToast(
-              lang === 'zh' ? `已添加 ${newRobotFiles.length} 个文件到素材库` : `Added ${newRobotFiles.length} file(s) to asset library`,
-              'success'
+              t.addedFilesToAssetLibrary.replace('{count}', String(newRobotFiles.length)),
+              'success',
             );
           }
         }
       } else if (libraryFiles.length > 0) {
-        alert(lang === 'zh' ? "库导入成功！" : "Library imported successfully!");
+        alert(t.libraryImportSuccessful);
       } else if (assetFiles.length === 0 && newRobotFiles.length === 0) {
-        alert(lang === 'zh' ? "未找到 URDF/MJCF/USD 文件。" : "No URDF/MJCF/USD file found.");
+        alert(t.noDefinitionFilesFound);
       }
 
     } catch (error: any) {
       console.error("Import failed:", error);
-      alert(lang === 'zh' ? "导入失败。请检查文件是否有效。" : "Failed to import. Please check if the file(s) are valid.");
+      alert(t.importFailedCheckFiles);
     }
-  }, [lang, assets, availableFiles, robotName, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, addAssets, setAvailableFiles, setMotorLibrary, setAppMode, setTheme, setLang, setSidebarTab, setOriginalFileFormat, setRobot, initAssembly, setAssembly, addComponent]);
+  }, [assets, availableFiles, robotName, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, addAssets, clearAssets, setAvailableFiles, setMotorLibrary, setAppMode, setTheme, setLang, setSidebarTab, setOriginalFileFormat, setRobot, initAssembly, setAssembly, addComponent, showImportWarning, t]);
 
   return {
     handleImport,

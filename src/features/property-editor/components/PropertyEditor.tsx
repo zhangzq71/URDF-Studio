@@ -9,6 +9,10 @@ import type { RobotState, AppMode, UrdfLink, MotorSpec, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
 import { useResizablePanel } from '../hooks/useResizablePanel';
+import {
+  PROPERTY_EDITOR_PANEL_EYEBROW_CLASS,
+  PROPERTY_EDITOR_PANEL_TITLE_CLASS,
+} from './FormControls';
 import { LinkProperties } from './LinkProperties';
 import { JointProperties } from './JointProperties';
 
@@ -48,7 +52,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 
   return (
     <div
-      className={`bg-slate-50 dark:bg-google-dark-bg border-l border-slate-200 dark:border-google-dark-border flex flex-col h-full z-20 relative will-change-[width,flex] ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
+      className={`bg-element-bg dark:bg-panel-bg border-l border-border-black flex flex-col h-full z-20 relative will-change-[width,flex] ${isDragging ? '' : 'transition-[width,min-width,flex] duration-200 ease-out'}`}
       style={{
         width: `${displayWidth}px`,
         minWidth: `${displayWidth}px`,
@@ -58,39 +62,39 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       {/* Side Toggle Button (Centered & Protruding Left) */}
       <button
           onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
-          className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-white dark:bg-[#2C2C2E] hover:bg-blue-500 dark:hover:bg-blue-600 hover:text-white border border-slate-300 dark:border-[#000000] rounded-l-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-slate-400 hover:text-white transition-all group"
+          className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-panel-bg hover:bg-system-blue-solid hover:text-white border border-border-strong rounded-l-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-text-tertiary transition-all group"
           title={collapsed ? t.properties : t.collapseSidebar}
       >
           <div className="flex flex-col gap-0.5 items-center">
-            <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 group-hover:bg-blue-200" />
+            <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
             {collapsed ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            <div className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-600 group-hover:bg-blue-200" />
+            <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
           </div>
       </button>
 
       {/* Content Container - use visibility to prevent flash but allow smooth transition */}
       <div className="h-full w-full flex flex-col overflow-hidden">
-        <div style={{ width: `${displayWidth}px` }} className="h-full flex flex-col bg-slate-50 dark:bg-google-dark-bg transition-all duration-200 ease-out">
+        <div style={{ width: `${displayWidth}px` }} className="h-full flex flex-col bg-element-bg dark:bg-panel-bg transition-all duration-200 ease-out">
           {/* Header */}
-          <div className="w-full flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-google-dark-border bg-white dark:bg-[#2C2C2E] shrink-0 relative z-30">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{t.properties}</span>
+          <div className="w-full flex items-center justify-between px-3 py-2 border-b border-border-black bg-panel-bg shrink-0 relative z-30">
+            <span className={PROPERTY_EDITOR_PANEL_EYEBROW_CLASS}>{t.properties}</span>
             {data && (
               <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase shrink-0 ${isLink ? 'bg-blue-100 dark:bg-slate-700 text-blue-700 dark:text-slate-300' : 'bg-orange-100 dark:bg-slate-700 text-orange-700 dark:text-slate-300'}`}>
+                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-[0.12em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
                   {selection.type}
                 </span>
-                <h2 className="font-semibold text-slate-900 dark:text-white truncate">{data.name}</h2>
+                <h2 className={`${PROPERTY_EDITOR_PANEL_TITLE_CLASS} truncate`}>{data.name}</h2>
               </div>
             )}
           </div>
 
           {/* Content */}
           {!data ? (
-            <div className="w-full flex-1 flex items-center justify-center p-8 text-slate-500 text-center">
-              <p>{t.selectLinkOrJoint}</p>
+            <div className="w-full flex-1 flex items-center justify-center p-8 text-text-tertiary text-center">
+              <p className="text-[12px] leading-5">{t.selectLinkOrJoint}</p>
             </div>
           ) : (
-            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-3 space-y-4">
+            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-2.5 space-y-3">
               {isLink ? (
                 <LinkProperties
                   data={data as UrdfLink}
@@ -121,7 +125,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       {/* Resize Handle - only show when expanded */}
       {!collapsed && (
         <div
-            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-40"
+            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue/40 transition-colors z-40"
             onMouseDown={handleResizeMouseDown}
         />
       )}

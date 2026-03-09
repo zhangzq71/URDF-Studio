@@ -1,4 +1,5 @@
 import type { InspectionReport } from '@/types'
+import { translations } from '@/shared/i18n'
 import type { IssueType } from '../types'
 import {
   INSPECTION_CRITERIA,
@@ -18,6 +19,7 @@ export function processInspectionResults(
   selectedItems?: Record<string, string[]>,
   lang: 'en' | 'zh' = 'en'
 ): InspectionReport {
+  const t = translations[lang]
   const parsedResult = (rawResults || {}) as ParsedInspectionResult
 
   const issues = ((parsedResult.issues || []) as Record<string, unknown>[]).map(issue => {
@@ -64,11 +66,8 @@ export function processInspectionResults(
             const itemDesc = lang === 'zh' ? item.descriptionZh : item.description
             allIssues.push({
               type: 'pass',
-              title: lang === 'zh' ? `${itemName} - 通过` : `${itemName} - Passed`,
-              description:
-                lang === 'zh'
-                  ? `该检查项已通过：${itemDesc}`
-                  : `This check item passed: ${itemDesc}`,
+              title: t.inspectionPassTitle.replace('{itemName}', itemName),
+              description: t.inspectionPassDescription.replace('{itemDesc}', itemDesc),
               category: categoryId,
               itemId,
               score: 10
@@ -114,7 +113,7 @@ export function processInspectionResults(
   const maxScore = allItemScores.length > 0 ? allItemScores.length * 10 : 100
 
   return {
-    summary: parsedResult.summary || 'Inspection completed.',
+    summary: parsedResult.summary || t.inspectionCompleted,
     issues: allIssues as unknown as InspectionReport['issues'],
     overallScore: Math.round(overallScore * 10) / 10,
     categoryScores: categoryScoreMap,

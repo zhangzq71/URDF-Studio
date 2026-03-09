@@ -200,7 +200,15 @@ const getCategoryName = (categoryId: string, t: typeof translations['en']) => {
   }
 };
 
-const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' | 'dark' }) => {
+const RobotThumbnail = ({
+  model,
+  theme,
+  previewLabel,
+}: {
+  model: RobotModel;
+  theme?: 'light' | 'dark';
+  previewLabel: string;
+}) => {
   // Use 3D preview for server-hosted models with urdfPath
   if (model.sourceType === 'server' && model.urdfPath && !model.urdfPath.startsWith('http')) {
     return (
@@ -208,16 +216,17 @@ const RobotThumbnail = ({ model, theme }: { model: RobotModel; theme?: 'light' |
         urdfPath={model.urdfPath}
         urdfFile={model.urdfFile}
         theme={theme}
+        fallbackLabel={previewLabel}
       />
     );
   }
 
   // Fallback to placeholder for URL-based models
   return (
-    <div className="flex flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500 w-full h-full">
+    <div className="flex flex-col items-center justify-center gap-2 text-text-tertiary w-full h-full">
       <Box className="w-10 h-10 opacity-40" />
       <span className="text-[9px] uppercase tracking-widest font-medium opacity-60">
-        {model.sourceType === 'url' ? 'GitHub' : 'Preview'}
+        {model.sourceType === 'url' ? 'GitHub' : previewLabel}
       </span>
     </div>
   );
@@ -268,7 +277,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       const path = parts.slice(4).join('/');
 
       if (!(window as any).showDirectoryPicker) {
-        throw new Error(lang === 'zh' ? '您的浏览器不支持文件系统访问 API' : 'Your browser does not support File System Access API');
+        throw new Error(t.galleryFileSystemAccessUnsupported);
       }
       const dirHandle = await (window as any).showDirectoryPicker({
         mode: 'readwrite',
@@ -277,7 +286,9 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
 
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
       const response = await fetch(apiUrl);
-      if (!response.ok) throw new Error('GitHub API request failed');
+      if (!response.ok) {
+        throw new Error(t.galleryGithubApiRequestFailed);
+      }
       const contents = await response.json();
 
       const downloadRecursive = async (items: any[], currentHandle: FileSystemDirectoryHandle) => {
@@ -301,16 +312,16 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
       await downloadRecursive(Array.isArray(contents) ? contents : [contents], dirHandle);
       
       setIsDownloading(false);
-      if (confirm(lang === 'zh' ? '下载完成！是否立即从本地文件夹加载该模型？' : 'Download complete! Would you like to load the model from the local folder now?')) {
+      if (confirm(t.downloadComplete)) {
         onClose();
-        alert(lang === 'zh' ? '请点击主界面的"导入本地 URDF"并选择刚才下载的文件夹。' : 'Please click "Import Local URDF" on the main screen and select the folder you just downloaded.');
+        alert(t.loadFromLocal);
       }
       
     } catch (err: any) {
       setIsDownloading(false);
       console.error('Github download failed:', err);
       if (err.name !== 'AbortError') {
-        alert(lang === 'zh' ? `下载失败: ${err.message}` : `Download failed: ${err.message}`);
+        alert(t.galleryDownloadFailed.replace('{message}', err.message));
       }
     }
   };
@@ -327,10 +338,24 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
     try {
       const manifestUrl = `${model.urdfPath}/manifest.json`;
       const manifestRes = await fetch(manifestUrl);
-      if (!manifestRes.ok) throw new Error('Manifest not found');
+      if (!manifestRes.ok) throw new Error(t.manifestNotFound);
       const files: string[] = await manifestRes.json();
+
+      const orderedFiles = [...files];
+      if (model.urdfFile) {
+        const preferredIndex = orderedFiles.findIndex((filePath) => (
+          filePath === model.urdfFile ||
+          filePath.endsWith(`/${model.urdfFile}`) ||
+          filePath.split('/').pop() === model.urdfFile
+        ));
+
+        if (preferredIndex > 0) {
+          const [preferredFile] = orderedFiles.splice(preferredIndex, 1);
+          orderedFiles.unshift(preferredFile);
+        }
+      }
       
-      const fileObjects = await Promise.all(files.map(async (filePath) => {
+      const fileObjects = await Promise.all(orderedFiles.map(async (filePath) => {
           const res = await fetch(`${model.urdfPath}/${filePath}`);
           const blob = await res.blob();
           const fileName = filePath.split('/').pop()!;
@@ -357,7 +382,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
     } catch (err) {
       setIsDownloading(false);
       console.error('Failed to import model:', err);
-      alert(lang === 'zh' ? '加载模型文件失败，请确保 manifest.json 存在。' : 'Failed to load model files. Please ensure manifest.json exists.');
+      alert(t.loadFailed);
     }
   };
 
@@ -386,31 +411,31 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
         title={
           <>
             <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-[#0060FA] rounded-lg text-white">
+              <div className="p-1.5 rounded-lg bg-element-bg text-text-primary border border-border-black">
                 <LayoutGrid className="w-4 h-4" />
               </div>
-              <h1 className="text-sm font-bold tracking-tight">
+              <h1 className="text-sm font-semibold text-text-primary">
                 {t.urdfGallery}
               </h1>
             </div>
 
             {!isMinimized && (
               <div className="hidden md:flex ml-4 relative w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary" />
                 <input
                   type="text"
                   placeholder={t.searchModels}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-white dark:bg-black border border-slate-200 dark:border-element-hover rounded-lg py-1.5 pl-9 pr-3 text-xs focus:ring-2 focus:ring-[#0060FA] transition-all"
+                  className="w-full bg-input-bg border border-border-black rounded-lg py-1.5 pl-9 pr-3 text-xs text-text-primary placeholder:text-text-tertiary focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all"
                   onMouseDown={(e) => e.stopPropagation()}
                 />
               </div>
             )}
           </>
         }
-        className="z-[100] bg-white dark:bg-panel-bg flex flex-col text-slate-900 dark:text-slate-100 overflow-hidden rounded-xl shadow-2xl dark:shadow-black border border-slate-200 dark:border-border-black"
-        headerClassName="h-12 border-b border-slate-200 dark:border-border-black flex items-center justify-between px-4 bg-slate-50 dark:bg-element-active shrink-0"
+        className="z-[100] bg-panel-bg flex flex-col text-text-primary overflow-hidden rounded-2xl shadow-xl border border-border-black"
+        headerClassName="h-12 border-b border-border-black flex items-center justify-between px-4 bg-element-bg shrink-0"
         interactionClassName="select-none"
         draggingClassName="cursor-grabbing"
         headerDraggableClassName="cursor-grab"
@@ -419,13 +444,13 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
         maximizeTitle={t.maximize}
         restoreTitle={t.restore}
         closeTitle={t.close}
-        controlButtonClassName="p-1.5 hover:bg-slate-200 dark:hover:bg-element-hover rounded-md transition-colors"
-        closeButtonClassName="p-1.5 text-slate-500 hover:bg-red-500 hover:text-white dark:text-slate-400 dark:hover:bg-red-600 dark:hover:text-white rounded transition-colors"
-        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-[#0060FA]/20 transition-colors z-20"
-        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-[#0060FA]/20 transition-colors z-20"
-        cornerResizeHandleClassName="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-[#0060FA]/30 transition-colors z-30"
+        controlButtonClassName="p-1.5 hover:bg-element-hover rounded-md transition-colors"
+        closeButtonClassName="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded transition-colors"
+        rightResizeHandleClassName="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-system-blue/20 transition-colors z-20"
+        bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize hover:bg-system-blue/20 transition-colors z-20"
+        cornerResizeHandleClassName="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize hover:bg-system-blue/30 transition-colors z-30"
         cornerResizeHandle={
-          <svg className="w-4 h-4 text-slate-400" viewBox="0 0 16 16" fill="currentColor">
+          <svg className="w-4 h-4 text-text-tertiary" viewBox="0 0 16 16" fill="currentColor">
             <path d="M14 14H10V12H12V10H14V14Z" />
             <path d="M14 8H12V6H14V8Z" />
             <path d="M8 14H6V12H8V14Z" />
@@ -437,10 +462,10 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
         {!isMinimized && (
           <div className="flex-1 flex overflow-hidden relative">
             {/* Sidebar */}
-            <div className="w-48 border-r border-slate-200 dark:border-border-black bg-slate-50 dark:bg-panel-bg p-3 overflow-y-auto hidden lg:block">
+            <div className="w-48 border-r border-border-black bg-element-bg p-3 overflow-y-auto hidden lg:block">
               <div className="space-y-4">
                 <div>
-                  <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">
+                  <h3 className="text-[10px] font-medium text-text-tertiary uppercase tracking-wider mb-2 px-2">
                     {t.categories}
                   </h3>
                   <div className="space-y-0.5">
@@ -450,8 +475,8 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                         onClick={() => setSelectedCategory(cat.id)}
                         className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs transition-all ${
                           selectedCategory === cat.id 
-                            ? 'bg-[#0060FA]/10 dark:bg-[#0060FA] text-[#0060FA] dark:text-white font-medium' 
-                            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-hover'
+                            ? 'bg-system-blue/10 text-system-blue font-medium' 
+                            : 'text-text-secondary hover:bg-element-hover'
                         }`}
                       >
                         <cat.icon className="w-3.5 h-3.5" />
@@ -464,15 +489,15 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
             </div>
 
             {/* Main Content */}
-            <div className="flex-1 overflow-y-auto bg-white dark:bg-[#151515]">
+            <div className="flex-1 overflow-y-auto bg-panel-bg">
               <div className="p-4">
                 {/* Page Header */}
                 <div className="mb-4">
-                  <div className="flex items-center gap-2 text-[#0060FA] dark:text-[#0060FA] text-xs font-medium mb-1">
+                  <div className="flex items-center gap-2 text-system-blue text-xs font-medium mb-1">
                     <Star className="w-3.5 h-3.5 fill-current" />
                     <span>{t.featuredModels}</span>
                   </div>
-                  <h2 className="text-xl font-bold text-slate-800 dark:text-white">
+                  <h2 className="text-xl font-semibold text-text-primary">
                     {t.findNextProject}
                   </h2>
                 </div>
@@ -480,13 +505,13 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                 {/* Grid */}
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
                   {filteredModels.map(model => (
-                    <div key={model.id} className="group bg-white dark:bg-panel-bg rounded-lg border border-slate-200 dark:border-border-black hover:border-[#0060FA] dark:hover:border-[#0060FA] overflow-hidden transition-all shadow-md hover:shadow-2xl dark:shadow-black flex flex-col">
+                    <div key={model.id} className="group bg-panel-bg rounded-lg border border-border-black hover:border-system-blue overflow-hidden transition-all shadow-sm hover:shadow-lg flex flex-col">
                       {/* Thumbnail Area */}
-                      <div className="relative h-36 overflow-hidden bg-slate-100 dark:bg-black flex items-center justify-center">
-                        <RobotThumbnail model={model} theme={theme} />
+                      <div className="relative h-36 overflow-hidden bg-element-bg flex items-center justify-center">
+                        <RobotThumbnail model={model} theme={theme} previewLabel={t.preview} />
                         
                         <div className="absolute top-2 left-2 flex gap-1">
-                          <span className="px-1.5 py-0.5 bg-white/90 dark:bg-black/80 text-slate-900 dark:text-white text-[9px] font-bold rounded uppercase shadow-sm backdrop-blur-[2px]">
+                          <span className="px-1.5 py-0.5 bg-panel-bg text-text-primary text-[9px] font-semibold rounded uppercase shadow-sm border border-border-black">
                             {getCategoryName(model.category, t)}
                           </span>
                         </div>
@@ -495,7 +520,7 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3 pointer-events-none">
                           <button 
                             onClick={() => handleImportModel(model)}
-                            className="w-full py-1.5 bg-white dark:bg-[#0060FA] text-slate-900 dark:text-white rounded-md text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-[#0060FA] dark:hover:bg-blue-600 hover:text-white transition-colors pointer-events-auto">
+                            className="w-full py-1.5 bg-system-blue-solid text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-system-blue-hover transition-colors pointer-events-auto">
                             <Download className="w-3.5 h-3.5" />
                             {t.importNow}
                           </button>
@@ -503,34 +528,34 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
                       </div>
 
                       {/* Details */}
-                      <div className="p-3 flex-1 flex flex-col">
-                        <div className="flex justify-between items-start mb-1">
-                          <h3 className="font-bold text-sm leading-tight group-hover:text-[#0060FA] transition-colors">
+                        <div className="p-3 flex-1 flex flex-col">
+                          <div className="flex justify-between items-start mb-1">
+                          <h3 className="font-semibold text-sm leading-tight text-text-primary group-hover:text-system-blue transition-colors">
                             {lang === 'zh' && MODEL_TRANSLATIONS[model.id]?.name_zh ? MODEL_TRANSLATIONS[model.id].name_zh : model.name}
                           </h3>
-                          <button className="text-slate-400 hover:text-red-500 transition-colors">
+                          <button className="text-text-tertiary hover:text-rose-500 transition-colors">
                             <Heart className="w-4 h-4" />
                           </button>
                         </div>
                         
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 mb-2">
+                        <div className="flex items-center gap-1 text-[10px] text-text-tertiary mb-2">
                           <User className="w-3 h-3" />
                           <span>{t.unitreeTech}</span>
                         </div>
 
-                        <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 mb-2 flex-1">
+                        <p className="text-xs text-text-secondary line-clamp-2 mb-2 flex-1">
                           {lang === 'zh' && MODEL_TRANSLATIONS[model.id]?.description_zh ? MODEL_TRANSLATIONS[model.id].description_zh : model.description}
                         </p>
 
                         <div className="flex flex-wrap gap-1 mb-2">
                           {(lang === 'zh' && MODEL_TRANSLATIONS[model.id]?.tags_zh ? MODEL_TRANSLATIONS[model.id].tags_zh : model.tags).slice(0, 3).map((tag, idx) => (
-                            <span key={idx} className="px-1.5 py-0.5 bg-slate-100 dark:bg-app-bg text-slate-600 dark:text-slate-300 text-[9px] rounded-full">
+                            <span key={idx} className="px-1.5 py-0.5 bg-element-bg text-text-secondary text-[9px] rounded-full">
                               #{tag}
                             </span>
                           ))}
                         </div>
 
-                        <div className="pt-2 border-t border-slate-100 dark:border-border-black flex items-center justify-between text-[10px] text-slate-400">
+                        <div className="pt-2 border-t border-border-black flex items-center justify-between text-[10px] text-text-tertiary">
                           <div className="flex items-center gap-3">
                             <div className="flex items-center gap-1">
                               <Star className="w-3 h-3" />
@@ -553,11 +578,11 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
 
                 {filteredModels.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <div className="w-12 h-12 bg-slate-100 dark:bg-app-bg rounded-full flex items-center justify-center mb-3">
-                      <Search className="w-6 h-6 text-slate-300" />
+                    <div className="w-12 h-12 bg-element-bg rounded-full flex items-center justify-center mb-3">
+                      <Search className="w-6 h-6 text-text-tertiary" />
                     </div>
-                    <h3 className="text-lg font-bold mb-1">{t.noModelsFound}</h3>
-                    <p className="text-sm text-slate-500">{t.changeSearchKeywords}</p>
+                    <h3 className="text-lg font-semibold text-text-primary mb-1">{t.noModelsFound}</h3>
+                    <p className="text-sm text-text-secondary">{t.changeSearchKeywords}</p>
                   </div>
                 )}
               </div>
@@ -567,18 +592,18 @@ export const URDFGallery: React.FC<URDFGalleryProps> = ({ onClose, lang, onImpor
         
         {/* Loading Indicator */}
         {isDownloading && (
-          <div className="absolute bottom-4 left-4 z-50 flex items-center gap-2 px-3 py-2 bg-white dark:bg-panel-bg shadow-md dark:shadow-xl rounded-lg border border-slate-200 dark:border-border-black">
-            <Loader2 className="w-4 h-4 text-[#0060FA] animate-spin" />
+          <div className="absolute bottom-4 left-4 z-50 flex items-center gap-2 px-3 py-2 bg-panel-bg shadow-md rounded-lg border border-border-black">
+            <Loader2 className="w-4 h-4 text-system-blue animate-spin" />
             <div className="flex flex-col">
-              <span className="text-xs font-bold">{t.processing}</span>
-              <span className="text-[9px] text-slate-500">{t.fetchingResources}</span>
+              <span className="text-xs font-semibold text-text-primary">{t.processing}</span>
+              <span className="text-[9px] text-text-tertiary">{t.fetchingResources}</span>
             </div>
           </div>
         )}
         
         {/* Resize indicator when resizing */}
         {isResizing && (
-          <div className="absolute bottom-2 right-2 z-50 px-2 py-1 bg-[#0060FA] text-white text-[10px] rounded font-mono">
+          <div className="absolute bottom-2 right-2 z-50 px-2 py-1 bg-system-blue-solid text-white text-[10px] rounded font-mono">
             {size.width} × {size.height}
           </div>
         )}

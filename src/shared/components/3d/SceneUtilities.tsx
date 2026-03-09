@@ -4,11 +4,12 @@
  */
 
 import React, { useRef, useEffect, useCallback, useLayoutEffect } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useThree, useFrame } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
 import * as THREE from 'three';
-import type { Theme } from '@/types';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { useUIStore } from '@/store';
+import type { Theme } from '@/types';
 
 // Helper component to trigger re-render on pointer move for hover detection (frameloop="demand")
 // Optimized to reduce unnecessary invalidations and CPU usage
@@ -60,11 +61,11 @@ export const HoverInvalidator = () => {
 export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number }) => {
   const { gl, setSize, invalidate, setFrameloop } = useThree();
   const loopFrameRef = useRef<number | null>(null);
+  const resizeWatchUntilRef = useRef(0);
   const lastSizeRef = useRef({ width: 0, height: 0 });
   const appliedBufferSizeRef = useRef({ width: 0, height: 0 });
   const pendingBufferSizeRef = useRef<{ width: number; height: number } | null>(null);
   const restoreFrameLoopTimerRef = useRef<number | null>(null);
-  const lastResizeAtRef = useRef(0);
 
   const beginSmoothResize = useCallback(() => {
     setFrameloop('always');
@@ -126,29 +127,63 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
     return true;
   }, [gl, setSize, invalidate]);
 
+  const ensureResizeWatch = useCallback((durationMs = transitionMs + 120) => {
+    const now = performance.now();
+    resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, now + durationMs);
+    if (loopFrameRef.current !== null) return;
+
+    const loop = () => {
+      loopFrameRef.current = null;
+      const frameNow = performance.now();
+      const changed = syncCanvasSize();
+      const flushed = flushPendingBufferSize();
+      if (changed) {
+        beginSmoothResize();
+        // Keep watching for a short settle window while animated width/height changes continue.
+        resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, frameNow + 160);
+      } else if (flushed) {
+        resizeWatchUntilRef.current = Math.max(resizeWatchUntilRef.current, frameNow + 80);
+      }
+
+      if (frameNow < resizeWatchUntilRef.current || pendingBufferSizeRef.current) {
+        invalidate();
+        loopFrameRef.current = requestAnimationFrame(loop);
+      } else {
+        flushPendingBufferSize();
+      }
+    };
+
+    loopFrameRef.current = requestAnimationFrame(loop);
+  }, [transitionMs, syncCanvasSize, beginSmoothResize, flushPendingBufferSize, invalidate]);
+
   useLayoutEffect(() => {
     syncCanvasSize();
     flushPendingBufferSize();
 
-    const loop = () => {
-      const now = performance.now();
-      const changed = syncCanvasSize();
-      if (changed) {
-        lastResizeAtRef.current = now;
-        beginSmoothResize();
-      } else if (now - lastResizeAtRef.current > 80) {
+    const parent = gl.domElement.parentElement;
+    let resizeObserver: ResizeObserver | null = null;
+    if (parent && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        syncCanvasSize();
         flushPendingBufferSize();
-      }
+        beginSmoothResize();
+        ensureResizeWatch();
+      });
+      resizeObserver.observe(parent);
+    }
 
-      if (now - lastResizeAtRef.current < transitionMs + 80) {
-        invalidate();
-      }
-      loopFrameRef.current = requestAnimationFrame(loop);
+    const handleWindowResize = () => {
+      syncCanvasSize();
+      flushPendingBufferSize();
+      beginSmoothResize();
+      ensureResizeWatch();
     };
 
-    loopFrameRef.current = requestAnimationFrame(loop);
+    window.addEventListener('resize', handleWindowResize);
 
     return () => {
+      window.removeEventListener('resize', handleWindowResize);
+      resizeObserver?.disconnect();
       if (loopFrameRef.current !== null) {
         cancelAnimationFrame(loopFrameRef.current);
         loopFrameRef.current = null;
@@ -160,12 +195,12 @@ export const CanvasResizeSync = ({ transitionMs = 260 }: { transitionMs?: number
       flushPendingBufferSize();
       setFrameloop('demand');
     };
-  }, [syncCanvasSize, flushPendingBufferSize, transitionMs, setFrameloop, beginSmoothResize, invalidate]);
+  }, [gl, syncCanvasSize, flushPendingBufferSize, setFrameloop, beginSmoothResize, ensureResizeWatch]);
 
   return null;
 };
 
-// Snapshot Manager - captures high-quality snapshot
+// Snapshot Manager - captures the exact current 3D viewport from the live canvas pipeline
 export const SnapshotManager = ({
   actionRef,
   robotName
@@ -173,153 +208,206 @@ export const SnapshotManager = ({
   actionRef?: React.MutableRefObject<(() => void) | null>;
   robotName: string;
 }) => {
-  // Use 'get' to access real-time state in callbacks (refs don't update when camera moves)
+  const SNAPSHOT_MIN_LONG_EDGE = 3840;
+  const SNAPSHOT_GRID_OBJECT_NAME = 'ReferenceGrid';
   const { gl, get, invalidate } = useThree();
+  const pendingCaptureRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!actionRef) return;
 
+    const clearPendingFrames = () => {
+      if (pendingCaptureRef.current !== null) {
+        cancelAnimationFrame(pendingCaptureRef.current);
+        pendingCaptureRef.current = null;
+      }
+    };
+
+    const resolveSnapshotSize = () => {
+      const drawingBufferSize = gl.getDrawingBufferSize(new THREE.Vector2());
+      const baseWidth = Math.max(1, Math.round(drawingBufferSize.x || 1));
+      const baseHeight = Math.max(1, Math.round(drawingBufferSize.y || 1));
+      const longEdge = Math.max(baseWidth, baseHeight);
+      const scale = longEdge >= SNAPSHOT_MIN_LONG_EDGE ? 1 : SNAPSHOT_MIN_LONG_EDGE / longEdge;
+      return {
+        baseWidth,
+        baseHeight,
+        targetWidth: Math.max(1, Math.round(baseWidth * scale)),
+        targetHeight: Math.max(1, Math.round(baseHeight * scale)),
+      };
+    };
+
+    const downloadCanvas = (canvas: HTMLCanvasElement, onDone?: () => void) => {
+      const safeRobotName = (robotName || 'robot').replace(/[\\/:*?"<>|]/g, '_');
+      const now = new Date();
+      const timestamp = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0'),
+        '_',
+        String(now.getHours()).padStart(2, '0'),
+        String(now.getMinutes()).padStart(2, '0'),
+        String(now.getSeconds()).padStart(2, '0'),
+      ].join('');
+      const filename = `${safeRobotName}_snapshot_${timestamp}.png`;
+
+      const downloadBlob = (blob: Blob | null) => {
+        if (!blob) {
+          console.error('[Snapshot] Failed to generate PNG blob.');
+          onDone?.();
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        onDone?.();
+      };
+
+      if (canvas.toBlob) {
+        canvas.toBlob(downloadBlob, 'image/png');
+        return;
+      }
+
+      // Legacy fallback
+      const link = document.createElement('a');
+      link.href = canvas.toDataURL('image/png');
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      onDone?.();
+    };
+
+    const readFramebufferToCanvas = (width: number, height: number) => {
+      const context = gl.getContext();
+      const pixelBuffer = new Uint8Array(width * height * 4);
+      const captureCanvas = document.createElement('canvas');
+      captureCanvas.width = width;
+      captureCanvas.height = height;
+      const ctx = captureCanvas.getContext('2d');
+      if (!ctx) {
+        return captureCanvas;
+      }
+
+      context.finish();
+      context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixelBuffer);
+
+      const imageData = ctx.createImageData(width, height);
+      const rowStride = width * 4;
+
+      for (let sourceRow = 0; sourceRow < height; sourceRow += 1) {
+        const destinationRow = height - sourceRow - 1;
+        const sourceOffset = sourceRow * rowStride;
+        const destinationOffset = destinationRow * rowStride;
+        imageData.data.set(
+          pixelBuffer.subarray(sourceOffset, sourceOffset + rowStride),
+          destinationOffset,
+        );
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      return captureCanvas;
+    };
+
+    const createExportCanvas = (sourceCanvas: HTMLCanvasElement, targetWidth: number, targetHeight: number) => {
+      if (sourceCanvas.width === targetWidth && sourceCanvas.height === targetHeight) {
+        return sourceCanvas;
+      }
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = targetWidth;
+      exportCanvas.height = targetHeight;
+      const ctx = exportCanvas.getContext('2d');
+      if (!ctx) {
+        return sourceCanvas;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+      return exportCanvas;
+    };
+
+    const hideSnapshotGrid = (scene: THREE.Scene) => {
+      const hiddenObjects: Array<{ object: THREE.Object3D; visible: boolean }> = [];
+
+      scene.traverse((object) => {
+        if (object.name !== SNAPSHOT_GRID_OBJECT_NAME) return;
+        hiddenObjects.push({ object, visible: object.visible });
+        object.visible = false;
+      });
+
+      return () => {
+        hiddenObjects.forEach(({ object, visible }) => {
+          object.visible = visible;
+        });
+      };
+    };
+
+    const renderAndDownloadHighRes = (onDone?: () => void) => {
+      const { targetWidth, targetHeight, baseWidth, baseHeight } = resolveSnapshotSize();
+      let restoreSnapshotGrid: (() => void) | null = null;
+      try {
+        // Keep the live viewport material response unchanged, but hide the reference grid
+        // so snapshots look like clean promo images.
+        waitFrames(2, () => {
+          const { scene: latestScene, camera: latestCamera } = get();
+          restoreSnapshotGrid = hideSnapshotGrid(latestScene);
+          gl.render(latestScene, latestCamera);
+          const capturedCanvas = readFramebufferToCanvas(baseWidth, baseHeight);
+          restoreSnapshotGrid();
+          restoreSnapshotGrid = null;
+          const exportCanvas = createExportCanvas(capturedCanvas, targetWidth, targetHeight);
+          downloadCanvas(exportCanvas, () => {
+            invalidate();
+            onDone?.();
+          });
+        });
+      } catch (e) {
+        restoreSnapshotGrid?.();
+        invalidate();
+        throw e;
+      }
+    };
+
+    const waitFrames = (count: number, onDone: () => void) => {
+      if (count <= 0) {
+        onDone();
+        return;
+      }
+      pendingCaptureRef.current = requestAnimationFrame(() => {
+        pendingCaptureRef.current = null;
+        waitFrames(count - 1, onDone);
+      });
+    };
+
     actionRef.current = () => {
       try {
-        // Get real-time scene and camera from R3F store
-        const { scene: currentScene, camera: currentCamera } = get();
-
-        // 1. Determine Dimensions (High Resolution)
-        const maxTextureSize = gl.capabilities.maxTextureSize || 4096;
-        const scale = 2; // 2x resolution is usually sufficient and stable
-        
-        let width = gl.domElement.width;
-        let height = gl.domElement.height;
-
-        // Handle high-DPI displays where domElement size might be different from CSS size
-        if (width === 0 || height === 0) {
-            width = gl.domElement.clientWidth * gl.getPixelRatio();
-            height = gl.domElement.clientHeight * gl.getPixelRatio();
-        }
-
-        // Clamp to safe limits
-        width = Math.max(width, 1024);
-        height = Math.max(height, 768);
-
-        let renderWidth = width * scale;
-        let renderHeight = height * scale;
-
-        // Prevent exceeding GPU limits
-        if (renderWidth > maxTextureSize || renderHeight > maxTextureSize) {
-            const aspect = width / height;
-            if (renderWidth > renderHeight) {
-                renderWidth = maxTextureSize;
-                renderHeight = Math.floor(maxTextureSize / aspect);
-            } else {
-                renderHeight = maxTextureSize;
-                renderWidth = Math.floor(maxTextureSize * aspect);
-            }
-        }
-
-        console.log(`[Snapshot] Capture size: ${renderWidth}x${renderHeight}`);
-
-        // 2. Hide Grid and Helpers
-        const hiddenNodes: THREE.Object3D[] = [];
-        currentScene.traverse((node) => {
-          if (
-            (node.name === 'ReferenceGrid' || 
-             node.type === 'AxesHelper' || 
-             node.type === 'GridHelper' ||
-             node.name?.includes('Gizmo') ||
-             node.name?.includes('axis') ||
-             node.userData?.isGizmo
-            ) && node.visible
-          ) {
-            hiddenNodes.push(node);
-            node.visible = false;
-          }
-        });
-
-        // 3. Prepare for Transparent Capture
-        const originalBackground = currentScene.background;
-        currentScene.background = null; // Transparent background
-
-        // 4. Create Off-screen Render Target
-        const renderTarget = new THREE.WebGLRenderTarget(renderWidth, renderHeight, {
-          minFilter: THREE.LinearFilter,
-          magFilter: THREE.LinearFilter,
-          format: THREE.RGBAFormat,
-          type: THREE.UnsignedByteType,
-          samples: 4, // MSAA
-          colorSpace: THREE.SRGBColorSpace,
-        });
-
-        // Save Renderer State
-        const originalRenderTarget = gl.getRenderTarget();
-        const originalClearAlpha = gl.getClearAlpha();
-        const originalClearColor = new THREE.Color();
-        gl.getClearColor(originalClearColor);
-
-        // 5. Render
-        gl.setRenderTarget(renderTarget);
-        gl.setClearColor(0x000000, 0); // Transparent clear
-
-        // Force update matrices (fixes camera position not syncing in frameloop="demand" mode)
-        currentCamera.updateMatrixWorld(true);
-        currentScene.updateMatrixWorld(true);
-
-        gl.render(currentScene, currentCamera);
-
-        // 6. Read Pixels & Create Image
-        const pixels = new Uint8Array(renderWidth * renderHeight * 4);
-        gl.readRenderTargetPixels(renderTarget, 0, 0, renderWidth, renderHeight, pixels);
-
-        // Flip Y (WebGL reads bottom-up) and draw to canvas
-        const canvas = document.createElement('canvas');
-        canvas.width = renderWidth;
-        canvas.height = renderHeight;
-        const ctx = canvas.getContext('2d')!;
-        const imageData = ctx.createImageData(renderWidth, renderHeight);
-        
-        // Optimize pixel flip
-        const data = imageData.data;
-        for (let y = 0; y < renderHeight; y++) {
-          const srcRow = (renderHeight - 1 - y) * renderWidth * 4;
-          const dstRow = y * renderWidth * 4;
-          data.set(pixels.subarray(srcRow, srcRow + renderWidth * 4), dstRow);
-        }
-        ctx.putImageData(imageData, 0, 0);
-
-        // 7. Download
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `${robotName}_snapshot.png`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-          }
-        }, 'image/png');
-
-        // 8. Restore State
-        gl.setRenderTarget(originalRenderTarget);
-        gl.setClearColor(originalClearColor, originalClearAlpha);
-        renderTarget.dispose();
-        
-        currentScene.background = originalBackground;
-        hiddenNodes.forEach(node => node.visible = true);
-        
-        // Force a re-render to ensure UI is back to normal
+        clearPendingFrames();
+        // Flush demand-mode updates, then render a high-resolution frame from the same live pipeline.
         invalidate();
-
+        waitFrames(2, () => {
+          try {
+            renderAndDownloadHighRes(() => {
+              invalidate();
+            });
+          } catch (e) {
+            console.error('[Snapshot] Failed:', e);
+            invalidate();
+          }
+        });
       } catch (e) {
         console.error('[Snapshot] Failed:', e);
-        // Emergency cleanup
-        const { scene: errorScene } = get();
-        const grid = errorScene.getObjectByName('ReferenceGrid');
-        if (grid) grid.visible = true;
+        invalidate();
       }
     };
 
     return () => {
+      clearPendingFrames();
       if (actionRef) actionRef.current = null;
     };
   }, [gl, get, robotName, actionRef, invalidate]);
@@ -327,25 +415,68 @@ export const SnapshotManager = ({
   return null;
 };
 
+// Neutral studio environment to provide non-yellow reflections.
+// Useful when we want nicer material response without HDR color cast.
+export function NeutralStudioEnvironment({
+  enabled = true,
+  intensity = 0.35,
+}: {
+  enabled?: boolean;
+  intensity?: number;
+}) {
+  const { scene, gl } = useThree();
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const previousEnvironment = scene.environment;
+    const previousEnvironmentIntensity = (scene as any).environmentIntensity;
+    const pmremGenerator = new THREE.PMREMGenerator(gl);
+    const envScene = new RoomEnvironment();
+    const renderTarget = pmremGenerator.fromScene(envScene, 0.05);
+    scene.environment = renderTarget.texture;
+    (scene as any).environmentIntensity = intensity;
+
+    return () => {
+      scene.environment = previousEnvironment;
+      (scene as any).environmentIntensity = previousEnvironmentIntensity;
+      renderTarget.dispose();
+      envScene.traverse((child: any) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach((mat: THREE.Material) => mat.dispose());
+          } else {
+            child.material.dispose();
+          }
+        }
+      });
+      pmremGenerator.dispose();
+    };
+  }, [scene, gl, enabled, intensity]);
+
+  return null;
+}
+
 // ============================================================
 // SCENE LIGHTING CONFIGURATION
 // 5-Point Lighting System for comprehensive robot illumination
 // ============================================================
 export const LIGHTING_CONFIG = {
   // Ambient: increased for softer look
-  ambientIntensity: 0.5,
+  ambientIntensity: 0.65,
 
   // Hemisphere: softer sky/ground blend
-  hemisphereIntensity: 0.4,
+  hemisphereIntensity: 0.5,
   hemisphereSky: '#ffffff',
   hemisphereGround: '#d4d4d8', // Light gray ground
 
   // Main front light: reduced intensity, balanced
-  mainLightIntensity: 0.5,
+  mainLightIntensity: 0.6,
   mainLightPosition: [5, 5, 5] as [number, number, number],
 
   // Left front fill light: left-front to balance main light
-  leftFillIntensity: 0.4,
+  leftFillIntensity: 0.5,
   leftFillPosition: [-5, 5, 5] as [number, number, number],
 
   // Pure left side light: directly from left to illuminate left side
@@ -359,16 +490,70 @@ export const LIGHTING_CONFIG = {
   // Back rim light: edge highlighting
   rimLightIntensity: 0.3,
   rimLightPosition: [0, 5, -5] as [number, number, number],
+
+  // Camera-following key light: keeps the currently viewed face readable
+  cameraKeyIntensityLight: 0.45,
+  cameraKeyIntensityDark: 0.35,
+  cameraKeyPriorityIntensityLight: 0.9,
+  cameraKeyPriorityIntensityDark: 0.82,
+  cameraFillIntensityLight: 0.32,
+  cameraFillIntensityDark: 0.28,
+  cameraSoftFrontIntensityLight: 0.48,
+  cameraSoftFrontIntensityDark: 0.42,
+} as const;
+
+export const WORKSPACE_CANVAS_BACKGROUND = {
+  light: '#f8f9fa',
+  dark: '#1f1f1f',
 } as const;
 
 // Scene lighting setup for Z-up coordinate system
 // 5-Point lighting for comprehensive robot illumination
-export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
+export function SceneLighting({
+  theme = 'system',
+  cameraFollowPrimary = false,
+}: {
+  theme?: Theme;
+  cameraFollowPrimary?: boolean;
+}) {
   const { scene, gl } = useThree();
+  const cameraKeyLightRef = useRef<THREE.DirectionalLight>(null);
+  const cameraSoftFrontLightRef = useRef<THREE.DirectionalLight>(null);
+  const cameraFillRightLightRef = useRef<THREE.DirectionalLight>(null);
+  const cameraFillLeftLightRef = useRef<THREE.DirectionalLight>(null);
+  const cameraDirectionRef = useRef(new THREE.Vector3());
+  const cameraTargetRef = useRef(new THREE.Vector3());
+  const cameraRightRef = useRef(new THREE.Vector3());
+  const cameraUpRef = useRef(new THREE.Vector3());
 
   const effectiveTheme = theme === 'system' 
     ? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     : theme;
+  const staticDirectionalScale = cameraFollowPrimary ? 0.72 : 1;
+  const rimDirectionalScale = cameraFollowPrimary ? 0.18 : staticDirectionalScale;
+  const ambientIntensity = cameraFollowPrimary
+    ? (effectiveTheme === 'light' ? 0.3 : 0.34)
+    : (effectiveTheme === 'light' ? 0.6 : LIGHTING_CONFIG.ambientIntensity);
+  const hemisphereIntensity = cameraFollowPrimary
+    ? (effectiveTheme === 'light' ? 0.3 : 0.34)
+    : (effectiveTheme === 'light' ? 0.4 : LIGHTING_CONFIG.hemisphereIntensity);
+  const cameraKeyIntensity = cameraFollowPrimary
+    ? (effectiveTheme === 'light'
+      ? LIGHTING_CONFIG.cameraKeyPriorityIntensityLight
+      : LIGHTING_CONFIG.cameraKeyPriorityIntensityDark)
+    : (effectiveTheme === 'light'
+      ? LIGHTING_CONFIG.cameraKeyIntensityLight
+      : LIGHTING_CONFIG.cameraKeyIntensityDark);
+  const cameraFillIntensity = cameraFollowPrimary
+    ? (effectiveTheme === 'light'
+      ? LIGHTING_CONFIG.cameraFillIntensityLight
+      : LIGHTING_CONFIG.cameraFillIntensityDark)
+    : 0;
+  const cameraSoftFrontIntensity = cameraFollowPrimary
+    ? (effectiveTheme === 'light'
+      ? LIGHTING_CONFIG.cameraSoftFrontIntensityLight
+      : LIGHTING_CONFIG.cameraSoftFrontIntensityDark)
+    : 0;
 
   useEffect(() => {
     // Enable high-quality soft shadows
@@ -378,18 +563,74 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 
     // Configure tone mapping: ACESFilmicToneMapping for realistic color reproduction
     // Prevents overexposure on white parts while revealing detail in dark areas
-    gl.toneMapping = THREE.ACESFilmicToneMapping;
-    gl.toneMappingExposure = effectiveTheme === 'light' ? 1.0 : 1.1; // Reduced exposure for light mode
+    gl.toneMapping = cameraFollowPrimary ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = cameraFollowPrimary
+      ? (effectiveTheme === 'light' ? 1.02 : 1.06)
+      : (effectiveTheme === 'light' ? 1.08 : 1.16);
 
     // Ensure proper sRGB output color space
     gl.outputColorSpace = THREE.SRGBColorSpace;
 
-  }, [scene, gl, effectiveTheme]);
+  }, [scene, gl, effectiveTheme, cameraFollowPrimary]);
+
+  useEffect(() => {
+    const keyLight = cameraKeyLightRef.current;
+    const softFrontLight = cameraSoftFrontLightRef.current;
+    const fillRightLight = cameraFillRightLightRef.current;
+    const fillLeftLight = cameraFillLeftLightRef.current;
+    if (!keyLight || !softFrontLight || !fillRightLight || !fillLeftLight) return;
+
+    scene.add(keyLight.target);
+    scene.add(softFrontLight.target);
+    scene.add(fillRightLight.target);
+    scene.add(fillLeftLight.target);
+    return () => {
+      scene.remove(keyLight.target);
+      scene.remove(softFrontLight.target);
+      scene.remove(fillRightLight.target);
+      scene.remove(fillLeftLight.target);
+    };
+  }, [scene]);
+
+  useFrame(({ camera }) => {
+    const keyLight = cameraKeyLightRef.current;
+    const softFrontLight = cameraSoftFrontLightRef.current;
+    const fillRightLight = cameraFillRightLightRef.current;
+    const fillLeftLight = cameraFillLeftLightRef.current;
+    if (!keyLight || !softFrontLight || !fillRightLight || !fillLeftLight) return;
+
+    camera.getWorldDirection(cameraDirectionRef.current);
+    cameraTargetRef.current.copy(camera.position).addScaledVector(cameraDirectionRef.current, 10);
+
+    keyLight.position.copy(camera.position);
+    keyLight.target.position.copy(cameraTargetRef.current);
+    keyLight.target.updateMatrixWorld();
+    softFrontLight.position.copy(camera.position).addScaledVector(
+      cameraUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion),
+      0.9,
+    );
+    softFrontLight.target.position.copy(cameraTargetRef.current);
+    softFrontLight.target.updateMatrixWorld();
+
+    cameraRightRef.current.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+    cameraUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    fillRightLight.position.copy(camera.position)
+      .addScaledVector(cameraRightRef.current, 3.0)
+      .addScaledVector(cameraUpRef.current, 1.6);
+    fillRightLight.target.position.copy(cameraTargetRef.current);
+    fillRightLight.target.updateMatrixWorld();
+
+    fillLeftLight.position.copy(camera.position)
+      .addScaledVector(cameraRightRef.current, -3.0)
+      .addScaledVector(cameraUpRef.current, 1.6);
+    fillLeftLight.target.position.copy(cameraTargetRef.current);
+    fillLeftLight.target.updateMatrixWorld();
+  });
 
   return (
     <>
       {/* Ambient light - base global fill (prevents pure black shadows) */}
-      <ambientLight intensity={effectiveTheme === 'light' ? 0.6 : LIGHTING_CONFIG.ambientIntensity} color="#ffffff" />
+      <ambientLight intensity={ambientIntensity} color="#ffffff" />
 
       {/* Hemisphere light - critical for 360° visibility
           White sky + grey ground ensures bottom surfaces are visible */}
@@ -397,7 +638,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
         args={[
           LIGHTING_CONFIG.hemisphereSky,
           effectiveTheme === 'light' ? '#ffffff' : LIGHTING_CONFIG.hemisphereGround,
-          effectiveTheme === 'light' ? 0.4 : LIGHTING_CONFIG.hemisphereIntensity
+          hemisphereIntensity
         ]}
         position={[0, 1, 0]}
       />
@@ -406,7 +647,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
       <directionalLight
         name="MainLight"
         position={LIGHTING_CONFIG.mainLightPosition}
-        intensity={effectiveTheme === 'light' ? 0.5 : LIGHTING_CONFIG.mainLightIntensity}
+        intensity={(effectiveTheme === 'light' ? 0.5 : LIGHTING_CONFIG.mainLightIntensity) * staticDirectionalScale}
         color="#ffffff"
         castShadow={effectiveTheme !== 'light'} // Disable shadows in light mode to fix artifacts
         shadow-mapSize-width={2048}
@@ -424,7 +665,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
       <directionalLight
         name="FillLightLeft"
         position={LIGHTING_CONFIG.leftFillPosition}
-        intensity={LIGHTING_CONFIG.leftFillIntensity}
+        intensity={LIGHTING_CONFIG.leftFillIntensity * staticDirectionalScale}
         color="#ffffff"
         castShadow={false}
       />
@@ -433,7 +674,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
       <directionalLight
         name="FillLightLeftSide"
         position={LIGHTING_CONFIG.leftSidePosition}
-        intensity={LIGHTING_CONFIG.leftSideIntensity}
+        intensity={LIGHTING_CONFIG.leftSideIntensity * staticDirectionalScale}
         color="#ffffff"
         castShadow={false}
       />
@@ -442,7 +683,7 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
       <directionalLight
         name="FillLightRight"
         position={LIGHTING_CONFIG.rightFillPosition}
-        intensity={LIGHTING_CONFIG.rightFillIntensity}
+        intensity={LIGHTING_CONFIG.rightFillIntensity * staticDirectionalScale}
         color="#ffffff"
         castShadow={false}
       />
@@ -451,8 +692,42 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
       <directionalLight
         name="RimLight"
         position={LIGHTING_CONFIG.rimLightPosition}
-        intensity={LIGHTING_CONFIG.rimLightIntensity}
+        intensity={LIGHTING_CONFIG.rimLightIntensity * rimDirectionalScale}
         color="#ffffff"
+        castShadow={false}
+      />
+
+      {/* Camera-following key light for detail readability */}
+      <directionalLight
+        ref={cameraKeyLightRef}
+        name="CameraKeyLight"
+        position={[0, 0, 0]}
+        intensity={cameraKeyIntensity}
+        color="#ffffff"
+        castShadow={false}
+      />
+      <directionalLight
+        ref={cameraSoftFrontLightRef}
+        name="CameraSoftFrontLight"
+        position={[0, 0, 0]}
+        intensity={cameraSoftFrontIntensity}
+        color="#f7f9ff"
+        castShadow={false}
+      />
+      <directionalLight
+        ref={cameraFillRightLightRef}
+        name="CameraFillLightRight"
+        position={[0, 0, 0]}
+        intensity={cameraFillIntensity}
+        color="#f5f7ff"
+        castShadow={false}
+      />
+      <directionalLight
+        ref={cameraFillLeftLightRef}
+        name="CameraFillLightLeft"
+        position={[0, 0, 0]}
+        intensity={cameraFillIntensity}
+        color="#f5f7ff"
         castShadow={false}
       />
     </>
@@ -465,11 +740,13 @@ export function SceneLighting({ theme = 'system' }: { theme?: Theme }) {
 // ============================================================
 interface ReferenceGridProps {
   theme: Theme;
+  groundOffset?: number;
 }
 
-export function ReferenceGrid({ theme }: ReferenceGridProps) {
-  const gridRef = useRef<THREE.Object3D>(null);
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
+  const gridRef = useRef<THREE.Mesh>(null);
+  const storedGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+  const groundPlaneOffset = groundOffset ?? storedGroundPlaneOffset;
 
   const effectiveTheme = theme === 'system'
     ? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
@@ -484,6 +761,13 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
       gridRef.current.traverse((child) => {
         child.renderOrder = -100;
       });
+
+      const gridMaterial = gridRef.current.material as THREE.Material | undefined;
+      if (gridMaterial) {
+        gridMaterial.polygonOffset = true;
+        gridMaterial.polygonOffsetFactor = 1;
+        gridMaterial.polygonOffsetUnits = 1;
+      }
     }
   }, []);
 
@@ -491,6 +775,7 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
     <Grid
       ref={gridRef as any}
       name="ReferenceGrid"
+      side={THREE.DoubleSide}
       infiniteGrid
       fadeDistance={100}
       sectionSize={1}
@@ -500,7 +785,7 @@ export function ReferenceGrid({ theme }: ReferenceGridProps) {
       cellColor={effectiveTheme === 'light' ? '#e2e8f0' : '#444444'}
       sectionColor={effectiveTheme === 'light' ? '#cbd5e1' : '#555555'}
       rotation={[Math.PI / 2, 0, 0]}
-      position={[0, 0, groundPlaneOffset - 0.001]}
+      position={[0, 0, groundPlaneOffset]}
       receiveShadow={false}
     />
   );

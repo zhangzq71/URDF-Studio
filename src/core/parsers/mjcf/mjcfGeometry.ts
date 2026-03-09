@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { findAssetByPath, createPlaceholderMesh } from '@/core/loaders';
-import { createMatteMaterial } from '@/features/urdf-viewer';
+import { createMatteMaterial } from '@/core/utils/materialFactory';
 import type { MJCFMesh } from './mjcfUtils';
 
 export interface MJCFGeometryDef {

@@ -1,11 +1,11 @@
 import { UrdfLink, GeometryType } from '@/types';
-import { DEFAULT_LINK, DEFAULT_JOINT } from '@/types/constants';
+import { DEFAULT_LINK } from '@/types/constants';
 import { parseVec3, parseRPY, parseColor } from './utils';
 import { parseGeometry } from './geometry';
 
 export const parseLinks = (robotEl: Element, globalMaterials: Record<string, string>, linkGazeboMaterials: Record<string, string>) => {
     const links: Record<string, UrdfLink> = {};
-    const extraJoints: any[] = []; // To return virtual joints for multi-collision
+    const extraJoints: any[] = []; // Reserved for backward compatibility
 
     Array.from(robotEl.children).forEach(child => {
         if (child.tagName !== 'link') return;
@@ -98,6 +98,7 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
                 ...mainCollisionGeo,
                 origin: mainCollisionOrigin
             },
+            collisionBodies: [],
             inertial: {
                 mass: parseFloat(massEl?.getAttribute("value") || "0"),
                 origin: inertialOriginEl ? {
@@ -115,11 +116,9 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
             }
         };
 
-        // Handle additional collisions as virtual links
+        // Keep additional collisions on the same link
         for (let i = 1; i < collisionEls.length; i++) {
             const colEl = collisionEls[i];
-            const virtualLinkId = `${id}_collision_${i}`;
-            const virtualJointId = `${id}_collision_joint_${i}`;
 
             // Parse geometry and origin for this collision
             let colGeo = parseGeometry(colEl.querySelector("geometry"), DEFAULT_LINK.collision);
@@ -131,29 +130,11 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
                 rpy: parseRPY(originEl?.getAttribute("rpy"))
             };
 
-            // Create Virtual Link
-            links[virtualLinkId] = {
-                id: virtualLinkId,
-                name: virtualLinkId,
-                visual: { ...DEFAULT_LINK.visual, type: GeometryType.NONE }, // Invisible
-                collision: {
-                    ...DEFAULT_LINK.collision,
-                    ...colGeo,
-                    origin: colOrigin
-                },
-                inertial: { ...DEFAULT_LINK.inertial, mass: 0 } // Massless
-            };
-
-            // Create Fixed Joint attaching to parent
-            extraJoints.push({
-                ...DEFAULT_JOINT,
-                id: virtualJointId,
-                name: virtualJointId,
-                type: 'fixed',
-                parentLinkId: id,
-                childLinkId: virtualLinkId,
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                axis: { x: 0, y: 0, z: 0 }
+            links[id].collisionBodies = links[id].collisionBodies || [];
+            links[id].collisionBodies.push({
+                ...DEFAULT_LINK.collision,
+                ...colGeo,
+                origin: colOrigin
             });
         }
     });

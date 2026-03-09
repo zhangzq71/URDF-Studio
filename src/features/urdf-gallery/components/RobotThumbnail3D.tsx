@@ -16,6 +16,7 @@ interface RobotThumbnail3DProps {
   urdfPath: string;
   urdfFile?: string;
   theme?: 'light' | 'dark';
+  fallbackLabel?: string;
 }
 
 /**
@@ -39,6 +40,8 @@ function RobotPreviewModel({
   const loadedRef = useRef(false);
   const robotRef = useRef<THREE.Object3D | null>(null);
   const fullyLoadedRef = useRef(false);
+  const blobUrlsRef = useRef<string[]>([]);
+  const timeoutIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
     if (loadedRef.current) return;
@@ -70,17 +73,17 @@ function RobotPreviewModel({
 
         // 3. Fetch all files and create blob URLs (asset map)
         const assets: Record<string, string> = {};
-        
         await Promise.all(files.map(async (filePath) => {
           try {
             const res = await fetch(`${urdfPath}/${filePath}`);
             if (res.ok) {
               const blob = await res.blob();
               const blobUrl = URL.createObjectURL(blob);
+              blobUrlsRef.current.push(blobUrl);
               assets[filePath] = blobUrl;
               // Also map filename only
-              const fileName = filePath.split('/').pop()!;
-              if (!assets[fileName]) {
+              const fileName = filePath.split('/').pop();
+              if (fileName && !assets[fileName]) {
                 assets[fileName] = blobUrl;
               }
             }
@@ -117,11 +120,10 @@ function RobotPreviewModel({
           const loadedRobot = robotRef.current;
           if (!loadedRobot || fullyLoadedRef.current) return;
 
-          // Small delay to ensure geometries are fully computed
-          setTimeout(() => {
+          timeoutIdsRef.current.push(setTimeout(() => {
             if (fullyLoadedRef.current) return;
             finalizeRobot(loadedRobot);
-          }, 50);
+          }, 50));
         };
         
         const finalizeRobot = (loadedRobot: THREE.Object3D) => {
@@ -207,8 +209,7 @@ function RobotPreviewModel({
         loadedRobot.visible = false;
         setRobot(loadedRobot);
         
-        // Handle case where no meshes to load or meshes load instantly
-        setTimeout(() => {
+        timeoutIdsRef.current.push(setTimeout(() => {
           if (!fullyLoadedRef.current && robotRef.current) {
             let hasMeshes = false;
             robotRef.current.traverse((c: any) => {
@@ -218,15 +219,14 @@ function RobotPreviewModel({
               manager.onLoad();
             }
           }
-        }, 200);
+        }, 200));
         
-        // Fallback timeout - force load after 3 seconds if still not loaded
-        setTimeout(() => {
+        timeoutIdsRef.current.push(setTimeout(() => {
           if (!fullyLoadedRef.current && robotRef.current) {
             console.warn('[RobotThumbnail3D] Force loading after timeout:', urdfPath);
             manager.onLoad();
           }
-        }, 3000);
+        }, 3000));
 
       } catch (e) {
         console.error('[RobotThumbnail3D] Failed to load robot:', e);
@@ -236,6 +236,26 @@ function RobotPreviewModel({
     };
 
     loadRobot();
+
+    return () => {
+      timeoutIdsRef.current.forEach(clearTimeout);
+      timeoutIdsRef.current = [];
+      blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
+      if (robotRef.current) {
+        robotRef.current.traverse((child: any) => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m: THREE.Material) => {
+              if ((m as any).map) (m as any).map.dispose();
+              m.dispose();
+            });
+          }
+        });
+        robotRef.current = null;
+      }
+    };
   }, [urdfPath, urdfFile, invalidate, camera]);
 
   // Continuous rotation
@@ -250,7 +270,7 @@ function RobotPreviewModel({
   }
 
   if (loading || !robot || !fullyLoaded) {
-    return <LoadingIndicator />;
+    return <LoadingIndicator theme={theme} />;
   }
 
   return (
@@ -264,23 +284,30 @@ function RobotPreviewModel({
 }
 
 /**
- * Loading indicator - rotating wireframe cube
+ * Loading indicator - minimal single arc spinner
  */
-function LoadingIndicator() {
-  const meshRef = useRef<THREE.Mesh>(null);
+function LoadingIndicator({ theme }: { theme: 'light' | 'dark' }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const arcColor = theme === 'light' ? '#334155' : '#cbd5e1';
+  const hubColor = theme === 'light' ? '#94a3b8' : '#64748b';
   
   useFrame((_, delta) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.x += delta * 0.5;
-      meshRef.current.rotation.y += delta * 0.7;
+    if (groupRef.current) {
+      groupRef.current.rotation.z -= delta * 1.8;
     }
   });
 
   return (
-    <mesh ref={meshRef}>
-      <boxGeometry args={[0.4, 0.4, 0.4]} />
-      <meshBasicMaterial color="#6366f1" wireframe />
-    </mesh>
+    <group ref={groupRef}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.24, 0.03, 18, 72, Math.PI * 1.45]} />
+        <meshBasicMaterial color={arcColor} transparent opacity={0.95} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[0.045, 18, 18]} />
+        <meshBasicMaterial color={hubColor} transparent opacity={0.65} />
+      </mesh>
+    </group>
   );
 }
 
@@ -288,7 +315,12 @@ function LoadingIndicator() {
  * RobotThumbnail3D - Main component with Canvas
  * Pure real-time 3D rendering
  */
-export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, urdfFile, theme = 'dark' }) => {
+export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({
+  urdfPath,
+  urdfFile,
+  theme = 'dark',
+  fallbackLabel = 'Preview'
+}) => {
   const [hasError, setHasError] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -318,7 +350,7 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, ur
     return (
       <div ref={containerRef} className="flex flex-col items-center justify-center w-full h-full text-slate-400">
         <Box className="w-8 h-8 opacity-30" />
-        <span className="text-[9px] mt-1 opacity-50">Preview</span>
+        <span className="text-[9px] mt-1 opacity-50">{fallbackLabel}</span>
       </div>
     );
   }
@@ -341,9 +373,12 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ urdfPath, ur
         >
           <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#000000']} />
           <SceneLighting />
-          <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
+          <Environment
+            files="/potsdamer_platz_1k.hdr"
+            environmentIntensity={theme === 'light' ? 0.8 : 1.0}
+          />
 
-          <Suspense fallback={<LoadingIndicator />}>
+          <Suspense fallback={<LoadingIndicator theme={theme} />}>
             <RobotPreviewModel 
               urdfPath={urdfPath}
               urdfFile={urdfFile}

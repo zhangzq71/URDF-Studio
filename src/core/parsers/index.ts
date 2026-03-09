@@ -5,7 +5,8 @@
 
 // URDF Parser
 export { parseURDF } from './urdf/parser';
-export { generateURDF, generateAssemblyURDF } from './urdf/urdfGenerator';
+export { generateURDF, generateAssemblyURDF, injectGazeboTags } from './urdf/urdfGenerator';
+export type { RosHardwareInterface } from './urdf/urdfGenerator';
 
 // MJCF Parser (MuJoCo format)
 export { parseMJCF, isMJCF } from './mjcf/mjcfParser';
@@ -19,3 +20,6 @@ export { parseUSDAToThreeJS } from './usd/usdLoader';
 // Xacro Parser (ROS Xacro format)
 export { isXacro, processXacro, parseXacro, getXacroArgs } from './xacro/xacroParser';
 export type { XacroArgs, XacroFileMap } from './xacro/xacroParser';
+
+// File Preview - Convert various robot file formats to URDF for preview
+export { computePreviewUrdf } from './filePreview';

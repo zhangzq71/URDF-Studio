@@ -70,6 +70,9 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
     ref
   ) => {
     const t = translations[lang];
+    const isEnglish = lang === 'en';
+    const englishCheckboxLabelClassName = isEnglish ? 'text-[10px]' : '';
+    const englishSliderLabelClassName = isEnglish ? 'text-[9px]' : '';
     const panelSections = useUIStore((state) => state.panelSections);
     const setPanelSection = useUIStore((state) => state.setPanelSection);
     const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
@@ -89,7 +92,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
             : { top: '16px', right: '16px' }
         }
       >
-        <OptionsPanelContainer isCollapsed={isCollapsed}>
+        <OptionsPanelContainer isCollapsed={isCollapsed} resizeTitle={t.resize}>
           <OptionsPanelHeader
             title={t.skeletonOptions}
             isCollapsed={isCollapsed}
@@ -126,13 +129,19 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
               isCollapsed={panelSections['skeleton_visuals'] ?? false}
               onToggle={() => setPanelSection('skeleton_visuals', !(panelSections['skeleton_visuals'] ?? false))}
             >
-              <CheckboxOption checked={showGeometry} onChange={setShowGeometry} label={t.showGeometry} />
+              <CheckboxOption
+                checked={showGeometry}
+                onChange={setShowGeometry}
+                label={t.showGeometry}
+                labelClassName={englishCheckboxLabelClassName}
+              />
 
               <div className="mt-1">
                 <CheckboxOption
                   checked={showSkeletonOrigin}
                   onChange={setShowSkeletonOrigin}
                   label={t.showOrigin}
+                  labelClassName={englishCheckboxLabelClassName}
                 />
                 {showSkeletonOrigin && (
                   <SliderOption
@@ -144,12 +153,18 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                     step={0.01}
                     compact
                     indent
+                    labelClassName={englishSliderLabelClassName}
                   />
                 )}
               </div>
 
               <div className="mt-1">
-                <CheckboxOption checked={showLabels} onChange={setShowLabels} label={t.showLabels} />
+                <CheckboxOption
+                  checked={showLabels}
+                  onChange={setShowLabels}
+                  label={t.showLabels}
+                  labelClassName={englishCheckboxLabelClassName}
+                />
                 {showLabels && (
                   <SliderOption
                     label={t.labelScale}
@@ -161,6 +176,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                     decimals={1}
                     compact
                     indent
+                    labelClassName={englishSliderLabelClassName}
                   />
                 )}
               </div>
@@ -170,6 +186,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                   checked={showJointAxes}
                   onChange={setShowJointAxes}
                   label={t.showJointAxes}
+                  labelClassName={englishCheckboxLabelClassName}
                 />
                 {showJointAxes && (
                   <SliderOption
@@ -181,6 +198,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                     step={0.01}
                     compact
                     indent
+                    labelClassName={englishSliderLabelClassName}
                   />
                 )}
               </div>
@@ -200,13 +218,14 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                 max={2}
                 step={0.01}
                 compact
-                indent={false}
+                indent
+                labelClassName={englishSliderLabelClassName}
               />
               <div className="flex gap-1.5 px-3 pb-2">
                 {onAutoFitGround && (
                   <button
                     onClick={onAutoFitGround}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-system-blue/10 dark:bg-system-blue/20 text-system-blue rounded-md hover:bg-system-blue/15 dark:hover:bg-system-blue/25 transition-colors"
                   >
                     <Crosshair size={11} />
                     {t.autoFitGround}
@@ -214,7 +233,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                 )}
                 <button
                   onClick={handleResetGround}
-                  className="flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                  className="flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-element-bg text-text-secondary dark:text-text-secondary rounded-md hover:bg-element-hover transition-colors"
                 >
                   {t.reset}
                 </button>

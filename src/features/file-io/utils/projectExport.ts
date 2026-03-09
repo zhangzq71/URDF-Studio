@@ -11,6 +11,25 @@ import {
 import { generateURDF, generateMujocoXML } from '@/core/parsers';
 import { generateBOM } from './bomGenerator';
 
+const AXIS_EXPORT_TYPES = new Set<JointType>([
+  JointType.REVOLUTE,
+  JointType.CONTINUOUS,
+  JointType.PRISMATIC,
+  JointType.PLANAR,
+]);
+
+const FULL_LIMIT_EXPORT_TYPES = new Set<JointType>([
+  JointType.REVOLUTE,
+  JointType.PRISMATIC,
+]);
+
+const EFFORT_VELOCITY_LIMIT_EXPORT_TYPES = new Set<JointType>([JointType.CONTINUOUS]);
+const DYNAMICS_EXPORT_TYPES = new Set<JointType>([
+  JointType.REVOLUTE,
+  JointType.CONTINUOUS,
+  JointType.PRISMATIC,
+]);
+
 const USP_README_EN = `# URDF Studio Project (.usp) File Format
 
 The .usp file is a ZIP-compressed package that contains all necessary data to restore a URDF Studio project.
@@ -95,9 +114,17 @@ function generateBridgeXml(bridges: Record<string, BridgeJoint>): string {
     xml += `      <origin xyz="${joint.origin.xyz.x} ${joint.origin.xyz.y} ${joint.origin.xyz.z}" `;
     xml += `rpy="${joint.origin.rpy.r} ${joint.origin.rpy.p} ${joint.origin.rpy.y}" />\n`;
     
-    if (joint.type !== JointType.FIXED) {
+    if (AXIS_EXPORT_TYPES.has(joint.type)) {
       xml += `      <axis xyz="${joint.axis.x} ${joint.axis.y} ${joint.axis.z}" />\n`;
-      xml += `      <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
+
+      if (FULL_LIMIT_EXPORT_TYPES.has(joint.type)) {
+        xml += `      <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
+      } else if (EFFORT_VELOCITY_LIMIT_EXPORT_TYPES.has(joint.type)) {
+        xml += `      <limit effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
+      }
+    }
+
+    if (DYNAMICS_EXPORT_TYPES.has(joint.type)) {
       if (joint.dynamics && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)) {
         xml += `      <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
       }
@@ -122,6 +149,11 @@ function getReferencedMeshes(robot: RobotData): Set<string> {
     if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referencedFiles.add(link.collision.meshPath);
     }
+    (link.collisionBodies || []).forEach((body) => {
+      if (body.type === GeometryType.MESH && body.meshPath) {
+        referencedFiles.add(body.meshPath);
+      }
+    });
   });
   return referencedFiles;
 }

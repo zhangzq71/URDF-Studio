@@ -1,79 +1,10 @@
 import * as THREE from 'three';
+import { disposeMaterial } from './dispose';
 
-// ============================================================
-// UNIFIED MATERIAL CONFIGURATION
-// PBR settings optimized for IBL (Image-Based Lighting)
-// ============================================================
-export const MATERIAL_CONFIG = {
-    // PBR properties for realistic matte finish
-    roughness: 0.7,         // 0.6-0.8 range for matte plastic/metal look
-    metalness: 0.1,         // Low metalness for plastic-like appearance
-    envMapIntensity: 0.8,   // Environment reflection intensity
-
-    // Color adjustment: slightly reduce white reflectivity to prevent overexposure
-    whiteColorMultiplier: 0.9, // Apply to pure white colors (1,1,1 -> 0.9,0.9,0.9)
-} as const;
-
-// ============================================================
-// UNIFIED MATERIAL FACTORY
-// Creates consistent MeshStandardMaterial for PBR rendering with IBL
-// ============================================================
-export interface CreateMaterialOptions {
-    color: THREE.ColorRepresentation;
-    opacity?: number;
-    transparent?: boolean;
-    side?: THREE.Side;
-    map?: THREE.Texture | null;
-    name?: string;
-}
-
-/**
- * Creates a unified MeshStandardMaterial for PBR rendering with IBL.
- * Optimized for realistic matte finish with proper roughness/metalness.
- *
- * @param options - Material configuration options
- * @returns THREE.MeshStandardMaterial
- */
-export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshStandardMaterial {
-    const {
-        color,
-        opacity = 1.0,
-        transparent = false,
-        side = THREE.DoubleSide,
-        map = null,
-        name = ''
-    } = options;
-
-    let finalColor = new THREE.Color(color);
-
-    // Reduce very bright/white colors to prevent overexposure
-    if (finalColor.r > 0.95 && finalColor.g > 0.95 && finalColor.b > 0.95) {
-        finalColor.multiplyScalar(MATERIAL_CONFIG.whiteColorMultiplier);
-    }
-
-    // Use MeshStandardMaterial for PBR rendering with IBL
-    const material = new THREE.MeshStandardMaterial({
-        color: finalColor,
-        roughness: MATERIAL_CONFIG.roughness,
-        metalness: MATERIAL_CONFIG.metalness,
-        envMapIntensity: MATERIAL_CONFIG.envMapIntensity,
-        side,
-        transparent: transparent || opacity < 1.0,
-        opacity,
-        depthWrite: opacity >= 1.0,
-        map,
-    });
-
-    if (name) material.name = name;
-
-    // Store original values for potential restoration
-    material.userData.originalColor = finalColor.clone();
-    material.userData.originalRoughness = MATERIAL_CONFIG.roughness;
-    material.userData.originalMetalness = MATERIAL_CONFIG.metalness;
-    material.userData.originalEnvMapIntensity = MATERIAL_CONFIG.envMapIntensity;
-
-    return material;
-}
+// Re-export shared material factory so existing consumers keep working
+export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
+export type { CreateMaterialOptions } from '@/shared/utils/materialFactory';
+import { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
 
 /**
  * Applies unified material properties to an existing mesh's materials.
@@ -112,10 +43,22 @@ export function applyMatteMaterialToMesh(
         });
     };
 
+    const originalMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mesh.material)) {
         mesh.material = mesh.material.map(processMaterial);
     } else if (mesh.material) {
         mesh.material = processMaterial(mesh.material);
+    }
+
+    if (originalMaterial) {
+        // New materials reuse texture references; dispose only material programs/state.
+        // Skip shared singleton materials for safety.
+        const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
+        mats.forEach((mat) => {
+            if (!mat) return;
+            if ((mat as any).userData?.isSharedMaterial || (mat as any).userData?.isCollisionMaterial) return;
+            disposeMaterial(mat, false);
+        });
     }
 }
 
@@ -151,6 +94,12 @@ export const collisionHighlightMaterial = new THREE.MeshStandardMaterial({
     depthTest: false,
     depthWrite: false,
 });
+highlightMaterial.userData.isSharedMaterial = true;
+highlightMaterial.userData.isHighlightMaterial = true;
+highlightFaceMaterial.userData.isSharedMaterial = true;
+highlightFaceMaterial.userData.isHighlightMaterial = true;
+collisionHighlightMaterial.userData.isSharedMaterial = true;
+collisionHighlightMaterial.userData.isHighlightMaterial = true;
 
 export const collisionBaseMaterial = new THREE.MeshStandardMaterial({
     color: 0xa855f7, // Purple-500
@@ -188,21 +137,41 @@ export const emptyRaycast = () => { };
 export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Texture | null) => {
     let enhancedCount = 0;
     let totalMeshes = 0;
+    const disposedMaterials = new Set<THREE.Material>();
 
     robotObject.traverse((child: any) => {
         if (child.isMesh && child.material) {
             totalMeshes++;
 
+            const originalMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
+            const shouldSkipEnhance = (mat: THREE.Material): boolean =>
+                Boolean((mat as any).userData?.isSharedMaterial) ||
+                Boolean((mat as any).userData?.isCollisionMaterial);
+
             if (Array.isArray(child.material)) {
                 child.material = child.material.map((mat: THREE.Material) => {
+                    if (shouldSkipEnhance(mat)) return mat;
                     const enhanced = enhanceSingleMaterial(mat, envMap);
                     if (enhanced !== mat) enhancedCount++;
                     return enhanced;
                 });
             } else {
-                const enhanced = enhanceSingleMaterial(child.material, envMap);
-                if (enhanced !== child.material) enhancedCount++;
-                child.material = enhanced;
+                if (!shouldSkipEnhance(child.material)) {
+                    const enhanced = enhanceSingleMaterial(child.material, envMap);
+                    if (enhanced !== child.material) enhancedCount++;
+                    child.material = enhanced;
+                }
+            }
+
+            if (originalMaterial) {
+                const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
+                for (const mat of mats) {
+                    if (!mat || disposedMaterials.has(mat)) continue;
+                    if (shouldSkipEnhance(mat)) continue;
+                    // Preserve textures because enhanced materials may share same maps.
+                    disposeMaterial(mat, false);
+                    disposedMaterials.add(mat);
+                }
             }
 
             // Enable shadows for better depth perception

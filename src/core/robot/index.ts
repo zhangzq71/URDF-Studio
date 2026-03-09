@@ -34,6 +34,16 @@ export {
 
 export type { ValidationError, ValidationResult } from './validators';
 
+// Collision body manipulation
+export {
+    appendCollisionBody,
+    getCollisionGeometryByObjectIndex,
+    getCollisionGeometryEntries,
+    optimizeCylinderCollisionsToCapsules,
+    removeCollisionGeometryByObjectIndex,
+    updateCollisionGeometryByObjectIndex,
+} from './collisionBodies';
+
 // Assembly Merger - Merge AssemblyState to RobotData
 export { mergeAssembly } from './assemblyMerger';
 

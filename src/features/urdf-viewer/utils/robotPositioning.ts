@@ -1,29 +1,34 @@
 import * as THREE from 'three';
-import { useUIStore } from '@/store';
+import { getLowestMeshZ } from '@/shared/utils';
 
-/**
- * Auto-fit ground plane to the robot's lowest Z point.
- * Sets groundPlaneOffset in uiStore instead of moving the model.
- */
-export function offsetRobotToGround(robot: THREE.Object3D): void {
-    robot.updateMatrixWorld(true);
-    const box = new THREE.Box3();
-
-    robot.traverse((child) => {
-        if (child.userData?.isGizmo) return;
-        if (child.name?.startsWith('__')) return;
-        if ((child as THREE.Mesh).isMesh) {
-            const mesh = child as THREE.Mesh;
-            if (mesh.geometry) {
-                if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-                const geomBox = mesh.geometry.boundingBox!.clone();
-                geomBox.applyMatrix4(mesh.matrixWorld);
-                box.union(geomBox);
-            }
-        }
+export function getRobotGroundOffset(robot: THREE.Object3D): number | null {
+    let minZ = getLowestMeshZ(robot, {
+        includeInvisible: false,
+        includeVisual: true,
+        includeCollision: false,
     });
 
-    if (!box.isEmpty() && isFinite(box.min.z)) {
-        useUIStore.getState().setGroundPlaneOffset(box.min.z);
+    if (minZ === null) {
+        minZ = getLowestMeshZ(robot, {
+            includeInvisible: true,
+            includeVisual: true,
+            includeCollision: false,
+        });
     }
+
+    return minZ;
+}
+
+/**
+ * Align the rendered robot so its lowest visible visual geometry rests on the target plane.
+ * This keeps the grid/canvas stable while switching assets with different authoring origins.
+ */
+export function offsetRobotToGround(robot: THREE.Object3D, targetZ = 0): void {
+    const minZ = getRobotGroundOffset(robot);
+    if (minZ === null) {
+        return;
+    }
+
+    robot.position.z += targetZ - minZ;
+    robot.updateMatrixWorld(true);
 }

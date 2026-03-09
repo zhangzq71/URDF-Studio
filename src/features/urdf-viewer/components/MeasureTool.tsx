@@ -13,22 +13,23 @@ const _pooledRay = new THREE.Ray();
 const MOUSE_MOVE_THRESHOLD = 2;
 // Throttle interval in ms (~30fps)
 const THROTTLE_INTERVAL = 33;
+const BOUNDING_BOX_CACHE_MS = 33;
 
 // Memoized measurement item to avoid creating new Vector3 on each render
 const MeasurementItem = memo(({
     pair,
-    idx,
     isHovered,
     onHover,
     onLeave,
-    onDelete
+    onDelete,
+    deleteTooltip
 }: {
     pair: [THREE.Vector3, THREE.Vector3];
-    idx: number;
     isHovered: boolean;
     onHover: () => void;
     onLeave: () => void;
     onDelete: () => void;
+    deleteTooltip: string;
 }) => {
     // Cache midpoint calculation - only recalculate when pair changes
     const midpoint = useMemo(() =>
@@ -52,11 +53,11 @@ const MeasurementItem = memo(({
             <Line points={[pair[0], pair[1]]} color={color} lineWidth={2} depthTest={false} />
             <Html position={midpoint} style={{ pointerEvents: 'none' }}>
                 <div
-                    className={`bg-slate-700/80 dark:bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap font-mono cursor-pointer transition-colors group flex items-center gap-1 pointer-events-auto ${isHovered ? 'bg-red-600/90' : 'hover:bg-slate-700 dark:hover:bg-black'}`}
+                    className={`bg-slate-700/80 dark:bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap font-mono transition-colors group flex items-center gap-1 cursor-pointer pointer-events-auto ${isHovered ? 'bg-red-600/90' : 'hover:bg-slate-700 dark:hover:bg-black'}`}
                     onMouseEnter={onHover}
                     onMouseLeave={onLeave}
                     onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                    title="点击删除此测量"
+                    title={deleteTooltip}
                 >
                     {distance}m
                     <svg className={`w-3 h-3 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -106,7 +107,8 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     active,
     robot,
     measureState,
-    setMeasureState
+    setMeasureState,
+    deleteTooltip = 'Click to delete this measurement'
 }) => {
     const { camera, gl } = useThree();
     const [hoveredMeasurementIdx, setHoveredMeasurementIdx] = useState<number | null>(null);
@@ -117,23 +119,41 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     const lastMousePosRef = useRef({ x: 0, y: 0 });
     // PERFORMANCE: Cached robot bounding box for two-phase detection
     const robotBoundingBoxRef = useRef<THREE.Box3 | null>(null);
+    const robotBoundingBoxUpdatedAtRef = useRef(0);
 
     const { measurements, currentPoints, tempPoint } = measureState;
 
     // PERFORMANCE: Get/update robot bounding box (cached)
-    const getRobotBoundingBox = useCallback(() => {
+    useEffect(() => {
+        robotBoundingBoxRef.current = null;
+        robotBoundingBoxUpdatedAtRef.current = 0;
+    }, [robot]);
+
+    const getRobotBoundingBox = useCallback((forceRefresh = false) => {
         if (!robot) return null;
+
         if (!robotBoundingBoxRef.current) {
             robotBoundingBoxRef.current = new THREE.Box3();
         }
-        robotBoundingBoxRef.current.setFromObject(robot);
-        robotBoundingBoxRef.current.expandByScalar(0.05);
+
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const needsRefresh =
+            forceRefresh ||
+            robotBoundingBoxUpdatedAtRef.current === 0 ||
+            now - robotBoundingBoxUpdatedAtRef.current >= BOUNDING_BOX_CACHE_MS;
+
+        if (needsRefresh) {
+            robotBoundingBoxRef.current.setFromObject(robot);
+            robotBoundingBoxRef.current.expandByScalar(0.05);
+            robotBoundingBoxUpdatedAtRef.current = now;
+        }
+
         return robotBoundingBoxRef.current;
     }, [robot]);
 
     // PERFORMANCE: Two-phase detection - check bounding box first
-    const rayIntersectsBoundingBox = useCallback((raycasterInstance: THREE.Raycaster): boolean => {
-        const bbox = getRobotBoundingBox();
+    const rayIntersectsBoundingBox = useCallback((raycasterInstance: THREE.Raycaster, forceRefresh = false): boolean => {
+        const bbox = getRobotBoundingBox(forceRefresh);
         if (!bbox) return false;
         _pooledRay.copy(raycasterInstance.ray);
         return _pooledRay.intersectsBox(bbox);
@@ -142,6 +162,7 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     // Only clear temp state when deactivating, keep measurements
     useEffect(() => {
         if (!active) {
+            setHoveredMeasurementIdx(null);
             setMeasureState(prev => ({ ...prev, currentPoints: [], tempPoint: null }));
         }
     }, [active, setMeasureState]);
@@ -236,10 +257,15 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
                  (event.target as HTMLElement).closest('.measure-context-menu') ||
                  (event.target as HTMLElement).closest('.measure-panel')) return;
 
+             const rect = gl.domElement.getBoundingClientRect();
+             mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+             mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+             lastMousePosRef.current.x = event.clientX;
+             lastMousePosRef.current.y = event.clientY;
              raycaster.setFromCamera(mouse.current, camera);
 
              // PERFORMANCE: Two-phase detection - check bounding box first
-             if (!rayIntersectsBoundingBox(raycaster)) {
+             if (!rayIntersectsBoundingBox(raycaster, true)) {
                  return; // Click missed robot entirely
              }
 
@@ -287,15 +313,15 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
     return (
         <group>
             {/* Render all completed measurements using memoized component */}
-            {measurements.map((pair, idx) => (
+            {active && measurements.map((pair, idx) => (
                 <MeasurementItem
                     key={`measurement-${idx}`}
                     pair={pair}
-                    idx={idx}
                     isHovered={hoveredMeasurementIdx === idx}
                     onHover={() => setHoveredMeasurementIdx(idx)}
                     onLeave={() => setHoveredMeasurementIdx(null)}
                     onDelete={() => handleDeleteMeasurement(idx)}
+                    deleteTooltip={deleteTooltip}
                 />
             ))}
 

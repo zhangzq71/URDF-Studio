@@ -1,9 +1,12 @@
 import React, { memo, useRef, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
+import { useUIStore } from '@/store';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { translations } from '@/shared/i18n';
 import type { RobotModelProps } from '../types';
+import { isSingleDofJoint } from '../utils/jointTypes';
+import { offsetRobotToGround } from '../utils/robotPositioning';
 
 // Import hooks
 import {
@@ -23,6 +26,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     showCollision = false,
     showVisual = true,
     onSelect,
+    onMeshSelect,
     onJointChange,
     onJointChangeCommit,
     jointAngles,
@@ -51,9 +55,20 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     toolMode = 'select',
     onCollisionTransformEnd,
     isOrbitDragging,
-    onTransformPending
+    onTransformPending,
+    isSelectionLockedRef,
+    isMeshPreview = false
 }) => {
     const { invalidate } = useThree();
+    const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+    const needsInitialGroundFitRef = useRef(true);
+    const initialGroundFitTimersRef = useRef<number[]>([]);
+    const appliedJointAnglesRef = useRef<Record<string, number>>({});
+
+    const clearInitialGroundFitTimers = () => {
+        initialGroundFitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+        initialGroundFitTimersRef.current = [];
+    };
 
     // Keep ref for setIsDragging to avoid stale closures
     const setIsDraggingRef = useRef(setIsDragging);
@@ -74,7 +89,9 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         assets,
         showCollision,
         showVisual,
+        isMeshPreview,
         robotLinks,
+        initialJointAngles: jointAngles,
         onRobotLoaded
     });
 
@@ -84,13 +101,15 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     const {
         highlightGeometry,
         rayIntersectsBoundingBox,
-        highlightedMeshesRef
+        highlightedMeshesRef,
+        boundingBoxNeedsUpdateRef
     } = useHighlightManager({
         robot,
         robotVersion,
         highlightMode,
         showCollision,
         showVisual,
+        robotLinks,
         linkMeshMapRef
     });
 
@@ -120,12 +139,14 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         showCollision,
         showVisual,
         onSelect,
+        onMeshSelect,
         onJointChange,
         onJointChangeCommit,
         setIsDragging,
         setActiveJoint,
         justSelectedRef,
         isOrbitDragging,
+        isSelectionLockedRef,
         highlightGeometry
     });
 
@@ -147,6 +168,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         needsRaycastRef,
         isOrbitDragging,
         justSelectedRef,
+        isSelectionLockedRef,
         rayIntersectsBoundingBox,
         highlightGeometry
     });
@@ -179,6 +201,14 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         highlightedMeshesRef
     });
 
+    useEffect(() => {
+        needsInitialGroundFitRef.current = true;
+        appliedJointAnglesRef.current = {};
+        return () => {
+            clearInitialGroundFitTimers();
+        };
+    }, [robot, robotVersion]);
+
     // ============================================================
     // Apply joint angles when jointAngles prop changes
     // ============================================================
@@ -187,16 +217,57 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
         const joints = (robot as any).joints;
         if (!joints) return;
+        let hasJointTransformChanges = false;
 
         Object.entries(jointAngles).forEach(([jointName, angle]) => {
             const joint = joints[jointName];
-            if (joint && typeof joint.setJointValue === 'function') {
-                joint.setJointValue(angle);
+            const previousAngle = appliedJointAnglesRef.current[jointName];
+            const currentAngle = joint?.angle ?? joint?.jointValue;
+
+            if (
+                previousAngle === angle
+                && currentAngle === angle
+            ) {
+                return;
             }
+
+            if (isSingleDofJoint(joint) && typeof joint.setJointValue === 'function') {
+                joint.setJointValue(angle);
+                hasJointTransformChanges = true;
+            }
+
+            appliedJointAnglesRef.current[jointName] = angle;
         });
 
+        if (needsInitialGroundFitRef.current && Object.keys(jointAngles).length > 0) {
+            needsInitialGroundFitRef.current = false;
+            clearInitialGroundFitTimers();
+
+            initialGroundFitTimersRef.current = [0, 80, 220, 500].map((delay) =>
+                window.setTimeout(() => {
+                    offsetRobotToGround(robot, groundPlaneOffset);
+                    boundingBoxNeedsUpdateRef.current = true;
+                    needsRaycastRef.current = true;
+                    invalidate();
+                }, delay)
+            );
+        }
+
+        if (!hasJointTransformChanges) {
+            return () => {
+                clearInitialGroundFitTimers();
+            };
+        }
+
+        robot.updateMatrixWorld(true);
+        boundingBoxNeedsUpdateRef.current = true;
+        needsRaycastRef.current = true;
         invalidate();
-    }, [robot, jointAngles, invalidate]);
+
+        return () => {
+            clearInitialGroundFitTimers();
+        };
+    }, [robot, jointAngles, groundPlaneOffset, invalidate, boundingBoxNeedsUpdateRef, needsRaycastRef]);
 
     // ============================================================
     // RENDER

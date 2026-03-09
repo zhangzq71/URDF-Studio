@@ -34,34 +34,141 @@ code, pre, kbd, samp {
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
-  --color-app-bg: #000000;
-  --color-panel-bg: #1E1E1E;
-  --color-element-bg: #3A3A3C;
-  --color-element-hover: #48484A;
-  --color-element-active: #2C2C2E;
-  --color-input-bg: #151515;
-  --color-system-blue: #0060FA;
-  --color-segmented-active: #636366;
-  --color-border-black: #000000;
-  
-  --color-google-dark-bg: var(--color-panel-bg);
-  --color-google-dark-surface: #2C2C2E;
-  --color-google-dark-border: var(--color-border-black);
-  --color-google-blue: var(--color-system-blue);
-  --color-google-light-bg: #f8f9fa;
-  --color-google-light-surface: #ffffff;
-}
-
-/* Root element with font scale variable */
+/* URDF Studio style semantic tokens */
 :root {
   --font-scale: 1;
+
+  /* Surfaces (light) */
+  --ui-bg: #f8f9fa;
+  --ui-panel-bg: #ffffff;
+  --ui-surface: #f8f9fa;
+  --ui-surface-elevated: #ffffff;
+  --ui-input-bg: #ffffff;
+
+  /* Borders (light) */
+  --ui-border: #e2e8f0;
+  --ui-border-strong: #cbd5e1;
+
+  /* Text (light) */
+  --ui-text-primary: #0f172a;
+  --ui-text-secondary: #334155;
+  --ui-text-tertiary: #64748b;
+
+  /* Accent (light) */
+  --ui-accent: #0060fa;
+  --ui-accent-solid: #0060fa;
+  --ui-accent-solid-hover: #0052d6;
+  --ui-accent-solid-active: #0048bd;
+  --ui-on-accent-hover: rgba(15, 23, 42, 0.16);
+
+  /* Segmented controls */
+  --ui-segmented-bg: #f1f5f9;
+  --ui-segmented-active: #ffffff;
+  --ui-switch-off: #cbd5e1;
+  --ui-slider-accent: #0088ff;
+
+  color-scheme: light;
+}
+
+.dark {
+  /* Surfaces (dark) */
+  --ui-bg: #000000;
+  --ui-panel-bg: #1c1c1e;
+  --ui-surface: #2c2c2e;
+  --ui-surface-elevated: #3a3a3c;
+  --ui-input-bg: #1c1c1e;
+
+  /* Borders (dark) */
+  --ui-border: #3a3a3c;
+  --ui-border-strong: #48484a;
+
+  /* Text (dark) */
+  --ui-text-primary: #f2f2f7;
+  --ui-text-secondary: #d1d1d6;
+  --ui-text-tertiary: #98989d;
+
+  /* Accent (dark) */
+  --ui-accent: #0a84ff;
+  --ui-accent-solid: #0a84ff;
+  --ui-accent-solid-hover: #409cff;
+  --ui-accent-solid-active: #0077ed;
+  --ui-on-accent-hover: rgba(255, 255, 255, 0.2);
+
+  /* Segmented controls */
+  --ui-segmented-bg: #151518;
+  --ui-segmented-active: #3a3a3c;
+  --ui-switch-off: #3a3a3c;
+  --ui-slider-accent: #0088ff;
+
+  color-scheme: dark;
+}
+
+/* High-contrast adaptation */
+@media (prefers-contrast: more) {
+  :root {
+    --ui-border: #8e8e93;
+    --ui-border-strong: #636366;
+    --ui-text-secondary: #1c1c1e;
+    --ui-text-tertiary: #3a3a3c;
+    --ui-accent-solid: #0050a8;
+    --ui-accent-solid-hover: #00458f;
+    --ui-accent-solid-active: #003a78;
+    --ui-on-accent-hover: rgba(15, 23, 42, 0.24);
+  }
+
+  .dark {
+    --ui-border: #8e8e93;
+    --ui-border-strong: #aeaeb2;
+    --ui-text-secondary: #f2f2f7;
+    --ui-text-tertiary: #d1d1d6;
+    --ui-accent-solid: #0068d1;
+    --ui-accent-solid-hover: #005bb8;
+    --ui-accent-solid-active: #004c99;
+    --ui-on-accent-hover: rgba(255, 255, 255, 0.28);
+    --ui-segmented-bg: #0f0f11;
+  }
+}
+
+@theme {
+  --color-app-bg: var(--ui-bg);
+  --color-panel-bg: var(--ui-panel-bg);
+  --color-element-bg: var(--ui-surface);
+  --color-element-hover: var(--ui-surface-elevated);
+  --color-element-active: var(--ui-surface);
+  --color-input-bg: var(--ui-input-bg);
+  --color-system-blue: var(--ui-accent);
+  --color-system-blue-solid: var(--ui-accent-solid);
+  --color-system-blue-hover: var(--ui-accent-solid-hover);
+  --color-system-blue-active: var(--ui-accent-solid-active);
+  --color-on-accent-hover: var(--ui-on-accent-hover);
+  --color-segmented-active: var(--ui-segmented-active);
+  --color-border-black: var(--ui-border);
+  --color-border-strong: var(--ui-border-strong);
+  --color-text-primary: var(--ui-text-primary);
+  --color-text-secondary: var(--ui-text-secondary);
+  --color-text-tertiary: var(--ui-text-tertiary);
+  --color-segmented-bg: var(--ui-segmented-bg);
+  --color-switch-off: var(--ui-switch-off);
+  --color-slider-accent: var(--ui-slider-accent);
+  
+  --color-google-dark-bg: var(--color-panel-bg);
+  --color-google-dark-surface: var(--color-element-bg);
+  --color-google-dark-border: var(--color-border-black);
+  --color-google-blue: var(--color-system-blue);
+  --color-google-light-bg: var(--color-app-bg);
+  --color-google-light-surface: var(--color-panel-bg);
 }
 
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  @apply bg-google-light-bg dark:bg-app-bg text-slate-900 dark:text-slate-200;
+  @apply bg-google-light-bg text-text-primary;
   overflow: hidden;
+}
+
+/* Unified focus ring for keyboard navigation */
+:where(button, input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 30%, transparent);
 }
 
 /* Apply font scale to body base size */

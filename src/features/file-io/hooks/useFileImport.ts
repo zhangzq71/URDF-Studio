@@ -5,8 +5,9 @@
 
 import { useCallback, useRef } from 'react';
 import JSZip from 'jszip';
+import { translations } from '@/shared/i18n';
 import { useAssetsStore, useUIStore } from '@/store';
-import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
+import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 import type { RobotFile, MotorSpec } from '@/types';
 import type { AssetFile, LibraryFile, ImportResult } from '../types';
 import {
@@ -40,6 +41,7 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
   const importFolderInputRef = useRef<HTMLInputElement | null>(null);
 
   const lang = useUIStore((s) => s.lang);
+  const t = translations[lang];
   const assets = useAssetsStore((s) => s.assets);
   const revokeAllAssets = useAssetsStore((s) => s.revokeAllAssets);
   const addAssets = useAssetsStore((s) => s.addAssets);
@@ -182,21 +184,21 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
       } else if (newRobotFiles.length > 0) {
         onLoadRobot?.(newRobotFiles[0]);
       } else if (libraryFiles.length > 0) {
-        alert(lang === 'zh' ? '库导入成功！' : 'Library imported successfully!');
+        alert(t.libraryImportSuccessful);
       } else if (assetFiles.length === 0) {
-        alert(lang === 'zh' ? '未找到 URDF/MJCF/USD 文件。' : 'No URDF/MJCF/USD file found.');
+        alert(t.noDefinitionFilesFound);
       }
 
     } catch (error: any) {
       console.error('Import failed:', error);
       onError?.(error);
-      alert(lang === 'zh' ? '导入失败。请检查文件是否有效。' : 'Failed to import. Please check if the file(s) are valid.');
+      alert(t.importFailedCheckFiles);
     } finally {
       if (importInputRef.current) importInputRef.current.value = '';
       if (importFolderInputRef.current) importFolderInputRef.current.value = '';
     }
   }, [
-    lang,
+    t,
     showPrivacyToast,
     revokeAllAssets,
     addAssets,

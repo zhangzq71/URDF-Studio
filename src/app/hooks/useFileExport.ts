@@ -5,15 +5,20 @@
 import { useCallback } from 'react';
 import JSZip from 'jszip';
 import type { RobotState, UrdfLink } from '@/types';
-import { GeometryType } from '@/types';
-import { generateURDF, generateMujocoXML } from '@/core/parsers';
+import { DEFAULT_LINK, GeometryType } from '@/types';
+import { generateURDF, generateMujocoXML, injectGazeboTags } from '@/core/parsers';
+import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
+import { compressSTLBlob } from '@/core/stl-compressor';
 import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
-import { exportProject } from '@/features/file-io/utils';
+import { exportProject, type ExportDialogConfig } from '@/features/file-io';
+import { translations } from '@/shared/i18n';
 
 export function useFileExport() {
   const lang = useUIStore((state) => state.lang);
+  const t = translations[lang];
   const theme = useUIStore((state) => state.theme);
   const appMode = useUIStore((state) => state.appMode);
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
   const assets = useAssetsStore((state) => state.assets);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const originalFileFormat = useAssetsStore((state) => state.originalFileFormat);
@@ -26,11 +31,127 @@ export function useFileExport() {
   const robotJoints = useRobotStore((state) => state.joints);
   const rootLinkId = useRobotStore((state) => state.rootLinkId);
 
+  const downloadBlob = useCallback((blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const buildRobotForExport = useCallback((): RobotState => {
+    // Keep export source aligned with current viewer:
+    // workspace tab -> merged assembly; structure tab -> current robot store.
+    if (assemblyState && sidebarTab === 'workspace') {
+      const mergedData = getMergedRobotData();
+      if (mergedData) {
+        return { ...mergedData, selection: { type: null, id: null } };
+      }
+
+      return {
+        name: '',
+        links: {
+          empty_root: {
+            ...DEFAULT_LINK,
+            id: 'empty_root',
+            name: 'base_link',
+            visual: {
+              ...DEFAULT_LINK.visual,
+              type: GeometryType.NONE,
+              dimensions: { x: 0, y: 0, z: 0 },
+            },
+            collision: {
+              ...DEFAULT_LINK.collision,
+              type: GeometryType.NONE,
+              dimensions: { x: 0, y: 0, z: 0 },
+            },
+            inertial: {
+              ...DEFAULT_LINK.inertial,
+              mass: 0,
+            },
+          },
+        },
+        joints: {},
+        rootLinkId: 'empty_root',
+        selection: { type: null, id: null },
+      };
+    }
+
+    return {
+      name: robotName,
+      links: robotLinks,
+      joints: robotJoints,
+      rootLinkId,
+      selection: { type: null, id: null },
+    };
+  }, [assemblyState, sidebarTab, getMergedRobotData, robotName, robotLinks, robotJoints, rootLinkId]);
+
+  const getRobotExportName = useCallback((robot: RobotState): string => {
+    const trimmed = robot.name?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : 'robot';
+  }, []);
+
+  const addMeshesToZip = useCallback(async (
+    robot: RobotState,
+    zip: JSZip,
+    compressOptions?: { compressSTL: boolean; stlQuality: number },
+  ) => {
+    const meshFolder = zip.folder("meshes");
+    const referencedFiles = new Set<string>();
+
+    Object.values(robot.links).forEach((link: UrdfLink) => {
+      if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
+        referencedFiles.add(link.visual.meshPath);
+      }
+      if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
+        referencedFiles.add(link.collision.meshPath);
+      }
+      (link.collisionBodies || []).forEach((body) => {
+        if (body.type === GeometryType.MESH && body.meshPath) {
+          referencedFiles.add(body.meshPath);
+        }
+      });
+    });
+
+    const promises: Promise<void>[] = [];
+    const exportedMeshPaths = new Set<string>();
+
+    referencedFiles.forEach((meshPath) => {
+      const exportPath = normalizeMeshPathForExport(meshPath);
+      if (!exportPath || exportedMeshPaths.has(exportPath)) return;
+      exportedMeshPaths.add(exportPath);
+
+      const blobUrl = resolveMeshAssetUrl(meshPath, assets);
+      if (!blobUrl) {
+        console.warn(`[Export] Mesh asset not found for: ${meshPath}`);
+        return;
+      }
+
+      const p = fetch(blobUrl)
+        .then(res => res.blob())
+        .then(async (blob) => {
+          if (compressOptions?.compressSTL) {
+            const filename = exportPath.split('/').pop() ?? exportPath;
+            const result = await compressSTLBlob(blob, filename, { quality: compressOptions.stlQuality });
+            meshFolder?.file(exportPath, result.blob);
+          } else {
+            meshFolder?.file(exportPath, blob);
+          }
+        })
+        .catch((err: any) => console.error(`Failed to load mesh ${meshPath}`, err));
+
+      promises.push(p);
+    });
+
+    await Promise.all(promises);
+  }, [assets]);
+
   // Generate BOM (Bill of Materials) CSV
   const generateBOM = useCallback((robot: RobotState): string => {
-    const headers = lang === 'zh'
-      ? ['关节名称', '类型', '电机型号', '电机 ID', '方向', '电枢', '下限', '上限']
-      : ['Joint Name', 'Type', 'Motor Type', 'Motor ID', 'Direction', 'Armature', 'Lower Limit', 'Upper Limit'];
+    const headers = [t.jointName, t.type, t.motorType, t.motorId, t.direction, t.armature, t.lower, t.upper];
 
     const rows = Object.values(robot.joints).map(j => {
       if (j.type === 'fixed') return null;
@@ -49,89 +170,97 @@ export function useFileExport() {
     }).filter(row => row !== null);
 
     return [headers.join(','), ...rows].join('\n');
-  }, [lang]);
+  }, [t]);
+
+  const handleExportURDF = useCallback(async () => {
+    const robot = buildRobotForExport();
+    const exportName = getRobotExportName(robot);
+    const zip = new JSZip();
+
+    zip.file(`${exportName}.urdf`, generateURDF(robot, false));
+    await addMeshesToZip(robot, zip);
+
+    const content = await zip.generateAsync({ type: "blob" });
+    downloadBlob(content, `${exportName}_urdf.zip`);
+  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob]);
+
+  const handleExportMJCF = useCallback(async () => {
+    const robot = buildRobotForExport();
+    const exportName = getRobotExportName(robot);
+    const zip = new JSZip();
+
+    zip.file(`${exportName}.xml`, generateMujocoXML(robot, { meshdir: 'meshes/' }));
+    await addMeshesToZip(robot, zip);
+
+    const content = await zip.generateAsync({ type: "blob" });
+    downloadBlob(content, `${exportName}_mjcf.zip`);
+  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob]);
 
   // Export handler
   const handleExport = useCallback(async () => {
-    // Build robot state from store
-    let robot: RobotState;
-    if (assemblyState) {
-      const mergedData = getMergedRobotData();
-      robot = mergedData
-        ? { ...mergedData, selection: { type: null, id: null } }
-        : { name: robotName, links: robotLinks, joints: robotJoints, rootLinkId, selection: { type: null, id: null } };
-    } else {
-      robot = {
-        name: robotName,
-        links: robotLinks,
-        joints: robotJoints,
-        rootLinkId,
-        selection: { type: null, id: null },
-      };
-    }
+    const robot = buildRobotForExport();
+    const exportName = getRobotExportName(robot);
 
     const zip = new JSZip();
-    const urdfFolder = zip.folder("urdf");
-    const meshFolder = zip.folder("meshes");
     const hardwareFolder = zip.folder("hardware");
-    const mujocoFolder = zip.folder("mujoco");
 
     // 1. Generate Standard URDF
     const xml = generateURDF(robot, false);
-    urdfFolder?.file(`${robot.name}.urdf`, xml);
+    zip.file(`${exportName}.urdf`, xml);
 
     // 2. Generate Extended URDF (with hardware info)
     const extendedXml = generateURDF(robot, true);
-    urdfFolder?.file(`${robot.name}_extended.urdf`, extendedXml);
+    zip.file(`${exportName}_extended.urdf`, extendedXml);
 
     // 3. Generate BOM
     const bomCsv = generateBOM(robot);
     hardwareFolder?.file("bom_list.csv", bomCsv);
 
     // 4. Generate MuJoCo XML
-    const mujocoXml = generateMujocoXML(robot);
-    mujocoFolder?.file(`${robot.name}.xml`, mujocoXml);
+    const mujocoXml = generateMujocoXML(robot, { meshdir: 'meshes/' });
+    zip.file(`${exportName}.xml`, mujocoXml);
 
     // 5. Add Meshes
-    const referencedFiles = new Set<string>();
-    Object.values(robot.links).forEach((link: UrdfLink) => {
-      if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-        referencedFiles.add(link.visual.meshPath);
-      }
-      if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
-        referencedFiles.add(link.collision.meshPath);
-      }
-    });
-
-    const promises: Promise<void>[] = [];
-    referencedFiles.forEach(fileName => {
-      const blobUrl = assets[fileName];
-      if (blobUrl) {
-        const p = fetch(blobUrl)
-          .then(res => res.blob())
-          .then(blob => {
-            meshFolder?.file(fileName, blob);
-          })
-          .catch((err: any) => console.error(`Failed to load mesh ${fileName}`, err));
-        promises.push(p);
-      }
-    });
-
-    await Promise.all(promises);
+    await addMeshesToZip(robot, zip);
 
     // Generate and download ZIP
-    zip.generateAsync({ type: "blob" })
-      .then(function (content: Blob) {
-        const url = URL.createObjectURL(content);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${robot.name}_package.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      });
-  }, [robotName, robotLinks, robotJoints, rootLinkId, assets, generateBOM, assemblyState, getMergedRobotData]);
+    const content = await zip.generateAsync({ type: "blob" });
+    downloadBlob(content, `${exportName}_package.zip`);
+  }, [buildRobotForExport, getRobotExportName, generateBOM, addMeshesToZip, downloadBlob]);
+
+  const handleExportWithConfig = useCallback(async (config: ExportDialogConfig) => {
+    const robot = buildRobotForExport();
+    const exportName = getRobotExportName(robot);
+    const zip = new JSZip();
+
+    if (config.format === 'mjcf') {
+      const { meshdir, addFloatBase, includeActuators, actuatorType, includeMeshes, compressSTL, stlQuality } = config.mjcf;
+      zip.file(
+        `${exportName}.xml`,
+        generateMujocoXML(robot, { meshdir, addFloatBase, includeActuators, actuatorType }),
+      );
+      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const content = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(content, `${exportName}_mjcf.zip`);
+    } else if (config.format === 'urdf') {
+      const { includeExtended, includeBOM, includeMeshes, compressSTL, stlQuality } = config.urdf;
+      zip.file(`${exportName}.urdf`, generateURDF(robot, includeExtended));
+      if (includeBOM) {
+        const hardwareFolder = zip.folder('hardware');
+        hardwareFolder?.file('bom_list.csv', generateBOM(robot));
+      }
+      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const content = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(content, `${exportName}_urdf.zip`);
+    } else if (config.format === 'xacro') {
+      const { rosVersion, rosHardwareInterface, includeMeshes, compressSTL, stlQuality } = config.xacro;
+      const xacroContent = injectGazeboTags(generateURDF(robot, false), robot, rosVersion, rosHardwareInterface);
+      zip.file(`${exportName}.urdf.xacro`, xacroContent);
+      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const content = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(content, `${exportName}_xacro.zip`);
+    }
+  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob, generateBOM]);
 
   // Export project as .usp
   const handleExportProject = useCallback(async () => {
@@ -153,8 +282,11 @@ export function useFileExport() {
   }, [robotName, assemblyState, appMode, lang, theme, availableFiles, assets, originalFileFormat, getMergedRobotData]);
 
   return {
+    handleExportURDF,
+    handleExportMJCF,
     handleExport,
     handleExportProject,
+    handleExportWithConfig,
     generateBOM,
   };
 }

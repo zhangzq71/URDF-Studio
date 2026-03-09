@@ -5,6 +5,17 @@
 
 import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState, RobotData } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import {
+  MAX_GEOMETRY_DIMENSION_DECIMALS,
+  MAX_PROPERTY_DECIMALS,
+  formatNumberWithMaxDecimals,
+} from '@/core/utils/numberPrecision';
+import { normalizeMeshPathForExport } from '../meshPathUtils';
+
+const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'planar']);
+const FULL_LIMIT_EXPORT_TYPES = new Set(['revolute', 'prismatic']);
+const EFFORT_VELOCITY_LIMIT_EXPORT_TYPES = new Set(['continuous']);
+const DYNAMICS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic']);
 
 // Helper to convert hex color to RGBA string
 const hexToRgba = (hex: string): string => {
@@ -18,6 +29,50 @@ const hexToRgba = (hex: string): string => {
   return '0.5 0.5 0.5 1.0'; // fallback gray
 };
 
+const generateLimitTag = (joint: UrdfJoint, formatScalar: (n: number) => string): string | null => {
+  const jointType = String(joint.type).toLowerCase();
+  if (FULL_LIMIT_EXPORT_TYPES.has(jointType)) {
+    return `    <limit lower="${formatScalar(joint.limit.lower)}" upper="${formatScalar(joint.limit.upper)}" effort="${formatScalar(joint.limit.effort)}" velocity="${formatScalar(joint.limit.velocity)}" />`;
+  }
+  if (EFFORT_VELOCITY_LIMIT_EXPORT_TYPES.has(jointType)) {
+    return `    <limit effort="${formatScalar(joint.limit.effort)}" velocity="${formatScalar(joint.limit.velocity)}" />`;
+  }
+  return null;
+};
+
+const generateCollisionElement = (
+  collision: UrdfLink['collision'],
+  vecStr: (v: { x: number; y: number; z: number }) => string,
+  rotStr: (v: { r: number; p: number; y: number }) => string,
+  formatShape: (n: number) => string,
+  exportRobotName: string,
+): string => {
+  if (!collision || collision.type === GeometryType.NONE) return '';
+
+  let xml = `    <collision>\n`;
+  if (collision.origin) {
+    xml += `      <origin xyz="${vecStr(collision.origin.xyz)}" rpy="${rotStr(collision.origin.rpy)}" />\n`;
+  }
+  xml += `      <geometry>\n`;
+  if (collision.type === GeometryType.BOX) {
+    xml += `        <box size="${vecStr(collision.dimensions)}" />\n`;
+  } else if (collision.type === GeometryType.CYLINDER) {
+    xml += `        <cylinder radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
+  } else if (collision.type === GeometryType.SPHERE) {
+    xml += `        <sphere radius="${formatShape(collision.dimensions.x)}" />\n`;
+  } else if (collision.type === GeometryType.CAPSULE) {
+    xml += `        <capsule radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
+  } else if (collision.type === GeometryType.MESH) {
+    const meshPath = collision.meshPath ? normalizeMeshPathForExport(collision.meshPath) : 'part_collision.stl';
+    const filename = `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
+    xml += `        <mesh filename="${filename}" />\n`;
+  }
+  xml += `      </geometry>\n`;
+  xml += `    </collision>\n`;
+
+  return xml;
+};
+
 export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean = false): string => {
   const mergedData = mergeAssembly(assembly);
   return generateURDF(mergedData as unknown as RobotState, extended);
@@ -25,13 +80,15 @@ export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean 
 
 export const generateURDF = (robot: RobotState, extended: boolean = false): string => {
   const { name, links, joints, rootLinkId } = robot;
+  const exportRobotName = name?.trim() ? name : 'robot';
 
   let xml = `<?xml version="1.0"?>\n<robot name="${name}">\n\n`;
 
   // Helper to format numbers
-  const f = (n: number) => n.toFixed(4);
-  const vecStr = (v: { x: number; y: number; z: number }) => `${f(v.x)} ${f(v.y)} ${f(v.z)}`;
-  const rotStr = (v: { r: number; p: number; y: number }) => `${f(v.r)} ${f(v.p)} ${f(v.y)}`;
+  const formatScalar = (n: number) => formatNumberWithMaxDecimals(n, MAX_PROPERTY_DECIMALS);
+  const formatShape = (n: number) => formatNumberWithMaxDecimals(n, MAX_GEOMETRY_DIMENSION_DECIMALS);
+  const vecStr = (v: { x: number; y: number; z: number }) => `${formatScalar(v.x)} ${formatScalar(v.y)} ${formatScalar(v.z)}`;
+  const rotStr = (v: { r: number; p: number; y: number }) => `${formatScalar(v.r)} ${formatScalar(v.p)} ${formatScalar(v.y)}`;
 
   // Generate Links
   Object.values(links).forEach((link) => {
@@ -48,13 +105,14 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         if (link.visual.type === GeometryType.BOX) {
           xml += `        <box size="${vecStr(link.visual.dimensions)}" />\n`;
         } else if (link.visual.type === GeometryType.CYLINDER) {
-          xml += `        <cylinder radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
+          xml += `        <cylinder radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.SPHERE) {
-          xml += `        <sphere radius="${f(link.visual.dimensions.x)}" />\n`;
+          xml += `        <sphere radius="${formatShape(link.visual.dimensions.x)}" />\n`;
         } else if (link.visual.type === GeometryType.CAPSULE) {
-          xml += `        <capsule radius="${f(link.visual.dimensions.x)}" length="${f(link.visual.dimensions.y)}" />\n`;
+          xml += `        <capsule radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
-           const filename = link.visual.meshPath ? `package://${name}/meshes/${link.visual.meshPath}` : 'package://robot/meshes/part.stl';
+           const meshPath = link.visual.meshPath ? normalizeMeshPathForExport(link.visual.meshPath) : 'part.stl';
+           const filename = `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
            xml += `        <mesh filename="${filename}" />\n`;
         }
         xml += `      </geometry>\n`;
@@ -64,36 +122,19 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
         xml += `    </visual>\n`;
     }
 
-    // Collision
-    if (link.collision && link.collision.type !== GeometryType.NONE) {
-        xml += `    <collision>\n`;
-        if (link.collision.origin) {
-            xml += `      <origin xyz="${vecStr(link.collision.origin.xyz)}" rpy="${rotStr(link.collision.origin.rpy)}" />\n`;
-        }
-        xml += `      <geometry>\n`;
-         if (link.collision.type === GeometryType.BOX) {
-          xml += `        <box size="${vecStr(link.collision.dimensions)}" />\n`;
-        } else if (link.collision.type === GeometryType.CYLINDER) {
-          xml += `        <cylinder radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
-        } else if (link.collision.type === GeometryType.SPHERE) {
-          xml += `        <sphere radius="${f(link.collision.dimensions.x)}" />\n`;
-        } else if (link.collision.type === GeometryType.CAPSULE) {
-          xml += `        <capsule radius="${f(link.collision.dimensions.x)}" length="${f(link.collision.dimensions.y)}" />\n`;
-        } else if (link.collision.type === GeometryType.MESH) {
-           const filename = link.collision.meshPath ? `package://${name}/meshes/${link.collision.meshPath}` : 'package://robot/meshes/part_collision.stl';
-           xml += `        <mesh filename="${filename}" />\n`;
-        }
-        xml += `      </geometry>\n`;
-        xml += `    </collision>\n`;
-    }
+    // Collision (primary + additional bodies on the same link)
+    xml += generateCollisionElement(link.collision, vecStr, rotStr, formatShape, exportRobotName);
+    (link.collisionBodies || []).forEach((collisionBody) => {
+      xml += generateCollisionElement(collisionBody, vecStr, rotStr, formatShape, exportRobotName);
+    });
 
     // Inertial
     xml += `    <inertial>\n`;
     if (link.inertial.origin) {
       xml += `      <origin xyz="${vecStr(link.inertial.origin.xyz)}" rpy="${rotStr(link.inertial.origin.rpy)}" />\n`;
     }
-    xml += `      <mass value="${link.inertial.mass}" />\n`;
-    xml += `      <inertia ixx="${f(link.inertial.inertia.ixx)}" ixy="${f(link.inertial.inertia.ixy)}" ixz="${f(link.inertial.inertia.ixz)}" iyy="${f(link.inertial.inertia.iyy)}" iyz="${f(link.inertial.inertia.iyz)}" izz="${f(link.inertial.inertia.izz)}" />\n`;
+    xml += `      <mass value="${formatScalar(link.inertial.mass)}" />\n`;
+    xml += `      <inertia ixx="${formatScalar(link.inertial.inertia.ixx)}" ixy="${formatScalar(link.inertial.inertia.ixy)}" ixz="${formatScalar(link.inertial.inertia.ixz)}" iyy="${formatScalar(link.inertial.inertia.iyy)}" iyz="${formatScalar(link.inertial.inertia.iyz)}" izz="${formatScalar(link.inertial.inertia.izz)}" />\n`;
     xml += `    </inertial>\n`;
     xml += `  </link>\n\n`;
   });
@@ -103,25 +144,35 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
     const parent = links[joint.parentLinkId];
     const child = links[joint.childLinkId];
     if (!parent || !child) return;
+    const jointType = String(joint.type).toLowerCase();
 
     xml += `  <joint name="${joint.name}" type="${joint.type}">\n`;
     xml += `    <parent link="${parent.name}" />\n`;
     xml += `    <child link="${child.name}" />\n`;
     xml += `    <origin xyz="${vecStr(joint.origin.xyz)}" rpy="${rotStr(joint.origin.rpy)}" />\n`;
-    if (joint.type !== 'fixed') {
+    if (AXIS_EXPORT_TYPES.has(jointType)) {
         xml += `    <axis xyz="${vecStr(joint.axis)}" />\n`;
-        xml += `    <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
-        if (joint.dynamics && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)) {
-            xml += `    <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
-        }
+    }
 
+    const limitTag = generateLimitTag(joint, formatScalar);
+    if (limitTag) {
+        xml += `${limitTag}\n`;
+    }
+
+    if (DYNAMICS_EXPORT_TYPES.has(jointType)) {
+        if (joint.dynamics && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)) {
+            xml += `    <dynamics damping="${formatScalar(joint.dynamics.damping)}" friction="${formatScalar(joint.dynamics.friction)}" />\n`;
+        }
+    }
+
+    if (DYNAMICS_EXPORT_TYPES.has(jointType)) {
         // Extended Hardware Info
         if (extended && joint.hardware) {
             xml += `    <hardware>\n`;
             if (joint.hardware.motorType) xml += `      <motorType>${joint.hardware.motorType}</motorType>\n`;
             if (joint.hardware.motorId) xml += `      <motorId>${joint.hardware.motorId}</motorId>\n`;
             if (joint.hardware.motorDirection) xml += `      <motorDirection>${joint.hardware.motorDirection}</motorDirection>\n`;
-            if (joint.hardware.armature !== undefined) xml += `      <armature>${joint.hardware.armature}</armature>\n`;
+            if (joint.hardware.armature !== undefined) xml += `      <armature>${formatScalar(joint.hardware.armature)}</armature>\n`;
             xml += `    </hardware>\n`;
         }
     }
@@ -130,4 +181,97 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
 
   xml += `</robot>`;
   return xml;
+};
+
+export type RosHardwareInterface = 'effort' | 'position' | 'velocity';
+
+/**
+ * Generate ROS1 <transmission> tags for non-fixed joints.
+ * These are appended inside the <robot> element before the closing tag.
+ */
+export const generateRos1Transmissions = (
+  robot: RobotState,
+  hwInterface: RosHardwareInterface = 'effort',
+): string => {
+  const { joints } = robot;
+  const ifName = hwInterface === 'effort'
+    ? 'hardware_interface/EffortJointInterface'
+    : hwInterface === 'position'
+    ? 'hardware_interface/PositionJointInterface'
+    : 'hardware_interface/VelocityJointInterface';
+
+  let xml = '';
+  Object.values(joints).forEach((j) => {
+    const jType = String(j.type).toLowerCase();
+    if (jType === 'fixed') return;
+    xml += `  <transmission name="${j.name}_trans">\n`;
+    xml += `    <type>transmission_interface/SimpleTransmission</type>\n`;
+    xml += `    <joint name="${j.name}">\n`;
+    xml += `      <hardwareInterface>${ifName}</hardwareInterface>\n`;
+    xml += `    </joint>\n`;
+    xml += `    <actuator name="${j.name}_motor">\n`;
+    xml += `      <hardwareInterface>${ifName}</hardwareInterface>\n`;
+    xml += `      <mechanicalReduction>1</mechanicalReduction>\n`;
+    xml += `    </actuator>\n`;
+    xml += `  </transmission>\n\n`;
+  });
+  return xml;
+};
+
+/**
+ * Generate ROS2 <ros2_control> block + Gazebo plugin tag.
+ * These are appended inside the <robot> element before the closing tag.
+ */
+export const generateRos2Control = (
+  robot: RobotState,
+  hwInterface: RosHardwareInterface = 'effort',
+  robotName?: string,
+): string => {
+  const { joints, name } = robot;
+  const ctrlName = robotName || name || 'robot';
+  const cmdIf = hwInterface === 'position' ? 'position' : hwInterface === 'velocity' ? 'velocity' : 'effort';
+
+  let xml = `  <ros2_control name="${ctrlName}" type="system">\n`;
+  xml += `    <hardware>\n`;
+  xml += `      <plugin>mock_components/GenericSystem</plugin>\n`;
+  xml += `    </hardware>\n`;
+
+  Object.values(joints).forEach((j) => {
+    const jType = String(j.type).toLowerCase();
+    if (jType === 'fixed') return;
+    xml += `    <joint name="${j.name}">\n`;
+    xml += `      <command_interface name="${cmdIf}"/>\n`;
+    xml += `      <state_interface name="position"/>\n`;
+    xml += `      <state_interface name="velocity"/>\n`;
+    if (cmdIf === 'effort') {
+      xml += `      <state_interface name="effort"/>\n`;
+    }
+    xml += `    </joint>\n`;
+  });
+
+  xml += `  </ros2_control>\n\n`;
+
+  xml += `  <gazebo>\n`;
+  xml += `    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">\n`;
+  xml += `      <robot_sim_type>gazebo_ros2_control/GazeboSystem</robot_sim_type>\n`;
+  xml += `    </plugin>\n`;
+  xml += `  </gazebo>\n`;
+
+  return xml;
+};
+
+/**
+ * Inject ROS1 or ROS2 Gazebo tags into an already-generated URDF string.
+ * Inserts the extra XML just before the closing </robot> tag.
+ */
+export const injectGazeboTags = (
+  urdfXml: string,
+  robot: RobotState,
+  rosVersion: 'ros1' | 'ros2',
+  hwInterface: RosHardwareInterface = 'effort',
+): string => {
+  const extra = rosVersion === 'ros1'
+    ? generateRos1Transmissions(robot, hwInterface)
+    : generateRos2Control(robot, hwInterface);
+  return urdfXml.replace(/(<\/robot>)\s*$/, `\n${extra}</robot>`);
 };

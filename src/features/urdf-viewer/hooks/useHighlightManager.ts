@@ -1,5 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
+import type { UrdfLink } from '@/types';
+import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import {
     highlightMaterial,
     collisionHighlightMaterial
@@ -12,6 +14,7 @@ export interface UseHighlightManagerOptions {
     highlightMode: 'link' | 'collision';
     showCollision: boolean;
     showVisual: boolean;
+    robotLinks?: Record<string, UrdfLink>;
     linkMeshMapRef: React.MutableRefObject<Map<string, THREE.Mesh[]>>;
 }
 
@@ -20,12 +23,12 @@ export interface UseHighlightManagerResult {
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
     revertAllHighlights: () => void;
-    getRobotBoundingBox: () => THREE.Box3 | null;
-    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster) => boolean;
-    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, THREE.Material | THREE.Material[]>>;
+    getRobotBoundingBox: (forceRefresh?: boolean) => THREE.Box3 | null;
+    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster, forceRefresh?: boolean) => boolean;
+    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
     boundingBoxNeedsUpdateRef: React.MutableRefObject<boolean>;
     getTriangleVertices: (
         geometry: THREE.BufferGeometry,
@@ -36,24 +39,41 @@ export interface UseHighlightManagerResult {
     ) => void;
 }
 
+interface HighlightedMaterialState {
+    transparent: boolean;
+    opacity: number;
+    depthTest: boolean;
+    depthWrite: boolean;
+}
+
+export interface HighlightedMeshSnapshot {
+    material: THREE.Material | THREE.Material[];
+    renderOrder: number;
+    materialStates: HighlightedMaterialState[];
+}
+
 export function useHighlightManager({
     robot,
     robotVersion,
     highlightMode,
     showCollision,
     showVisual,
+    robotLinks,
     linkMeshMapRef
 }: UseHighlightManagerOptions): UseHighlightManagerResult {
+    const BOUNDING_BOX_CACHE_MS = 33;
     // PERFORMANCE: Cached robot bounding box for two-phase detection
     const robotBoundingBoxRef = useRef<THREE.Box3 | null>(null);
+    const robotBoundingBoxUpdatedAtRef = useRef(0);
     const boundingBoxNeedsUpdateRef = useRef(true);
 
     // Map to track currently highlighted meshes for O(1) revert instead of traverse
-    const highlightedMeshesRef = useRef<Map<THREE.Mesh, THREE.Material | THREE.Material[]>>(new Map());
+    const highlightedMeshesRef = useRef<Map<THREE.Mesh, HighlightedMeshSnapshot>>(new Map());
 
     // Refs for visibility state
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
+    const robotLinksRef = useRef(robotLinks);
 
     // PERFORMANCE: Pre-allocated vectors for triangle vertices (object pooling)
     const _triVert0 = useRef(new THREE.Vector3());
@@ -63,32 +83,89 @@ export function useHighlightManager({
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
+    useEffect(() => { robotLinksRef.current = robotLinks; }, [robotLinks]);
 
     // PERFORMANCE: Update robot bounding box when robot changes
     useEffect(() => {
         if (robot) {
             boundingBoxNeedsUpdateRef.current = true;
+            robotBoundingBoxUpdatedAtRef.current = 0;
         }
     }, [robot, robotVersion]);
 
+    // Visibility mode changes alter which meshes participate in setFromObject().
+    // Mark bbox dirty so hover broad-phase remains accurate after toggles.
+    useEffect(() => {
+        if (robot) {
+            boundingBoxNeedsUpdateRef.current = true;
+            robotBoundingBoxUpdatedAtRef.current = 0;
+        }
+    }, [robot, showCollision, showVisual, highlightMode, robotLinks]);
+
+    const getCollisionGeometryByIndex = useCallback((linkData: UrdfLink | undefined, colliderIndex: number) => {
+        if (!linkData) return undefined;
+        return getCollisionGeometryByObjectIndex(linkData, colliderIndex)?.geometry;
+    }, []);
+
+    const getColliderIndex = useCallback((collider: THREE.Object3D): number => {
+        const linkObject = collider.parent && (collider.parent as any).isURDFLink
+            ? collider.parent
+            : null;
+        if (!linkObject) return 0;
+
+        const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
+        const colliderIndex = colliders.indexOf(collider);
+        return colliderIndex >= 0 ? colliderIndex : 0;
+    }, []);
+
+    const getMeshVisibility = useCallback((mesh: THREE.Mesh) => {
+        const linkName = typeof mesh.userData?.parentLinkName === 'string'
+            ? mesh.userData.parentLinkName
+            : undefined;
+        const linkData = linkName ? robotLinksRef.current?.[linkName] : undefined;
+
+        if (mesh.userData?.isCollisionMesh || (mesh.parent && (mesh.parent as any).isURDFCollider)) {
+            const colliderRoot = mesh.parent && (mesh.parent as any).isURDFCollider
+                ? mesh.parent
+                : null;
+            const colliderIndex = colliderRoot ? getColliderIndex(colliderRoot) : 0;
+            const geometry = getCollisionGeometryByIndex(linkData, colliderIndex);
+            return showCollisionRef.current && geometry?.visible !== false;
+        }
+
+        return showVisualRef.current
+            && linkData?.visible !== false
+            && linkData?.visual.visible !== false;
+    }, [getColliderIndex, getCollisionGeometryByIndex]);
+
     // Helper to get/update robot bounding box (cached)
-    const getRobotBoundingBox = useCallback(() => {
+    const getRobotBoundingBox = useCallback((forceRefresh = false) => {
         if (!robot) return null;
-        if (boundingBoxNeedsUpdateRef.current || !robotBoundingBoxRef.current) {
-            if (!robotBoundingBoxRef.current) {
-                robotBoundingBoxRef.current = new THREE.Box3();
-            }
+
+        if (!robotBoundingBoxRef.current) {
+            robotBoundingBoxRef.current = new THREE.Box3();
+        }
+
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const shouldRefresh =
+            forceRefresh
+            || boundingBoxNeedsUpdateRef.current
+            || robotBoundingBoxUpdatedAtRef.current === 0
+            || now - robotBoundingBoxUpdatedAtRef.current >= BOUNDING_BOX_CACHE_MS;
+
+        if (shouldRefresh) {
             robotBoundingBoxRef.current.setFromObject(robot);
-            // Expand slightly to account for animation/movement
             robotBoundingBoxRef.current.expandByScalar(0.05);
             boundingBoxNeedsUpdateRef.current = false;
+            robotBoundingBoxUpdatedAtRef.current = now;
         }
+
         return robotBoundingBoxRef.current;
     }, [robot]);
 
     // PERFORMANCE: Two-phase detection - check bounding box first
-    const rayIntersectsBoundingBox = useCallback((raycaster: THREE.Raycaster): boolean => {
-        const bbox = getRobotBoundingBox();
+    const rayIntersectsBoundingBox = useCallback((raycaster: THREE.Raycaster, forceRefresh = false): boolean => {
+        const bbox = getRobotBoundingBox(forceRefresh);
         if (!bbox) return false;
         // Use pooled ray to avoid allocation
         _pooledRay.copy(raycaster.ray);
@@ -123,30 +200,55 @@ export function useHighlightManager({
         outV2.set(positionAttribute.getX(c), positionAttribute.getY(c), positionAttribute.getZ(c));
     }, []);
 
+    const captureHighlightedMeshSnapshot = useCallback((mesh: THREE.Mesh): HighlightedMeshSnapshot => {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+        return {
+            material: mesh.material,
+            renderOrder: mesh.renderOrder,
+            materialStates: materials.map((material) => ({
+                transparent: material?.transparent ?? false,
+                opacity: material?.opacity ?? 1,
+                depthTest: material?.depthTest ?? true,
+                depthWrite: material?.depthWrite ?? true,
+            })),
+        };
+    }, []);
+
+    const restoreHighlightedMeshSnapshot = useCallback((
+        mesh: THREE.Mesh,
+        snapshot: HighlightedMeshSnapshot,
+        shouldBeVisible: boolean,
+    ) => {
+        mesh.material = snapshot.material;
+        mesh.renderOrder = snapshot.renderOrder;
+        mesh.visible = shouldBeVisible;
+
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach((material, index) => {
+            const materialState = snapshot.materialStates[index];
+            if (!material || !materialState) return;
+
+            material.transparent = materialState.transparent;
+            material.opacity = materialState.opacity;
+            material.depthTest = materialState.depthTest;
+            material.depthWrite = materialState.depthWrite;
+        });
+    }, []);
+
     // Revert all highlighted meshes using the tracked Map (O(n) where n = highlighted, not total)
     const revertAllHighlights = useCallback(() => {
-        highlightedMeshesRef.current.forEach((origMaterial, mesh) => {
-            mesh.material = origMaterial;
+        highlightedMeshesRef.current.forEach((snapshot, mesh) => {
             const isCollider = (mesh as any).isURDFCollider || mesh.userData.isCollisionMesh;
+            const shouldBeVisible = getMeshVisibility(mesh);
+            restoreHighlightedMeshSnapshot(mesh, snapshot, shouldBeVisible);
+
             if (isCollider) {
-                mesh.visible = showCollisionRef.current;
-                if (mesh.parent && (mesh.parent as any).isURDFCollider) mesh.parent.visible = showCollisionRef.current;
-                const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-                materials.forEach((m: any) => { 
-                    if (m) { 
-                        m.transparent = true; 
-                        m.opacity = 0.35; 
-                        m.depthTest = false;
-                        m.depthWrite = false;
-                    } 
-                });
-                mesh.renderOrder = 0;
-            } else {
-                mesh.visible = showVisualRef.current;
+                if (mesh.parent && (mesh.parent as any).isURDFCollider) mesh.parent.visible = shouldBeVisible;
             }
         });
         highlightedMeshesRef.current.clear();
-    }, []);
+    }, [getMeshVisibility, restoreHighlightedMeshSnapshot]);
 
     // PERFORMANCE: Helper function to highlight/unhighlight link geometry
     // Uses pre-built linkMeshMap for O(1) lookup instead of traverse
@@ -154,7 +256,7 @@ export function useHighlightManager({
         linkName: string | null,
         revert: boolean,
         subType: 'visual' | 'collision' | undefined = undefined,
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => {
         if (!robot) return;
 
@@ -173,6 +275,19 @@ export function useHighlightManager({
                     // Collision mode but collision display is off - don't highlight
                     return;
                 }
+                if (linkName) {
+                    const linkData = robotLinksRef.current?.[linkName];
+                    if (targetSubType === 'visual' && (linkData?.visible === false || linkData?.visual.visible === false)) {
+                        return;
+                    }
+                    if (targetSubType === 'collision') {
+                        const collisionIndex = typeof meshToHighlight === 'number' ? meshToHighlight : 0;
+                        const geometry = getCollisionGeometryByIndex(linkData, collisionIndex);
+                        if (geometry?.visible === false) {
+                            return;
+                        }
+                    }
+                }
             }
 
             // OPTIMIZED: Use Map-based revert instead of traversing
@@ -181,38 +296,81 @@ export function useHighlightManager({
                 return;
             }
 
-            // PERFORMANCE: If highlighting a specific mesh, use direct access
-            if (meshToHighlight && (meshToHighlight as any).isMesh) {
-                const mesh = meshToHighlight as THREE.Mesh;
-                if (!highlightedMeshesRef.current.has(mesh)) {
-                    highlightedMeshesRef.current.set(mesh, mesh.material);
-                }
-                mesh.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
-                mesh.visible = true;
-                if (mesh.parent) mesh.parent.visible = true;
+            // PERFORMANCE: If highlighting a specific object subtree, use direct access.
+            if (meshToHighlight && typeof meshToHighlight !== 'number') {
+                let highlightedAnyMesh = false;
 
-                if (mesh.userData.isCollisionMesh && mesh.material) {
-                    (mesh.material as any).transparent = true;
-                    (mesh.material as any).opacity = 1.0;
-                    (mesh.material as any).depthTest = false;
-                    (mesh.material as any).depthWrite = false;
-                    mesh.renderOrder = 1000;
+                (meshToHighlight as THREE.Object3D).traverse((child: any) => {
+                    if (!child.isMesh || child.userData?.isGizmo) return;
+                    if (!getMeshVisibility(child)) return;
+
+                    highlightedAnyMesh = true;
+                    if (!highlightedMeshesRef.current.has(child)) {
+                        highlightedMeshesRef.current.set(child, captureHighlightedMeshSnapshot(child));
+                    }
+                    child.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
+                    child.visible = true;
+                    if (child.parent) child.parent.visible = true;
+
+                    if (targetSubType === 'collision' && child.material) {
+                        (child.material as any).transparent = true;
+                        (child.material as any).opacity = 1.0;
+                        (child.material as any).depthTest = false;
+                        (child.material as any).depthWrite = false;
+                        child.renderOrder = 1000;
+                    }
+                });
+
+                if (highlightedAnyMesh) {
+                    return;
                 }
-                return;
             }
 
             // PERFORMANCE: Use pre-built linkMeshMap for O(1) lookup
             if (linkName) {
+                if (typeof meshToHighlight === 'number') {
+                    const linkObj = (robot as any).links?.[linkName];
+                    if (linkObj) {
+                        const isCollision = targetSubType === 'collision';
+                        const siblings = linkObj.children.filter((c: any) => isCollision ? c.isURDFCollider : c.isURDFVisual);
+                        const targetGroup = siblings[meshToHighlight];
+                        if (targetGroup) {
+                            targetGroup.traverse((c: any) => {
+                                if (c.isMesh && !c.userData?.isGizmo) {
+                                    if (!getMeshVisibility(c)) return;
+                                    if (!highlightedMeshesRef.current.has(c)) {
+                                        highlightedMeshesRef.current.set(c, captureHighlightedMeshSnapshot(c));
+                                    }
+                                    c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
+                                    c.visible = true;
+                                    if (c.parent) c.parent.visible = true;
+
+                                    if (targetSubType === 'collision' && c.material) {
+                                        (c.material as any).transparent = true;
+                                        (c.material as any).opacity = 1.0;
+                                        (c.material as any).depthTest = false;
+                                        (c.material as any).depthWrite = false;
+                                        c.renderOrder = 1000;
+                                    }
+                                }
+                            });
+                            return;
+                        }
+                    }
+                }
+
                 const mapKey = `${linkName}:${targetSubType}`;
                 const meshes = linkMeshMapRef.current.get(mapKey);
 
                 if (meshes && meshes.length > 0) {
+
                     for (let i = 0; i < meshes.length; i++) {
                         const mesh = meshes[i];
                         if (mesh.userData?.isGizmo) continue;
+                        if (!getMeshVisibility(mesh)) continue;
 
                         if (!highlightedMeshesRef.current.has(mesh)) {
-                            highlightedMeshesRef.current.set(mesh, mesh.material);
+                            highlightedMeshesRef.current.set(mesh, captureHighlightedMeshSnapshot(mesh));
                         }
                         mesh.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
                         mesh.visible = true;
@@ -237,9 +395,9 @@ export function useHighlightManager({
                         if (c.isMesh) {
                             const isCollider = c.isURDFCollider || c.userData.isCollisionMesh;
                             const shouldHighlight = (targetSubType === 'collision' && isCollider) || (targetSubType === 'visual' && !isCollider);
-                            if (shouldHighlight) {
+                            if (shouldHighlight && getMeshVisibility(c)) {
                                 if (!highlightedMeshesRef.current.has(c)) {
-                                    highlightedMeshesRef.current.set(c, c.material);
+                                    highlightedMeshesRef.current.set(c, captureHighlightedMeshSnapshot(c));
                                 }
                                 c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
                                 c.visible = true;
@@ -262,7 +420,7 @@ export function useHighlightManager({
         } catch (err) {
             console.warn("Error in highlightGeometry:", err);
         }
-    }, [robot, showCollision, showVisual, highlightMode, revertAllHighlights, linkMeshMapRef]);
+    }, [robot, showCollision, showVisual, highlightMode, revertAllHighlights, linkMeshMapRef, getCollisionGeometryByIndex, getMeshVisibility, captureHighlightedMeshSnapshot]);
 
     return {
         highlightGeometry,

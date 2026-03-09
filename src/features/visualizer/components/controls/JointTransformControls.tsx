@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
-import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { JointType, RobotState } from '@/types';
+import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { TransformControlsState } from '../../hooks/useTransformControls';
 import { TransformConfirmUI } from './TransformConfirmUI';
 
@@ -12,6 +12,7 @@ interface JointTransformControlsProps {
   transformMode: 'translate' | 'rotate' | 'select';
   transformControlsState: TransformControlsState;
   confirmTitle?: string;
+  cancelTitle?: string;
 }
 
 /**
@@ -30,6 +31,7 @@ export const JointTransformControls = memo(function JointTransformControls({
   transformMode,
   transformControlsState,
   confirmTitle,
+  cancelTitle,
 }: JointTransformControlsProps) {
   const {
     transformControlRef,
@@ -61,11 +63,11 @@ export const JointTransformControls = memo(function JointTransformControls({
   return (
     <>
       {/* TransformControls at root Canvas level - not nested in hierarchy */}
-      <TransformControls
+      <UnifiedTransformControls
         ref={transformControlRef}
         object={selectedJointPivot}
         mode={transformMode}
-        size={0.7}
+        size={VISUALIZER_UNIFIED_GIZMO_SIZE}
         space="local"
         enabled={!pendingEdit}
         onChange={handleObjectChange}
@@ -88,6 +90,7 @@ export const JointTransformControls = memo(function JointTransformControls({
             handleConfirm={handleConfirm}
             handleCancel={handleCancel}
             confirmTitle={confirmTitle}
+            cancelTitle={cancelTitle}
           />
         );
       })()}

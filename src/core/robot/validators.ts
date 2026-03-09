@@ -6,6 +6,19 @@
 import type { RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { JointType, GeometryType } from '@/types';
 
+const AXIS_REQUIRED_TYPES = new Set<JointType>([
+    JointType.REVOLUTE,
+    JointType.CONTINUOUS,
+    JointType.PRISMATIC,
+    JointType.PLANAR,
+]);
+
+const EFFORT_VELOCITY_LIMIT_TYPES = new Set<JointType>([
+    JointType.REVOLUTE,
+    JointType.PRISMATIC,
+    JointType.CONTINUOUS,
+]);
+
 export interface ValidationError {
     type: 'error' | 'warning';
     message: string;
@@ -102,8 +115,8 @@ export const validateJoint = (joint: UrdfJoint, links: Record<string, UrdfLink>)
         errors.push({ type: 'error', message: `Invalid joint type: ${joint.type}`, path: 'type' });
     }
 
-    // Validate axis for non-fixed joints
-    if (joint.type !== JointType.FIXED) {
+    // Validate axis only for types that use axis
+    if (AXIS_REQUIRED_TYPES.has(joint.type)) {
         const axisLength = Math.sqrt(joint.axis.x ** 2 + joint.axis.y ** 2 + joint.axis.z ** 2);
         if (Math.abs(axisLength - 1) > 0.001) {
             errors.push({ type: 'warning', message: 'Joint axis should be normalized', path: 'axis' });
@@ -118,6 +131,9 @@ export const validateJoint = (joint: UrdfJoint, links: Record<string, UrdfLink>)
         if (joint.limit.lower > joint.limit.upper) {
             errors.push({ type: 'error', message: 'Lower limit cannot be greater than upper limit', path: 'limit' });
         }
+    }
+
+    if (EFFORT_VELOCITY_LIMIT_TYPES.has(joint.type)) {
         if (joint.limit.effort < 0) {
             errors.push({ type: 'error', message: 'Effort limit cannot be negative', path: 'limit.effort' });
         }

@@ -5,6 +5,7 @@ import * as THREE from 'three';
  * Caches materials based on their properties to improve performance
  */
 const materialCache = new Map<string, THREE.Material>();
+const MAX_MATERIAL_CACHE_SIZE = 512;
 
 interface MaterialOptions {
   key: string;
@@ -65,6 +66,16 @@ export function getCachedMaterial({
         polygonOffsetFactor: -1,
         polygonOffsetUnits: -1,
       });
+    }
+    // Keep cache bounded to avoid unbounded GPU memory growth in long sessions.
+    // Note: do NOT dispose evicted materials here — they may still be referenced
+    // by active Three.js meshes (via <primitive object={material} />) and calling
+    // dispose() on a live material corrupts its GPU program, causing visual glitches.
+    if (materialCache.size >= MAX_MATERIAL_CACHE_SIZE) {
+      const oldestKey = materialCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        materialCache.delete(oldestKey);
+      }
     }
     materialCache.set(cacheKey, material);
   }

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useUIStore } from '@/store';
 import { URDFLoader, URDFCollider, URDFVisual } from '@/core/parsers/urdf/loader';
-import { disposeObject3D } from '../utils/dispose';
+import { disposeObject3D, disposeMaterial } from '../utils/dispose';
 import { enhanceMaterials, collisionBaseMaterial, createMatteMaterial } from '../utils/materials';
 import { parseURDFMaterials, applyURDFMaterials } from '../utils/urdfMaterials';
 import { offsetRobotToGround } from '../utils/robotPositioning';
@@ -10,9 +11,9 @@ import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
 import { parseURDF } from '@/core/parsers/urdf/parser';
-import { processCapsuleGeometries } from '../utils/capsulePostProcessor';
 import { GeometryType } from '@/types';
 import type { UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
+import { isSingleDofJoint } from '../utils/jointTypes';
 
 function preprocessURDFForLoader(content: string): string {
     // Remove <transmission> blocks to prevent urdf-loader from finding duplicate joints
@@ -60,6 +61,16 @@ function sameGeometry(a: LinkGeometry | undefined, b: LinkGeometry | undefined):
     );
 }
 
+function sameGeometryList(a: LinkGeometry[] | undefined, b: LinkGeometry[] | undefined): boolean {
+    const listA = a || [];
+    const listB = b || [];
+
+    return (
+        listA.length === listB.length &&
+        listA.every((geometry, index) => sameGeometry(geometry, listB[index]))
+    );
+}
+
 function sameInertial(a: UrdfLink['inertial'] | undefined, b: UrdfLink['inertial'] | undefined): boolean {
     if (!a || !b) return a === b;
 
@@ -82,7 +93,8 @@ function isSameLink(prev: UrdfLink, next: UrdfLink): boolean {
         prev.visible === next.visible &&
         sameInertial(prev.inertial, next.inertial) &&
         sameGeometry(prev.visual, next.visual) &&
-        sameGeometry(prev.collision, next.collision)
+        sameGeometry(prev.collision, next.collision) &&
+        sameGeometryList(prev.collisionBodies, next.collisionBodies)
     );
 }
 
@@ -93,7 +105,8 @@ function getGeometryPatchForLink(prev: UrdfLink, next: UrdfLink): GeometryPatchC
         prev.id !== next.id ||
         prev.name !== next.name ||
         prev.visible !== next.visible ||
-        !sameInertial(prev.inertial, next.inertial)
+        !sameInertial(prev.inertial, next.inertial) ||
+        !sameGeometryList(prev.collisionBodies, next.collisionBodies)
     ) {
         return null;
     }
@@ -156,6 +169,28 @@ function clearGroupChildren(group: THREE.Object3D): void {
     }
 }
 
+function disposeReplacedMaterials(
+    material: THREE.Material | THREE.Material[] | undefined,
+    disposedMaterials: Set<THREE.Material>,
+    disposeTextures: boolean
+): void {
+    if (!material) return;
+    const mats = Array.isArray(material) ? material : [material];
+    for (const mat of mats) {
+        if (!mat || disposedMaterials.has(mat) || SHARED_MATERIALS.has(mat)) continue;
+        disposeMaterial(mat, disposeTextures, SHARED_MATERIALS);
+        disposedMaterials.add(mat);
+    }
+}
+
+function disposeTempMaterialMap(materials: Map<string, THREE.Material>): void {
+    materials.forEach((material) => {
+        if (!SHARED_MATERIALS.has(material)) {
+            disposeMaterial(material, true, SHARED_MATERIALS);
+        }
+    });
+}
+
 function findRobotLinkObject(robotModel: THREE.Object3D, linkName: string): THREE.Object3D | null {
     const links = (robotModel as any).links as Record<string, THREE.Object3D> | undefined;
     if (links?.[linkName]) return links[linkName];
@@ -169,7 +204,13 @@ function findRobotLinkObject(robotModel: THREE.Object3D, linkName: string): THRE
     return found;
 }
 
-function updateVisualMaterial(mesh: THREE.Mesh, color?: string): void {
+function updateVisualMaterial(
+    mesh: THREE.Mesh,
+    color: string | undefined,
+    disposedMaterials: Set<THREE.Material>
+): void {
+    const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
+
     const update = (mat: THREE.Material): THREE.Material => {
         const map = (mat as any).map || null;
         const next = createMatteMaterial({
@@ -190,25 +231,35 @@ function updateVisualMaterial(mesh: THREE.Mesh, color?: string): void {
     } else if (mesh.material) {
         mesh.material = update(mesh.material);
     }
+
+    // Preserve texture ownership when old map is reused by the new material.
+    disposeReplacedMaterials(previousMaterial, disposedMaterials, false);
 }
 
 function markVisualObject(obj: THREE.Object3D, linkName: string, color: string | undefined, showVisual: boolean): void {
+    const disposedMaterials = new Set<THREE.Material>();
+
     obj.traverse((child: any) => {
         if (!child.isMesh) return;
         child.userData.parentLinkName = linkName;
         child.userData.isVisualMesh = true;
         child.visible = showVisual;
-        updateVisualMaterial(child, color);
+        updateVisualMaterial(child, color, disposedMaterials);
     });
 }
 
 function markCollisionObject(obj: THREE.Object3D, linkName: string): void {
+    const disposedMaterials = new Set<THREE.Material>();
+
     obj.traverse((child: any) => {
         if (!child.isMesh) return;
+        const previousMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
         child.userData.parentLinkName = linkName;
         child.userData.isCollisionMesh = true;
         child.material = collisionBaseMaterial;
         child.renderOrder = 999;
+
+        disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
     });
 }
 
@@ -222,31 +273,42 @@ function rebuildLinkMeshMapForLink(
     const visualMeshes: THREE.Mesh[] = [];
     const collisionMeshes: THREE.Mesh[] = [];
 
-    linkObject.traverse((child: any) => {
-        if (!child.isMesh) return;
+    const collectGroupMeshes = (group: THREE.Object3D, kind: 'visual' | 'collision') => {
+        group.traverse((child: any) => {
+            if (!child.isMesh) return;
+            if (child.userData?.isGizmo || String(child.name || '').startsWith('__')) return;
+
+            child.userData.parentLinkName = linkName;
+
+            if (kind === 'collision') {
+                child.userData.isCollisionMesh = true;
+                child.userData.isVisualMesh = false;
+                collisionMeshes.push(child as THREE.Mesh);
+            } else {
+                child.userData.isVisualMesh = true;
+                child.userData.isCollisionMesh = false;
+                visualMeshes.push(child as THREE.Mesh);
+            }
+        });
+    };
+
+    linkObject.children.forEach((child: any) => {
         if (child.userData?.isGizmo || String(child.name || '').startsWith('__')) return;
 
-        let isCollision = Boolean(child.userData?.isCollisionMesh);
-        if (!isCollision) {
-            let current = child.parent;
-            while (current && current !== linkObject.parent) {
-                if (current.userData?.isGizmo || String(current.name || '').startsWith('__')) return;
-                if ((current as any).isURDFCollider) {
-                    isCollision = true;
-                    break;
-                }
-                if (current === linkObject) break;
-                current = current.parent;
-            }
+        if (child.isURDFCollider) {
+            collectGroupMeshes(child, 'collision');
+            return;
         }
 
-        if (isCollision) {
-            child.userData.isCollisionMesh = true;
+        if (child.isURDFVisual) {
+            collectGroupMeshes(child, 'visual');
+            return;
+        }
+
+        if (child.isMesh) {
             child.userData.parentLinkName = linkName;
-            collisionMeshes.push(child as THREE.Mesh);
-        } else {
             child.userData.isVisualMesh = true;
-            child.userData.parentLinkName = linkName;
+            child.userData.isCollisionMesh = false;
             visualMeshes.push(child as THREE.Mesh);
         }
     });
@@ -268,6 +330,7 @@ interface PatchCategoryOptions {
     showCollision: boolean;
     linkMeshMapRef: React.MutableRefObject<Map<string, THREE.Mesh[]>>;
     invalidate: () => void;
+    isPatchTargetValid?: () => boolean;
 }
 
 function patchGeometryCategory({
@@ -281,6 +344,7 @@ function patchGeometryCategory({
     showCollision,
     linkMeshMapRef,
     invalidate,
+    isPatchTargetValid,
 }: PatchCategoryOptions): void {
     const isCollision = category === 'collision';
 
@@ -314,7 +378,7 @@ function patchGeometryCategory({
 
     if (geometry.type === GeometryType.NONE) {
         rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-        offsetRobotToGround(robotModel);
+        robotModel.updateMatrixWorld(true);
         invalidate();
         return;
     }
@@ -350,12 +414,13 @@ function patchGeometryCategory({
             new THREE.CapsuleGeometry(radius, bodyLength, 8, 16),
             isCollision ? collisionBaseMaterial : createMatteMaterial({ color: geometry.color || '#808080' })
         );
-        mesh.rotation.set(-Math.PI / 2, 0, 0);
+        // Keep capsule axis consistent with CylinderGeometry in this loader pipeline.
+        mesh.rotation.set(Math.PI / 2, 0, 0);
         addPrimitive(mesh);
     } else if (geometry.type === GeometryType.MESH) {
         if (!geometry.meshPath) {
             rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-            offsetRobotToGround(robotModel);
+            robotModel.updateMatrixWorld(true);
             invalidate();
             return;
         }
@@ -367,7 +432,10 @@ function patchGeometryCategory({
         meshLoader(geometry.meshPath, manager, (obj, err) => {
             if (!obj) return;
 
-            if ((targetGroup!.userData.__patchToken as number) !== patchToken) {
+            if (
+                (targetGroup!.userData.__patchToken as number) !== patchToken ||
+                (isPatchTargetValid && !isPatchTargetValid())
+            ) {
                 disposeObject3D(obj, true, SHARED_MATERIALS);
                 return;
             }
@@ -387,7 +455,7 @@ function patchGeometryCategory({
 
             targetGroup!.add(obj);
             rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-            offsetRobotToGround(robotModel);
+            robotModel.updateMatrixWorld(true);
             invalidate();
         });
 
@@ -395,7 +463,7 @@ function patchGeometryCategory({
     }
 
     rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
-    offsetRobotToGround(robotModel);
+    robotModel.updateMatrixWorld(true);
     invalidate();
 }
 
@@ -407,6 +475,7 @@ interface ApplyGeometryPatchOptions {
     showCollision: boolean;
     linkMeshMapRef: React.MutableRefObject<Map<string, THREE.Mesh[]>>;
     invalidate: () => void;
+    isPatchTargetValid?: () => boolean;
 }
 
 function applyGeometryPatchInPlace({
@@ -417,6 +486,7 @@ function applyGeometryPatchInPlace({
     showCollision,
     linkMeshMapRef,
     invalidate,
+    isPatchTargetValid,
 }: ApplyGeometryPatchOptions): boolean {
     const linkObject = findRobotLinkObject(robotModel, patch.linkName);
     if (!linkObject) return false;
@@ -433,6 +503,7 @@ function applyGeometryPatchInPlace({
             showCollision,
             linkMeshMapRef,
             invalidate,
+            isPatchTargetValid,
         });
     }
 
@@ -448,6 +519,7 @@ function applyGeometryPatchInPlace({
             showCollision,
             linkMeshMapRef,
             invalidate,
+            isPatchTargetValid,
         });
     }
 
@@ -459,7 +531,9 @@ export interface UseRobotLoaderOptions {
     assets: Record<string, string>;
     showCollision: boolean;
     showVisual: boolean;
+    isMeshPreview?: boolean;
     robotLinks?: Record<string, UrdfLink>;
+    initialJointAngles?: Record<string, number>;
     onRobotLoaded?: (robot: THREE.Object3D) => void;
 }
 
@@ -476,7 +550,9 @@ export function useRobotLoader({
     assets,
     showCollision,
     showVisual,
+    isMeshPreview = false,
     robotLinks,
+    initialJointAngles,
     onRobotLoaded
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
@@ -490,10 +566,16 @@ export function useRobotLoader({
     const isMountedRef = useRef(true);
     // Track loading abort controller to cancel duplicate loads
     const loadAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
+    // Dispose the previously rendered robot only after the new one has had a chance to mount,
+    // otherwise the canvas can flash a blank frame during file switching.
+    const pendingDisposeRobotRef = useRef<THREE.Object3D | null>(null);
+    const pendingDisposeFrameRef = useRef<number | null>(null);
+    const groundAlignTimerRef = useRef<number[]>([]);
 
     // Refs for visibility state (used in loading callback)
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
+    const initialJointAnglesRef = useRef(initialJointAngles);
 
     // PERFORMANCE: Pre-built map of linkName -> meshes for O(1) highlight lookup
     const linkMeshMapRef = useRef<Map<string, THREE.Mesh[]>>(new Map());
@@ -505,28 +587,105 @@ export function useRobotLoader({
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
+    useEffect(() => { initialJointAnglesRef.current = initialJointAngles; }, [initialJointAngles]);
+
+    const disposeRobotObject = useCallback((robotObject: THREE.Object3D | null) => {
+        if (!robotObject) return;
+        if (robotObject.parent) {
+            robotObject.parent.remove(robotObject);
+        }
+        disposeObject3D(robotObject, true, SHARED_MATERIALS);
+    }, []);
+
+    const flushPendingRobotDispose = useCallback(() => {
+        if (pendingDisposeFrameRef.current !== null && typeof window !== 'undefined') {
+            window.cancelAnimationFrame(pendingDisposeFrameRef.current);
+            pendingDisposeFrameRef.current = null;
+        }
+
+        if (pendingDisposeRobotRef.current) {
+            const robotToDispose = pendingDisposeRobotRef.current;
+            pendingDisposeRobotRef.current = null;
+            disposeRobotObject(robotToDispose);
+        }
+    }, [disposeRobotObject]);
+
+    const clearGroundAlignTimers = useCallback(() => {
+        groundAlignTimerRef.current.forEach((timer) => window.clearTimeout(timer));
+        groundAlignTimerRef.current = [];
+    }, []);
+
+    const schedulePreviousRobotDispose = useCallback((previousRobot: THREE.Object3D | null) => {
+        if (!previousRobot) return;
+
+        flushPendingRobotDispose();
+        pendingDisposeRobotRef.current = previousRobot;
+
+        const disposePreviousRobot = () => {
+            pendingDisposeFrameRef.current = null;
+            const robotToDispose = pendingDisposeRobotRef.current;
+            pendingDisposeRobotRef.current = null;
+
+            if (!robotToDispose || robotToDispose === robotRef.current) {
+                return;
+            }
+
+            disposeRobotObject(robotToDispose);
+        };
+
+        if (typeof window !== 'undefined') {
+            pendingDisposeFrameRef.current = window.requestAnimationFrame(() => {
+                pendingDisposeFrameRef.current = window.requestAnimationFrame(disposePreviousRobot);
+            });
+            return;
+        }
+
+        queueMicrotask(disposePreviousRobot);
+    }, [disposeRobotObject, flushPendingRobotDispose]);
+
+    const scheduleGroundAlignment = useCallback((loadedRobot: THREE.Object3D) => {
+        if (typeof window === 'undefined') {
+            offsetRobotToGround(loadedRobot, useUIStore.getState().groundPlaneOffset);
+            return;
+        }
+
+        clearGroundAlignTimers();
+
+        groundAlignTimerRef.current = [0, 80, 220, 500].map((delay) =>
+            window.setTimeout(() => {
+                if (!isMountedRef.current) return;
+                if (robotRef.current !== loadedRobot) return;
+
+                offsetRobotToGround(loadedRobot, useUIStore.getState().groundPlaneOffset);
+                invalidate();
+            }, delay)
+        );
+    }, [clearGroundAlignTimers, invalidate]);
 
     // Incremental path: update exactly one changed link geometry in-place and skip next full URDF reload.
     useEffect(() => {
+        if (isMeshPreview) return;
         if (!robotLinks) return;
 
         const previousLinks = prevRobotLinksRef.current;
+        const currentRobot = robotRef.current;
         prevRobotLinksRef.current = robotLinks;
 
-        if (!previousLinks || !robotRef.current) return;
+        if (!previousLinks || !currentRobot) return;
         if (isMJCFContent(urdfContent)) return;
 
         const patch = detectSingleGeometryPatch(previousLinks, robotLinks);
         if (!patch) return;
 
         const applied = applyGeometryPatchInPlace({
-            robotModel: robotRef.current,
+            robotModel: currentRobot,
             patch,
             assets,
             showVisual: showVisualRef.current,
             showCollision: showCollisionRef.current,
             linkMeshMapRef,
             invalidate,
+            isPatchTargetValid: () => isMountedRef.current && robotRef.current === currentRobot,
         });
 
         if (!applied) return;
@@ -534,7 +693,7 @@ export function useRobotLoader({
         skipReloadForContentRef.current = urdfContent;
         setRobotVersion((v) => v + 1);
         setError(null);
-    }, [robotLinks, urdfContent, assets, invalidate]);
+    }, [robotLinks, urdfContent, assets, invalidate, isMeshPreview]);
 
     // Track component mount state for preventing state updates after unmount
     useEffect(() => {
@@ -547,18 +706,26 @@ export function useRobotLoader({
     // Cleanup on unmount ONLY
     useEffect(() => {
         return () => {
+            clearGroundAlignTimers();
+            flushPendingRobotDispose();
+
             // Deep cleanup of robot resources on unmount
             if (robotRef.current) {
-                // Remove from scene
-                if (robotRef.current.parent) {
-                    robotRef.current.parent.remove(robotRef.current);
-                }
-                // Dispose all geometries, materials (except shared), and textures
-                disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
+                disposeRobotObject(robotRef.current);
                 robotRef.current = null;
             }
         };
-    }, []);
+    }, [clearGroundAlignTimers, disposeRobotObject, flushPendingRobotDispose]);
+
+    useEffect(() => {
+        if (!robot) return;
+
+        scheduleGroundAlignment(robot);
+
+        return () => {
+            clearGroundAlignTimers();
+        };
+    }, [clearGroundAlignTimers, robot, robotVersion, scheduleGroundAlignment, showCollision, showVisual]);
 
     // Load robot with proper cleanup and abort handling
     useEffect(() => {
@@ -581,9 +748,134 @@ export function useRobotLoader({
                 // We wait until the new robot is ready to avoid flickering/rendering disposed objects.
 
                 let robotModel: THREE.Object3D | null = null;
+                const isMJCFAsset = isMJCFContent(urdfContent);
+
+                const finalizeLoadedRobot = (loadedRobot: THREE.Object3D) => {
+                    if (abortController.aborted || !isMountedRef.current) {
+                        if (robotRef.current !== loadedRobot) {
+                            disposeObject3D(loadedRobot, true, SHARED_MATERIALS);
+                        }
+                        return;
+                    }
+
+                    if (!isMJCFAsset) {
+                        const materials = parseURDFMaterials(urdfContent);
+                        try {
+                            applyURDFMaterials(loadedRobot, materials);
+                        } finally {
+                            disposeTempMaterialMap(materials);
+                        }
+
+                    }
+
+                    enhanceMaterials(loadedRobot);
+
+                    const newLinkMeshMap = new Map<string, THREE.Mesh[]>();
+
+                    loadedRobot.traverse((child: any) => {
+                        let parentLink: any = null;
+                        let current = child;
+                        while (current) {
+                            if (current.isURDFLink || (loadedRobot as any).links?.[current.name]) {
+                                parentLink = current;
+                                break;
+                            }
+                            current = current.parent;
+                        }
+
+                        if (child.isURDFCollider) {
+                            child.visible = showCollisionRef.current;
+                            if (parentLink) {
+                                markCollisionObject(child, parentLink.name);
+                            } else {
+                                child.traverse((inner: any) => {
+                                    if (!inner.isMesh) return;
+                                    inner.userData.isCollisionMesh = true;
+                                    inner.material = collisionBaseMaterial;
+                                    inner.renderOrder = 999;
+                                });
+                            }
+                            child.traverse((inner: any) => {
+                                if (!inner.isMesh) return;
+
+                                inner.userData.isCollisionMesh = true;
+                                if (parentLink) {
+                                    inner.userData.parentLinkName = parentLink.name;
+                                    const key = `${parentLink.name}:collision`;
+                                    if (!newLinkMeshMap.has(key)) {
+                                        newLinkMeshMap.set(key, []);
+                                    }
+                                    newLinkMeshMap.get(key)!.push(inner);
+                                }
+                            });
+                            return;
+                        }
+
+                        if (!child.isMesh || child.userData.isCollisionMesh) {
+                            return;
+                        }
+
+                        let isVisual = false;
+                        let checkParent = child.parent;
+                        while (checkParent) {
+                            if (checkParent.isURDFCollider) {
+                                break;
+                            }
+                            if (checkParent.isURDFLink) {
+                                isVisual = true;
+                                break;
+                            }
+                            checkParent = checkParent.parent;
+                        }
+
+                        if (isVisual && parentLink) {
+                            child.userData.parentLinkName = parentLink.name;
+                            child.userData.isVisualMesh = true;
+                            const key = `${parentLink.name}:visual`;
+                            if (!newLinkMeshMap.has(key)) {
+                                newLinkMeshMap.set(key, []);
+                            }
+                            newLinkMeshMap.get(key)!.push(child);
+                        }
+
+                        child.visible = showVisualRef.current;
+                    });
+
+                    const nextJointAngles = initialJointAnglesRef.current;
+                    if (nextJointAngles && (loadedRobot as any).joints) {
+                        Object.entries(nextJointAngles).forEach(([jointName, angle]) => {
+                            const joint = (loadedRobot as any).joints?.[jointName];
+                            if (!isSingleDofJoint(joint) || typeof angle !== 'number') {
+                                return;
+                            }
+
+                            joint.setJointValue?.(angle);
+                        });
+                        loadedRobot.updateMatrixWorld(true);
+                    }
+
+                    const groundPlaneOffset = useUIStore.getState().groundPlaneOffset;
+                    offsetRobotToGround(loadedRobot, groundPlaneOffset);
+
+                    const previousRobot = robotRef.current;
+
+                    linkMeshMapRef.current = newLinkMeshMap;
+                    robotRef.current = loadedRobot;
+                    setRobot(loadedRobot);
+                    setRobotVersion((v) => v + 1);
+                    setError(null);
+                    invalidate();
+                    scheduleGroundAlignment(loadedRobot);
+
+                    if (previousRobot && previousRobot !== loadedRobot) {
+                        schedulePreviousRobotDispose(previousRobot);
+                    }
+
+                    onRobotLoaded?.(loadedRobot);
+                };
 
                 // Check if content is MJCF (MuJoCo XML)
-                if (isMJCFContent(urdfContent)) {
+                if (isMJCFAsset) {
                     robotModel = await loadMJCFToThreeJS(urdfContent, assets);
 
                     if (abortController.aborted) {
@@ -597,15 +889,8 @@ export function useRobotLoader({
                     const urdfDir = '';
                     const manager = createLoadingManager(assets, urdfDir);
                     manager.onLoad = () => {
-                        if (!robotModel || abortController.aborted || !isMountedRef.current) return;
-
-                        const materials = parseURDFMaterials(urdfContent);
-                        applyURDFMaterials(robotModel, materials);
-                        processCapsuleGeometries(robotModel, urdfContent);
-                        enhanceMaterials(robotModel);
-                        offsetRobotToGround(robotModel);
-                        setRobotVersion(v => v + 1);
-                        invalidate();
+                        if (!robotModel) return;
+                        finalizeLoadedRobot(robotModel);
                     };
                     // Use new local URDFLoader
                     const loader = new URDFLoader(manager);
@@ -615,143 +900,41 @@ export function useRobotLoader({
                     loader.loadMeshCb = createMeshLoader(assets, manager, urdfDir);
                     loader.packages = '';
 
-                    const cleanContent = preprocessURDFForLoader(urdfContent);
-                    robotModel = loader.parse(cleanContent);
+                    const loadCompletionKey = '__urdf_studio_robot_finalize__';
+                    manager.itemStart(loadCompletionKey);
+                    try {
+                        const cleanContent = preprocessURDFForLoader(urdfContent);
+                        robotModel = loader.parse(cleanContent);
 
-                    // Extract full joint limits (effort, velocity) which urdf-loader might miss
-                    const fullRobotState = parseURDF(urdfContent);
-                    if (fullRobotState && fullRobotState.joints && (robotModel as any).joints) {
-                        Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
-                             const parsedJoint = fullRobotState.joints[name];
-                             if (parsedJoint && parsedJoint.limit) {
-                                 // Ensure limit object exists on the threejs joint
-                                 if (!joint.limit) joint.limit = {};
-                                 
-                                 // Update missing properties
-                                 joint.limit.effort = parsedJoint.limit.effort;
-                                 joint.limit.velocity = parsedJoint.limit.velocity;
-                                 
-                                 // Also ensure lower/upper are consistent if they were missing
-                                 if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
-                                 if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
-                             }
-                        });
-                    }
-
-                    // Check if load was aborted (e.g., by StrictMode remount or urdfContent change)
-                    if (abortController.aborted) {
-                        // Dispose the loaded model since we don't need it
-                        if (robotModel) {
-                            disposeObject3D(robotModel, true, SHARED_MATERIALS);
-                        }
-                        return;
-                    }
-                }
-
-                if (robotModel && isMountedRef.current) {
-                    // Apply URDF materials from XML (urdf-loader doesn't handle inline rgba)
-                    if (!isMJCFContent(urdfContent)) {
-                        const materials = parseURDFMaterials(urdfContent);
-                        applyURDFMaterials(robotModel, materials);
-
-                        // Process capsule geometries (urdf-loader doesn't support capsule natively)
-                        processCapsuleGeometries(robotModel, urdfContent);
-                    }
-
-                    // Offset robot so bottom is at ground level (Y=0)
-                    offsetRobotToGround(robotModel);
-
-                    enhanceMaterials(robotModel);
-
-                    // PERFORMANCE: Build linkName -> meshes map and inject userData in single traverse
-                    // This eliminates the need for traverse in highlightGeometry
-                    const newLinkMeshMap = new Map<string, THREE.Mesh[]>();
-
-                    robotModel.traverse((child: any) => {
-                        // Find parent link for this object
-                        let parentLink: any = null;
-                        let current = child;
-                        while (current) {
-                            if (current.isURDFLink || (robotModel as any).links?.[current.name]) {
-                                parentLink = current;
-                                break;
-                            }
-                            current = current.parent;
-                        }
-
-                        // Handle collision meshes
-                        if (child.isURDFCollider) {
-                            child.visible = showCollisionRef.current;
-                            child.traverse((inner: any) => {
-                                if (inner.isMesh) {
-                                    inner.userData.isCollisionMesh = true;
-                                    // Inject parent link name for fast lookup
-                                    if (parentLink) {
-                                        inner.userData.parentLinkName = parentLink.name;
-                                    }
-                                    // Add to link mesh map
-                                    if (parentLink) {
-                                        const key = `${parentLink.name}:collision`;
-                                        if (!newLinkMeshMap.has(key)) {
-                                            newLinkMeshMap.set(key, []);
-                                        }
-                                        newLinkMeshMap.get(key)!.push(inner);
-                                    }
+                        const fullRobotState = parseURDF(urdfContent);
+                        if (fullRobotState && fullRobotState.joints && (robotModel as any).joints) {
+                            Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
+                                const parsedJoint = fullRobotState.joints[name];
+                                if (parsedJoint && parsedJoint.limit) {
+                                    if (!joint.limit) joint.limit = {};
+                                    joint.limit.effort = parsedJoint.limit.effort;
+                                    joint.limit.velocity = parsedJoint.limit.velocity;
+                                    if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
+                                    if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
                                 }
                             });
                         }
-                        // Handle visual meshes
-                        else if (child.isMesh && !child.userData.isCollisionMesh) {
-                            // Check if it's a visual (not a joint or collider)
-                            let isVisual = false;
-                            let checkParent = child.parent;
-                            while (checkParent) {
-                                if (checkParent.isURDFCollider) {
-                                    break; // Already handled as collision
-                                }
-                                if (checkParent.isURDFLink) {
-                                    isVisual = true;
-                                    break;
-                                }
-                                checkParent = checkParent.parent;
+
+                        if (abortController.aborted) {
+                            if (robotModel) {
+                                disposeObject3D(robotModel, true, SHARED_MATERIALS);
                             }
-
-                            if (isVisual && parentLink) {
-                                child.userData.parentLinkName = parentLink.name;
-                                child.userData.isVisualMesh = true;
-                                const key = `${parentLink.name}:visual`;
-                                if (!newLinkMeshMap.has(key)) {
-                                    newLinkMeshMap.set(key, []);
-                                }
-                                newLinkMeshMap.get(key)!.push(child);
-                            }
-
-                            child.visible = showVisualRef.current;
+                            return;
                         }
-                    });
-
-                    // Cleanup previous robot NOW, before replacing it
-                    if (robotRef.current) {
-                        // Remove from scene first
-                        if (robotRef.current.parent) {
-                            robotRef.current.parent.remove(robotRef.current);
-                        }
-                        // Deep dispose with shared materials exclusion
-                        disposeObject3D(robotRef.current, true, SHARED_MATERIALS);
-                        robotRef.current = null;
+                    } finally {
+                        manager.itemEnd(loadCompletionKey);
                     }
 
-                    // Store the pre-built map
-                    linkMeshMapRef.current = newLinkMeshMap;
+                    return;
+                }
 
-                    // Store in ref for cleanup
-                    robotRef.current = robotModel;
-                    setRobot(robotModel);
-                    setError(null);
-
-                    if (onRobotLoaded) {
-                        onRobotLoaded(robotModel);
-                    }
+                if (robotModel && isMountedRef.current) {
+                    finalizeLoadedRobot(robotModel);
                 } else if (robotModel) {
                      // Aborted or unmounted after load but before we could use it
                      disposeObject3D(robotModel, true, SHARED_MATERIALS);
@@ -770,12 +953,13 @@ export function useRobotLoader({
         return () => {
             // Mark this load as aborted to prevent state updates
             abortController.aborted = true;
+            clearGroundAlignTimers();
 
             // NOTE: We do NOT dispose robotRef.current here.
             // We allow the old robot to persist until the new one is ready, 
             // or until the component unmounts (handled by the separate useEffect).
         };
-    }, [urdfContent, assets, invalidate, onRobotLoaded]);
+    }, [assets, clearGroundAlignTimers, invalidate, onRobotLoaded, scheduleGroundAlignment, urdfContent]);
 
     return {
         robot,

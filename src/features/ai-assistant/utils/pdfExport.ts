@@ -4,7 +4,7 @@
 
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { Language } from '@/shared/i18n'
+import { translations, type Language } from '@/shared/i18n'
 import type { InspectionReport } from '@/types'
 import { InspectionReportTemplate } from '@/features/file-io/components/InspectionReportTemplate'
 
@@ -20,6 +20,7 @@ export function exportInspectionReportPdf({
   lang
 }: ExportInspectionReportPdfParams): void {
   if (!inspectionReport) return
+  const t = translations[lang]
 
   const container = document.createElement('div')
   container.id = 'pdf-report-container-modal'
@@ -52,10 +53,7 @@ export function exportInspectionReportPdf({
       minute: '2-digit'
     })
 
-    const fileName =
-      lang === 'zh'
-        ? `${robotName}_检查报告_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`
-        : `${robotName}_inspection_report_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`
+    const fileName = `${robotName}_${t.inspectionReportFileSuffix}_${dateStr.replace(/[\/\s:]/g, '_')}.pdf`
 
     const element = document.getElementById('pdf-report-container-modal')?.firstElementChild
     if (element) {
@@ -89,24 +87,27 @@ export function exportInspectionReportPdf({
       `
       document.head.appendChild(styleElement)
 
+      let restored = false
+
+      const restoreOriginalView = () => {
+        if (restored) return
+        restored = true
+        window.removeEventListener('afterprint', handleAfterPrint)
+        document.body.innerHTML = originalContent
+        document.title = originalTitle
+        styleElement.remove()
+      }
+
+      const handleAfterPrint = () => {
+        restoreOriginalView()
+      }
+
       setTimeout(() => {
+        window.addEventListener('afterprint', handleAfterPrint, { once: true })
         window.print()
 
-        window.addEventListener(
-          'afterprint',
-          () => {
-            document.body.innerHTML = originalContent
-            document.title = originalTitle
-            styleElement.remove()
-          },
-          { once: true }
-        )
-
         setTimeout(() => {
-          if (document.body.contains(reportClone)) {
-            document.body.innerHTML = originalContent
-            document.title = originalTitle
-          }
+          restoreOriginalView()
         }, 5000)
       }, 100)
     }

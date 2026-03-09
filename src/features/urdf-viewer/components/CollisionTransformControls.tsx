@@ -1,9 +1,26 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
-import { TransformControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { UnifiedTransformControls } from '@/shared/components/3d';
 import type { CollisionTransformControlsProps } from '../types';
 import { translations } from '@/shared/i18n';
+import {
+    applyAxisTransformValue,
+    degToRad,
+    formatPendingDelta,
+    getAxisTransformValue,
+    getObjectRPY,
+    radToDeg,
+    type CollisionPendingEdit,
+    type CollisionTransformAxis
+} from '../utils/collisionTransformMath';
+import { CollisionPendingEditOverlay } from './CollisionPendingEditOverlay';
+
+const COLLISION_TRANSLATE_GIZMO_SIZE = 1.18;
+const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.42;
+
+const isTransformAxis = (axis: unknown): axis is CollisionTransformAxis =>
+    axis === 'X' || axis === 'Y' || axis === 'Z';
 
 export const CollisionTransformControls: React.FC<CollisionTransformControlsProps> = ({
     robot,
@@ -11,403 +28,247 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     transformMode,
     setIsDragging,
     onTransformEnd,
-    robotLinks,
     lang = 'en',
     onTransformPending
 }) => {
     const t = translations[lang];
     const transformRef = useRef<any>(null);
+    const rotateTransformRef = useRef<any>(null);
     const { invalidate } = useThree();
     const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
+    const [pendingEdit, setPendingEdit] = useState<CollisionPendingEdit | null>(null);
+    const pendingEditRef = useRef<CollisionPendingEdit | null>(null);
+    const [inputValue, setInputValue] = useState('');
+    const controlsLocked = pendingEdit !== null;
 
-    // Pending edit state - shown after drag ends, waiting for confirm/cancel
-    const [pendingEdit, setPendingEdit] = useState<{
-        axis: string;
-        value: number;
-        startValue: number;
-        isRotate: boolean;
-    } | null>(null);
-
-    // Force re-render when pendingEdit changes
-    const [, forceUpdate] = useState(0);
-
-    // Store original transform for cancel
     const originalPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
     const originalRotationRef = useRef<THREE.Euler>(new THREE.Euler());
-
-    // Track if currently dragging
     const isDraggingRef = useRef(false);
-    const currentAxisRef = useRef<string | null>(null);
-    const startValueRef = useRef<number>(0);
+    const activeDragControlsRef = useRef<any | null>(null);
+    const currentAxisRef = useRef<CollisionTransformAxis | null>(null);
+    const currentIsRotateRef = useRef(false);
+    const startValueRef = useRef(0);
 
-    // Local input value state to prevent cursor jumping/formatting issues
-    const [inputValue, setInputValue] = useState('');
-
-    // Update axis opacity based on active axis and dragging state
-    const updateAxisOpacity = useCallback((gizmo: any, axis: string | null, isDragging: boolean) => {
-        gizmo.traverse((child: any) => {
-            if (child.material && child.material.color) {
-                // Check axis by material color (R=X, G=Y, B=Z)
-                const color = child.material.color;
-                const isXAxis = color.r > 0.5 && color.g < 0.4 && color.b < 0.4;
-                const isYAxis = color.g > 0.5 && color.r < 0.4 && color.b < 0.4;
-                const isZAxis = color.b > 0.5 && color.r < 0.4 && color.g < 0.4;
-
-                const isActiveAxis = !axis ||
-                    (axis === 'X' && isXAxis) ||
-                    (axis === 'Y' && isYAxis) ||
-                    (axis === 'Z' && isZAxis);
-
-                // When dragging: active axis stays full opacity, others become very transparent
-                // When hovering: active axis stays full opacity, others become slightly transparent
-                if (axis && !isActiveAxis) {
-                    child.material.opacity = isDragging ? 0.15 : 0.3;
-                    child.material.transparent = true;
-                } else {
-                    child.material.opacity = 1.0;
-                    child.material.transparent = false;
-                }
-                child.material.needsUpdate = true;
-            }
-        });
-    }, []);
-
-    // Track hovered/dragged axis for single-axis highlight effect
-    const [currentAxis, setCurrentAxis] = useState<string | null>(null);
-    const [isDraggingAxis, setIsDraggingAxis] = useState(false);
-
-    // Setup event listeners for TransformControls
     useEffect(() => {
-        const controls = transformRef.current;
-        if (!controls || !targetObject) return;
+        pendingEditRef.current = pendingEdit;
+    }, [pendingEdit]);
 
-        const handleDraggingChange = (event: any) => {
-            const dragging = event.value;
+    useEffect(() => {
+        const controlsList = [transformRef.current, rotateTransformRef.current].filter(Boolean) as any[];
+        if (!targetObject || controlsList.length === 0) return;
 
-            if (dragging) {
-                // Start dragging
-                isDraggingRef.current = true;
-                setIsDragging(true);
-                setIsDraggingAxis(true);
+        const cleanups: Array<() => void> = [];
+        for (const controls of controlsList) {
+            const handleDraggingChange = (event: any) => {
+                const dragging = Boolean(event.value);
 
-                // Store original position/rotation
-                originalPositionRef.current.copy(targetObject.position);
-                originalRotationRef.current.copy(targetObject.rotation);
+                if (dragging) {
+                    if (isDraggingRef.current && activeDragControlsRef.current !== controls) {
+                        return;
+                    }
 
-                // Get current axis from controls
-                const axis = controls.axis;
-                currentAxisRef.current = axis;
+                    const axis = controls.axis;
+                    if (!isTransformAxis(axis)) return;
 
-                // Update axis opacity for dragging state
-                const gizmo = (controls as any).children?.[0];
-                if (gizmo && axis) {
-                    updateAxisOpacity(gizmo, axis, true);
-                }
+                    isDraggingRef.current = true;
+                    activeDragControlsRef.current = controls;
+                    currentAxisRef.current = axis;
+                    currentIsRotateRef.current = controls.mode === 'rotate';
+                    startValueRef.current = getAxisTransformValue(
+                        targetObject,
+                        axis,
+                        currentIsRotateRef.current
+                    );
 
-                // Get start value
-                const isRotate = transformMode === 'rotate';
-                if (isRotate) {
-                    const val = axis === 'X' ? targetObject.rotation.x :
-                        axis === 'Y' ? targetObject.rotation.y :
-                            axis === 'Z' ? targetObject.rotation.z : 0;
-                    startValueRef.current = val;
-                } else {
-                    const val = axis === 'X' ? targetObject.position.x :
-                        axis === 'Y' ? targetObject.position.y :
-                            axis === 'Z' ? targetObject.position.z : 0;
-                    startValueRef.current = val;
-                }
-            } else if (isDraggingRef.current) {
-                // End dragging
-                isDraggingRef.current = false;
-                setIsDragging(false);
-                setIsDraggingAxis(false);
+                    originalPositionRef.current.copy(targetObject.position);
+                    originalRotationRef.current.copy(targetObject.rotation);
+                    setPendingEdit(null);
+                    setIsDragging(true);
+                } else if (isDraggingRef.current) {
+                    if (activeDragControlsRef.current && activeDragControlsRef.current !== controls) {
+                        return;
+                    }
 
-                const axis = currentAxisRef.current;
-                const isRotate = transformMode === 'rotate';
+                    isDraggingRef.current = false;
+                    activeDragControlsRef.current = null;
+                    setIsDragging(false);
 
-                // Reset axis opacity to hover state
-                const gizmo = (controls as any).children?.[0];
-                if (gizmo && axis) {
-                    updateAxisOpacity(gizmo, axis, false);
-                }
+                    const axis = currentAxisRef.current;
+                    if (!axis) {
+                        invalidate();
+                        return;
+                    }
 
-                // Get current value after drag
-                let currentVal = 0;
-                if (isRotate) {
-                    currentVal = axis === 'X' ? targetObject.rotation.x :
-                        axis === 'Y' ? targetObject.rotation.y :
-                            axis === 'Z' ? targetObject.rotation.z : 0;
-                } else {
-                    currentVal = axis === 'X' ? targetObject.position.x :
-                        axis === 'Y' ? targetObject.position.y :
-                            axis === 'Z' ? targetObject.position.z : 0;
-                }
+                    const isRotate = currentIsRotateRef.current;
+                    const currentVal = getAxisTransformValue(targetObject, axis, isRotate);
+                    const delta = currentVal - startValueRef.current;
 
-                const delta = currentVal - startValueRef.current;
+                    if (Math.abs(delta) <= 0.0001) {
+                        invalidate();
+                        return;
+                    }
 
-                // Show confirm UI if value changed (check for any change, positive or negative)
-                if (Math.abs(delta) > 0.0001 && axis) {
-                    const radToDeg = (rad: number) => rad * (180 / Math.PI);
-                    
                     setPendingEdit({
                         axis,
                         value: currentVal,
                         startValue: startValueRef.current,
                         isRotate
                     });
-                    
-                    // Initialize input value
-                    const displayVal = isRotate 
-                        ? radToDeg(currentVal).toFixed(2)
-                        : currentVal.toFixed(4);
-                    setInputValue(displayVal);
-                    
-                    forceUpdate(n => n + 1);
+                    setInputValue(isRotate ? radToDeg(currentVal).toFixed(2) : currentVal.toFixed(4));
                 }
-            }
-            invalidate();
-        };
 
-        controls.addEventListener('dragging-changed', handleDraggingChange);
+                invalidate();
+            };
+
+            controls.addEventListener('dragging-changed', handleDraggingChange);
+            cleanups.push(() => {
+                controls.removeEventListener('dragging-changed', handleDraggingChange);
+            });
+        }
 
         return () => {
-            controls.removeEventListener('dragging-changed', handleDraggingChange);
+            for (const cleanup of cleanups) cleanup();
         };
-    }, [targetObject, transformMode, setIsDragging, invalidate, pendingEdit, updateAxisOpacity]);
+    }, [targetObject, transformMode, setIsDragging, invalidate]);
 
-    // Find the selected collision mesh
     useEffect(() => {
         if (!robot || !selection?.id || selection.subType !== 'collision' || transformMode === 'select') {
             setTargetObject(null);
             setPendingEdit(null);
+            activeDragControlsRef.current = null;
+            isDraggingRef.current = false;
+            setIsDragging(false);
             return;
         }
 
-        const linkName = selection.id;
-        const linkObj = (robot as any).links?.[linkName];
-
+        const linkObj = (robot as any).links?.[selection.id];
         if (!linkObj) {
             setTargetObject(null);
             return;
         }
 
-        let collisionGroup: THREE.Object3D | null = null;
+        const colliders: THREE.Object3D[] = [];
         linkObj.traverse((child: any) => {
-            if (!collisionGroup && child.isURDFCollider) {
-                collisionGroup = child;
+            if (child.isURDFCollider && child.parent === linkObj) {
+                colliders.push(child);
             }
         });
 
-        if (collisionGroup) {
-            const cg = collisionGroup as THREE.Object3D;
-            setTargetObject(cg);
-            // Store original position/rotation when target changes
-            originalPositionRef.current.copy(cg.position);
-            originalRotationRef.current.copy(cg.rotation);
-        } else {
-            setTargetObject(null);
+        if (colliders.length === 0) {
+            linkObj.traverse((child: any) => {
+                if (child.isURDFCollider) {
+                    colliders.push(child);
+                }
+            });
         }
-    }, [robot, selection, transformMode]);
 
-    // Track pendingEdit in a ref to access it in cleanup/effects without triggering re-renders
-    const pendingEditRef = useRef(pendingEdit);
-    useEffect(() => {
-        pendingEditRef.current = pendingEdit;
-    }, [pendingEdit]);
+        const objectIndex = selection.objectIndex ?? 0;
+        const collisionGroup = colliders[objectIndex] || colliders[0] || null;
 
-    // Clear pending edit when selection changes or transformMode changes
+        if (!collisionGroup) {
+            setTargetObject(null);
+            return;
+        }
+
+        setTargetObject(collisionGroup);
+        if (!isDraggingRef.current && !pendingEditRef.current) {
+            originalPositionRef.current.copy(collisionGroup.position);
+            originalRotationRef.current.copy(collisionGroup.rotation);
+        }
+    }, [robot, selection, transformMode, setIsDragging]);
+
     useEffect(() => {
-        // When selection changes, cancel any pending edit by restoring original transform
         if (pendingEditRef.current && targetObject) {
             targetObject.position.copy(originalPositionRef.current);
             targetObject.rotation.copy(originalRotationRef.current);
+            targetObject.updateMatrixWorld(true);
         }
         setPendingEdit(null);
-    }, [selection?.id, selection?.type, selection?.subType, transformMode]);
+    }, [selection?.id, selection?.type, selection?.subType, transformMode, targetObject]);
 
-    // Report pending state
     useEffect(() => {
         onTransformPending?.(!!pendingEdit);
     }, [pendingEdit, onTransformPending]);
 
-    // Clear pending edit and restore when switching away from collision selection
     useEffect(() => {
         return () => {
-            // Cleanup: if component unmounts with pending edit, restore original transform
+            setIsDragging(false);
             if (pendingEditRef.current && targetObject) {
                 targetObject.position.copy(originalPositionRef.current);
                 targetObject.rotation.copy(originalRotationRef.current);
+                targetObject.updateMatrixWorld(true);
                 invalidate();
             }
         };
-    }, [targetObject]);
+    }, [targetObject, invalidate, setIsDragging]);
 
-    // Customize TransformControls appearance - thicker axes and single-axis highlight
-    useEffect(() => {
-        const controls = transformRef.current;
-        if (!controls) return;
-
-        // Access the gizmo to customize axis appearance
-        const gizmo = (controls as any).children?.[0];
-        if (!gizmo) return;
-
-        // Make axes thicker by scaling line width
-        const updateAxisAppearance = () => {
-            gizmo.traverse((child: any) => {
-                if (child.isMesh || child.isLine) {
-                    // Make lines thicker
-                    if (child.material) {
-                        if (child.material.linewidth !== undefined) {
-                            child.material.linewidth = 3;
-                        }
-                        // Scale up the geometry for thicker appearance
-                        if (!child.userData.scaled) {
-                            if (child.isLine) {
-                                child.scale.multiplyScalar(1.5);
-                            }
-                            child.userData.scaled = true;
-                        }
-                    }
-                }
-            });
-        };
-
-        updateAxisAppearance();
-
-        // Listen for axis changes to update transparency
-        const handleAxisChanged = (event: any) => {
-            // Don't allow axis changes if pending edit exists
-            if (pendingEdit) return;
-
-            const axis = event.value;
-            setCurrentAxis(axis);
-
-            // Update opacity based on current axis and dragging state
-            updateAxisOpacity(gizmo, axis, isDraggingAxis);
-            invalidate();
-        };
-
-        controls.addEventListener('axis-changed', handleAxisChanged);
-
-        return () => {
-            controls.removeEventListener('axis-changed', handleAxisChanged);
-        };
-    }, [targetObject, transformMode, invalidate, pendingEdit, isDraggingAxis, updateAxisOpacity]);
-
-    // Handle transform change (live update during drag)
     const handleObjectChange = useCallback(() => {
         invalidate();
     }, [invalidate]);
 
-    // Handle confirm - save to history
     const handleConfirm = useCallback(() => {
         if (!targetObject || !selection?.id || !onTransformEnd || !pendingEdit) return;
 
-        // Apply the edited value (in case user modified in text field)
-        const axis = pendingEdit.axis;
-        if (pendingEdit.isRotate) {
-            if (axis === 'X') targetObject.rotation.x = pendingEdit.value;
-            else if (axis === 'Y') targetObject.rotation.y = pendingEdit.value;
-            else if (axis === 'Z') targetObject.rotation.z = pendingEdit.value;
-        } else {
-            if (axis === 'X') targetObject.position.x = pendingEdit.value;
-            else if (axis === 'Y') targetObject.position.y = pendingEdit.value;
-            else if (axis === 'Z') targetObject.position.z = pendingEdit.value;
-        }
-
-        // Call onTransformEnd to save to history
         const pos = targetObject.position;
-        const euler = new THREE.Euler().setFromQuaternion(targetObject.quaternion, 'XYZ');
+        const rotation = getObjectRPY(targetObject);
 
         onTransformEnd(
             selection.id,
             { x: pos.x, y: pos.y, z: pos.z },
-            { r: euler.x, p: euler.y, y: euler.z }
+            rotation,
+            selection.objectIndex
         );
 
-        // Update original refs for next operation
         originalPositionRef.current.copy(targetObject.position);
         originalRotationRef.current.copy(targetObject.rotation);
-
         setPendingEdit(null);
         invalidate();
-    }, [targetObject, selection?.id, onTransformEnd, pendingEdit, invalidate]);
+    }, [targetObject, selection?.id, selection?.objectIndex, onTransformEnd, pendingEdit, invalidate]);
 
-    // Handle cancel - restore original transform
     const handleCancel = useCallback(() => {
-        if (targetObject) {
-            targetObject.position.copy(originalPositionRef.current);
-            targetObject.rotation.copy(originalRotationRef.current);
+        if (targetObject && pendingEdit) {
+            applyAxisTransformValue(targetObject, pendingEdit.axis, pendingEdit.startValue, pendingEdit.isRotate);
+            targetObject.updateMatrixWorld(true);
         }
         setPendingEdit(null);
         invalidate();
-    }, [targetObject, invalidate]);
+    }, [targetObject, pendingEdit, invalidate]);
 
-    // Convert radians to degrees for display
-    const radToDeg = (rad: number) => rad * (180 / Math.PI);
-    const degToRad = (deg: number) => deg * (Math.PI / 180);
+    const getDeltaDisplay = useCallback(() => formatPendingDelta(pendingEdit), [pendingEdit]);
 
-    // Get display value (degrees for rotation, meters for translation)
-    // NOTE: This is now only used for initial value, subsequent updates use inputValue state
-    const getDisplayValue = useCallback(() => {
-        if (!pendingEdit) return '0';
-        if (pendingEdit.isRotate) {
-            return radToDeg(pendingEdit.value).toFixed(2);
-        }
-        return pendingEdit.value.toFixed(4);
-    }, [pendingEdit]);
+    const getAxisLabel = useCallback((edit: CollisionPendingEdit) => {
+        if (!edit.isRotate) return edit.axis;
+        if (edit.axis === 'X') return t.roll;
+        if (edit.axis === 'Y') return t.pitch;
+        return t.yaw;
+    }, [t.pitch, t.roll, t.yaw]);
 
-    // Get delta display value
-    const getDeltaDisplay = useCallback(() => {
-        if (!pendingEdit) return '0';
-        const delta = pendingEdit.value - pendingEdit.startValue;
-        if (pendingEdit.isRotate) {
-            const degDelta = radToDeg(delta);
-            return (degDelta >= 0 ? '+' : '') + degDelta.toFixed(2);
-        }
-        return (delta >= 0 ? '+' : '') + delta.toFixed(4);
-    }, [pendingEdit]);
-
-    // Handle value change in text field
-    const handleValueChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const rawValue = e.target.value;
+    const handleValueChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+        const rawValue = event.target.value;
         setInputValue(rawValue);
 
         const inputVal = parseFloat(rawValue);
-        if (!isNaN(inputVal) && pendingEdit) {
-            // Convert degrees to radians for rotation
-            const val = pendingEdit.isRotate ? degToRad(inputVal) : inputVal;
-            setPendingEdit(prev => prev ? ({ ...prev, value: val }) : null);
+        if (!Number.isNaN(inputVal) && pendingEdit) {
+            const value = pendingEdit.isRotate ? degToRad(inputVal) : inputVal;
+            setPendingEdit((prev) => prev ? ({ ...prev, value }) : null);
 
-            // Live preview
             if (targetObject) {
-                const axis = pendingEdit.axis;
-                if (pendingEdit.isRotate) {
-                    if (axis === 'X') targetObject.rotation.x = val;
-                    else if (axis === 'Y') targetObject.rotation.y = val;
-                    else if (axis === 'Z') targetObject.rotation.z = val;
-                } else {
-                    if (axis === 'X') targetObject.position.x = val;
-                    else if (axis === 'Y') targetObject.position.y = val;
-                    else if (axis === 'Z') targetObject.position.z = val;
-                }
+                applyAxisTransformValue(targetObject, pendingEdit.axis, value, pendingEdit.isRotate);
+                targetObject.updateMatrixWorld(true);
                 invalidate();
             }
         }
     }, [pendingEdit, targetObject, invalidate]);
 
-    // Handle Enter key to confirm
-    const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
+    const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
             handleConfirm();
-        } else if (e.key === 'Escape') {
-            e.preventDefault();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
             handleCancel();
         } else {
-            // Stop propagation to prevent camera movement/other shortcuts
-            e.stopPropagation();
+            event.stopPropagation();
         }
     }, [handleConfirm, handleCancel]);
 
@@ -415,116 +276,38 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
         return null;
     }
 
-    // Get axis color
-    const getAxisColor = (axis: string | null) => {
-        if (axis === 'X') return '#ef4444';
-        if (axis === 'Y') return '#22c55e';
-        if (axis === 'Z') return '#3b82f6';
-        return '#94a3b8';
-    };
-
-    // Determine the mode for TransformControls
-    const getControlMode = () => {
-        if (transformMode === 'translate') return 'translate';
-        if (transformMode === 'rotate') return 'rotate';
-        return 'translate';
-    };
-
     return (
         <>
-            {/* Main TransformControls - disabled when pending edit exists */}
-            <TransformControls
+            <UnifiedTransformControls
                 ref={transformRef}
+                rotateRef={rotateTransformRef}
                 object={targetObject}
-                mode={getControlMode()}
-                size={0.8}
+                mode={transformMode}
+                gizmoPreset="official"
+                axesOnly
+                size={COLLISION_TRANSLATE_GIZMO_SIZE}
+                rotateSize={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
                 space="local"
-                enabled={!pendingEdit}
+                enabled={!controlsLocked}
                 onChange={handleObjectChange}
+                onRotateChange={handleObjectChange}
             />
 
-            {/* For universal mode, add rotation gizmo */}
-            {transformMode === 'universal' && (
-                <TransformControls
-                    object={targetObject}
-                    mode="rotate"
-                    size={1.2}
-                    enabled={!pendingEdit}
-                    onChange={handleObjectChange}
+            {pendingEdit && (
+                <CollisionPendingEditOverlay
+                    pendingEdit={pendingEdit}
+                    axisLabel={getAxisLabel(pendingEdit)}
+                    targetObject={targetObject}
+                    inputValue={inputValue}
+                    deltaDisplay={getDeltaDisplay()}
+                    confirmTitle={t.confirmEnter}
+                    cancelTitle={t.cancelEsc}
+                    onValueChange={handleValueChange}
+                    onKeyDown={handleKeyDown}
+                    onConfirm={handleConfirm}
+                    onCancel={handleCancel}
                 />
             )}
-
-            {/* Confirm/Cancel UI after drag ends - Fusion360 style: positioned above collision body */}
-            {pendingEdit && (() => {
-                // Calculate bounding box top position for Fusion360-like UI placement
-                const box = new THREE.Box3().setFromObject(targetObject);
-                const center = box.getCenter(new THREE.Vector3());
-                const size = box.getSize(new THREE.Vector3());
-                // Position UI just above the collision body's bounding box
-                const uiPosition: [number, number, number] = [
-                    center.x,
-                    center.y,
-                    center.z + size.z / 2 + 0.02 // Small offset above the top
-                ];
-                return (
-                <Html
-                    position={uiPosition}
-                    style={{ pointerEvents: 'auto' }}
-                    center
-                    zIndexRange={[100, 0]}
-                >
-                    <div
-                        className="flex flex-col items-center gap-1"
-                        onClick={(e) => e.stopPropagation()}
-                        onPointerDown={(e) => e.stopPropagation()}
-                    >
-                        {/* Compact input with axis indicator */}
-                        <div className="flex items-center gap-1">
-                            <span
-                                className="w-5 h-5 rounded text-white text-xs font-bold flex items-center justify-center shadow"
-                                style={{ backgroundColor: getAxisColor(pendingEdit.axis) }}
-                            >
-                                {pendingEdit.axis}
-                            </span>
-                            <input
-                                type="number"
-                                step={pendingEdit.isRotate ? "1" : "0.001"}
-                                value={inputValue}
-                                onChange={handleValueChange}
-                                onKeyDown={handleKeyDown}
-                                autoFocus
-                                className="w-20 px-1.5 py-0.5 text-xs font-mono bg-white/90 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-600 rounded text-slate-800 dark:text-white focus:outline-none focus:border-blue-500 shadow"
-                            />
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                                {pendingEdit.isRotate ? '°' : 'm'} ({getDeltaDisplay()})
-                            </span>
-                        </div>
-
-                        {/* Compact confirm/cancel buttons */}
-                        <div className="flex gap-1">
-                            <button
-                                onClick={handleConfirm}
-                                className="w-6 h-6 bg-green-500 hover:bg-green-600 text-white rounded shadow flex items-center justify-center transition-colors"
-                                title={t.confirmEnter}
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                            </button>
-                            <button
-                                onClick={handleCancel}
-                                className="w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded shadow flex items-center justify-center transition-colors"
-                                title={t.cancelEsc}
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                </Html>
-                );
-            })()}
         </>
     );
 };

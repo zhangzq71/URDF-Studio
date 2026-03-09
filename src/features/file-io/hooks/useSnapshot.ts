@@ -5,6 +5,7 @@
  */
 
 import { useCallback, useRef } from 'react';
+import { translations } from '@/shared/i18n';
 import { useUIStore } from '@/store';
 
 interface UseSnapshotOptions {
@@ -21,6 +22,7 @@ interface UseSnapshotReturn {
 export function useSnapshot(options: UseSnapshotOptions = {}): UseSnapshotReturn {
   const { onSuccess, onError, showToast } = options;
   const lang = useUIStore((s) => s.lang);
+  const t = translations[lang];
   const snapshotActionRef = useRef<(() => void) | null>(null);
 
   const handleSnapshot = useCallback(() => {
@@ -29,23 +31,17 @@ export function useSnapshot(options: UseSnapshotOptions = {}): UseSnapshotReturn
         // Trigger the snapshot logic inside the Three.js context
         snapshotActionRef.current();
         // Show progress toast
-        showToast?.(
-          lang === 'zh' ? '正在生成高清快照...' : 'Generating High-Res Snapshot...',
-          'info'
-        );
+        showToast?.(t.generatingSnapshot, 'info');
         onSuccess?.();
       } catch (e) {
         console.error('Snapshot failed:', e);
-        showToast?.(
-          lang === 'zh' ? '快照失败' : 'Snapshot failed',
-          'error'
-        );
+        showToast?.(t.snapshotFailed, 'error');
         onError?.(e as Error);
       }
     } else {
       console.warn('Snapshot action not bound');
     }
-  }, [lang, onSuccess, onError, showToast]);
+  }, [onSuccess, onError, showToast, t]);
 
   return {
     snapshotActionRef,

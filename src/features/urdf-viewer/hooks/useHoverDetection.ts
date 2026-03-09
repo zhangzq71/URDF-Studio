@@ -2,6 +2,8 @@ import { useRef, useEffect, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { highlightFaceMaterial } from '../utils/materials';
+import { collectGizmoRaycastTargets, findFirstIntersection, isGizmoObject } from '../utils/raycast';
+import { resolveSelectionTarget } from '../utils/selectionTargets';
 import type { ToolMode, URDFViewerProps } from '../types';
 
 export interface UseHoverDetectionOptions {
@@ -19,12 +21,13 @@ export interface UseHoverDetectionOptions {
     needsRaycastRef: React.MutableRefObject<boolean>;
     isOrbitDragging?: React.MutableRefObject<boolean>;
     justSelectedRef?: React.MutableRefObject<boolean>;
-    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster) => boolean;
+    isSelectionLockedRef?: React.MutableRefObject<boolean>;
+    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster, forceRefresh?: boolean) => boolean;
     highlightGeometry: (
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
 }
 
@@ -49,6 +52,7 @@ export function useHoverDetection({
     needsRaycastRef,
     isOrbitDragging,
     justSelectedRef,
+    isSelectionLockedRef,
     rayIntersectsBoundingBox,
     highlightGeometry
 }: UseHoverDetectionOptions): UseHoverDetectionResult {
@@ -56,11 +60,30 @@ export function useHoverDetection({
 
     const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh; faceIndex: number } | null>(null);
     const highlightedFaceMeshRef = useRef<THREE.Mesh | null>(null);
+    const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
+    const gizmoTargetsCacheKeyRef = useRef('');
+    const gizmoTargetsUpdatedAtRef = useRef(0);
 
     // Track last camera position to detect camera movement
     const lastCameraPosRef = useRef(new THREE.Vector3());
     // Track last toolMode to detect mode changes
     const lastToolModeRef = useRef(toolMode);
+
+    const getGizmoTargets = () => {
+        const nextCacheKey = `${scene.children.length}:${toolMode}:${selection?.type ?? 'none'}:${selection?.id ?? ''}`;
+        const now = performance.now();
+
+        if (
+            gizmoTargetsCacheKeyRef.current !== nextCacheKey
+            || now - gizmoTargetsUpdatedAtRef.current > 120
+        ) {
+            gizmoTargetsRef.current = collectGizmoRaycastTargets(scene);
+            gizmoTargetsCacheKeyRef.current = nextCacheKey;
+            gizmoTargetsUpdatedAtRef.current = now;
+        }
+
+        return gizmoTargetsRef.current;
+    };
 
     // Update face highlight mesh
     useEffect(() => {
@@ -111,7 +134,16 @@ export function useHoverDetection({
         }
 
         const highlightGeo = highlightMesh.geometry;
-        highlightGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        const existingPosition = highlightGeo.getAttribute('position') as THREE.BufferAttribute | undefined;
+        if (existingPosition && existingPosition.itemSize === 3 && existingPosition.count * 3 === positions.length) {
+            existingPosition.copyArray(positions);
+            existingPosition.needsUpdate = true;
+        } else {
+            // Release previous GPU buffer when replacing the attribute.
+            const disposable = existingPosition as THREE.BufferAttribute & { dispose?: () => void };
+            disposable?.dispose?.();
+            highlightGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        }
         highlightGeo.computeVertexNormals();
     }, [highlightedFace, scene]);
 
@@ -171,16 +203,61 @@ export function useHoverDetection({
 
         // Skip raycast if no update needed
         if (!needsRaycastRef.current) return;
-        needsRaycastRef.current = false;
 
         const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
+        const isCollisionMode = highlightMode === 'collision';
+        const selectionSubType: 'visual' | 'collision' = selection?.subType ?? (isCollisionMode ? 'collision' : 'visual');
+
+        const restoreSelectionHighlight = () => {
+            if (selection?.type === 'link' && selection.id) {
+                highlightGeometry(selection.id, false, selectionSubType, selection.objectIndex);
+            }
+        };
+
+        const clearHoverHighlight = () => {
+            if (!hoveredLinkRef.current) return;
+            highlightGeometry(
+                hoveredLinkRef.current,
+                true,
+                isCollisionMode ? 'collision' : 'visual',
+                (hoveredLinkRef as any).currentMesh || (hoveredLinkRef as any).currentObjectIndex
+            );
+            hoveredLinkRef.current = null;
+            (hoveredLinkRef as any).currentMesh = null;
+            (hoveredLinkRef as any).currentObjectIndex = null;
+            (hoveredLinkRef as any).currentSubType = null;
+            restoreSelectionHighlight();
+        };
+
+        if (isSelectionLockedRef?.current) {
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                clearHoverHighlight();
+            }
+            if (highlightedFace) {
+                setHighlightedFace(null);
+            }
+            return;
+        }
+
+        if (justSelectedRef?.current) return;
+
+        needsRaycastRef.current = false;
 
         // Handle Face Selection Mode
         if (toolMode === 'face') {
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
+            const gizmoTargets = getGizmoTargets();
+            const nearestSceneHit = gizmoTargets.length > 0
+                ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
+                : undefined;
+            if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+                if (highlightedFace) setHighlightedFace(null);
+                if (hoveredLinkRef.current) clearHoverHighlight();
+                return;
+            }
 
             // PERFORMANCE: Two-phase detection - check bounding box first
-            if (!rayIntersectsBoundingBox(raycasterRef.current)) {
+            if (!rayIntersectsBoundingBox(raycasterRef.current) && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
                 if (highlightedFace) setHighlightedFace(null);
                 return;
             }
@@ -201,8 +278,7 @@ export function useHoverDetection({
                         setHighlightedFace({ mesh: hit.object, faceIndex: hit.faceIndex as number });
                     }
                     if (hoveredLinkRef.current) {
-                        highlightGeometry(hoveredLinkRef.current, true);
-                        hoveredLinkRef.current = null;
+                        clearHoverHighlight();
                     }
                     return;
                 }
@@ -216,39 +292,39 @@ export function useHoverDetection({
             setHighlightedFace(null);
         }
 
-        if (justSelectedRef?.current) return;
-
         if (!isStandardMode) {
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                const isCollisionMode = highlightMode === 'collision';
-                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
-                hoveredLinkRef.current = null;
-                (hoveredLinkRef as any).currentMesh = null;
+                clearHoverHighlight();
             }
             return;
         }
 
         // CRITICAL: Skip hover detection if the corresponding display option is not enabled
-        const isCollisionMode = highlightMode === 'collision';
         if ((isCollisionMode && !showCollision) || (!isCollisionMode && !showVisual)) {
             // Clear any current hover since display is disabled
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
-                hoveredLinkRef.current = null;
-                (hoveredLinkRef as any).currentMesh = null;
+                clearHoverHighlight();
             }
             return;
         }
 
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        const gizmoTargets = getGizmoTargets();
+        const nearestSceneHit = gizmoTargets.length > 0
+            ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
+            : undefined;
+        if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+                clearHoverHighlight();
+            }
+            return;
+        }
 
         // PERFORMANCE: Two-phase detection - check bounding box first
-        if (!rayIntersectsBoundingBox(raycasterRef.current)) {
+        if (!rayIntersectsBoundingBox(raycasterRef.current) && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
             // Ray misses robot entirely - clear hover state if needed
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
-                hoveredLinkRef.current = null;
-                (hoveredLinkRef as any).currentMesh = null;
+                clearHoverHighlight();
             }
             return;
         }
@@ -259,7 +335,7 @@ export function useHoverDetection({
         let newHoveredMesh: THREE.Object3D | null = null;
 
         if (intersections.length > 0) {
-            const validHits = intersections.filter(hit => {
+            const firstValidHit = findFirstIntersection(intersections, (hit) => {
                 if (hit.object.userData?.isGizmo) return false;
                 let p = hit.object.parent;
                 while (p) {
@@ -288,25 +364,36 @@ export function useHoverDetection({
                 return true;
             });
 
-            if (validHits.length > 0) {
-                const hit = validHits[0];
-                newHoveredMesh = hit.object;
-                let current = hit.object as THREE.Object3D | null;
-
+            if (firstValidHit) {
+                let current: THREE.Object3D | null = firstValidHit.object;
+                let linkObj: THREE.Object3D | null = null;
                 while (current) {
+                    if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+                        newHoveredLink = current.name;
+                        linkObj = current;
+                        break;
+                    }
                     if ((robot as any).links && (robot as any).links[current.name]) {
                         newHoveredLink = current.name;
+                        linkObj = current;
                         break;
                     }
                     if (current === robot) break;
                     current = current.parent;
+                }
+
+                if (linkObj && newHoveredLink) {
+                    const resolvedTarget = resolveSelectionTarget(firstValidHit.object, linkObj);
+                    newHoveredMesh = resolvedTarget.highlightTarget;
+                } else {
+                    newHoveredLink = null;
                 }
             }
         }
 
         if (newHoveredLink !== hoveredLinkRef.current || newHoveredMesh !== (hoveredLinkRef as any).currentMesh) {
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
+                clearHoverHighlight();
             }
 
             if (newHoveredLink && newHoveredLink !== selection?.id) {
@@ -315,6 +402,8 @@ export function useHoverDetection({
 
             hoveredLinkRef.current = newHoveredLink;
             (hoveredLinkRef as any).currentMesh = newHoveredMesh;
+            (hoveredLinkRef as any).currentObjectIndex = typeof newHoveredMesh === 'number' ? newHoveredMesh : null;
+            (hoveredLinkRef as any).currentSubType = newHoveredLink ? (isCollisionMode ? 'collision' : 'visual') : null;
         }
     });
 

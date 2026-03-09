@@ -2,7 +2,7 @@
  * MeshPreview - Inline 3D preview for mesh files in the property editor
  * Shows a small Canvas with the selected mesh, auto-rotating for inspection
  */
-import React, { Suspense, useMemo, useRef } from 'react';
+import React, { Suspense, useMemo, useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
@@ -11,6 +11,7 @@ import { findAssetByPath } from '@/core/loaders/meshLoader';
 interface MeshPreviewProps {
   meshPath: string;
   assets: Record<string, string>;
+  notFoundText?: string;
 }
 
 /** Auto-fit camera using frustum projection to guarantee the full mesh is visible and centered */
@@ -18,39 +19,42 @@ function AutoFitCamera() {
   const { scene, camera, gl } = useThree();
   const fitted = useRef(false);
   const frameCount = useRef(0);
+  const boxRef = useRef(new THREE.Box3());
+  const centerRef = useRef(new THREE.Vector3());
+  const sizeRef = useRef(new THREE.Vector3());
+  const dirRef = useRef(new THREE.Vector3(0.3, 0.25, 0.92).normalize());
+  const worldUpRef = useRef(new THREE.Vector3(0, 1, 0));
+  const rightRef = useRef(new THREE.Vector3());
+  const upRef = useRef(new THREE.Vector3());
+  const hsRef = useRef(new THREE.Vector3());
 
   useFrame(() => {
     if (fitted.current) return;
-    // Wait a few frames for RotatingGroup centering + matrix propagation
     frameCount.current++;
     if (frameCount.current < 3) return;
 
     scene.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(scene);
+    const box = boxRef.current.setFromObject(scene);
     if (box.isEmpty()) return;
 
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(centerRef.current);
+    const size = box.getSize(sizeRef.current);
     const maxDim = Math.max(size.x, size.y, size.z);
     if (maxDim < 1e-6) return;
 
     const perspCamera = camera as THREE.PerspectiveCamera;
-    const vFovHalf = (perspCamera.fov * Math.PI) / 360; // half vertical FOV in radians
+    const vFovHalf = (perspCamera.fov * Math.PI) / 360;
     const aspect = gl.domElement.clientWidth / gl.domElement.clientHeight;
-    const hFovHalf = Math.atan(Math.tan(vFovHalf) * aspect); // half horizontal FOV
+    const hFovHalf = Math.atan(Math.tan(vFovHalf) * aspect);
 
-    // Camera viewing direction — slightly elevated front 3/4 view
-    const dir = new THREE.Vector3(0.3, 0.25, 0.92).normalize();
-    const worldUp = new THREE.Vector3(0, 1, 0);
-    const right = new THREE.Vector3().crossVectors(dir, worldUp).normalize();
-    const up = new THREE.Vector3().crossVectors(right, dir).normalize();
+    const dir = dirRef.current;
+    const right = rightRef.current.crossVectors(dir, worldUpRef.current).normalize();
+    const up = upRef.current.crossVectors(right, dir).normalize();
 
-    // Project AABB half-extents onto camera up/right to get visible extent
-    const hs = size.clone().multiplyScalar(0.5);
+    const hs = hsRef.current.copy(size).multiplyScalar(0.5);
     const projUp = Math.abs(up.x) * hs.x + Math.abs(up.y) * hs.y + Math.abs(up.z) * hs.z;
     const projRight = Math.abs(right.x) * hs.x + Math.abs(right.y) * hs.y + Math.abs(right.z) * hs.z;
 
-    // Required distance for each axis — like tracing rays from bbox edges to the focal point
     const distV = projUp / Math.tan(vFovHalf);
     const distH = projRight / Math.tan(hFovHalf);
     const dist = Math.max(distV, distH) * 1.05;
@@ -73,16 +77,17 @@ function RotatingGroup({ children }: { children: React.ReactNode }) {
   const groupRef = useRef<THREE.Group>(null);
   const innerRef = useRef<THREE.Group>(null);
   const centered = useRef(false);
+  const boxRef = useRef(new THREE.Box3());
+  const centerRef = useRef(new THREE.Vector3());
 
   useFrame((_, delta) => {
     if (!groupRef.current || !innerRef.current) return;
 
-    // Center once on the first valid frame — before any rotation is applied
     if (!centered.current) {
       innerRef.current.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(innerRef.current);
+      const box = boxRef.current.setFromObject(innerRef.current);
       if (!box.isEmpty()) {
-        const center = box.getCenter(new THREE.Vector3());
+        const center = box.getCenter(centerRef.current);
         innerRef.current.position.set(-center.x, -center.y, -center.z);
         innerRef.current.updateMatrixWorld(true);
         centered.current = true;
@@ -105,6 +110,7 @@ function MeshContent({ meshPath, assetUrl, assets }: { meshPath: string; assetUr
     () => new THREE.MeshStandardMaterial({ color: '#6b9bd2', metalness: 0.1, roughness: 0.6 }),
     []
   );
+  useEffect(() => () => { material.dispose(); }, [material]);
   const ext = meshPath.split('.').pop()?.toLowerCase();
 
   if (ext === 'stl') {
@@ -131,19 +137,23 @@ function LoadingFallback() {
   );
 }
 
-export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({ meshPath, assets }) => {
+export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({
+  meshPath,
+  assets,
+  notFoundText = 'Mesh not found'
+}) => {
   const assetUrl = findAssetByPath(meshPath, assets);
 
   if (!assetUrl) {
     return (
-      <div className="h-[140px] flex items-center justify-center bg-slate-50 dark:bg-google-dark-bg rounded border border-slate-200 dark:border-google-dark-border">
-        <span className="text-[10px] text-slate-400">Mesh not found</span>
+      <div className="h-[140px] flex items-center justify-center bg-element-bg rounded border border-border-black">
+        <span className="text-[10px] text-text-tertiary">{notFoundText}</span>
       </div>
     );
   }
 
   return (
-    <div className="h-[140px] rounded border border-slate-200 dark:border-google-dark-border overflow-hidden bg-gradient-to-b from-slate-50 to-slate-100 dark:from-[#1a1a1c] dark:to-[#222224]">
+    <div className="h-[140px] rounded border border-border-black overflow-hidden bg-gradient-to-b from-element-bg to-panel-bg">
       <Canvas
         camera={{ fov: 45, near: 0.001, far: 100, position: [0.5, 0.3, 0.5] }}
         gl={{ antialias: true, alpha: true }}

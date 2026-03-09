@@ -17,6 +17,7 @@ interface TransformConfirmUIProps {
   handleConfirm: () => void;
   handleCancel: () => void;
   confirmTitle?: string;
+  cancelTitle?: string;
 }
 
 /**
@@ -38,6 +39,7 @@ export const TransformConfirmUI = memo(function TransformConfirmUI({
   handleConfirm,
   handleCancel,
   confirmTitle = 'Confirm (Enter)',
+  cancelTitle = 'Cancel (Esc)',
 }: TransformConfirmUIProps) {
 
   const getAxisColor = (axis: string) => {
@@ -95,7 +97,7 @@ export const TransformConfirmUI = memo(function TransformConfirmUI({
           <button
             onClick={handleCancel}
             className="w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded shadow flex items-center justify-center transition-colors"
-            title="Cancel (Esc)"
+            title={cancelTitle}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

@@ -1,7 +1,8 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useCallback } from 'react';
 import * as THREE from 'three';
-import { GeometryType, UrdfLink } from '@/types';
+import { GeometryType, UrdfLink, UrdfVisual } from '@/types';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
+import { useSelectionStore } from '@/store/selectionStore';
 import { getCachedMaterial } from '../../utils/materialCache';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
 
@@ -17,6 +18,9 @@ interface GeometryRendererProps {
   onLinkClick: (e: any, subType?: 'visual' | 'collision') => void;
   setVisualRef?: (ref: THREE.Group | null) => void;
   setCollisionRef?: (ref: THREE.Group | null) => void;
+  geometryData?: UrdfVisual;
+  geometryId?: string;
+  objectIndex?: number;
 }
 
 /**
@@ -35,11 +39,15 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   onLinkClick,
   setVisualRef,
   setCollisionRef,
+  geometryData,
+  geometryId,
+  objectIndex,
 }: GeometryRendererProps) {
-  const data = isCollision ? link.collision : link.visual;
+  const data = geometryData || (isCollision ? link.collision : link.visual);
 
   // Fallback if collision data doesn't exist yet
   if (isCollision && !data) return null;
+  if (data?.visible === false) return null;
 
   if (mode === 'skeleton' && !showGeometry && !isCollision) return null;
 
@@ -57,15 +65,28 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   if (type === GeometryType.NONE) return null;
 
   // Create a unique key based on geometry properties
-  const geometryKey = `${isCollision ? 'col' : 'vis'}-${type}-${dimensions.x}-${dimensions.y}-${dimensions.z}-${meshPath || 'none'}`;
+  const geometryKey = `${isCollision ? 'col' : 'vis'}-${geometryId || 'primary'}-${type}-${dimensions.x}-${dimensions.y}-${dimensions.z}-${meshPath || 'none'}`;
 
   const isSkeleton = mode === 'skeleton';
+  const geometrySubType = isCollision ? 'collision' : 'visual';
+  const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
+  const isHovered = useSelectionStore((state) => {
+    const hovered = state.hoveredSelection;
+    if (hovered.type !== 'link' || hovered.id !== link.id) return false;
+    if (!hovered.subType) return geometrySubType === 'visual';
+    if (hovered.subType !== geometrySubType) return false;
+    return !isCollision || (hovered.objectIndex ?? 0) === (objectIndex ?? 0);
+  });
 
-  // Hover State for highlighting before selection
-  const [hoveredType, setHoveredType] = useState<'visual' | 'collision' | null>(null);
+  const clearGeometryHover = useCallback(() => {
+    const hovered = useSelectionStore.getState().hoveredSelection;
+    if (hovered.type !== 'link' || hovered.id !== link.id) return;
+    if (!hovered.subType || hovered.subType !== geometrySubType) return;
+    if (isCollision && (hovered.objectIndex ?? 0) !== (objectIndex ?? 0)) return;
+    useSelectionStore.getState().clearHover();
+  }, [geometrySubType, isCollision, link.id, objectIndex]);
 
   // Interaction States
-  const isHovered = hoveredType === (isCollision ? 'collision' : 'visual');
   const isVisualHighlight = !isCollision && isSelected && (selectionSubType === 'visual' || !selectionSubType);
   const isCollisionHighlight = isCollision && isSelected && selectionSubType === 'collision';
 
@@ -127,15 +148,20 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   // Use array format for position/rotation to avoid creating new objects
   const wrapperProps = {
     onClick: (e: any) => {
-      onLinkClick(e, isCollision ? 'collision' : 'visual');
+      onLinkClick(e, geometrySubType);
     },
     onPointerOver: (e: any) => {
       e.stopPropagation();
-      setHoveredType(isCollision ? 'collision' : 'visual');
+      setHoveredSelection({
+        type: 'link',
+        id: link.id,
+        subType: geometrySubType,
+        objectIndex: isCollision ? (objectIndex ?? 0) : undefined,
+      });
     },
     onPointerOut: (e: any) => {
       e.stopPropagation();
-      setHoveredType(null);
+      clearGeometryHover();
     },
     position: origin
       ? ([origin.xyz.x, origin.xyz.y, origin.xyz.z] as [number, number, number])
@@ -144,6 +170,9 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       ? ([origin.rpy.r, origin.rpy.p, origin.rpy.y] as [number, number, number])
       : undefined,
     ref: isCollision ? setCollisionRef : setVisualRef,
+    userData: {
+      geometryRole: isCollision ? 'collision' : 'visual',
+    },
   };
 
   let geometryNode;
@@ -219,7 +248,12 @@ export const GeometryRenderer = memo(function GeometryRenderer({
         geometryNode = <DAERenderer url={url} material={material} assets={assets} scale={dimensions} />;
       } else {
         // Fallback for unknown extension
-        geometryNode = <mesh geometry={new THREE.BoxGeometry(0.1, 0.1, 0.1)} material={material} />;
+        geometryNode = (
+          <mesh>
+            <boxGeometry args={[0.1, 0.1, 0.1]} />
+            <primitive object={material} attach="material" />
+          </mesh>
+        );
       }
     } else {
       // Placeholder if no mesh loaded

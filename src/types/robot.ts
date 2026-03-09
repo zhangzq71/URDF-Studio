@@ -9,6 +9,8 @@ export enum JointType {
   REVOLUTE = 'revolute',
   CONTINUOUS = 'continuous',
   PRISMATIC = 'prismatic',
+  PLANAR = 'planar',
+  FLOATING = 'floating',
 }
 
 export interface UrdfInertial {
@@ -29,6 +31,11 @@ export interface UrdfLink {
   name: string;
   visual: UrdfVisual;
   collision: UrdfVisual;
+  /**
+   * Additional collision geometries on the same link.
+   * The primary collision is kept in `collision` for backward compatibility.
+   */
+  collisionBodies?: UrdfVisual[];
   inertial: UrdfInertial;
   visible?: boolean; // Controls visibility in the 3D scene
 }
@@ -64,7 +71,7 @@ export interface RobotState {
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision' };
+  selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
 }
 
 /** Robot data without selection (selection is in selectionStore) */

@@ -20,17 +20,17 @@ export const Button: React.FC<ButtonProps> = ({
   const baseStyles = "inline-flex items-center justify-center font-medium transition-all duration-200 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed select-none";
   
   const variants = {
-    primary: "bg-[#0060FA] hover:bg-[#0050D0] active:bg-[#0040B0] text-white shadow-sm border border-transparent",
-    secondary: "bg-white dark:bg-white/10 border border-[#E5E5E5] dark:border-transparent text-slate-700 dark:text-white hover:bg-[#F5F5F7] dark:hover:bg-white/15 active:bg-[#E5E5E5] dark:active:bg-white/20 shadow-sm",
-    ghost: "bg-transparent hover:bg-black/5 dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 active:bg-black/10 dark:active:bg-white/20",
+    primary: "bg-system-blue-solid hover:bg-system-blue-hover active:bg-system-blue-active text-white shadow-sm border border-transparent",
+    secondary: "bg-panel-bg border border-border-black text-text-primary hover:bg-element-bg active:bg-element-active shadow-sm",
+    ghost: "bg-transparent hover:bg-element-hover text-text-secondary active:bg-element-active",
     danger: "bg-red-500 hover:bg-red-600 active:bg-red-700 text-white shadow-sm border border-transparent",
   };
 
   const sizes = {
-    sm: "text-xs px-2.5 py-1 rounded-[6px] gap-1.5",
-    md: "text-sm px-4 py-1.5 rounded-[8px] gap-2",
-    lg: "text-base px-5 py-2.5 rounded-[10px] gap-2.5",
-    icon: "p-1.5 rounded-[6px]",
+    sm: "text-xs px-2.5 py-1 rounded-md gap-1.5",
+    md: "text-sm px-4 py-1.5 rounded-lg gap-2",
+    lg: "text-base px-5 py-2.5 rounded-xl gap-2.5",
+    icon: "p-1.5 rounded-md",
   };
 
   return (

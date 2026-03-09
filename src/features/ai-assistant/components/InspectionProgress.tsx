@@ -24,43 +24,43 @@ export function InspectionProgress({
   const percentage = Math.round((progress.completed / progress.total) * 100)
 
   return (
-    <div className="h-full flex flex-col items-center justify-center max-w-md mx-auto text-center space-y-6">
+    <div className="h-full flex flex-col items-center justify-center max-w-md mx-auto text-center space-y-5">
       <div className="relative">
-        <div className="w-24 h-24 rounded-full border-4 border-slate-100 dark:border-border-black flex items-center justify-center">
-          <Loader2 className="w-10 h-10 text-[#0060FA] animate-spin" />
+        <div className="w-20 h-20 rounded-full border-2 border-border-black flex items-center justify-center bg-panel-bg shadow-sm">
+          <Loader2 className="w-8 h-8 text-system-blue animate-spin" />
         </div>
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-xs font-bold font-mono">{percentage}%</span>
+          <span className="text-xs font-semibold text-text-primary">{percentage}%</span>
         </div>
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-lg font-bold text-slate-800 dark:text-white">{t.runInspection}</h3>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
+        <h3 className="text-base font-semibold text-text-primary">{t.runInspection}</h3>
+        <div className="text-sm text-text-secondary leading-relaxed">
           {progress.currentCategory ? (
             <>
-              {t.checking}: <span className="text-[#0060FA] font-bold">{progress.currentCategory}</span>
+              {t.checking}: <span className="text-system-blue font-semibold">{progress.currentCategory}</span>
               <br />
               <span className="opacity-60">{progress.currentItem}</span>
             </>
           ) : (
             <>
               <div className="flex items-center justify-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#0060FA]" />
-                <span className="text-[#0060FA] font-semibold">{t.generatingReport}</span>
+                <Sparkles className="w-4 h-4 text-system-blue" />
+                <span className="text-system-blue font-semibold">{t.generatingReport}</span>
               </div>
-              <span className="text-xs text-slate-400 mt-1 block">
-                {lang === 'zh' ? '这可能需要 30 秒...' : 'This may take up to 30 seconds...'}
+              <span className="text-xs text-text-tertiary mt-1 block">
+                {t.inspectionMayTake30Seconds}
               </span>
             </>
           )}
-        </p>
+        </div>
       </div>
 
-      <div className="w-full bg-slate-100 dark:bg-black rounded-full h-2 overflow-hidden">
+      <div className="w-full bg-element-bg rounded-full h-2 overflow-hidden">
         <div
           className={`h-full transition-all duration-300 ${
-            progress.currentCategory ? 'bg-[#0060FA]' : 'bg-[#0060FA] animate-pulse'
+            progress.currentCategory ? 'bg-slider-accent' : 'bg-slider-accent animate-pulse'
           }`}
           style={{ width: `${(progress.completed / progress.total) * 100}%` }}
         />
@@ -68,13 +68,13 @@ export function InspectionProgress({
 
       {!progress.currentCategory && reportGenerationTimer && (
         <div className="w-full space-y-2 pt-2">
-          <div className="flex justify-between text-[10px] text-slate-400">
-            <span>{lang === 'zh' ? 'AI 分析中' : 'AI Analyzing'}</span>
+          <div className="flex justify-between text-[10px] text-text-tertiary font-medium">
+            <span>{t.aiAnalyzing}</span>
             <span>{reportGenerationTimer}s</span>
           </div>
-          <div className="w-full bg-slate-100 dark:bg-black rounded-full h-1.5 overflow-hidden">
+          <div className="w-full bg-element-bg rounded-full h-1.5 overflow-hidden">
             <div
-              className="h-full bg-blue-500 transition-all duration-1000"
+              className="h-full bg-slider-accent transition-all duration-1000"
               style={{ width: `${Math.min((reportGenerationTimer / 30) * 100, 95)}%` }}
             />
           </div>

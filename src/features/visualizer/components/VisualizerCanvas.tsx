@@ -1,9 +1,17 @@
 import React, { memo, Suspense, useEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { Theme } from '@/types';
-import { SceneLighting, SnapshotManager, ReferenceGrid, CanvasResizeSync } from '@/shared/components/3d';
+import {
+  SceneLighting,
+  SnapshotManager,
+  ReferenceGrid,
+  CanvasResizeSync,
+  NeutralStudioEnvironment,
+  WORKSPACE_CANVAS_BACKGROUND,
+  WorldOriginAxes,
+} from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 
 interface VisualizerCanvasProps {
@@ -53,18 +61,17 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.0,
-        preserveDrawingBuffer: true,
+        toneMappingExposure: 1.2,
       }}
     >
       <CanvasResizeSync />
       {sceneRef && <SceneCapture sceneRef={sceneRef} />}
-      <color attach="background" args={[effectiveTheme === 'light' ? '#f8f9fa' : '#000000']} />
+      <color attach="background" args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]} />
       <Suspense fallback={null}>
         <OrbitControls makeDefault enableDamping={false} />
         {/* Pass effective theme to SceneLighting and ReferenceGrid */}
         <SceneLighting theme={effectiveTheme} />
-        <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
+        <NeutralStudioEnvironment intensity={effectiveTheme === 'light' ? 0.38 : 0.46} />
         <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
 
         {/* Render robot and controls passed as children */}
@@ -72,12 +79,15 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
 
         {/* Reference Grid */}
         <ReferenceGrid theme={effectiveTheme} />
+        <WorldOriginAxes />
 
         {/* Axis Gizmo */}
-        <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+        <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
           <GizmoViewport
             axisColors={['#ef4444', '#22c55e', '#3b82f6']}
             labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+            axisHeadScale={0.9}
+            scale={34}
           />
         </GizmoHelper>
       </Suspense>

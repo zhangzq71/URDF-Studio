@@ -2,37 +2,59 @@
  * Main App Component
  * Root component that assembles all pieces together
  */
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
-import { AIModal } from '@/features/ai-assistant';
-import { URDFGallery } from '@/features/urdf-gallery';
-import { useFileImport, useFileExport } from './hooks';
-import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore } from '@/store';
+import { LazyOverlayFallback } from './components/LazyOverlayFallback';
+import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
+import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+
+const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
+const loadURDFGalleryModule = () => import('@/features/urdf-gallery/components/URDFGallery');
+const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
+
+const AIModal = lazy(() =>
+  loadAIModalModule().then((module) => ({ default: module.AIModal }))
+);
+
+const URDFGallery = lazy(() =>
+  loadURDFGalleryModule().then((module) => ({ default: module.URDFGallery }))
+);
+
+const ExportDialog = lazy(() =>
+  loadExportDialogModule().then((module) => ({ default: module.ExportDialog }))
+);
 
 function AppContent() {
   // Refs for file inputs
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
+  const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
 
   // UI Store
   const lang = useUIStore((state) => state.lang);
+  const t = translations[lang];
   const setAppMode = useUIStore((state) => state.setAppMode);
   const openSettings = useUIStore((state) => state.openSettings);
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
 
   // Selection Store
   const setSelection = useSelectionStore((state) => state.setSelection);
+  const selection = useSelectionStore((state) => state.selection);
+  const focusOn = useSelectionStore((state) => state.focusOn);
 
   // Assets Store
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
+  const selectedFile = useAssetsStore((state) => state.selectedFile);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const assets = useAssetsStore((state) => state.assets);
   const motorLibrary = useAssetsStore((state) => state.motorLibrary);
@@ -44,47 +66,84 @@ function AppContent() {
   const rootLinkId = useRobotStore((state) => state.rootLinkId);
   const setRobot = useRobotStore((state) => state.setRobot);
 
-  // Local UI state
-  const [toast, setToast] = useState<{ show: boolean; message: string; type: 'info' | 'success' }>({
-    show: false, message: '', type: 'info'
-  });
-  const [isAboutOpen, setIsAboutOpen] = useState(false);
-  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
-  const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
-  const [isURDFGalleryOpen, setIsURDFGalleryOpen] = useState(false);
-  const [viewConfig, setViewConfig] = useState({
-    showToolbar: true,
-    showOptionsPanel: true,
-    showSkeletonOptionsPanel: true,
-    showJointPanel: true,
-  });
+  // Assembly Store
+  const assemblyState = useAssemblyStore((state) => state.assemblyState);
+  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
 
-  // Show toast helper
-  const showToast = useCallback((message: string, type: 'info' | 'success' = 'info') => {
-    setToast({ show: true, message, type });
-    setTimeout(() => setToast(prev => ({ ...prev, show: false })), 5000);
-  }, []);
+  const {
+    toast,
+    closeToast,
+    showToast,
+    isAboutOpen,
+    setIsAboutOpen,
+    isAIModalOpen,
+    setIsAIModalOpen,
+    isCodeViewerOpen,
+    setIsCodeViewerOpen,
+    isURDFGalleryOpen,
+    setIsURDFGalleryOpen,
+    isExportDialogOpen,
+    setIsExportDialogOpen,
+    isExporting,
+    setIsExporting,
+    viewConfig,
+    setViewConfig,
+  } = useAppShellState();
 
-  // Build robot state for components
-  const robot: RobotState = {
-    name: robotName,
-    links: robotLinks,
-    joints: robotJoints,
+  // Build robot state for AI modal
+  // In workspace mode, AI inspection/select should target merged assembly ids.
+  const robot: RobotState = useMemo(() => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      const mergedRobot = getMergedRobotData();
+      if (mergedRobot) {
+        return {
+          ...mergedRobot,
+          selection,
+        };
+      }
+    }
+
+    return {
+      name: robotName,
+      links: robotLinks,
+      joints: robotJoints,
+      rootLinkId,
+      selection,
+    };
+  }, [
+    robotName,
+    robotLinks,
+    robotJoints,
     rootLinkId,
-    selection: useSelectionStore.getState().selection,
-  };
+    selection,
+    assemblyState,
+    sidebarTab,
+    getMergedRobotData,
+  ]);
 
   // Load robot file handler
   const handleLoadRobot = useCallback((file: RobotFile) => {
+    if (
+      selectedFile
+      && selectedFile.name === file.name
+      && selectedFile.format === file.format
+      && selectedFile.content === file.content
+    ) {
+      setAppMode('detail');
+      return;
+    }
+
     let newState: RobotState | null = null;
 
     switch (file.format) {
       case 'urdf':
         newState = parseURDF(file.content);
         break;
-      case 'mjcf':
-        newState = parseMJCF(file.content);
+      case 'mjcf': {
+        const resolved = resolveMJCFSource(file, availableFiles);
+        newState = parseMJCF(resolved.content);
         break;
+      }
       case 'usd':
         newState = parseUSDA(file.content);
         break;
@@ -142,16 +201,27 @@ function AppContent() {
       setSelection({ type: null, id: null });
       setSelectedFile(file);
       setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-      setOriginalFileFormat(file.format);
+      setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
       setAppMode('detail');
     } else {
-      alert(lang === 'zh' ? `解析 ${file.format.toUpperCase()} 失败` : `Failed to parse ${file.format.toUpperCase()}`);
+      alert(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()));
     }
-  }, [availableFiles, assets, lang, setRobot, setSelection, setSelectedFile, setOriginalUrdfContent, setOriginalFileFormat, setAppMode]);
+  }, [
+    availableFiles,
+    assets,
+    selectedFile,
+    setRobot,
+    setSelection,
+    setSelectedFile,
+    setOriginalUrdfContent,
+    setOriginalFileFormat,
+    setAppMode,
+    t,
+  ]);
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
-  const { handleExport, handleExportProject } = useFileExport();
+  const { handleExportProject, handleExportWithConfig } = useFileExport();
 
   // AI changes handler
   const handleApplyAIChanges = useCallback((data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => {
@@ -164,20 +234,50 @@ function AppContent() {
     setAppMode('skeleton');
   }, [robotName, robotLinks, robotJoints, rootLinkId, setRobot, setAppMode]);
 
-  // File input change handlers
-  useEffect(() => {
-    const input = importInputRef.current;
-    const folderInput = importFolderInputRef.current;
-    const onImport = (e: Event) => handleImport((e.target as HTMLInputElement).files);
-    if (input) input.addEventListener('change', onImport as EventListener);
-    if (folderInput) folderInput.addEventListener('change', onImport as EventListener);
-    return () => {
-      if (input) input.removeEventListener('change', onImport as EventListener);
-      if (folderInput) folderInput.removeEventListener('change', onImport as EventListener);
-    };
-  }, [handleImport]);
+  useImportInputBinding({
+    importInputRef,
+    importFolderInputRef,
+    onImport: handleImport,
+  });
 
-  const t = translations[lang];
+  useEffect(() => {
+    const warmup = () => {
+      void loadAIModalModule();
+      void loadExportDialogModule();
+      void loadURDFGalleryModule();
+    };
+
+    const idleWindow = window as Window & {
+      requestIdleCallback?: typeof window.requestIdleCallback;
+      cancelIdleCallback?: typeof window.cancelIdleCallback;
+    };
+
+    if (typeof idleWindow.requestIdleCallback === 'function') {
+      const idleId = idleWindow.requestIdleCallback(warmup, { timeout: 2200 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+
+    const timer = window.setTimeout(warmup, 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const handleOpenAIModal = useCallback(() => {
+    setShouldRenderAIModal(true);
+    void loadAIModalModule();
+    setIsAIModalOpen(true);
+  }, [setIsAIModalOpen]);
+
+  const handleOpenExportDialog = useCallback(() => {
+    void loadExportDialogModule();
+    setIsExportDialogOpen(true);
+  }, [setIsExportDialogOpen]);
+
+  const handleOpenURDFGallery = useCallback(() => {
+    void loadURDFGalleryModule();
+    setIsURDFGalleryOpen(true);
+  }, [setIsURDFGalleryOpen]);
+
+  const loadingLabel = t.loadingPanel;
 
   return (
     <>
@@ -185,15 +285,15 @@ function AppContent() {
         importInputRef={importInputRef}
         importFolderInputRef={importFolderInputRef}
         onFileDrop={(files) => handleImport(files as any)}
-        onExport={handleExport}
+        onOpenExport={handleOpenExportDialog}
         onExportProject={handleExportProject}
         showToast={showToast}
-        onOpenAI={() => setIsAIModalOpen(true)}
+        onOpenAI={handleOpenAIModal}
         isCodeViewerOpen={isCodeViewerOpen}
         setIsCodeViewerOpen={setIsCodeViewerOpen}
         onOpenSettings={() => openSettings()}
         onOpenAbout={() => setIsAboutOpen(true)}
-        onOpenURDFGallery={() => setIsURDFGalleryOpen(true)}
+        onOpenURDFGallery={handleOpenURDFGallery}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
@@ -202,23 +302,52 @@ function AppContent() {
       {/* Modals */}
       <SettingsModal />
       <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
-      <AIModal
-        isOpen={isAIModalOpen}
-        onClose={() => setIsAIModalOpen(false)}
-        robot={robot}
-        motorLibrary={motorLibrary}
-        lang={lang}
-        onApplyChanges={handleApplyAIChanges}
-        onSelectItem={(type, id) => setSelection({ type, id })}
-      />
+      {shouldRenderAIModal && (
+        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          <AIModal
+            isOpen={isAIModalOpen}
+            onClose={() => setIsAIModalOpen(false)}
+            robot={robot}
+            motorLibrary={motorLibrary}
+            lang={lang}
+            onApplyChanges={handleApplyAIChanges}
+            onSelectItem={(type, id) => {
+              setSelection({ type, id });
+              focusOn(id);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {/* Export Dialog */}
+      {isExportDialogOpen && (
+        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          <ExportDialog
+            onClose={() => setIsExportDialogOpen(false)}
+            onExport={async (config) => {
+              setIsExporting(true);
+              try {
+                await handleExportWithConfig(config);
+              } finally {
+                setIsExporting(false);
+                setIsExportDialogOpen(false);
+              }
+            }}
+            lang={lang}
+            isExporting={isExporting}
+          />
+        </Suspense>
+      )}
 
       {/* URDF Gallery */}
       {isURDFGalleryOpen && (
-        <URDFGallery
-          onClose={() => setIsURDFGalleryOpen(false)}
-          lang={lang}
-          onImport={(e) => handleImport(e.target.files)}
-        />
+        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          <URDFGallery
+            onClose={() => setIsURDFGalleryOpen(false)}
+            lang={lang}
+            onImport={(e) => handleImport(e.target.files)}
+          />
+        </Suspense>
       )}
 
       {/* Toast */}
@@ -232,7 +361,7 @@ function AppContent() {
             </div>
             <div className="text-sm text-slate-700 dark:text-white font-medium">{toast.message}</div>
             <button
-              onClick={() => setToast(prev => ({ ...prev, show: false }))}
+              onClick={closeToast}
               className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 ml-2"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

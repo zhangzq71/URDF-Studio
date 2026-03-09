@@ -4,6 +4,7 @@
  */
 import { useEffect } from 'react';
 import { useUIStore } from '@/store';
+import { translations } from '@/shared/i18n';
 
 interface ProvidersProps {
   children: React.ReactNode;
@@ -13,12 +14,11 @@ interface ProvidersProps {
  * Providers component that handles global initializations
  * - Theme application (dark mode class)
  * - Language-based document title
- * - UI scale application
  */
 export function Providers({ children }: ProvidersProps) {
   const theme = useUIStore((state) => state.theme);
   const lang = useUIStore((state) => state.lang);
-  const uiScale = useUIStore((state) => state.uiScale);
+  const t = translations[lang];
 
   // Apply theme class to document
   useEffect(() => {
@@ -49,15 +49,8 @@ export function Providers({ children }: ProvidersProps) {
 
   // Update document title based on language
   useEffect(() => {
-    document.title = lang === 'zh'
-      ? "URDF Studio - 专业机器人设计与可视化工具"
-      : "URDF Studio - Professional Robot Design & Visualization Tool";
-  }, [lang]);
-
-  // Apply UI scale
-  useEffect(() => {
-    document.documentElement.style.fontSize = `${uiScale * 100}%`;
-  }, [uiScale]);
+    document.title = t.documentTitle;
+  }, [t]);
 
   return <>{children}</>;
 }

@@ -56,6 +56,7 @@ export async function generatePdfFromHtml(
 
   // Inject print styles
   const styleElement = document.createElement('style');
+  styleElement.setAttribute('data-pdf-print', 'true');
   styleElement.textContent = `
     @media print {
       body * {
@@ -81,22 +82,33 @@ export async function generatePdfFromHtml(
   // Use print dialog to generate PDF
   try {
     await new Promise<void>((resolve, reject) => {
-      const printHandler = () => {
-        window.removeEventListener('afterprint', printHandler);
-        cleanup();
-        resolve();
-      };
+      let settled = false;
 
-      const errorHandler = () => {
+      function finalize(error?: Error) {
+        if (settled) return;
+        settled = true;
         window.removeEventListener('afterprint', printHandler);
+        window.removeEventListener('cancel', errorHandler);
         cleanup();
-        reject(new Error('Print dialog was cancelled'));
-      };
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      }
+
+      function printHandler() {
+        finalize();
+      }
+
+      function errorHandler() {
+        finalize(new Error('Print dialog was cancelled'));
+      }
 
       // Wait a bit for styles to apply
       setTimeout(() => {
-        window.addEventListener('afterprint', printHandler);
-        window.addEventListener('cancel', errorHandler);
+        window.addEventListener('afterprint', printHandler, { once: true });
+        window.addEventListener('cancel', errorHandler, { once: true });
         window.print();
       }, 100);
     });
@@ -115,6 +127,7 @@ export async function generatePdfFromHtml(
     if (container) {
       document.body.removeChild(container);
     }
+    styleElement.remove();
     const styles = document.head.querySelectorAll('style[data-pdf-print]');
     styles.forEach((s) => s.remove());
   }

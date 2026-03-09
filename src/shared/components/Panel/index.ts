@@ -8,7 +8,6 @@ export {
   OptionsPanelHeader,
   OptionsPanelContent,
   OptionsPanelContainer,
-  ModelHeaderBadge,
   CheckboxOption,
   SliderOption,
   SegmentedControl,

@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import type { RobotFile, MotorSpec } from '@/types';
-import { DEFAULT_MOTOR_LIBRARY } from '@/features/hardware-config';
+import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 
 interface AssetsState {
   // Mesh and texture assets (blob URLs)
@@ -19,6 +19,9 @@ interface AssetsState {
   availableFiles: RobotFile[];
   setAvailableFiles: (files: RobotFile[]) => void;
   addRobotFile: (file: RobotFile) => void;
+  removeRobotFile: (fileName: string) => void;
+  removeRobotFolder: (folderPath: string) => void;
+  clearRobotLibrary: () => void;
 
   // Currently selected file in file browser
   selectedFile: RobotFile | null;
@@ -79,6 +82,113 @@ export const useAssetsStore = create<AssetsState>()((set, get) => ({
     set((state) => ({
       availableFiles: [...state.availableFiles, file],
     })),
+  removeRobotFile: (fileName) =>
+    set((state) => {
+      if (!state.availableFiles.some((file) => file.name === fileName)) return state;
+
+      const nextAvailableFiles = state.availableFiles.filter((file) => file.name !== fileName);
+      const nextSelectedFile =
+        state.selectedFile?.name === fileName ? null : state.selectedFile;
+
+      const nextAllFileContents = { ...state.allFileContents };
+      delete nextAllFileContents[fileName];
+
+      const removableKeys = new Set<string>([fileName]);
+      const baseName = fileName.split('/').pop();
+      if (baseName) {
+        removableKeys.add(baseName);
+        removableKeys.add(`/meshes/${baseName}`);
+      }
+
+      const parts = fileName.split('/');
+      for (let i = 0; i < parts.length; i += 1) {
+        const subPath = parts.slice(i).join('/');
+        removableKeys.add(subPath);
+        removableKeys.add(`/${subPath}`);
+      }
+
+      const targetUrl = state.assets[fileName];
+      const removeByUrl = Boolean(targetUrl && targetUrl.startsWith('blob:'));
+      const nextAssets: Record<string, string> = {};
+
+      Object.entries(state.assets).forEach(([key, url]) => {
+        if (removableKeys.has(key)) return;
+        if (removeByUrl && url === targetUrl) return;
+        nextAssets[key] = url;
+      });
+
+      if (removeByUrl && targetUrl) {
+        URL.revokeObjectURL(targetUrl);
+      }
+
+      return {
+        availableFiles: nextAvailableFiles,
+        selectedFile: nextSelectedFile,
+        allFileContents: nextAllFileContents,
+        assets: nextAssets,
+      };
+    }),
+  removeRobotFolder: (folderPath) =>
+    set((state) => {
+      const normalizedFolder = folderPath.replace(/\/+$/, '');
+      if (!normalizedFolder) return state;
+
+      const shouldRemove = (path: string) =>
+        path === normalizedFolder || path.startsWith(`${normalizedFolder}/`);
+
+      const removedFiles = state.availableFiles.filter((file) => shouldRemove(file.name));
+      if (removedFiles.length === 0) return state;
+
+      const removedFileNames = new Set(removedFiles.map((file) => file.name));
+      const nextAvailableFiles = state.availableFiles.filter((file) => !removedFileNames.has(file.name));
+      const nextSelectedFile =
+        state.selectedFile && shouldRemove(state.selectedFile.name) ? null : state.selectedFile;
+
+      const nextAllFileContents: Record<string, string> = {};
+      Object.entries(state.allFileContents).forEach(([path, content]) => {
+        if (!shouldRemove(path)) {
+          nextAllFileContents[path] = content;
+        }
+      });
+
+      const targetUrls = new Set<string>();
+      Object.entries(state.assets).forEach(([key, url]) => {
+        if (shouldRemove(key) && url.startsWith('blob:')) {
+          targetUrls.add(url);
+        }
+      });
+
+      const nextAssets: Record<string, string> = {};
+      Object.entries(state.assets).forEach(([key, url]) => {
+        if (shouldRemove(key)) return;
+        if (targetUrls.has(url)) return;
+        nextAssets[key] = url;
+      });
+
+      targetUrls.forEach((url) => URL.revokeObjectURL(url));
+
+      return {
+        availableFiles: nextAvailableFiles,
+        selectedFile: nextSelectedFile,
+        allFileContents: nextAllFileContents,
+        assets: nextAssets,
+      };
+    }),
+  clearRobotLibrary: () =>
+    set((state) => {
+      const targetUrls = new Set(
+        Object.values(state.assets).filter((url) => url.startsWith('blob:')),
+      );
+
+      targetUrls.forEach((url) => URL.revokeObjectURL(url));
+
+      return {
+        availableFiles: [],
+        selectedFile: null,
+        allFileContents: {},
+        assets: {},
+      };
+    }),
 
   // Selected file
   selectedFile: null,

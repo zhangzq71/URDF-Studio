@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { MathUtils } from '@/shared/utils';
+import { MathUtils as SharedMathUtils } from '@/shared/utils';
+import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import { collisionBaseMaterial, emptyRaycast } from '../utils/materials';
 import {
     createJointAxisVisualization,
@@ -12,6 +13,7 @@ import {
 } from '../utils/visualizationFactories';
 import type { UrdfLink } from '@/types';
 import type { ToolMode, URDFViewerProps } from '../types';
+import type { HighlightedMeshSnapshot } from './useHighlightManager';
 
 export interface UseVisualizationEffectsOptions {
     robot: THREE.Object3D | null;
@@ -39,9 +41,61 @@ export interface UseVisualizationEffectsOptions {
         linkName: string | null,
         revert: boolean,
         subType?: 'visual' | 'collision',
-        meshToHighlight?: THREE.Object3D | null
+        meshToHighlight?: THREE.Object3D | null | number
     ) => void;
-    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, THREE.Material | THREE.Material[]>>;
+    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
+}
+
+function resolveLinkNameFromObject(object: THREE.Object3D | null): string | null {
+    if (!object) return null;
+    if (typeof object.userData?.parentLinkName === 'string' && object.userData.parentLinkName) {
+        return object.userData.parentLinkName;
+    }
+
+    let current: THREE.Object3D | null = object;
+    while (current) {
+        if ((current as any).isURDFLink && current.name) {
+            return current.name;
+        }
+        current = current.parent;
+    }
+
+    return null;
+}
+
+function getCollisionGeometryByIndex(linkData: UrdfLink | undefined, colliderIndex: number) {
+    if (!linkData) return undefined;
+    return getCollisionGeometryByObjectIndex(linkData, colliderIndex)?.geometry;
+}
+
+function isVisualGeometryVisible(linkData: UrdfLink | undefined, showVisual: boolean): boolean {
+    return showVisual && linkData?.visible !== false && linkData?.visual.visible !== false;
+}
+
+function isCollisionGeometryVisible(
+    linkData: UrdfLink | undefined,
+    colliderIndex: number,
+    showCollision: boolean
+): boolean {
+    const geometry = getCollisionGeometryByIndex(linkData, colliderIndex);
+    return showCollision && geometry?.visible !== false;
+}
+
+function getColliderIndex(collider: THREE.Object3D): number {
+    const linkObject = collider.parent && (collider.parent as any).isURDFLink
+        ? collider.parent
+        : null;
+    if (!linkObject) return 0;
+
+    const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
+    const colliderIndex = colliders.indexOf(collider);
+    return colliderIndex >= 0 ? colliderIndex : 0;
+}
+
+interface VisualMaterialState {
+    opacity: number;
+    transparent: boolean;
+    depthWrite: boolean;
 }
 
 export function useVisualizationEffects({
@@ -72,12 +126,55 @@ export function useVisualizationEffects({
     const { invalidate, scene } = useThree();
 
     // Track current selection/hover for cleanup
-    const currentSelectionRef = useRef<{ id: string | null; subType: string | null }>({ id: null, subType: null });
-    const currentHoverRef = useRef<{ id: string | null; subType: string | null }>({ id: null, subType: null });
+    const currentSelectionRef = useRef<{ id: string | null; subType: string | null; objectIndex?: number }>({ id: null, subType: null });
+    const currentHoverRef = useRef<{ id: string | null; subType: string | null; objectIndex?: number }>({ id: null, subType: null });
+    const visualMaterialStateRef = useRef<Map<THREE.Material, VisualMaterialState>>(new Map());
 
     // Refs for visibility state
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
+
+    useEffect(() => {
+        visualMaterialStateRef.current.clear();
+    }, [robot]);
+
+    const getVisualMaterialState = (material: THREE.Material): VisualMaterialState => {
+        const cachedState = visualMaterialStateRef.current.get(material);
+        if (cachedState) return cachedState;
+
+        const state: VisualMaterialState = {
+            opacity: material.opacity ?? 1,
+            transparent: material.transparent,
+            depthWrite: material.depthWrite,
+        };
+
+        visualMaterialStateRef.current.set(material, state);
+        return state;
+    };
+
+    const resolveHighlightTarget = (
+        candidate?: URDFViewerProps['selection']
+    ): { id: string | null; subType: 'visual' | 'collision' | undefined; objectIndex?: number } => {
+        if (!robot || !candidate?.id || !candidate.type) {
+            return { id: null, subType: undefined };
+        }
+
+        if (candidate.type === 'link') {
+            return { id: candidate.id, subType: candidate.subType, objectIndex: candidate.objectIndex };
+        }
+
+        const jointObj = robot.getObjectByName(candidate.id);
+        if (!jointObj) {
+            return { id: null, subType: candidate.subType, objectIndex: candidate.objectIndex };
+        }
+
+        const childLink = jointObj.children.find((c: any) => c.isURDFLink);
+        if (!childLink) {
+            return { id: null, subType: candidate.subType, objectIndex: candidate.objectIndex };
+        }
+
+        return { id: childLink.name, subType: candidate.subType, objectIndex: candidate.objectIndex };
+    };
 
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
@@ -85,63 +182,68 @@ export function useVisualizationEffects({
     // Clean up all tracked highlights on unmount
     useEffect(() => {
         return () => {
-            highlightedMeshesRef.current.forEach((origMaterial, mesh) => {
-                mesh.material = origMaterial;
+            highlightedMeshesRef.current.forEach((snapshot, mesh) => {
+                mesh.material = snapshot.material;
+                mesh.renderOrder = snapshot.renderOrder;
             });
             highlightedMeshesRef.current.clear();
         };
     }, [highlightedMeshesRef]);
 
-    // Update collision visibility when showCollision changes
+    // Sync per-link / per-geometry visibility for visual and collision content.
     useEffect(() => {
         if (!robot) return;
 
         robot.traverse((child: any) => {
+            const linkName = resolveLinkNameFromObject(child);
+            const linkData = linkName ? robotLinks?.[linkName] : undefined;
+
             if (child.isURDFCollider) {
-                child.visible = showCollision;
+                const colliderIndex = getColliderIndex(child);
+                const isVisible = isCollisionGeometryVisible(linkData, colliderIndex, showCollision);
+
+                child.visible = isVisible;
                 child.traverse((inner: any) => {
-                    if (inner.isMesh) {
-                        inner.userData.isCollisionMesh = true;
-                        inner.raycast = (highlightMode === 'collision' && showCollision)
-                            ? THREE.Mesh.prototype.raycast
-                            : emptyRaycast;
+                    if (!inner.isMesh) return;
+
+                    inner.userData.isCollisionMesh = true;
+                    inner.raycast = (highlightMode === 'collision' && isVisible)
+                        ? THREE.Mesh.prototype.raycast
+                        : emptyRaycast;
+
+                    if (isVisible) {
+                        inner.visible = true;
+                        if (inner.__origMaterial) {
+                            inner.__origMaterial = collisionBaseMaterial;
+                        }
+                        inner.material = collisionBaseMaterial;
+                        inner.renderOrder = 999;
+                    } else {
+                        inner.visible = false;
                     }
                 });
-
-                if (showCollision) {
-                    child.traverse((innerChild: any) => {
-                        if (innerChild.isMesh) {
-                            innerChild.userData.isCollisionMesh = true;
-                            if (innerChild.__origMaterial) {
-                                innerChild.__origMaterial = collisionBaseMaterial;
-                            } else {
-                                innerChild.material = collisionBaseMaterial;
-                            }
-                            innerChild.renderOrder = 999;
-                        }
-                    });
-                }
-            }
-        });
-    }, [robot, showCollision, robotVersion, highlightMode]);
-
-    // Update visual mesh visibility when showVisual changes
-    useEffect(() => {
-        if (!robot) return;
-
-        robot.traverse((child: any) => {
-            // Handle visual group containers (from MJCF loader)
-            if (child.userData?.isVisualGroup) {
-                child.visible = showVisual;
                 return;
             }
 
-            // Handle individual visual meshes (marked during load)
-            if (child.isMesh && child.userData?.isVisual) {
-                child.visible = showVisual;
+            if (child.userData?.isVisualGroup) {
+                child.visible = isVisualGeometryVisible(linkData, showVisual);
+                return;
             }
 
-            // Handle URDF visual meshes (check parent chain for URDFVisual)
+            if (
+                child.parent
+                && child.parent.isURDFLink
+                && !child.isURDFJoint
+                && !child.isURDFCollider
+                && child.userData?.isGizmo !== true
+            ) {
+                child.visible = isVisualGeometryVisible(linkData, showVisual);
+            }
+
+            if (child.isMesh && child.userData?.isVisual) {
+                child.visible = isVisualGeometryVisible(linkData, showVisual);
+            }
+
             if (child.isMesh && !child.userData?.isCollision && !child.userData?.isCollisionMesh) {
                 let parent = child.parent;
                 let isUrdfVisual = false;
@@ -155,14 +257,15 @@ export function useVisualizationEffects({
                     }
                     parent = parent.parent;
                 }
+
                 if (isUrdfVisual) {
-                    child.visible = showVisual;
+                    child.visible = isVisualGeometryVisible(linkData, showVisual);
                 }
             }
         });
 
         invalidate();
-    }, [robot, showVisual, robotVersion, invalidate]);
+    }, [robot, showCollision, showVisual, robotLinks, robotVersion, highlightMode, invalidate]);
 
     // Update link axes, joint axes visibility, and model opacity
     useEffect(() => {
@@ -236,11 +339,21 @@ export function useVisualizationEffects({
                             !mat.userData?.isSharedMaterial &&
                             !mat.userData?.isCollisionMaterial &&
                             mat.depthTest !== false) {
-                            const isTransparent = modelOpacity < 1.0;
-                            mat.transparent = isTransparent;
-                            mat.opacity = modelOpacity;
-                            mat.depthWrite = true;
-                            mat.needsUpdate = true;
+                            const baseState = getVisualMaterialState(mat);
+                            const nextOpacity = THREE.MathUtils.clamp(baseState.opacity * modelOpacity, 0, 1);
+                            const nextTransparent = baseState.transparent || nextOpacity < 1.0;
+                            const nextDepthWrite = baseState.depthWrite;
+
+                            if (
+                                mat.transparent !== nextTransparent ||
+                                mat.opacity !== nextOpacity ||
+                                mat.depthWrite !== nextDepthWrite
+                            ) {
+                                mat.transparent = nextTransparent;
+                                mat.opacity = nextOpacity;
+                                mat.depthWrite = nextDepthWrite;
+                                mat.needsUpdate = true;
+                            }
                         }
                     });
                 }
@@ -249,27 +362,6 @@ export function useVisualizationEffects({
 
         invalidate();
     }, [robot, showOrigins, originSize, showJointAxes, jointAxisSize, modelOpacity, robotVersion, invalidate]);
-
-    // Update visual visibility when link visibility changes
-    useEffect(() => {
-        if (!robot) return;
-
-        robot.traverse((child: any) => {
-            if (child.parent && child.parent.isURDFLink && !child.isURDFJoint && !child.isURDFCollider && child.userData?.isGizmo !== true) {
-                const linkName = child.parent.name;
-                const isLinkVisible = robotLinks?.[linkName]?.visible !== false;
-                child.visible = isLinkVisible;
-            }
-            if (child.isMesh && !child.isURDFCollider && !child.userData.isCollisionMesh && child.userData?.isGizmo !== true) {
-                let linkName = '';
-                if (child.parent && child.parent.isURDFLink) linkName = child.parent.name;
-                else if (child.parent && child.parent.parent && child.parent.parent.isURDFLink) linkName = child.parent.parent.name;
-
-                const isLinkVisible = linkName ? (robotLinks?.[linkName]?.visible !== false) : true;
-                child.visible = isLinkVisible;
-            }
-        });
-    }, [robot, robotVersion, robotLinks]);
 
     // Effect to handle inertia and CoM visualization
     useEffect(() => {
@@ -335,7 +427,7 @@ export function useVisualizationEffects({
                         maxLinkSize = undefined;
                     }
 
-                    const boxData = MathUtils.computeInertiaBox(inertialData, maxLinkSize);
+                    const boxData = SharedMathUtils.computeInertiaBox(inertialData, maxLinkSize);
 
                     if (boxData) {
                         const { width, height, depth, rotation } = boxData;
@@ -415,7 +507,10 @@ export function useVisualizationEffects({
                                 }
 
                                 const newAxes = createOriginAxes(currentSize);
-                                newAxes.children.forEach((c: any) => originAxes.add(c.clone()));
+                                // Re-parent generated children directly to avoid clone allocations/leaks.
+                                while (newAxes.children.length > 0) {
+                                    originAxes.add(newAxes.children[0]);
+                                }
                             }
                         }
 
@@ -515,38 +610,25 @@ export function useVisualizationEffects({
 
         if (toolMode === 'measure') {
             if (currentSelectionRef.current.id) {
-                highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any);
+                highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any, currentSelectionRef.current.objectIndex);
             }
             currentSelectionRef.current = { id: null, subType: null };
             return;
         }
 
         if (currentSelectionRef.current.id) {
-            highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any);
+            highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any, currentSelectionRef.current.objectIndex);
         }
 
-        let targetId: string | null = null;
-        let targetSubType = selection?.subType;
-
-        if (selection?.type === 'link' && selection.id) {
-            targetId = selection.id;
-        } else if (selection?.type === 'joint' && selection.id) {
-            const jointObj = robot.getObjectByName(selection.id);
-            if (jointObj) {
-                const childLink = jointObj.children.find((c: any) => c.isURDFLink);
-                if (childLink) {
-                    targetId = childLink.name;
-                }
-            }
-        }
+        const { id: targetId, subType: targetSubType, objectIndex: targetObjectIndex } = resolveHighlightTarget(selection);
 
         if (targetId) {
-            highlightGeometry(targetId, false, targetSubType);
-            currentSelectionRef.current = { id: targetId, subType: targetSubType || null };
+            highlightGeometry(targetId, false, targetSubType, targetObjectIndex);
+            currentSelectionRef.current = { id: targetId, subType: targetSubType || null, objectIndex: targetObjectIndex };
         } else {
             currentSelectionRef.current = { id: null, subType: null };
         }
-    }, [robot, selection?.type, selection?.id, selection?.subType, highlightGeometry, robotVersion, highlightMode, showCollision, showVisual, toolMode]);
+    }, [robot, selection?.type, selection?.id, selection?.subType, selection?.objectIndex, highlightGeometry, robotVersion, highlightMode, showCollision, showVisual, toolMode]);
 
     // Effect to handle hover highlighting
     useEffect(() => {
@@ -554,23 +636,29 @@ export function useVisualizationEffects({
 
         if (toolMode === 'measure') {
             if (currentHoverRef.current.id) {
-                highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any);
+                highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any, currentHoverRef.current.objectIndex);
             }
             currentHoverRef.current = { id: null, subType: null };
             return;
         }
 
+        const { id: selectionHighlightId, subType: selectionHighlightSubType, objectIndex: selectionHighlightObjectIndex } = resolveHighlightTarget(selection);
+
         if (currentHoverRef.current.id) {
-            if (currentHoverRef.current.id !== selection?.id || currentHoverRef.current.subType !== selection?.subType) {
-                highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any);
+            if (currentHoverRef.current.id !== selectionHighlightId || currentHoverRef.current.subType !== selectionHighlightSubType || currentHoverRef.current.objectIndex !== selectionHighlightObjectIndex) {
+                highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any, currentHoverRef.current.objectIndex);
+                if (selectionHighlightId) {
+                    highlightGeometry(selectionHighlightId, false, selectionHighlightSubType, selectionHighlightObjectIndex);
+                }
             }
         }
 
-        if (hoveredSelection?.type === 'link' && hoveredSelection.id) {
-            highlightGeometry(hoveredSelection.id, false, hoveredSelection.subType);
-            currentHoverRef.current = { id: hoveredSelection.id, subType: hoveredSelection.subType || null };
+        const { id: hoverTargetId, subType: hoverTargetSubType, objectIndex: hoverTargetObjectIndex } = resolveHighlightTarget(hoveredSelection);
+        if (hoverTargetId) {
+            highlightGeometry(hoverTargetId, false, hoverTargetSubType, hoverTargetObjectIndex);
+            currentHoverRef.current = { id: hoverTargetId, subType: hoverTargetSubType || null, objectIndex: hoverTargetObjectIndex };
         } else {
             currentHoverRef.current = { id: null, subType: null };
         }
-    }, [robot, hoveredSelection?.id, hoveredSelection?.subType, selection?.id, selection?.subType, highlightGeometry, robotVersion, toolMode, highlightMode, showVisual, showCollision]);
+    }, [robot, hoveredSelection?.type, hoveredSelection?.id, hoveredSelection?.subType, hoveredSelection?.objectIndex, selection?.type, selection?.id, selection?.subType, selection?.objectIndex, highlightGeometry, robotVersion, toolMode, highlightMode, showVisual, showCollision]);
 }
