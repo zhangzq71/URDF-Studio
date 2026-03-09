@@ -18,6 +18,15 @@ const _tempQuatB = new THREE.Quaternion();
 const _tempEuler = new THREE.Euler();
 const _tempEulerB = new THREE.Euler();
 const _zAxis = new THREE.Vector3(0, 0, 1);
+const MAX_MESH_ANALYSIS_POINTS = 4096;
+const DEFAULT_MESH_SURFACE_POINT_LIMIT = 1536;
+
+export interface MeshAnalysisOptions {
+  includePrimitiveFits?: boolean;
+  includeSurfacePoints?: boolean;
+  pointCollectionLimit?: number;
+  surfacePointLimit?: number;
+}
 
 /**
  * Compute auto-align for a cylinder geometry to match the child joint direction.
@@ -190,10 +199,11 @@ function getRepresentativeMeshColor(object: THREE.Object3D): string | undefined 
 export async function computeMeshAnalysisFromAssets(
   meshPath: string,
   assets: Record<string, string>,
-  meshScale?: { x: number; y: number; z: number }
+  meshScale?: { x: number; y: number; z: number },
+  options: MeshAnalysisOptions = {},
 ): Promise<MeshAnalysis | null> {
   try {
-    const manager = createLoadingManager(assets);
+    const manager = createLoadingManager(assets, '', { preferPlaceholderTextures: true });
     const meshLoader = createMeshLoader(assets, manager);
 
     return await new Promise<MeshAnalysis | null>((resolve) => {
@@ -203,6 +213,17 @@ export async function computeMeshAnalysisFromAssets(
           return;
         }
         const normalizedScale = normalizeMeshScale(meshScale);
+        const includePrimitiveFits = options.includePrimitiveFits ?? true;
+        const includeSurfacePoints = options.includeSurfacePoints ?? true;
+        const pointCollectionLimit = Math.max(
+          1,
+          options.pointCollectionLimit
+            ?? (includePrimitiveFits ? MAX_MESH_ANALYSIS_POINTS : DEFAULT_MESH_SURFACE_POINT_LIMIT),
+        );
+        const surfacePointLimit = Math.max(
+          1,
+          options.surfacePointLimit ?? DEFAULT_MESH_SURFACE_POINT_LIMIT,
+        );
         obj.scale.set(normalizedScale.x, normalizedScale.y, normalizedScale.z);
         obj.updateMatrixWorld(true);
         const box = new THREE.Box3().setFromObject(obj);
@@ -212,11 +233,12 @@ export async function computeMeshAnalysisFromAssets(
           resolve(null);
           return;
         }
-        const points = collectMeshPoints(obj);
-        const surfacePoints = sampleMeshPoints(points);
-        const primitiveFits = computeBestPrimitiveFits(points);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
+        const needsPointCollection = includePrimitiveFits || includeSurfacePoints;
+        const points = needsPointCollection ? collectMeshPoints(obj, pointCollectionLimit) : [];
+        const surfacePoints = includeSurfacePoints ? sampleMeshPoints(points, surfacePointLimit) : undefined;
+        const primitiveFits = includePrimitiveFits ? computeBestPrimitiveFits(points) : undefined;
         disposeObject3D(obj, true);
         resolve({
           bounds: {
@@ -247,7 +269,10 @@ export async function computeMeshBoundsFromAssets(
   assets: Record<string, string>,
   meshScale?: { x: number; y: number; z: number }
 ): Promise<MeshBounds | null> {
-  const analysis = await computeMeshAnalysisFromAssets(meshPath, assets, meshScale);
+  const analysis = await computeMeshAnalysisFromAssets(meshPath, assets, meshScale, {
+    includePrimitiveFits: false,
+    includeSurfacePoints: false,
+  });
   return analysis?.bounds ?? null;
 }
 
@@ -272,6 +297,8 @@ interface ConversionResult {
 interface ConversionContext {
   siblingGeometries?: GeomData[];
   meshClearanceObstacles?: MeshClearanceObstacle[];
+  fitVolumeWindowRatio?: number;
+  overlapAllowanceRatio?: number;
 }
 
 const DEFAULT_DIMENSIONS = { x: 0.1, y: 0.5, z: 0.1 };
@@ -327,9 +354,16 @@ function normalizeMeshScale(dimensions: GeomData['dimensions']): { x: number; y:
   };
 }
 
-function collectMeshPoints(object: THREE.Object3D): Point3[] {
-  const points: Point3[] = [];
-  const vertex = new THREE.Vector3();
+function collectMeshPoints(
+  object: THREE.Object3D,
+  maxPoints: number = MAX_MESH_ANALYSIS_POINTS,
+): Point3[] {
+  const meshEntries: Array<{
+    mesh: THREE.Mesh;
+    position: THREE.BufferAttribute;
+    vertexCount: number;
+  }> = [];
+  let totalVertexCount = 0;
 
   object.traverse((child) => {
     const mesh = child as THREE.Mesh;
@@ -337,12 +371,74 @@ function collectMeshPoints(object: THREE.Object3D): Point3[] {
 
     const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
     const position = geometry?.attributes?.position as THREE.BufferAttribute | undefined;
-    if (!position) return;
+    if (!position || position.count <= 0) return;
 
-    for (let index = 0; index < position.count; index += 1) {
-      vertex.fromBufferAttribute(position, index).applyMatrix4(mesh.matrixWorld);
-      points.push({ x: vertex.x, y: vertex.y, z: vertex.z });
+    meshEntries.push({
+      mesh,
+      position,
+      vertexCount: position.count,
+    });
+    totalVertexCount += position.count;
+  });
+
+  if (meshEntries.length === 0 || totalVertexCount === 0) {
+    return [];
+  }
+
+  const points: Point3[] = [];
+  const vertex = new THREE.Vector3();
+  const pushVertex = (mesh: THREE.Mesh, position: THREE.BufferAttribute, vertexIndex: number) => {
+    vertex.fromBufferAttribute(position, vertexIndex).applyMatrix4(mesh.matrixWorld);
+    points.push({ x: vertex.x, y: vertex.y, z: vertex.z });
+  };
+
+  if (totalVertexCount <= maxPoints) {
+    meshEntries.forEach(({ mesh, position, vertexCount }) => {
+      for (let index = 0; index < vertexCount; index += 1) {
+        pushVertex(mesh, position, index);
+      }
+    });
+    return points;
+  }
+
+  let remainingBudget = maxPoints;
+  let remainingVertexCount = totalVertexCount;
+
+  meshEntries.forEach(({ mesh, position, vertexCount }, meshIndex) => {
+    if (remainingBudget <= 0 || remainingVertexCount <= 0) {
+      remainingVertexCount -= vertexCount;
+      return;
     }
+
+    const isLastMesh = meshIndex === meshEntries.length - 1;
+    const quota = isLastMesh
+      ? Math.min(remainingBudget, vertexCount)
+      : Math.max(
+          1,
+          Math.min(
+            vertexCount,
+            Math.round((vertexCount / remainingVertexCount) * remainingBudget),
+          ),
+        );
+
+    if (quota >= vertexCount) {
+      for (let index = 0; index < vertexCount; index += 1) {
+        pushVertex(mesh, position, index);
+      }
+    } else if (quota === 1) {
+      pushVertex(mesh, position, Math.floor((vertexCount - 1) / 2));
+    } else {
+      for (let sampleIndex = 0; sampleIndex < quota; sampleIndex += 1) {
+        const vertexIndex = Math.min(
+          Math.round((sampleIndex * (vertexCount - 1)) / (quota - 1)),
+          vertexCount - 1,
+        );
+        pushVertex(mesh, position, vertexIndex);
+      }
+    }
+
+    remainingBudget -= quota;
+    remainingVertexCount -= vertexCount;
   });
 
   return points;
@@ -545,6 +641,18 @@ function rotateLocalVectorByOrigin(
   _tempVec3A.set(localVector.x, localVector.y, localVector.z).applyEuler(_tempEuler);
   const axis = canonicalizeAxis({ x: _tempVec3A.x, y: _tempVec3A.y, z: _tempVec3A.z });
   return axis ?? { x: 0, y: 0, z: 1 };
+}
+
+function computeOverlapAllowance(
+  primitiveRadius: number,
+  overlapAllowanceRatio: number | undefined,
+): number {
+  if (!Number.isFinite(overlapAllowanceRatio) || !overlapAllowanceRatio || overlapAllowanceRatio <= 0) {
+    return 0;
+  }
+
+  const safeRatio = Math.min(Math.max(overlapAllowanceRatio, 0), 0.35);
+  return Math.min(Math.max(primitiveRadius * safeRatio, 0), primitiveRadius * 0.35);
 }
 
 function computeBroadPhaseRadius(geometry: GeomData): number | null {
@@ -885,6 +993,7 @@ function applyMeshPointCollisionClearance(
   newType: GeometryType,
   meshClearanceObstacles: MeshClearanceObstacle[] | undefined,
   centerOrigin: ConversionResult['origin'],
+  overlapAllowanceRatio?: number,
 ): { radius: number; length: number; centerShift: number } {
   if ((newType !== GeometryType.CYLINDER && newType !== GeometryType.CAPSULE) || !meshClearanceObstacles?.length) {
     return {
@@ -920,7 +1029,8 @@ function applyMeshPointCollisionClearance(
   const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
   const radius = toPositive(primitiveRadius, 0.05);
   const minSize = 1e-4;
-  const clearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+  const baseClearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+  const clearance = baseClearance - computeOverlapAllowance(radius, overlapAllowanceRatio);
   const minRadius = Math.min(Math.max(radius * 0.15, minSize), radius);
   const radiusCandidates = collectRadiusCandidatesFromMeshPoints(
     radius,
@@ -1226,6 +1336,7 @@ function applySiblingCollisionClearance(
   newType: GeometryType,
   siblingGeometries: GeomData[] | undefined,
   centerOrigin: ConversionResult['origin'],
+  overlapAllowanceRatio?: number,
 ): { radius: number; length: number; centerShift: number } {
   if ((newType !== GeometryType.CYLINDER && newType !== GeometryType.CAPSULE) || !siblingGeometries?.length) {
     return {
@@ -1261,7 +1372,8 @@ function applySiblingCollisionClearance(
   const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
   const radius = toPositive(primitiveRadius, 0.05);
   const minSize = 1e-4;
-  const clearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+  const baseClearance = Math.min(Math.max(radius * 0.05, 0.002), 0.01);
+  const clearance = baseClearance - computeOverlapAllowance(radius, overlapAllowanceRatio);
   const minRadius = Math.min(Math.max(radius * 0.15, minSize), radius);
   const radiusCandidates = collectRadiusCandidates(
     radius,
@@ -2073,8 +2185,7 @@ function selectBestPrimitiveFitCandidate(
   primitiveFits: MeshAnalysis['primitiveFits'] | undefined,
   newType: GeometryType,
   origin: ConversionResult['origin'],
-  siblingGeometries?: GeomData[],
-  meshClearanceObstacles?: MeshClearanceObstacle[],
+  context?: ConversionContext,
 ): {
   fit: PrimitiveFit;
   centeredOrigin: ConversionResult['origin'];
@@ -2100,8 +2211,9 @@ function selectBestPrimitiveFitCandidate(
         fit.length,
         axisInLinkSpace,
         newType,
-        siblingGeometries,
+        context?.siblingGeometries,
         centeredOrigin,
+        context?.overlapAllowanceRatio,
       );
       const siblingShiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(centeredOrigin, {
@@ -2115,8 +2227,9 @@ function selectBestPrimitiveFitCandidate(
         clearanceAdjustedSize.length,
         axisInLinkSpace,
         newType,
-        meshClearanceObstacles,
+        context?.meshClearanceObstacles,
         siblingShiftedOrigin,
+        context?.overlapAllowanceRatio,
       );
       const shiftedOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(siblingShiftedOrigin, {
@@ -2139,6 +2252,7 @@ function selectBestPrimitiveFitCandidate(
         radius,
         length,
         adjustedVolume: computePrimitiveVolume(newType, radius, length),
+        centerShiftMagnitude: Math.abs(clearanceAdjustedSize.centerShift + meshAdjustedSize.centerShift),
       };
     })
     .filter((candidate) => Number.isFinite(candidate.adjustedVolume) && candidate.adjustedVolume > 0);
@@ -2147,20 +2261,22 @@ function selectBestPrimitiveFitCandidate(
     return null;
   }
 
-  const minAdjustedVolume = evaluated.reduce(
-    (minVolume, candidate) => Math.min(minVolume, candidate.adjustedVolume),
+  const minFitVolume = evaluated.reduce(
+    (minVolume, candidate) => Math.min(minVolume, candidate.fit.volume),
     Number.POSITIVE_INFINITY,
   );
+  const fitVolumeWindowRatio = Math.max(context?.fitVolumeWindowRatio ?? 1.25, 1);
   const finalists = evaluated
-    .filter((candidate) => candidate.adjustedVolume <= minAdjustedVolume * 1.15 + 1e-8)
+    .filter((candidate) => candidate.fit.volume <= minFitVolume * fitVolumeWindowRatio + 1e-8)
     .sort((left, right) =>
-      left.length - right.length ||
-      left.adjustedVolume - right.adjustedVolume ||
+      right.adjustedVolume - left.adjustedVolume ||
+      left.centerShiftMagnitude - right.centerShiftMagnitude ||
       left.fit.volume - right.fit.volume ||
+      left.length - right.length ||
       left.radius - right.radius
     );
 
-  const best = finalists[0];
+  const best = finalists[0] ?? evaluated[0];
   return best ?? null;
 }
 
@@ -2214,8 +2330,7 @@ export function convertGeometryType(
       meshAnalysis.primitiveFits,
       newType,
       origin,
-      context?.siblingGeometries,
-      context?.meshClearanceObstacles,
+      context,
     );
 
     if (fittedPrimitive) {
@@ -2287,6 +2402,7 @@ export function convertGeometryType(
         newType,
         context?.siblingGeometries,
         centeredOrigin,
+        context?.overlapAllowanceRatio,
       );
       const siblingShiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(centeredOrigin, {
@@ -2302,6 +2418,7 @@ export function convertGeometryType(
         newType,
         context?.meshClearanceObstacles,
         siblingShiftedOrigin,
+        context?.overlapAllowanceRatio,
       );
       const shiftedOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(siblingShiftedOrigin, {
@@ -2337,6 +2454,7 @@ export function convertGeometryType(
         newType,
         context?.siblingGeometries,
         centeredOrigin,
+        context?.overlapAllowanceRatio,
       );
       const siblingShiftedOrigin = Math.abs(clearanceAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(centeredOrigin, {
@@ -2352,6 +2470,7 @@ export function convertGeometryType(
         newType,
         context?.meshClearanceObstacles,
         siblingShiftedOrigin,
+        context?.overlapAllowanceRatio,
       );
       const shiftedOrigin = Math.abs(meshAdjustedSize.centerShift) > 1e-8
         ? offsetOriginByLocalVector(siblingShiftedOrigin, {
@@ -2404,6 +2523,7 @@ export function convertGeometryType(
         newType,
         context.siblingGeometries,
         origin,
+        context?.overlapAllowanceRatio,
       );
       radius = clearanceAdjustedSize.radius;
       length = clearanceAdjustedSize.length;
@@ -2425,6 +2545,7 @@ export function convertGeometryType(
         newType,
         context.meshClearanceObstacles,
         nextOrigin,
+        context?.overlapAllowanceRatio,
       );
       radius = meshAdjustedSize.radius;
       length = meshAdjustedSize.length;

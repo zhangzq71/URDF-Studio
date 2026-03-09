@@ -1,13 +1,13 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useRobotStore } from '@/store/robotStore';
 import { Slider } from '@/shared/components/ui';
 
 export interface JointControlItemProps {
     name: string;
     joint: any;
-    jointAngles: Record<string, number>;
+    value: number;
     angleUnit: 'rad' | 'deg';
-    activeJoint: string | null;
+    isActive: boolean;
     setActiveJoint: (name: string | null) => void;
     handleJointAngleChange: (name: string, val: number) => void;
     handleJointChangeCommit: (name: string, val: number) => void;
@@ -16,12 +16,12 @@ export interface JointControlItemProps {
     isAdvanced?: boolean;
 }
 
-export const JointControlItem: React.FC<JointControlItemProps> = ({
+const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     name,
     joint,
-    jointAngles,
+    value,
     angleUnit,
-    activeJoint,
+    isActive,
     setActiveJoint,
     handleJointAngleChange,
     handleJointChangeCommit,
@@ -30,15 +30,9 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
     isAdvanced = false
 }) => {
     const limit = joint.limit || { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 };
-    const value = jointAngles[name] || 0;
     const itemRef = useRef<HTMLDivElement>(null);
     
     const updateJoint = useRobotStore(state => state.updateJoint);
-    const joints = useRobotStore(state => state.joints);
-    const storeJoint = useMemo(
-        () => Object.values(joints).find(j => j.name === name),
-        [joints, name]
-    );
 
     const [localLimits, setLocalLimits] = useState({ 
         lower: limit.lower, 
@@ -72,10 +66,11 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
             }
         }
 
-        if (storeJoint) {
-            updateJoint(storeJoint.id, {
+        const jointId = joint.id || name;
+        if (jointId) {
+            updateJoint(jointId, {
                 limit: {
-                    ...storeJoint.limit,
+                    ...(joint.limit || {}),
                     [key]: val
                 }
             });
@@ -83,7 +78,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
     };
 
     useEffect(() => {
-        if (activeJoint === name && itemRef.current) {
+        if (isActive && itemRef.current) {
             const scrollParent = itemRef.current.closest('.overflow-y-auto');
             if (scrollParent) {
                 const parentRect = scrollParent.getBoundingClientRect();
@@ -101,7 +96,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
                 itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         }
-    }, [activeJoint, name]);
+    }, [isActive, name]);
 
     const displayValue = angleUnit === 'deg' ? value * 180 / Math.PI : value;
     const displayMin = angleUnit === 'deg' ? localLimits.lower * 180 / Math.PI : localLimits.lower;
@@ -265,7 +260,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
             }}
             onMouseEnter={() => onHover?.('joint', name, 'visual')}
             className={`space-y-1.5 p-2 rounded-lg transition-colors cursor-pointer border ${
-                activeJoint === name
+                isActive
                     ? 'bg-blue-50 dark:bg-google-blue/10 border-blue-200 dark:border-google-blue/30'
                     : 'bg-transparent border-transparent hover:bg-slate-50 dark:hover:bg-white/5'
             }`}
@@ -273,7 +268,7 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
             <div className="flex justify-between items-center gap-2 h-6">
                 <span
                     className={`text-[11px] font-medium truncate min-w-0 ${
-                        activeJoint === name 
+                        isActive 
                             ? 'text-google-blue dark:text-google-blue-light' 
                             : 'text-slate-700 dark:text-slate-300'
                     } flex-1`}
@@ -357,3 +352,5 @@ export const JointControlItem: React.FC<JointControlItemProps> = ({
         </div>
     );
 };
+
+export const JointControlItem = React.memo(JointControlItemComponent);

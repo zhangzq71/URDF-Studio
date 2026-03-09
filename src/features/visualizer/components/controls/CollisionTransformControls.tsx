@@ -60,7 +60,8 @@ export const CollisionTransformControls = memo(function CollisionTransformContro
         ref={transformControlRef}
         object={selectedCollisionRef}
         mode={transformMode}
-        gizmoPreset="collision-precise"
+        gizmoPreset="official"
+        axesOnly
         size={VISUALIZER_UNIFIED_GIZMO_SIZE}
         space="local"
         enabled={!pendingEdit}

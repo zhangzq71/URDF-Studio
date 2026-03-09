@@ -30,15 +30,35 @@ import { MeshPreview } from './MeshPreview';
 import {
   computeAutoAlign,
   convertGeometryType,
-  computeMeshAnalysisFromAssets,
 } from '../utils/geometryConversion';
-import type { MeshAnalysis, MeshClearanceObstacle } from '../utils/geometryConversion';
+import type { MeshAnalysis, MeshAnalysisOptions, MeshClearanceObstacle } from '../utils/geometryConversion';
+import { analyzeMeshBatchWithWorker } from '../utils/meshAnalysisWorkerBridge';
 import {
   GEOMETRY_DIMENSION_STEP,
   MAX_GEOMETRY_DIMENSION_DECIMALS,
   MAX_TRANSFORM_DECIMALS,
   TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
+
+const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
+  includePrimitiveFits: true,
+  includeSurfacePoints: false,
+  pointCollectionLimit: 2048,
+} satisfies MeshAnalysisOptions;
+
+const GEOMETRY_EDITOR_RELAXED_OVERLAP_ALLOWANCE_RATIO = 0.12;
+const GEOMETRY_EDITOR_RELAXED_FIT_VOLUME_WINDOW_RATIO = 1.75;
+
+async function yieldToNextFrame(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
 
 interface GeometryEditorProps {
   data: UrdfLink;
@@ -66,6 +86,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
     const meshAnalysisKeyRef = useRef<string | null>(null);
     const meshAnalysisCacheRef = useRef<Record<string, MeshAnalysis | null>>({});
+    const meshAnalysisPromiseCacheRef = useRef<Record<string, Promise<MeshAnalysis | null>>>({});
     const typeChangeRequestRef = useRef(0);
     const setSelection = useSelectionStore((state) => state.setSelection);
 
@@ -122,6 +143,30 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
     const createMeshAnalysisKey = (geometry: Pick<UrdfVisual, 'meshPath' | 'dimensions'>) =>
       `${geometry.meshPath ?? ''}:${geometry.dimensions?.x ?? 1}:${geometry.dimensions?.y ?? 1}:${geometry.dimensions?.z ?? 1}`;
+
+    const analyzeMeshGeometry = async (
+      geometry: Pick<UrdfVisual, 'meshPath' | 'dimensions' | 'type'>,
+      signal?: AbortSignal,
+    ): Promise<MeshAnalysis | null> => {
+      if (geometry.type !== GeometryType.MESH || !geometry.meshPath) {
+        return null;
+      }
+
+      const analysisKey = createMeshAnalysisKey(geometry);
+      const workerResults = await analyzeMeshBatchWithWorker({
+        assets,
+        tasks: [{
+          targetId: analysisKey,
+          cacheKey: analysisKey,
+          meshPath: geometry.meshPath,
+          dimensions: geometry.dimensions,
+        }],
+        options: GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS,
+        signal,
+      });
+
+      return workerResults[analysisKey] ?? null;
+    };
 
     const cloneGeometry = (geometry: UrdfVisual): UrdfVisual => ({
       ...geometry,
@@ -180,15 +225,28 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       if (meshAnalysisKeyRef.current === analysisKey && meshAnalysisRef.current) {
         return;
       }
+      if (meshAnalysisPromiseCacheRef.current[analysisKey]) {
+        return;
+      }
       meshAnalysisKeyRef.current = analysisKey;
       meshAnalysisRef.current = null;
-      let cancelled = false;
-      computeMeshAnalysisFromAssets(geomData.meshPath, assets, geomData.dimensions).then((analysis) => {
-        if (!cancelled) {
+      const controller = new AbortController();
+      const analysisPromise = analyzeMeshGeometry(geomData, controller.signal);
+      meshAnalysisPromiseCacheRef.current[analysisKey] = analysisPromise;
+      void analysisPromise.then((analysis) => {
+        if (meshAnalysisPromiseCacheRef.current[analysisKey] === analysisPromise) {
+          delete meshAnalysisPromiseCacheRef.current[analysisKey];
+        }
+        if (!controller.signal.aborted) {
+          meshAnalysisCacheRef.current[analysisKey] = analysis;
           meshAnalysisRef.current = analysis;
         }
+      }).catch(() => {
+        if (meshAnalysisPromiseCacheRef.current[analysisKey] === analysisPromise) {
+          delete meshAnalysisPromiseCacheRef.current[analysisKey];
+        }
       });
-      return () => { cancelled = true; };
+      return () => { controller.abort(); };
     }, [geomData.meshPath, geomData.type, geomData.dimensions?.x, geomData.dimensions?.y, geomData.dimensions?.z, assets]);
 
     const resolveMeshAnalysisForGeometry = async (geometry: UrdfVisual): Promise<MeshAnalysis | null> => {
@@ -205,73 +263,45 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           return meshAnalysisRef.current;
         }
 
-        const analysis = await computeMeshAnalysisFromAssets(geometry.meshPath, assets, geometry.dimensions);
-        meshAnalysisCacheRef.current[analysisKey] = analysis;
-
-        if (geometry.meshPath === geomData.meshPath && analysisKey === createMeshAnalysisKey(geomData)) {
-          meshAnalysisKeyRef.current = analysisKey;
-          meshAnalysisRef.current = analysis;
+        const pendingAnalysis = meshAnalysisPromiseCacheRef.current[analysisKey];
+        if (pendingAnalysis) {
+          const analysis = await pendingAnalysis;
+          meshAnalysisCacheRef.current[analysisKey] = analysis;
+          return analysis;
         }
 
-        return analysis;
+        const analysisPromise = analyzeMeshGeometry(geometry);
+        meshAnalysisPromiseCacheRef.current[analysisKey] = analysisPromise;
+        try {
+          const analysis = await analysisPromise;
+          meshAnalysisCacheRef.current[analysisKey] = analysis;
+
+          if (geometry.meshPath === geomData.meshPath && analysisKey === createMeshAnalysisKey(geomData)) {
+            meshAnalysisKeyRef.current = analysisKey;
+            meshAnalysisRef.current = analysis;
+          }
+
+          return analysis;
+        } finally {
+          if (meshAnalysisPromiseCacheRef.current[analysisKey] === analysisPromise) {
+            delete meshAnalysisPromiseCacheRef.current[analysisKey];
+          }
+        }
     };
 
     const resolveCollisionClearanceContext = async (): Promise<{
       siblingGeometries?: UrdfVisual[];
       meshClearanceObstacles?: MeshClearanceObstacle[];
+      overlapAllowanceRatio?: number;
+      fitVolumeWindowRatio?: number;
     }> => {
         if (category !== 'collision') {
           return {};
         }
 
-        const siblingEntries = getCollisionGeometryEntries(data)
-          .filter((entry) => entry.objectIndex !== selectedCollisionObjectIndex);
-
-        if (siblingEntries.length === 0) {
-          return {};
-        }
-
-        const resolvedEntries = await Promise.all(siblingEntries.map(async ({ geometry }) => {
-          const analysis = await resolveMeshAnalysisForGeometry(geometry);
-          const meshObstacle = analysis?.surfacePoints?.length && geometry.type === GeometryType.MESH
-            ? {
-                points: analysis.surfacePoints.map((point) => ({ ...point })),
-              }
-            : null;
-
-          if (!analysis || geometry.type !== GeometryType.MESH) {
-            return {
-              siblingGeometry: cloneGeometry(geometry),
-              meshObstacle,
-            };
-          }
-
-          const boxedGeometry = convertGeometryType(geometry, GeometryType.BOX, analysis);
-          return {
-            siblingGeometry: {
-              ...geometry,
-              type: GeometryType.BOX,
-              dimensions: { ...boxedGeometry.dimensions },
-              origin: {
-                xyz: { ...boxedGeometry.origin.xyz },
-                rpy: { ...boxedGeometry.origin.rpy },
-              },
-              meshPath: undefined,
-            },
-            meshObstacle,
-          };
-        }));
-
-        const siblingGeometries = resolvedEntries
-          .map((entry) => entry?.siblingGeometry ?? null)
-          .filter((entry): entry is UrdfVisual => entry !== null);
-        const meshClearanceObstacles = resolvedEntries
-          .map((entry) => entry?.meshObstacle ?? null)
-          .filter((entry): entry is MeshClearanceObstacle => entry !== null && entry.points.length > 0);
-
         return {
-          siblingGeometries: siblingGeometries.length > 0 ? siblingGeometries : undefined,
-          meshClearanceObstacles: meshClearanceObstacles.length > 0 ? meshClearanceObstacles : undefined,
+          overlapAllowanceRatio: GEOMETRY_EDITOR_RELAXED_OVERLAP_ALLOWANCE_RATIO,
+          fitVolumeWindowRatio: GEOMETRY_EDITOR_RELAXED_FIT_VOLUME_WINDOW_RATIO,
         };
     };
 
@@ -346,6 +376,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
         const requestId = ++typeChangeRequestRef.current;
 
         void (async () => {
+          await yieldToNextFrame();
+
           const meshAnalysis =
             currentType === GeometryType.MESH
               ? await resolveMeshAnalysisForGeometry(geomData)

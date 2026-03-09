@@ -46,6 +46,7 @@ export const VisualizerScene = React.memo(({
     handleRegisterCollisionRef,
     transformControlsState,
     handleCollisionTransformEnd,
+    handleAutoFitGround,
   } = controller;
   const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
     const grouped: Record<string, UrdfJoint[]> = {};
@@ -60,6 +61,21 @@ export const VisualizerScene = React.memo(({
 
     return grouped;
   }, [robot.joints]);
+
+  React.useEffect(() => {
+    if (mode !== 'skeleton' || !robotRootRef.current) return;
+
+    const timers = [0, 80, 220].map((delay) =>
+      window.setTimeout(() => {
+        if (!robotRootRef.current) return;
+        handleAutoFitGround();
+      }, delay)
+    );
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [handleAutoFitGround, mode, robot.joints, robot.links, robotRootRef]);
 
   return (
     <>
@@ -115,7 +131,8 @@ export const VisualizerScene = React.memo(({
               ref={collisionTransformControlRef}
               object={selectedCollisionRef}
               mode={state.transformMode === 'select' ? 'translate' : state.transformMode}
-              gizmoPreset="collision-precise"
+              gizmoPreset="official"
+              axesOnly
               size={VISUALIZER_UNIFIED_GIZMO_SIZE}
               space="local"
               onMouseUp={handleCollisionTransformEnd}

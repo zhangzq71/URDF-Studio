@@ -24,6 +24,8 @@ import { useShallow } from 'zustand/react/shallow';
 export interface TreeNodeProps {
   linkId: string;
   robot: RobotState;
+  childJointsByParent?: Record<string, RobotState['joints'][string][]>;
+  selectionBranchLinkIds?: Set<string>;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
   onFocus?: (id: string) => void;
@@ -53,20 +55,6 @@ function getJointTypeLabel(type: JointType, t: TranslationKeys): string {
     default:
       return type;
   }
-}
-
-function branchContainsSelection(robot: RobotState, branchLinkId: string): boolean {
-  const { selection } = robot;
-  if (!selection.type || !selection.id) return false;
-  if (selection.type === 'link' && selection.id === branchLinkId) return true;
-
-  const childJoints = Object.values(robot.joints).filter((joint) => joint.parentLinkId === branchLinkId);
-  for (const joint of childJoints) {
-    if (selection.type === 'joint' && selection.id === joint.id) return true;
-    if (branchContainsSelection(robot, joint.childLinkId)) return true;
-  }
-
-  return false;
 }
 
 function scrollElementIntoView(element: HTMLElement | null) {
@@ -104,6 +92,8 @@ function resolveTreeRowStateClass(
 export const TreeNode = memo(({
   linkId,
   robot,
+  childJointsByParent,
+  selectionBranchLinkIds,
   onSelect,
   onSelectGeometry,
   onFocus,
@@ -183,7 +173,7 @@ export const TreeNode = memo(({
     return null;
   }
 
-  const childJoints = Object.values(robot.joints).filter((joint) => joint.parentLinkId === linkId);
+  const childJoints = childJointsByParent?.[linkId] ?? [];
   const hasChildren = childJoints.length > 0;
 
   const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
@@ -231,7 +221,7 @@ export const TreeNode = memo(({
     attentionSelection,
     { type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }
   );
-  const selectionInBranch = branchContainsSelection(robot, linkId);
+  const selectionInBranch = selectionBranchLinkIds?.has(linkId) ?? false;
   const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
   const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
   const contextMenuHasCollision = Boolean(
@@ -985,6 +975,8 @@ export const TreeNode = memo(({
                 <TreeNode
                   linkId={joint.childLinkId}
                   robot={robot}
+                  childJointsByParent={childJointsByParent}
+                  selectionBranchLinkIds={selectionBranchLinkIds}
                   onSelect={onSelect}
                   onSelectGeometry={onSelectGeometry}
                   onFocus={onFocus}

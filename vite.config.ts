@@ -102,6 +102,9 @@ export default defineConfig(({ mode }) => {
           },
         },
       },
+      worker: {
+        format: 'es',
+      },
       plugins: [react(), tailwindcss()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.OPENAI_API_KEY || env.GEMINI_API_KEY),

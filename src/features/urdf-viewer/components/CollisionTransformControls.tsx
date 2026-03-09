@@ -16,8 +16,8 @@ import {
 } from '../utils/collisionTransformMath';
 import { CollisionPendingEditOverlay } from './CollisionPendingEditOverlay';
 
-const COLLISION_TRANSLATE_GIZMO_SIZE = 1.48;
-const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.3;
+const COLLISION_TRANSLATE_GIZMO_SIZE = 1.18;
+const COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE = 1.42;
 
 const isTransformAxis = (axis: unknown): axis is CollisionTransformAxis =>
     axis === 'X' || axis === 'Y' || axis === 'Z';
@@ -39,6 +39,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const [pendingEdit, setPendingEdit] = useState<CollisionPendingEdit | null>(null);
     const pendingEditRef = useRef<CollisionPendingEdit | null>(null);
     const [inputValue, setInputValue] = useState('');
+    const controlsLocked = pendingEdit !== null;
 
     const originalPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
     const originalRotationRef = useRef<THREE.Euler>(new THREE.Euler());
@@ -282,11 +283,12 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
                 rotateRef={rotateTransformRef}
                 object={targetObject}
                 mode={transformMode}
-                gizmoPreset="collision-precise"
+                gizmoPreset="official"
+                axesOnly
                 size={COLLISION_TRANSLATE_GIZMO_SIZE}
                 rotateSize={COLLISION_UNIVERSAL_ROTATE_GIZMO_SIZE}
                 space="local"
-                enabled={true}
+                enabled={!controlsLocked}
                 onChange={handleObjectChange}
                 onRotateChange={handleObjectChange}
             />

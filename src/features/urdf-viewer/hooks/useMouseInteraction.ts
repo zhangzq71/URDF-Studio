@@ -5,9 +5,11 @@ import { throttle } from '@/shared/utils';
 import { THROTTLE_INTERVAL } from '../constants';
 import type { ToolMode } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
+import { collectGizmoRaycastTargets, findFirstIntersection, isGizmoObject } from '../utils/raycast';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
 
 const JOINT_DRAG_EPSILON = 1e-5;
+const MAX_REVOLUTE_DELTA_PER_EVENT = Math.PI / 8;
 
 export interface UseMouseInteractionOptions {
     robot: THREE.Object3D | null;
@@ -80,6 +82,9 @@ export function useMouseInteraction({
     const lastRotationPointRef = useRef(new THREE.Vector3());
     const hasLastRotationPointRef = useRef(false);
     const selectionResetTimerRef = useRef<number | null>(null);
+    const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
+    const gizmoTargetsCacheKeyRef = useRef('');
+    const gizmoTargetsUpdatedAtRef = useRef(0);
 
     // Keep refs up to date
     const onJointChangeRef = useRef(onJointChange);
@@ -98,6 +103,22 @@ export function useMouseInteraction({
 
     // Mouse tracking for hover detection AND joint dragging
     useEffect(() => {
+        const getGizmoTargets = () => {
+            const nextCacheKey = `${scene.children.length}:${toolMode}:${mode ?? 'detail'}:${robot ? 'robot' : 'empty'}`;
+            const now = performance.now();
+
+            if (
+                gizmoTargetsCacheKeyRef.current !== nextCacheKey
+                || now - gizmoTargetsUpdatedAtRef.current > 120
+            ) {
+                gizmoTargetsRef.current = collectGizmoRaycastTargets(scene);
+                gizmoTargetsCacheKeyRef.current = nextCacheKey;
+                gizmoTargetsUpdatedAtRef.current = now;
+            }
+
+            return gizmoTargetsRef.current;
+        };
+
         const setOrbitControlsEnabled = (enabled: boolean) => {
             if (orbitControls && typeof orbitControls.enabled === 'boolean') {
                 orbitControls.enabled = enabled;
@@ -123,8 +144,10 @@ export function useMouseInteraction({
 
             updatePointerFromClient(clientX, clientY);
 
-            const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
-            const nearestSceneHit = sceneHits[0];
+            const gizmoTargets = getGizmoTargets();
+            const nearestSceneHit = gizmoTargets.length > 0
+                ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
+                : undefined;
             if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
                 return true;
             }
@@ -168,7 +191,7 @@ export function useMouseInteraction({
             return Number.isFinite(target.x) && Number.isFinite(target.y);
         };
 
-        const getScreenAlignedDirection = (
+        const getScreenSpaceRotationDelta = (
             radialVector: THREE.Vector3,
             pointerDeltaX: number,
             pointerDeltaY: number
@@ -207,19 +230,12 @@ export function useMouseInteraction({
                 return 0;
             }
 
-            return Math.sign(pointerAlignment);
+            return pointerAlignment / tangentScreenLengthSq;
         };
 
         const syncJointWorldFrame = (joint: any) => {
             const axis = joint.axis || new THREE.Vector3(0, 0, 1);
-
-            if (joint.bodyOffsetGroup) {
-                joint.bodyOffsetGroup.getWorldQuaternion(tempWorldQuat);
-            } else if (joint.parent) {
-                joint.parent.getWorldQuaternion(tempWorldQuat);
-            } else {
-                joint.getWorldQuaternion(tempWorldQuat);
-            }
+            joint.getWorldQuaternion(tempWorldQuat);
 
             tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
             tempPivotPoint.setFromMatrixPosition(joint.matrixWorld);
@@ -242,15 +258,6 @@ export function useMouseInteraction({
                 current = current.parent;
             }
             return null;
-        };
-
-        const isGizmoObject = (object: THREE.Object3D | null): boolean => {
-            let current: THREE.Object3D | null = object;
-            while (current) {
-                if (current.userData?.isGizmo) return true;
-                current = current.parent;
-            }
-            return false;
         };
 
         /**
@@ -300,11 +307,46 @@ export function useMouseInteraction({
             tempProjStart.sub(tempPivotPoint);
             tempProjEnd.sub(tempPivotPoint);
 
+            if (
+                tempProjStart.lengthSq() <= JOINT_DRAG_EPSILON ||
+                tempProjEnd.lengthSq() <= JOINT_DRAG_EPSILON
+            ) {
+                return 0;
+            }
+
             tempCross.crossVectors(tempProjStart, tempProjEnd);
-            const worldDirection = Math.sign(tempCross.dot(tempAxisWorld));
-            const screenDirection = getScreenAlignedDirection(tempProjStart, pointerDeltaX, pointerDeltaY);
-            const direction = screenDirection || worldDirection;
-            return direction * tempProjStart.angleTo(tempProjEnd);
+            const worldDelta = Math.atan2(
+                tempCross.dot(tempAxisWorld),
+                tempProjStart.dot(tempProjEnd)
+            );
+            const screenDelta = getScreenSpaceRotationDelta(
+                tempProjStart,
+                pointerDeltaX,
+                pointerDeltaY
+            );
+
+            const hasWorldDelta =
+                Number.isFinite(worldDelta) && Math.abs(worldDelta) > JOINT_DRAG_EPSILON;
+            const hasScreenDelta =
+                Number.isFinite(screenDelta) && Math.abs(screenDelta) > JOINT_DRAG_EPSILON;
+
+            if (!hasWorldDelta) {
+                return THREE.MathUtils.clamp(
+                    screenDelta,
+                    -MAX_REVOLUTE_DELTA_PER_EVENT,
+                    MAX_REVOLUTE_DELTA_PER_EVENT
+                );
+            }
+
+            const resolvedDelta = hasScreenDelta
+                ? Math.sign(screenDelta) * Math.abs(worldDelta)
+                : worldDelta;
+
+            return THREE.MathUtils.clamp(
+                resolvedDelta,
+                -MAX_REVOLUTE_DELTA_PER_EVENT,
+                MAX_REVOLUTE_DELTA_PER_EVENT
+            );
         };
 
         const getPrismaticDelta = (joint: any, startPt: THREE.Vector3, endPt: THREE.Vector3): number => {
@@ -445,23 +487,25 @@ export function useMouseInteraction({
             // TransformControls gizmo is not a child of `robot`.
             // If we only raycast `robot`, clicking gizmo will "pass through" and select
             // underlying collision/visual meshes by mistake.
-            const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
-            const nearestSceneHit = sceneHits[0];
+            const gizmoTargets = getGizmoTargets();
+            const nearestSceneHit = gizmoTargets.length > 0
+                ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
+                : undefined;
             if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
                 return;
             }
 
             const intersections = raycasterRef.current.intersectObject(robot, true);
 
-            const validHits = intersections.filter(hit => {
-                if (hit.object.userData?.isGizmo) return false;
-                let p = hit.object.parent;
+            const hit = findFirstIntersection(intersections, (rayHit) => {
+                if (rayHit.object.userData?.isGizmo) return false;
+                let p = rayHit.object.parent;
                 while (p) {
                     if (p.userData?.isGizmo) return false;
                     p = p.parent;
                 }
                 if (isCollisionMode) {
-                    let obj: THREE.Object3D | null = hit.object;
+                    let obj: THREE.Object3D | null = rayHit.object;
                     let isCollision = false;
                     while (obj) {
                         if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
@@ -472,7 +516,7 @@ export function useMouseInteraction({
                     }
                     return isCollision;
                 }
-                let obj: THREE.Object3D | null = hit.object;
+                let obj: THREE.Object3D | null = rayHit.object;
                 while (obj) {
                     if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
                         return false;
@@ -482,11 +526,7 @@ export function useMouseInteraction({
                 return true;
             });
 
-            if (validHits.length > 0) {
-                // Ensure strictly sorted by distance (closest first)
-                validHits.sort((a, b) => a.distance - b.distance);
-                const hit = validHits[0];
-
+            if (hit) {
                 if (justSelectedRef) {
                     justSelectedRef.current = true;
                 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { computePreviewUrdf, generateMujocoXML, generateURDF } from '@/core/parsers';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { DEFAULT_LINK, GeometryType, type AssemblyState, type RobotData, type RobotFile, type RobotState, type UrdfJoint, type UrdfLink } from '@/types';
@@ -21,6 +21,46 @@ interface UseWorkspaceSourceSyncOptions {
   setOriginalUrdfContent: (content: string | null) => void;
 }
 
+function areJointSourceCompatible(
+  prev: Record<string, UrdfJoint>,
+  next: Record<string, UrdfJoint>,
+): boolean {
+  const prevKeys = Object.keys(prev);
+  const nextKeys = Object.keys(next);
+
+  if (prevKeys.length !== nextKeys.length) return false;
+
+  for (const key of nextKeys) {
+    const prevJoint = prev[key] as (UrdfJoint & { angle?: number }) | undefined;
+    const nextJoint = next[key] as (UrdfJoint & { angle?: number }) | undefined;
+    if (!prevJoint || !nextJoint) return false;
+    if (prevJoint === nextJoint) continue;
+
+    const comparedKeys = new Set([
+      ...Object.keys(prevJoint),
+      ...Object.keys(nextJoint),
+    ]);
+
+    for (const comparedKey of comparedKeys) {
+      if (comparedKey === 'angle') continue;
+      if ((prevJoint as Record<string, unknown>)[comparedKey] !== (nextJoint as Record<string, unknown>)[comparedKey]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function stripTransientJointState(joints: Record<string, UrdfJoint>): Record<string, UrdfJoint> {
+  return Object.fromEntries(
+    Object.entries(joints).map(([jointId, joint]) => {
+      const { angle: _angle, ...sourceJoint } = joint as UrdfJoint & { angle?: number };
+      return [jointId, sourceJoint as UrdfJoint];
+    }),
+  );
+}
+
 export function useWorkspaceSourceSync({
   assemblyState,
   sidebarTab,
@@ -40,6 +80,7 @@ export function useWorkspaceSourceSync({
 }: UseWorkspaceSourceSyncOptions) {
   const isWorkspaceAssembly = Boolean(assemblyState && sidebarTab === 'workspace');
   const [filePreviewFile, setFilePreviewFile] = useState<RobotFile | null>(null);
+  const sourceJointsRef = useRef<Record<string, UrdfJoint>>({});
 
   const mergedRobotData = useMemo(() => {
     if (!isWorkspaceAssembly) return null;
@@ -108,13 +149,23 @@ export function useWorkspaceSourceSync({
     return Object.values(robot.links).some((link) => link.visible !== false);
   }, [robot.links]);
 
+  const sourceRobotJoints = useMemo(() => {
+    if (areJointSourceCompatible(sourceJointsRef.current, robotJoints)) {
+      return sourceJointsRef.current;
+    }
+
+    const nextSourceJoints = stripTransientJointState(robotJoints);
+    sourceJointsRef.current = nextSourceJoints;
+    return nextSourceJoints;
+  }, [robotJoints]);
+
   const currentRobotSourceState = useMemo<RobotState>(() => ({
     name: robotName,
     links: robotLinks,
-    joints: robotJoints,
+    joints: sourceRobotJoints,
     rootLinkId,
     selection: { type: null, id: null },
-  }), [robotJoints, robotLinks, robotName, rootLinkId]);
+  }), [robotLinks, robotName, rootLinkId, sourceRobotJoints]);
 
   const syncedSourceContent = useMemo(() => {
     if (!selectedFile || isWorkspaceAssembly) {
