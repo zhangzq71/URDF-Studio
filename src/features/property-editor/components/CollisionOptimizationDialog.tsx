@@ -16,6 +16,7 @@ import { useDraggableWindow } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 import { GeometryType } from '@/types';
 import type {
+  CollisionOptimizationAnalysis,
   CollisionOptimizationBaseAnalysis,
   CollisionOptimizationSource,
   CollisionOptimizationScope,
@@ -24,7 +25,7 @@ import type {
   RodBoxOptimizationStrategy,
 } from '../utils/collisionOptimization';
 import {
-  buildCollisionOptimizationAnalysis,
+  buildCollisionOptimizationAnalysisAsync,
   buildCollisionOptimizationOperations,
   countSameLinkOverlapWarnings,
   prepareCollisionOptimizationBaseAnalysis,
@@ -46,6 +47,35 @@ interface CollisionOptimizationDialogProps {
   onClose: () => void;
   onApply: (operations: CollisionOptimizationOperation[]) => void;
   onSelectTarget?: (target: CollisionTargetRef) => void;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function afterNextPaint(callback: () => void): () => void {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    const timeoutId = setTimeout(callback, 0);
+    return () => clearTimeout(timeoutId);
+  }
+
+  let cancelled = false;
+  let frameA = 0;
+  let frameB = 0;
+
+  frameA = window.requestAnimationFrame(() => {
+    frameB = window.requestAnimationFrame(() => {
+      if (!cancelled) {
+        callback();
+      }
+    });
+  });
+
+  return () => {
+    cancelled = true;
+    window.cancelAnimationFrame(frameA);
+    window.cancelAnimationFrame(frameB);
+  };
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -259,12 +289,15 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const [meshStrategy, setMeshStrategy] = useState<MeshOptimizationStrategy>('capsule');
   const [cylinderStrategy, setCylinderStrategy] = useState<CylinderOptimizationStrategy>('capsule');
   const [rodBoxStrategy, setRodBoxStrategy] = useState<RodBoxOptimizationStrategy>('capsule');
-  const [avoidSiblingOverlap, setAvoidSiblingOverlap] = useState(true);
-  const [isAnalyzing, setIsAnalyzing] = useState(true);
+  const [avoidSiblingOverlap, setAvoidSiblingOverlap] = useState(false);
+  const [isPreparingBaseAnalysis, setIsPreparingBaseAnalysis] = useState(true);
+  const [isComputingCandidates, setIsComputingCandidates] = useState(false);
   const [baseAnalysis, setBaseAnalysis] = useState<CollisionOptimizationBaseAnalysis | null>(null);
+  const [analysis, setAnalysis] = useState<CollisionOptimizationAnalysis | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [stackedPanel, setStackedPanel] = useState<'candidates' | 'settings'>('candidates');
   const hasCustomCheckedSelectionRef = useRef(false);
+  const isAnalyzing = isPreparingBaseAnalysis || isComputingCandidates;
 
   const windowState = useDraggableWindow({
     defaultSize: { width: 1120, height: 720 },
@@ -293,48 +326,89 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const effectiveSelectedTargetId = scope === 'selected' ? selectedTargetId : null;
 
   useEffect(() => {
-    let isMounted = true;
-    setIsAnalyzing(true);
+    const controller = new AbortController();
+    setIsPreparingBaseAnalysis(true);
+    setIsComputingCandidates(false);
+    setBaseAnalysis(null);
+    setAnalysis(null);
     hasCustomCheckedSelectionRef.current = false;
     setCheckedIds(new Set());
 
-    void prepareCollisionOptimizationBaseAnalysis(source, assets)
+    const cancelScheduledStart = afterNextPaint(() => {
+      void prepareCollisionOptimizationBaseAnalysis(source, assets, {
+        signal: controller.signal,
+        includeClearanceData: avoidSiblingOverlap,
+      })
+        .then((result) => {
+          if (controller.signal.aborted) return;
+          setBaseAnalysis(result);
+        })
+        .catch((error) => {
+          if (!isAbortError(error)) {
+            console.error('Failed to prepare collision optimization base analysis', error);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setIsPreparingBaseAnalysis(false);
+          }
+        });
+    });
+
+    return () => {
+      cancelScheduledStart();
+      controller.abort();
+    };
+  }, [assets, avoidSiblingOverlap, source]);
+
+  useEffect(() => {
+    if (!baseAnalysis) {
+      setIsComputingCandidates(false);
+      setAnalysis(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsComputingCandidates(true);
+    setAnalysis(null);
+
+    void buildCollisionOptimizationAnalysisAsync(baseAnalysis, {
+      scope,
+      meshStrategy,
+      cylinderStrategy,
+      rodBoxStrategy,
+      avoidSiblingOverlap,
+      selectedTargetId: effectiveSelectedTargetId,
+    }, {
+      signal: controller.signal,
+    })
       .then((result) => {
-        if (!isMounted) return;
-        setBaseAnalysis(result);
+        if (controller.signal.aborted) return;
+        setAnalysis(result);
+      })
+      .catch((error) => {
+        if (!isAbortError(error)) {
+          console.error('Failed to build collision optimization candidates', error);
+        }
       })
       .finally(() => {
-        if (isMounted) {
-          setIsAnalyzing(false);
+        if (!controller.signal.aborted) {
+          setIsComputingCandidates(false);
         }
       });
 
     return () => {
-      isMounted = false;
+      controller.abort();
     };
-  }, [assets, source]);
-
-  const analysis = useMemo(
-    () => (baseAnalysis
-      ? buildCollisionOptimizationAnalysis(baseAnalysis, {
-        scope,
-        meshStrategy,
-        cylinderStrategy,
-        rodBoxStrategy,
-        avoidSiblingOverlap,
-        selectedTargetId: effectiveSelectedTargetId,
-      })
-      : null),
-    [
-      avoidSiblingOverlap,
-      baseAnalysis,
-      cylinderStrategy,
-      effectiveSelectedTargetId,
-      meshStrategy,
-      rodBoxStrategy,
-      scope,
-    ],
-  );
+  }, [
+    avoidSiblingOverlap,
+    baseAnalysis,
+    cylinderStrategy,
+    effectiveSelectedTargetId,
+    meshStrategy,
+    rodBoxStrategy,
+    scope,
+  ]);
 
   useEffect(() => {
     if (!analysis || hasCustomCheckedSelectionRef.current) {

@@ -141,6 +141,50 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const showStructureFilePath = Boolean(currentFileName && sidebarTab === 'structure');
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
+  const childJointsByParent = useMemo<Record<string, RobotState['joints'][string][]>>(() => {
+    const grouped: Record<string, RobotState['joints'][string][]> = {};
+
+    Object.values(robot.joints).forEach((joint) => {
+      if (!grouped[joint.parentLinkId]) {
+        grouped[joint.parentLinkId] = [];
+      }
+      grouped[joint.parentLinkId].push(joint);
+    });
+
+    return grouped;
+  }, [robot.joints]);
+  const selectionBranchLinkIds = useMemo(() => {
+    const branchLinkIds = new Set<string>();
+    const { selection } = robot;
+    const parentLinkByChild = new Map<string, string>();
+    const jointsByIdentity = new Map<string, RobotState['joints'][string]>();
+
+    Object.values(robot.joints).forEach((joint) => {
+      parentLinkByChild.set(joint.childLinkId, joint.parentLinkId);
+      jointsByIdentity.set(joint.id, joint);
+      jointsByIdentity.set(joint.name, joint);
+    });
+
+    const markAncestors = (startLinkId: string | null | undefined) => {
+      let currentLinkId = startLinkId ?? null;
+
+      while (currentLinkId) {
+        branchLinkIds.add(currentLinkId);
+        currentLinkId = parentLinkByChild.get(currentLinkId) ?? null;
+      }
+    };
+
+    if (selection.type === 'link' && selection.id) {
+      markAncestors(selection.id);
+    } else if (selection.type === 'joint' && selection.id) {
+      const selectedJoint = jointsByIdentity.get(selection.id);
+      if (selectedJoint) {
+        markAncestors(selectedJoint.parentLinkId);
+      }
+    }
+
+    return branchLinkIds;
+  }, [robot.joints, robot.selection]);
 
   const toggleFolder = useCallback((path: string) => {
     setExpandedFolders((prev) => {
@@ -634,6 +678,8 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                     <TreeNode
                       linkId={robot.rootLinkId}
                       robot={robot}
+                      childJointsByParent={childJointsByParent}
+                      selectionBranchLinkIds={selectionBranchLinkIds}
                       onSelect={onSelect}
                       onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}

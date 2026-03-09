@@ -24,6 +24,7 @@ const PLACEHOLDER_MATERIAL = new THREE.MeshPhongMaterial({
     transparent: true,
     opacity: 0.7
 });
+const TRANSPARENT_TEXTURE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 // Reusable Vector3 for size calculations (object pooling)
 const _tempSize = new THREE.Vector3();
@@ -260,10 +261,20 @@ export const findAssetByPath = (path: string, assets: Record<string, string>, ur
 };
 
 // Loading manager that resolves asset URLs from our blob storage
-export const createLoadingManager = (assets: Record<string, string>, urdfDir: string = '') => {
+export interface LoadingManagerOptions {
+    preferPlaceholderTextures?: boolean;
+}
+
+export const createLoadingManager = (
+    assets: Record<string, string>,
+    urdfDir: string = '',
+    options: LoadingManagerOptions = {}
+) => {
     const manager = new THREE.LoadingManager();
 
     manager.setURLModifier((url: string) => {
+        const isTextureUrl = /\.(jpg|jpeg|png|gif|bmp|tga|tiff|webp)$/i.test(url);
+
         // If already a blob/data URL, return as-is
         if (url.startsWith('blob:') || url.startsWith('data:')) {
             // Check if it's a malformed blob URL
@@ -279,14 +290,18 @@ export const createLoadingManager = (assets: Record<string, string>, urdfDir: st
             return url;
         }
 
+        if (options.preferPlaceholderTextures && isTextureUrl) {
+            return TRANSPARENT_TEXTURE_DATA_URL;
+        }
+
         const found = findAssetByPath(url, assets, urdfDir);
         if (found) return found;
 
         console.warn('[MeshLoader] Asset not found:', url);
         // Return a transparent 1x1 pixel for missing textures instead of invalid URL
         // This prevents the browser from trying to load package:// URLs
-        if (/\.(jpg|jpeg|png|gif|bmp|tga|tiff|webp)$/i.test(url)) {
-            return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+        if (isTextureUrl) {
+            return TRANSPARENT_TEXTURE_DATA_URL;
         }
         // For mesh files, return empty string to let mesh loader handle it with placeholder
         return '';

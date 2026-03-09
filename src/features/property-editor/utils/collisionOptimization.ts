@@ -3,11 +3,11 @@ import { getCollisionGeometryEntries, mergeAssembly, updateCollisionGeometryByOb
 import type { AssemblyState, GeometryType as GeometryTypeValue, RobotData, UrdfJoint, UrdfLink, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
 import {
-  computeMeshAnalysisFromAssets,
   convertGeometryType,
   type MeshAnalysis,
   type MeshClearanceObstacle,
 } from './geometryConversion';
+import { analyzeMeshBatchWithWorker } from './meshAnalysisWorkerBridge';
 
 export type CollisionOptimizationSource =
   | { kind: 'robot'; robot: RobotData }
@@ -100,6 +100,48 @@ interface CollisionClearanceContext {
 }
 
 const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+const DEFAULT_CANDIDATE_ANALYSIS_YIELD_EVERY = 8;
+
+export interface CollisionOptimizationAsyncOptions {
+  signal?: AbortSignal;
+  yieldEvery?: number;
+  includeClearanceData?: boolean;
+  includeMeshClearanceObstacles?: boolean;
+  pointCollectionLimit?: number;
+  surfacePointLimit?: number;
+}
+
+function createAbortError(): DOMException {
+  return new DOMException('Collision optimization analysis aborted', 'AbortError');
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+}
+
+async function yieldToMainThread(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
+async function maybeYieldAfterBatch(
+  index: number,
+  yieldEvery: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (yieldEvery > 0 && (index + 1) % yieldEvery === 0) {
+    throwIfAborted(signal);
+    await yieldToMainThread();
+  }
+}
 
 function createTargetId(componentId: string | undefined, linkId: string, objectIndex: number): string {
   return `${componentId ?? 'robot'}::${linkId}::${objectIndex}`;
@@ -107,6 +149,15 @@ function createTargetId(componentId: string | undefined, linkId: string, objectI
 
 function getLinkGroupKey(target: Pick<CollisionTargetRef, 'componentId' | 'linkId'>): string {
   return `${target.componentId ?? 'robot'}::${target.linkId}`;
+}
+
+function createMeshAnalysisCacheKey(geometry: Pick<UrdfVisual, 'meshPath' | 'dimensions'>): string {
+  return [
+    geometry.meshPath ?? '',
+    geometry.dimensions?.x ?? 1,
+    geometry.dimensions?.y ?? 1,
+    geometry.dimensions?.z ?? 1,
+  ].join('::');
 }
 
 function cloneGeometry(geometry: UrdfVisual): UrdfVisual {
@@ -479,6 +530,7 @@ function buildNearbyCollisionClearanceContext(
   target: CollisionTargetRef,
   meshAnalysisByTargetId: Record<string, MeshAnalysis | null>,
   clearanceWorld: CollisionOptimizationClearanceWorld | null,
+  includeMeshClearanceObstacles = true,
 ): CollisionClearanceContext {
   if (!clearanceWorld) {
     const siblingGeometries = buildSiblingGeometries(targets, target, meshAnalysisByTargetId);
@@ -520,7 +572,9 @@ function buildNearbyCollisionClearanceContext(
 
     const geometry = candidate.geometry;
     const analysis = meshAnalysisByTargetId[candidate.id];
-    const meshObstacle = analysis?.surfacePoints?.length && geometry.type === GeometryType.MESH
+    const meshObstacle = includeMeshClearanceObstacles
+      && analysis?.surfacePoints?.length
+      && geometry.type === GeometryType.MESH
       ? transformMeshObstaclePointsToTargetLinkFrame(
           analysis.surfacePoints,
           sourceLinkMatrix,
@@ -756,36 +810,125 @@ export function buildCollisionOptimizationAnalysis(
 export async function prepareCollisionOptimizationBaseAnalysis(
   source: CollisionOptimizationSource,
   assets: Record<string, string>,
+  options: CollisionOptimizationAsyncOptions = {},
 ): Promise<CollisionOptimizationBaseAnalysis> {
   const targets = collectCollisionTargets(source);
-
   const meshTargets = targets.filter((target) => target.geometry.type === GeometryType.MESH && Boolean(target.geometry.meshPath));
-  const meshAnalysisEntries = await Promise.all(
-    meshTargets.map(async (target) => {
-      const analysis = await computeMeshAnalysisFromAssets(
-        target.geometry.meshPath!,
-        assets,
-        target.geometry.dimensions,
-      );
-      return [target.id, analysis] as const;
-    }),
-  );
-
   const meshAnalysisByTargetId: Record<string, MeshAnalysis | null> = {};
-  meshAnalysisEntries.forEach(([targetId, analysis]) => {
-    meshAnalysisByTargetId[targetId] = analysis;
+  const includeClearanceData = options.includeClearanceData ?? false;
+  const includeMeshClearanceObstacles = options.includeMeshClearanceObstacles ?? includeClearanceData;
+  const clearancePointCollectionLimit = Math.max(options.pointCollectionLimit ?? 1024, 1);
+  const clearanceSurfacePointLimit = Math.max(options.surfacePointLimit ?? 512, 1);
+  const workerResults = await analyzeMeshBatchWithWorker({
+    assets,
+    tasks: meshTargets.map((target) => ({
+      targetId: target.id,
+      cacheKey: createMeshAnalysisCacheKey(target.geometry),
+      meshPath: target.geometry.meshPath!,
+      dimensions: target.geometry.dimensions,
+    })),
+    options: {
+      includePrimitiveFits: false,
+      includeSurfacePoints: includeMeshClearanceObstacles,
+      pointCollectionLimit: includeMeshClearanceObstacles ? clearancePointCollectionLimit : 1,
+      surfacePointLimit: includeMeshClearanceObstacles ? clearanceSurfacePointLimit : 1,
+    },
+    signal: options.signal,
   });
 
-  const clearanceWorld = buildCollisionOptimizationClearanceWorld(
-    source,
-    targets,
-    meshAnalysisByTargetId,
-  );
+  meshTargets.forEach((target, index) => {
+    throwIfAborted(options.signal);
+    meshAnalysisByTargetId[target.id] = workerResults[target.id] ?? null;
+  });
+
+  throwIfAborted(options.signal);
+  const clearanceWorld = includeClearanceData
+    ? buildCollisionOptimizationClearanceWorld(
+        source,
+        targets,
+        meshAnalysisByTargetId,
+      )
+    : null;
 
   return {
     targets,
     meshAnalysisByTargetId,
     clearanceWorld,
+  };
+}
+
+export async function buildCollisionClearanceContextForTarget(
+  robot: RobotData,
+  assets: Record<string, string>,
+  linkId: string,
+  objectIndex: number,
+  options: Pick<
+    CollisionOptimizationAsyncOptions,
+    'includeMeshClearanceObstacles' | 'pointCollectionLimit' | 'surfacePointLimit'
+  > = {},
+): Promise<{
+  siblingGeometries?: UrdfVisual[];
+  meshClearanceObstacles?: MeshClearanceObstacle[];
+}> {
+  const baseAnalysis = await prepareCollisionOptimizationBaseAnalysis(
+    { kind: 'robot', robot },
+    assets,
+    {
+      includeClearanceData: true,
+      includeMeshClearanceObstacles: options.includeMeshClearanceObstacles,
+      pointCollectionLimit: options.pointCollectionLimit,
+      surfacePointLimit: options.surfacePointLimit,
+    },
+  );
+
+  const target = baseAnalysis.targets.find((entry) =>
+    entry.linkId === linkId && entry.objectIndex === objectIndex
+  );
+
+  if (!target) {
+    return {};
+  }
+
+  return buildNearbyCollisionClearanceContext(
+    baseAnalysis.targets,
+    target,
+    baseAnalysis.meshAnalysisByTargetId,
+    baseAnalysis.clearanceWorld,
+    options.includeMeshClearanceObstacles ?? true,
+  );
+}
+
+export async function buildCollisionOptimizationAnalysisAsync(
+  baseAnalysis: CollisionOptimizationBaseAnalysis,
+  settings: CollisionOptimizationSettings,
+  options: CollisionOptimizationAsyncOptions = {},
+): Promise<CollisionOptimizationAnalysis> {
+  const filteredTargets = filterTargets(baseAnalysis.targets, settings);
+  const candidates: CollisionOptimizationCandidate[] = [];
+  const yieldEvery = Math.max(options.yieldEvery ?? DEFAULT_CANDIDATE_ANALYSIS_YIELD_EVERY, 1);
+
+  for (let index = 0; index < filteredTargets.length; index += 1) {
+    throwIfAborted(options.signal);
+
+    const target = filteredTargets[index];
+    candidates.push(
+      buildCandidate(
+        target,
+        baseAnalysis.targets,
+        settings,
+        baseAnalysis.meshAnalysisByTargetId,
+        baseAnalysis.clearanceWorld,
+      ),
+    );
+
+    await maybeYieldAfterBatch(index, yieldEvery, options.signal);
+  }
+
+  return {
+    targets: baseAnalysis.targets,
+    filteredTargets,
+    candidates,
+    meshAnalysisByTargetId: baseAnalysis.meshAnalysisByTargetId,
   };
 }
 
@@ -795,7 +938,7 @@ export async function analyzeCollisionOptimization(
   settings: CollisionOptimizationSettings,
 ): Promise<CollisionOptimizationAnalysis> {
   const baseAnalysis = await prepareCollisionOptimizationBaseAnalysis(source, assets);
-  return buildCollisionOptimizationAnalysis(baseAnalysis, settings);
+  return buildCollisionOptimizationAnalysisAsync(baseAnalysis, settings);
 }
 
 function computeBroadPhaseRadius(

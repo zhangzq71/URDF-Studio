@@ -126,9 +126,9 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             key={name}
                             name={name}
                             joint={joint}
-                            jointAngles={jointAngles}
+                            value={jointAngles[name] || 0}
                             angleUnit={angleUnit}
-                            activeJoint={activeJoint}
+                            isActive={activeJoint === name}
                             setActiveJoint={setActiveJoint}
                             handleJointAngleChange={handleJointAngleChange}
                             handleJointChangeCommit={handleJointChangeCommit}

@@ -570,6 +570,7 @@ export function useRobotLoader({
     // otherwise the canvas can flash a blank frame during file switching.
     const pendingDisposeRobotRef = useRef<THREE.Object3D | null>(null);
     const pendingDisposeFrameRef = useRef<number | null>(null);
+    const groundAlignTimerRef = useRef<number[]>([]);
 
     // Refs for visibility state (used in loading callback)
     const showVisualRef = useRef(showVisual);
@@ -609,6 +610,11 @@ export function useRobotLoader({
         }
     }, [disposeRobotObject]);
 
+    const clearGroundAlignTimers = useCallback(() => {
+        groundAlignTimerRef.current.forEach((timer) => window.clearTimeout(timer));
+        groundAlignTimerRef.current = [];
+    }, []);
+
     const schedulePreviousRobotDispose = useCallback((previousRobot: THREE.Object3D | null) => {
         if (!previousRobot) return;
 
@@ -636,6 +642,25 @@ export function useRobotLoader({
 
         queueMicrotask(disposePreviousRobot);
     }, [disposeRobotObject, flushPendingRobotDispose]);
+
+    const scheduleGroundAlignment = useCallback((loadedRobot: THREE.Object3D) => {
+        if (typeof window === 'undefined') {
+            offsetRobotToGround(loadedRobot, useUIStore.getState().groundPlaneOffset);
+            return;
+        }
+
+        clearGroundAlignTimers();
+
+        groundAlignTimerRef.current = [0, 80, 220, 500].map((delay) =>
+            window.setTimeout(() => {
+                if (!isMountedRef.current) return;
+                if (robotRef.current !== loadedRobot) return;
+
+                offsetRobotToGround(loadedRobot, useUIStore.getState().groundPlaneOffset);
+                invalidate();
+            }, delay)
+        );
+    }, [clearGroundAlignTimers, invalidate]);
 
     // Incremental path: update exactly one changed link geometry in-place and skip next full URDF reload.
     useEffect(() => {
@@ -681,6 +706,7 @@ export function useRobotLoader({
     // Cleanup on unmount ONLY
     useEffect(() => {
         return () => {
+            clearGroundAlignTimers();
             flushPendingRobotDispose();
 
             // Deep cleanup of robot resources on unmount
@@ -689,7 +715,17 @@ export function useRobotLoader({
                 robotRef.current = null;
             }
         };
-    }, [disposeRobotObject, flushPendingRobotDispose]);
+    }, [clearGroundAlignTimers, disposeRobotObject, flushPendingRobotDispose]);
+
+    useEffect(() => {
+        if (!robot) return;
+
+        scheduleGroundAlignment(robot);
+
+        return () => {
+            clearGroundAlignTimers();
+        };
+    }, [clearGroundAlignTimers, robot, robotVersion, scheduleGroundAlignment, showCollision, showVisual]);
 
     // Load robot with proper cleanup and abort handling
     useEffect(() => {
@@ -829,6 +865,7 @@ export function useRobotLoader({
                     setRobotVersion((v) => v + 1);
                     setError(null);
                     invalidate();
+                    scheduleGroundAlignment(loadedRobot);
 
                     if (previousRobot && previousRobot !== loadedRobot) {
                         schedulePreviousRobotDispose(previousRobot);
@@ -916,12 +953,13 @@ export function useRobotLoader({
         return () => {
             // Mark this load as aborted to prevent state updates
             abortController.aborted = true;
+            clearGroundAlignTimers();
 
             // NOTE: We do NOT dispose robotRef.current here.
             // We allow the old robot to persist until the new one is ready, 
             // or until the component unmounts (handled by the separate useEffect).
         };
-    }, [urdfContent, assets, invalidate, onRobotLoaded]);
+    }, [assets, clearGroundAlignTimers, invalidate, onRobotLoaded, scheduleGroundAlignment, urdfContent]);
 
     return {
         robot,

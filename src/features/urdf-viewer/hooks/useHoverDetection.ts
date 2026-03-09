@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { highlightFaceMaterial } from '../utils/materials';
+import { collectGizmoRaycastTargets, findFirstIntersection, isGizmoObject } from '../utils/raycast';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
 import type { ToolMode, URDFViewerProps } from '../types';
 
@@ -56,22 +57,33 @@ export function useHoverDetection({
     highlightGeometry
 }: UseHoverDetectionOptions): UseHoverDetectionResult {
     const { scene, camera } = useThree();
-    const isGizmoObject = (object: THREE.Object3D | null): boolean => {
-        let current: THREE.Object3D | null = object;
-        while (current) {
-            if (current.userData?.isGizmo) return true;
-            current = current.parent;
-        }
-        return false;
-    };
 
     const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh; faceIndex: number } | null>(null);
     const highlightedFaceMeshRef = useRef<THREE.Mesh | null>(null);
+    const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
+    const gizmoTargetsCacheKeyRef = useRef('');
+    const gizmoTargetsUpdatedAtRef = useRef(0);
 
     // Track last camera position to detect camera movement
     const lastCameraPosRef = useRef(new THREE.Vector3());
     // Track last toolMode to detect mode changes
     const lastToolModeRef = useRef(toolMode);
+
+    const getGizmoTargets = () => {
+        const nextCacheKey = `${scene.children.length}:${toolMode}:${selection?.type ?? 'none'}:${selection?.id ?? ''}`;
+        const now = performance.now();
+
+        if (
+            gizmoTargetsCacheKeyRef.current !== nextCacheKey
+            || now - gizmoTargetsUpdatedAtRef.current > 120
+        ) {
+            gizmoTargetsRef.current = collectGizmoRaycastTargets(scene);
+            gizmoTargetsCacheKeyRef.current = nextCacheKey;
+            gizmoTargetsUpdatedAtRef.current = now;
+        }
+
+        return gizmoTargetsRef.current;
+    };
 
     // Update face highlight mesh
     useEffect(() => {
@@ -234,8 +246,10 @@ export function useHoverDetection({
         // Handle Face Selection Mode
         if (toolMode === 'face') {
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
-            const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
-            const nearestSceneHit = sceneHits[0];
+            const gizmoTargets = getGizmoTargets();
+            const nearestSceneHit = gizmoTargets.length > 0
+                ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
+                : undefined;
             if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
                 if (highlightedFace) setHighlightedFace(null);
                 if (hoveredLinkRef.current) clearHoverHighlight();
@@ -295,8 +309,10 @@ export function useHoverDetection({
         }
 
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
-        const sceneHits = raycasterRef.current.intersectObjects(scene.children, true);
-        const nearestSceneHit = sceneHits[0];
+        const gizmoTargets = getGizmoTargets();
+        const nearestSceneHit = gizmoTargets.length > 0
+            ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
+            : undefined;
         if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
                 clearHoverHighlight();
@@ -319,7 +335,7 @@ export function useHoverDetection({
         let newHoveredMesh: THREE.Object3D | null = null;
 
         if (intersections.length > 0) {
-            const validHits = intersections.filter(hit => {
+            const firstValidHit = findFirstIntersection(intersections, (hit) => {
                 if (hit.object.userData?.isGizmo) return false;
                 let p = hit.object.parent;
                 while (p) {
@@ -348,35 +364,29 @@ export function useHoverDetection({
                 return true;
             });
 
-            if (validHits.length > 0) {
-                validHits.sort((a, b) => a.distance - b.distance);
-
-                for (const hit of validHits) {
-                    let current: THREE.Object3D | null = hit.object;
-                    let linkObj: THREE.Object3D | null = null;
-                    while (current) {
-                        if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
-                            newHoveredLink = current.name;
-                            linkObj = current;
-                            break;
-                        }
-                        if ((robot as any).links && (robot as any).links[current.name]) {
-                            newHoveredLink = current.name;
-                            linkObj = current;
-                            break;
-                        }
-                        if (current === robot) break;
-                        current = current.parent;
+            if (firstValidHit) {
+                let current: THREE.Object3D | null = firstValidHit.object;
+                let linkObj: THREE.Object3D | null = null;
+                while (current) {
+                    if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+                        newHoveredLink = current.name;
+                        linkObj = current;
+                        break;
                     }
-
-                    if (!linkObj || !newHoveredLink) {
-                        newHoveredLink = null;
-                        continue;
+                    if ((robot as any).links && (robot as any).links[current.name]) {
+                        newHoveredLink = current.name;
+                        linkObj = current;
+                        break;
                     }
+                    if (current === robot) break;
+                    current = current.parent;
+                }
 
-                    const resolvedTarget = resolveSelectionTarget(hit.object, linkObj);
+                if (linkObj && newHoveredLink) {
+                    const resolvedTarget = resolveSelectionTarget(firstValidHit.object, linkObj);
                     newHoveredMesh = resolvedTarget.highlightTarget;
-                    break;
+                } else {
+                    newHoveredLink = null;
                 }
             }
         }
