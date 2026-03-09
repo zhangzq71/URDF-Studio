@@ -2,15 +2,15 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { resolveMJCFSource } from '../src/core/parsers/mjcf/mjcfSourceResolver';
-import { parseMJCF } from '../src/core/parsers/mjcf/mjcfParser';
-import { parseMJCFModel } from '../src/core/parsers/mjcf/mjcfModel';
+import { resolveMJCFSource } from '../../src/core/parsers/mjcf/mjcfSourceResolver';
+import { parseMJCF } from '../../src/core/parsers/mjcf/mjcfParser';
+import { parseMJCFModel } from '../../src/core/parsers/mjcf/mjcfModel';
 import {
     createCanonicalSnapshotFromOracleExport,
     createCanonicalSnapshotFromParsedModel,
     diffCanonicalSnapshots,
-} from '../src/core/parsers/mjcf/mjcfSnapshot';
-import type { RobotFile } from '../src/types';
+} from '../../src/core/parsers/mjcf/mjcfSnapshot';
+import type { RobotFile } from '../../src/types';
 
 interface CompareCliOptions {
     casePath: string;
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     }
 
     if (options.smokeLoad) {
-        const { loadMJCFToThreeJS } = await import('../src/core/parsers/mjcf/mjcfLoader');
+        const { loadMJCFToThreeJS } = await import('../../src/core/parsers/mjcf/mjcfLoader');
         await loadMJCFToThreeJS(resolvedSource.content, {});
     }
 
