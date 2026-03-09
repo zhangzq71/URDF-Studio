@@ -18,5 +18,3 @@ AGENTS.md
 test/
 .tmp/
 .uv-cache/
-
-#*.db

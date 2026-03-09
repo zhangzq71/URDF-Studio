@@ -8,47 +8,38 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { URDFLoader } from '@/core/parsers/urdf/loader';
-import { Box, Loader2, Image as ImageIcon } from 'lucide-react';
-import { SceneLighting } from '@/shared/components/3d';
+import { Box, Loader2 } from 'lucide-react';
+import { SceneLighting, ReferenceGrid } from '@/shared/components/3d';
 import { createLoadingManager, createMeshLoader, buildAssetIndex, resetUnitDetection } from '@/core/loaders';
 
 interface RobotThumbnail3DProps {
-  assetId: string;
+  urdfPath: string;
   urdfFile?: string;
   theme?: 'light' | 'dark';
+  fallbackLabel?: string;
 }
 
-// Helper to convert DataURL to Blob
-const dataURLtoBlob = (dataurl: string) => {
-  const arr = dataurl.split(',');
-  const match = arr[0].match(/:(.*?);/);
-  const mime = match ? match[1] : 'image/png';
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) {
-    u8arr[n] = bstr.charCodeAt(n);
-  }
-  return new Blob([u8arr], { type: mime });
-};
-
 /**
- * ThumbnailGenerator - Loads robot, positions camera, and captures screenshot
+ * RobotPreviewModel - Loads and displays URDF model with continuous rotation
  */
-function ThumbnailGenerator({ 
-  files,
+function RobotPreviewModel({ 
+  urdfPath,
   urdfFile,
-  onCapture
+  theme
 }: { 
-  files: Array<{ path: string; url: string }>;
+  urdfPath: string;
   urdfFile?: string;
-  onCapture: (dataUrl: string) => void;
+  theme: 'light' | 'dark';
 }) {
-  const { gl, camera, scene } = useThree();
   const [robot, setRobot] = useState<THREE.Object3D | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [fullyLoaded, setFullyLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  const groupRef = useRef<THREE.Group>(null);
+  const { invalidate, camera } = useThree();
   const loadedRef = useRef(false);
   const robotRef = useRef<THREE.Object3D | null>(null);
-  const capturedRef = useRef(false);
+  const fullyLoadedRef = useRef(false);
   const blobUrlsRef = useRef<string[]>([]);
   const timeoutIdsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -58,32 +49,60 @@ function ThumbnailGenerator({
 
     const loadRobot = async () => {
       try {
-        // 1. Find URDF file
-        const targetFileObj = urdfFile 
-          ? files.find(f => f.path.endsWith(urdfFile)) 
-          : files.find(f => f.path.toLowerCase().endsWith('.urdf'));
-
-        if (!targetFileObj) {
-          console.error('[ThumbnailGenerator] No URDF file found');
+        // 1. Fetch manifest.json
+        const manifestUrl = `${urdfPath}/manifest.json`;
+        const manifestRes = await fetch(manifestUrl);
+        
+        if (!manifestRes.ok) {
+          console.error('[RobotThumbnail3D] Failed to fetch manifest:', urdfPath);
+          setError(true);
+          setLoading(false);
+          return;
+        }
+        
+        const files: string[] = await manifestRes.json();
+        
+        // 2. Find URDF file - use prop if provided, otherwise find from manifest
+        const targetUrdfFile = urdfFile || files.find(f => f.toLowerCase().endsWith('.urdf'));
+        if (!targetUrdfFile) {
+          console.error('[RobotThumbnail3D] No URDF file found in manifest:', urdfPath);
+          setError(true);
+          setLoading(false);
           return;
         }
 
-        // 2. Register assets
+        // 3. Fetch all files and create blob URLs (asset map)
         const assets: Record<string, string> = {};
-        files.forEach(f => {
-          assets[f.path] = f.url;
-          const fileName = f.path.split('/').pop();
-          if (fileName && !assets[fileName]) {
-            assets[fileName] = f.url;
+        await Promise.all(files.map(async (filePath) => {
+          try {
+            const res = await fetch(`${urdfPath}/${filePath}`);
+            if (res.ok) {
+              const blob = await res.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              blobUrlsRef.current.push(blobUrl);
+              assets[filePath] = blobUrl;
+              // Also map filename only
+              const fileName = filePath.split('/').pop();
+              if (fileName && !assets[fileName]) {
+                assets[fileName] = blobUrl;
+              }
+            }
+          } catch (e) {
+            // Ignore individual file fetch errors
           }
-        });
+        }));
 
-        // 3. Fetch URDF content
-        const urdfRes = await fetch(targetFileObj.url);
-        if (!urdfRes.ok) throw new Error('Failed to fetch URDF');
+        // 4. Fetch URDF content
+        const urdfRes = await fetch(`${urdfPath}/${targetUrdfFile}`);
+        if (!urdfRes.ok) {
+          console.error('[RobotThumbnail3D] Failed to fetch URDF:', targetUrdfFile);
+          setError(true);
+          setLoading(false);
+          return;
+        }
         const urdfContent = await urdfRes.text();
 
-        // 4. Setup Loader
+        // 5. Setup URDFLoader
         resetUnitDetection();
         const assetIndex = buildAssetIndex(assets, '');
         const manager = createLoadingManager(assets, '');
@@ -96,280 +115,280 @@ function ThumbnailGenerator({
           if (originalOnStart) originalOnStart(url, loaded, total);
         };
 
-        const finalize = (loadedRobot: THREE.Object3D) => {
-          setupRobotScene(loadedRobot, camera as THREE.PerspectiveCamera);
-          
-          robotRef.current = loadedRobot;
-          setRobot(loadedRobot);
-
-          // Wait a bit for rendering to settle, then capture
-          setTimeout(() => {
-             if (capturedRef.current) return;
-             capturedRef.current = true;
-             
-             // Force a render before capture
-             gl.render(scene, camera);
-             
-             const dataUrl = gl.domElement.toDataURL('image/png');
-             onCapture(dataUrl);
-          }, 500); 
-        };
-
+        // When ALL meshes are loaded, finalize the robot
         manager.onLoad = () => {
-          if (robotRef.current && !capturedRef.current) {
-             finalize(robotRef.current);
+          const loadedRobot = robotRef.current;
+          if (!loadedRobot || fullyLoadedRef.current) return;
+
+          timeoutIdsRef.current.push(setTimeout(() => {
+            if (fullyLoadedRef.current) return;
+            finalizeRobot(loadedRobot);
+          }, 50));
+        };
+        
+        const finalizeRobot = (loadedRobot: THREE.Object3D) => {
+          // Apply material styling
+          loadedRobot.traverse((child: any) => {
+            if (child.isMesh) {
+              if (child.material) {
+                const mat = child.material;
+                if (mat.isMeshStandardMaterial || mat.isMeshPhongMaterial) {
+                  mat.roughness = 0.5;
+                  mat.metalness = 0.1;
+                }
+              }
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+
+          // Recalculate bounds
+          const box = new THREE.Box3().setFromObject(loadedRobot);
+          const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          
+          // Check for invalid bounding box (can happen with some URDF models)
+          const isValidBox = box.min.x !== Infinity && box.max.x !== -Infinity &&
+                            !isNaN(center.x) && !isNaN(center.y) && !isNaN(center.z) &&
+                            size.x > 0 && size.y > 0 && size.z > 0;
+          
+          if (!isValidBox) {
+            console.warn('[RobotThumbnail3D] Invalid bounding box, using defaults');
+            // Use default positioning for invalid boxes
+            loadedRobot.position.set(0, 0, 0);
+            camera.position.set(2, 2, 1);
+            camera.lookAt(0, 0, 0.5);
+            camera.updateProjectionMatrix();
+          } else {
+            const minZ = box.min.z;
+            
+            // Center and place on ground
+            loadedRobot.position.set(-center.x, -center.y, -minZ);
+
+            // Auto-fit camera
+            const aspectRatio = size.z / Math.max(size.x, size.y, 0.01);
+            const isHumanoid = aspectRatio > 2.0; // Tall robots
+            const isLargeQuadruped = size.x > 0.8 || size.y > 0.8; // Large quadrupeds like B2
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = (camera as THREE.PerspectiveCamera).fov * (Math.PI / 180);
+            const fitDistance = (maxDim / 2) / Math.tan(fov / 2);
+            // Adjust multiplier based on robot type
+            let distanceMultiplier = 1.8;
+            if (isHumanoid) {
+              distanceMultiplier = 1.2;
+            } else if (isLargeQuadruped) {
+              distanceMultiplier = 2.2; // Pull camera back more for large robots
+            }
+            const cameraDistance = Math.max(fitDistance * distanceMultiplier, 0.5);
+            
+            const robotCenterZ = size.z / 2;
+            camera.position.set(
+              cameraDistance * 0.8,
+              cameraDistance * 0.8,
+              robotCenterZ + cameraDistance * 0.4
+            );
+            camera.lookAt(0, 0, robotCenterZ);
+            camera.updateProjectionMatrix();
           }
+
+          // Mark as fully loaded
+          fullyLoadedRef.current = true;
+          loadedRobot.visible = true;
+          setFullyLoaded(true);
+          setLoading(false);
+          invalidate();
         };
 
         const loader = new URDFLoader(manager);
         loader.packages = '';
         loader.loadMeshCb = meshLoader;
 
-        const parsedRobot = loader.parse(urdfContent);
-        robotRef.current = parsedRobot;
+        // 6. Parse URDF
+        const loadedRobot = loader.parse(urdfContent);
+        robotRef.current = loadedRobot;
+        loadedRobot.visible = false;
+        setRobot(loadedRobot);
         
-        // Handle instant loads
-        setTimeout(() => {
-          if (!capturedRef.current) {
-             // Check if we need to wait for meshes
-             let hasMeshes = false;
-             parsedRobot.traverse((c: any) => {
-               if (c.isMesh) hasMeshes = true;
-             });
-             if (!hasMeshes || pendingLoads === 0) {
-                manager.onLoad();
-             }
+        timeoutIdsRef.current.push(setTimeout(() => {
+          if (!fullyLoadedRef.current && robotRef.current) {
+            let hasMeshes = false;
+            robotRef.current.traverse((c: any) => {
+              if (c.isMesh) hasMeshes = true;
+            });
+            if (!hasMeshes || pendingLoads === 0) {
+              manager.onLoad();
+            }
           }
-        }, 200);
-
-        // Fallback
-        setTimeout(() => {
-          if (!capturedRef.current && robotRef.current) {
-            console.warn('[ThumbnailGenerator] Force finalize after timeout');
-            finalize(robotRef.current);
+        }, 200));
+        
+        timeoutIdsRef.current.push(setTimeout(() => {
+          if (!fullyLoadedRef.current && robotRef.current) {
+            console.warn('[RobotThumbnail3D] Force loading after timeout:', urdfPath);
+            manager.onLoad();
           }
-        }, 4000);
+        }, 3000));
 
       } catch (e) {
-        console.error('[ThumbnailGenerator] Error:', e);
+        console.error('[RobotThumbnail3D] Failed to load robot:', e);
+        setError(true);
+        setLoading(false);
       }
     };
 
     loadRobot();
-  }, [files, urdfFile, gl, camera, scene, onCapture]);
 
-  return robot ? <primitive object={robot} /> : null;
-}
-
-// Logic to center robot and adjust camera (extracted from original)
-function setupRobotScene(robot: THREE.Object3D, camera: THREE.PerspectiveCamera) {
-  // Apply material styling
-  robot.traverse((child: any) => {
-    if (child.isMesh) {
-      if (child.material) {
-        const mat = child.material;
-        if (mat.isMeshStandardMaterial || mat.isMeshPhongMaterial) {
-           mat.roughness = 0.5;
-           mat.metalness = 0.1;
-        }
+    return () => {
+      timeoutIdsRef.current.forEach(clearTimeout);
+      timeoutIdsRef.current = [];
+      blobUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      blobUrlsRef.current = [];
+      if (robotRef.current) {
+        robotRef.current.traverse((child: any) => {
+          if (child.geometry) child.geometry.dispose();
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m: THREE.Material) => {
+              if ((m as any).map) (m as any).map.dispose();
+              m.dispose();
+            });
+          }
+        });
+        robotRef.current = null;
       }
-      child.castShadow = true;
-      child.receiveShadow = true;
+    };
+  }, [urdfPath, urdfFile, invalidate, camera]);
+
+  // Continuous rotation
+  useFrame((_, delta) => {
+    if (groupRef.current && robot && fullyLoaded) {
+      groupRef.current.rotation.z += delta * 0.5;
     }
   });
 
-  const box = new THREE.Box3().setFromObject(robot);
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  
-  const isValidBox = box.min.x !== Infinity && size.x > 0;
-  
-  if (!isValidBox) {
-    robot.position.set(0, 0, 0);
-    camera.position.set(2, 2, 2);
-    camera.lookAt(0, 0, 0.5);
-  } else {
-    // Center and place on ground
-    robot.position.set(-center.x, -center.y, -box.min.z);
-    
-    // Use the exact camera angle as VisualizerCanvas (Isometric 2,2,2)
-    // No extra robot rotation, to keep consistency with the editor view
-    
-    // Calculate fit distance based on bounding sphere
-    const radius = size.length() / 2;
-    const fov = camera.fov * (Math.PI / 180);
-    const fitDistance = radius / Math.sin(fov / 2);
-    
-    // Adjust margin: reduced from 1.7 to 1.2 to zoom in (reducing total whitespace)
-    const margin = 1.2; 
-    const dist = Math.max(fitDistance * margin, 0.5);
-    
-    // Target: Shift center up (0.5 -> 0.6) to move robot DOWN in the frame
-    // This preserves top margin while consuming bottom whitespace
-    const lookAtPos = new THREE.Vector3(0, 0, size.z * 0.6);
-    
-    // Direction: (1, 1, 1) normalized (matches 2,2,2 vector)
-    const direction = new THREE.Vector3(1, 1, 1).normalize();
-    
-    camera.position.copy(lookAtPos).add(direction.multiplyScalar(dist));
-    camera.lookAt(lookAtPos);
+  if (error) {
+    return null;
   }
-  camera.updateProjectionMatrix();
+
+  if (loading || !robot || !fullyLoaded) {
+    return <LoadingIndicator theme={theme} />;
+  }
+
+  return (
+    <>
+      <ReferenceGrid theme={theme} />
+      <group ref={groupRef}>
+        <primitive object={robot} />
+      </group>
+    </>
+  );
 }
 
-export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ assetId, urdfFile, theme = 'dark' }) => {
-  const [status, setStatus] = useState<'init' | 'checking' | 'found-image' | 'generating' | 'error'>('init');
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [fileList, setFileList] = useState<Array<{path: string, url: string}> | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(false);
+/**
+ * Loading indicator - minimal single arc spinner
+ */
+function LoadingIndicator({ theme }: { theme: 'light' | 'dark' }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const arcColor = theme === 'light' ? '#334155' : '#cbd5e1';
+  const hubColor = theme === 'light' ? '#94a3b8' : '#64748b';
+  
+  useFrame((_, delta) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.z -= delta * 1.8;
+    }
+  });
 
-  // Lazy load
+  return (
+    <group ref={groupRef}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.24, 0.03, 18, 72, Math.PI * 1.45]} />
+        <meshBasicMaterial color={arcColor} transparent opacity={0.95} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[0.045, 18, 18]} />
+        <meshBasicMaterial color={hubColor} transparent opacity={0.65} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * RobotThumbnail3D - Main component with Canvas
+ * Pure real-time 3D rendering
+ */
+export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({
+  urdfPath,
+  urdfFile,
+  theme = 'dark',
+  fallbackLabel = 'Preview'
+}) => {
+  const [hasError, setHasError] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Lazy loading with IntersectionObserver
   useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        setIsVisible(true);
-        observer.disconnect();
-      }
-    }, { threshold: 0.1, rootMargin: '50px' });
-    
-    if (containerRef.current) observer.observe(containerRef.current);
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.disconnect();
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: '50px' }
+    );
+
+    observer.observe(container);
     return () => observer.disconnect();
   }, []);
 
-  // Main logic
-  useEffect(() => {
-    if (!isVisible || status !== 'init' || !assetId) return;
-
-    const checkFiles = async () => {
-      setStatus('checking');
-      try {
-        const token = (import.meta as any).env.VITE_API_TOKEN;
-        const res = await fetch('/api/download-asset', {
-          method: 'POST',
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json' 
-          },
-          body: JSON.stringify({ assetId })
-        });
-        
-        const data = await res.json();
-        if (!data.success || !data.data?.files) throw new Error('Failed to list files');
-        
-        const files = data.data.files;
-        
-        // Skip checking for existing thumbnail, always generate fresh one
-        setFileList(files);
-        setStatus('generating');
-      } catch (err) {
-        console.error('Error getting thumbnail:', err);
-        setStatus('error');
-      }
-    };
-
-    checkFiles();
-  }, [isVisible, assetId, status]);
-
-  const handleCapture = async (dataUrl: string) => {
-    // 1. Show captured image immediately
-    setImageUrl(dataUrl);
-    setStatus('found-image');
-
-    // 2. Upload in background via backend proxy (avoids CORS issues)
-    try {
-      const token = (import.meta as any).env.VITE_API_TOKEN;
-      
-      // Upload directly to backend using assetId and relative path
-      const secret = import.meta.env.VITE_UPLOAD_SECRET;
-      
-      const res = await fetch('/api/upload-file', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ 
-           assetId: assetId,
-           relativePath: 'thumbnail.png',
-           content: dataUrl,
-           secret: secret || '' // Optional extra secret for admin-only upload
-        })
-      });
-
-      const json = await res.json();
-      if (!json.success) throw new Error(json.message);
-
-      console.log('Thumbnail uploaded successfully for asset:', assetId);
-    } catch (e) {
-      console.error('Failed to upload thumbnail:', e);
-      // We still show the generated image, it just won't be persisted for next time
-    }
-  };
-
-  if (status === 'error') {
+  if (hasError) {
     return (
-      <div ref={containerRef} className="flex flex-col items-center justify-center w-full h-full text-slate-400 bg-slate-50 dark:bg-slate-900">
+      <div ref={containerRef} className="flex flex-col items-center justify-center w-full h-full text-slate-400">
         <Box className="w-8 h-8 opacity-30" />
+        <span className="text-[9px] mt-1 opacity-50">{fallbackLabel}</span>
       </div>
     );
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-slate-100 dark:bg-[#000000]">
-      {/* 1. Static Image View */}
-      {status === 'found-image' && imageUrl && (
-        <img 
-          src={imageUrl} 
-          alt="Robot Preview" 
-          className="w-full h-full object-cover"
-        />
-      )}
+    <div ref={containerRef} className="w-full h-full">
+      {isVisible ? (
+        <Canvas
+          camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 50 }}
+          shadows
+          frameloop="always"
+          dpr={[1, 1.5]}
+          gl={{
+            antialias: true,
+            toneMapping: THREE.ACESFilmicToneMapping,
+            toneMappingExposure: 1.1,
+            powerPreference: 'high-performance',
+          }}
+          onError={() => setHasError(true)}
+        >
+          <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#000000']} />
+          <SceneLighting />
+          <Environment
+            files="/potsdamer_platz_1k.hdr"
+            environmentIntensity={theme === 'light' ? 0.8 : 1.0}
+          />
 
-      {/* 2. Generating View (Hidden Canvas + Loading) */}
-      {status === 'generating' && fileList && (
-        <>
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-100 dark:bg-[#000000]">
-            <div className="flex flex-col items-center">
-               <Loader2 className="w-6 h-6 animate-spin text-indigo-500 mb-2" />
-               <span className="text-xs text-slate-500">Generating Preview...</span>
-            </div>
-          </div>
-          {/* Render Canvas offscreen with fixed large size for high res output */ }
-          <div 
-            style={{ 
-              position: 'fixed', 
-              top: 0, 
-              left: 0, 
-              width: '1024px', 
-              height: '1024px', 
-              opacity: 0, 
-              pointerEvents: 'none', 
-              zIndex: -1 
-            }}
-          >
-            <Canvas
-              dpr={2}
-              gl={{ preserveDrawingBuffer: true, antialias: true }}
-              camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
-            >
-              <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#000000']} />
-              <SceneLighting />
-              <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={1.2} />
-              <ThumbnailGenerator 
-                 files={fileList} 
-                 urdfFile={urdfFile}
-                 onCapture={handleCapture}
-              />
-            </Canvas>
-          </div>
-        </>
-      )}
-
-      {/* 3. Initial Loading */}
-      {(status === 'init' || status === 'checking') && (
-        <div className="flex items-center justify-center w-full h-full">
-           <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+          <Suspense fallback={<LoadingIndicator theme={theme} />}>
+            <RobotPreviewModel 
+              urdfPath={urdfPath}
+              urdfFile={urdfFile}
+              theme={theme}
+            />
+          </Suspense>
+        </Canvas>
+      ) : (
+        <div className="flex items-center justify-center w-full h-full bg-slate-100 dark:bg-[#000000]">
+          <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
         </div>
       )}
     </div>
@@ -377,4 +396,3 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({ assetId, urd
 };
 
 export default RobotThumbnail3D;
-
