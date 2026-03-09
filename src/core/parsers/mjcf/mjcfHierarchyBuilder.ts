@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
-import type { MJCFCompilerSettings, MJCFMesh } from './mjcfUtils';
+import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial } from './mjcfUtils';
 
 export interface MJCFHierarchyGeom {
     name?: string;
@@ -16,6 +16,7 @@ export interface MJCFHierarchyGeom {
     contype?: number;
     conaffinity?: number;
     group?: number;
+    material?: string;
 }
 
 export interface MJCFHierarchyJoint {
@@ -43,6 +44,7 @@ interface BuildMJCFHierarchyOptions {
     assets: Record<string, string>;
     meshCache: MJCFMeshCache;
     compilerSettings: MJCFCompilerSettings;
+    materialMap: Map<string, MJCFMaterial>;
 }
 
 export interface MJCFHierarchyResult {
@@ -61,8 +63,28 @@ function convertAngle(value: number, settings: MJCFCompilerSettings): number {
     return value;
 }
 
+function applyMaterialAssetToMesh(mesh: THREE.Object3D, materialDef: MJCFMaterial, materialName?: string): void {
+    const rgba = materialDef.rgba || [0.8, 0.8, 0.8, 1];
+    const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
+    const g = Math.max(0, Math.min(1, rgba[1] ?? 0.8));
+    const b = Math.max(0, Math.min(1, rgba[2] ?? 0.8));
+    const alpha = Math.max(0, Math.min(1, rgba[3] ?? 1));
+
+    mesh.traverse((child: any) => {
+        if (!child.isMesh) return;
+        child.material = createMatteMaterial({
+            color: new THREE.Color(r, g, b),
+            opacity: alpha,
+            transparent: alpha < 1,
+            side: THREE.DoubleSide,
+            name: materialName || materialDef.name || 'mjcf_material_asset',
+        });
+        child.castShadow = true;
+        child.receiveShadow = true;
+      });
+}
 export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Promise<MJCFHierarchyResult> {
-    const { bodies, rootGroup, meshMap, assets, meshCache, compilerSettings } = options;
+    const { bodies, rootGroup, meshMap, assets, meshCache, compilerSettings, materialMap } = options;
     const linksMap: Record<string, THREE.Object3D> = {};
     const jointsMap: Record<string, THREE.Object3D> = {};
 
@@ -80,15 +102,16 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         collisionGroup.visible = false; // Hidden by default
 
         for (const geom of geoms) {
-            const hasGroup1 = geom.group === 1;
+            const hasVisualGroup = geom.group === 1 || geom.group === 2;
             const hasContype0 = geom.contype === 0 && geom.conaffinity === 0;
 
-            // Visual: explicit group=1 with contype=0
-            const isVisualGeom = hasGroup1 && hasContype0;
+            // Visual geoms in common MJCF models often use group=1 or group=2,
+            // and/or explicitly disable contacts with contype=0 + conaffinity=0.
+            const isVisualGeom = hasContype0 || hasVisualGroup;
 
             // Collision: no group attribute, OR primitives without group
             // In MJCF, geoms without group are typically collision duplicates
-            const isCollisionGeom = geom.group === undefined || geom.group === 0 || geom.group === 3;
+            const isCollisionGeom = !isVisualGeom || geom.group === 3;
 
             const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache);
             if (!mesh) continue;
@@ -102,6 +125,13 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
             if (geom.quat) {
                 const q = new THREE.Quaternion(geom.quat[1], geom.quat[2], geom.quat[3], geom.quat[0]);
                 mesh.quaternion.copy(q);
+            }
+
+            if (geom.material) {
+                const materialDef = materialMap.get(geom.material);
+                if (materialDef) {
+                    applyMaterialAssetToMesh(mesh, materialDef, geom.material);
+                }
             }
 
             if (geom.rgba) {

@@ -12,6 +12,7 @@ import { useAssetsStore, useRobotStore, useUIStore, useAssemblyStore } from '@/s
 import { importProject, isMeshFile } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 interface UseFileImportOptions {
   onLoadRobot?: (file: RobotFile) => void;
@@ -82,9 +83,11 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       case 'urdf':
         newState = parseURDF(file.content);
         break;
-      case 'mjcf':
-        newState = parseMJCF(file.content);
+      case 'mjcf': {
+        const resolved = resolveMJCFSource(file, availableFiles);
+        newState = parseMJCF(resolved.content);
         break;
+      }
       case 'usd':
         newState = parseUSDA(file.content);
         break;

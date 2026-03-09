@@ -16,6 +16,7 @@ import type {
 import { DEFAULT_JOINT, JointType, GeometryType } from '@/types';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 interface AssemblyContext {
   availableFiles?: RobotFile[];
@@ -149,9 +150,11 @@ export const useAssemblyStore = create<
         case 'urdf':
           robotData = parseURDF(file.content);
           break;
-        case 'mjcf':
-          robotData = parseMJCF(file.content);
+        case 'mjcf': {
+          const resolved = resolveMJCFSource(file, context.availableFiles ?? []);
+          robotData = parseMJCF(resolved.content);
           break;
+        }
         case 'usd':
           robotData = parseUSDA(file.content);
           break;

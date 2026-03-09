@@ -14,6 +14,7 @@ import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
 const loadURDFGalleryModule = () => import('@/features/urdf-gallery/components/URDFGallery');
@@ -53,6 +54,7 @@ function AppContent() {
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
+  const selectedFile = useAssetsStore((state) => state.selectedFile);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const assets = useAssetsStore((state) => state.assets);
   const motorLibrary = useAssetsStore((state) => state.motorLibrary);
@@ -121,15 +123,27 @@ function AppContent() {
 
   // Load robot file handler
   const handleLoadRobot = useCallback((file: RobotFile) => {
+    if (
+      selectedFile
+      && selectedFile.name === file.name
+      && selectedFile.format === file.format
+      && selectedFile.content === file.content
+    ) {
+      setAppMode('detail');
+      return;
+    }
+
     let newState: RobotState | null = null;
 
     switch (file.format) {
       case 'urdf':
         newState = parseURDF(file.content);
         break;
-      case 'mjcf':
-        newState = parseMJCF(file.content);
+      case 'mjcf': {
+        const resolved = resolveMJCFSource(file, availableFiles);
+        newState = parseMJCF(resolved.content);
         break;
+      }
       case 'usd':
         newState = parseUSDA(file.content);
         break;
@@ -192,7 +206,18 @@ function AppContent() {
     } else {
       alert(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()));
     }
-  }, [availableFiles, assets, setRobot, setSelection, setSelectedFile, setOriginalUrdfContent, setOriginalFileFormat, setAppMode, t]);
+  }, [
+    availableFiles,
+    assets,
+    selectedFile,
+    setRobot,
+    setSelection,
+    setSelectedFile,
+    setOriginalUrdfContent,
+    setOriginalFileFormat,
+    setAppMode,
+    t,
+  ]);
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });

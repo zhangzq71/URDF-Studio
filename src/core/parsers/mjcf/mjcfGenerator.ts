@@ -91,6 +91,27 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return meshAssetNameMap.get(normalized) || null;
   };
 
+  const hasGeometry = (link: UrdfLink | undefined): boolean => {
+    if (!link) return false;
+
+    const hasVisual = link.visual.type !== GeometryType.NONE;
+    const hasCollision = link.collision.type !== GeometryType.NONE;
+    const hasExtraCollisions = (link.collisionBodies || []).some((body) => body.type !== GeometryType.NONE);
+
+    return hasVisual || hasCollision || hasExtraCollisions;
+  };
+
+  const isSyntheticWorldRoot = (linkId: string): boolean => {
+    const link = links[linkId];
+    if (!link) return false;
+
+    const normalizedName = (link.name || '').trim().toLowerCase();
+    if (normalizedName !== 'world') return false;
+
+    const hasMass = (link.inertial?.mass || 0) > 0;
+    return !hasMass && !hasGeometry(link);
+  };
+
   let xml = `<mujoco model="${name}">\n`;
   xml += `  <compiler angle="radian" meshdir="${meshdir}" />\n`;
 
@@ -112,9 +133,17 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   xml += `    <geom type="plane" size="5 5 0.1" rgba=".9 .9 .9 1"/>\n`;
 
   // Recursive Body Builder
-  const buildBody = (linkId: string, indent: string) => {
+  const buildBody = (linkId: string, indent: string, path = new Set<string>()) => {
     const link = links[linkId];
     if (!link) return '';
+
+    if (path.has(linkId)) {
+      console.warn(`[MJCFGenerator] Skipping cyclic link reference at "${linkId}"`);
+      return '';
+    }
+
+    const nextPath = new Set(path);
+    nextPath.add(linkId);
 
     // Find the joint that connects to this link (if not root)
     const parentJoint = Object.values(joints).find(j => j.childLinkId === linkId);
@@ -229,18 +258,34 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     // 5. Recursively add children
     const childJoints = Object.values(joints).filter(j => j.parentLinkId === linkId);
     childJoints.forEach(childJoint => {
-        bodyXml += buildBody(childJoint.childLinkId, indent + "  ");
+        bodyXml += buildBody(childJoint.childLinkId, indent + "  ", nextPath);
     });
 
     bodyXml += `${indent}</body>\n`;
     return bodyXml;
   };
 
-  const rootBodyXml = buildBody(rootLinkId, "    ");
+  const emitRootBodies = (): string => {
+    if (!isSyntheticWorldRoot(rootLinkId)) {
+      return buildBody(rootLinkId, "    ");
+    }
+
+    const rootChildren = Object.values(joints).filter((joint) => joint.parentLinkId === rootLinkId);
+    return rootChildren.map((joint) => buildBody(joint.childLinkId, "    ")).join('');
+  };
+
+  const injectFreeJoint = (bodyXml: string): string => {
+    const firstNewline = bodyXml.indexOf('\n');
+    if (firstNewline === -1) {
+      return bodyXml;
+    }
+
+    return bodyXml.slice(0, firstNewline + 1) + '      <freejoint/>\n' + bodyXml.slice(firstNewline + 1);
+  };
+
+  const rootBodyXml = emitRootBodies();
   if (addFloatBase) {
-    // Inject <freejoint/> right after the opening <body ...> line
-    const firstNewline = rootBodyXml.indexOf('\n');
-    xml += rootBodyXml.slice(0, firstNewline + 1) + '      <freejoint/>\n' + rootBodyXml.slice(firstNewline + 1);
+    xml += injectFreeJoint(rootBodyXml);
   } else {
     xml += rootBodyXml;
   }
