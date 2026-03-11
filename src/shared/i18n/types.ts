@@ -21,6 +21,12 @@ export interface TranslationKeys {
   humanoids: string;
   mobileBases: string;
   unitreeTech: string;
+  fullRobots: string;
+  endEffectors: string;
+  sensors: string;
+  articulatedObjects: string;
+  dataAssets: string;
+  tags: string;
   fetchingResources: string;
   minimize: string;
   maximize: string;
