@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useRef, useEffect, useCallback } from 'react';
+import { Suspense, useState, useRef, useEffect, useCallback } from 'react';
 import { Canvas, RootState } from '@react-three/fiber';
 import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
@@ -47,15 +47,16 @@ export function URDFViewer({
     onSelect,
     onMeshSelect,
     onHover,
-    theme,
     selection,
     hoveredSelection,
     robotLinks,
+    robotJoints,
     focusTarget,
     showVisual: propShowVisual,
     setShowVisual: propSetShowVisual,
     snapshotAction,
     isMeshPreview = false,
+    onCollisionTransformPreview,
     onCollisionTransform,
     showToolbar = true,
     setShowToolbar,
@@ -95,6 +96,7 @@ export function URDFViewer({
     const setShowVisual = propSetShowVisual || setLocalShowVisual;
 
     const [toolMode, setToolMode] = useState<ToolMode>('select');
+    const hoverSelectionEnabled = hoveredSelection !== undefined;
 
     // WebGL context lost state
     const [contextLost, setContextLost] = useState(false);
@@ -112,7 +114,6 @@ export function URDFViewer({
         optionsPanelPos,
         jointPanelPos,
         measurePanelPos,
-        dragging,
         handleMouseDown,
         handleMouseMove,
         handleMouseUp
@@ -327,8 +328,13 @@ export function URDFViewer({
         }
     }, [onSelect, robot]);
 
-    const handleHoverWrapper = useCallback((type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
-        onHover?.(type, id, subType);
+    const handleHoverWrapper = useCallback((
+        type: 'link' | 'joint' | null,
+        id: string | null,
+        subType?: 'visual' | 'collision',
+        objectIndex?: number
+    ) => {
+        onHover?.(type, id, subType, objectIndex);
     }, [onHover]);
 
     const handleAutoFitGround = useCallback(() => {
@@ -447,7 +453,7 @@ export function URDFViewer({
         >
             {/* Info overlay */}
             <div className="absolute top-4 left-4 z-20 pointer-events-none select-none">
-                <div className="text-slate-500 dark:text-slate-400 text-xs bg-white/50 dark:bg-google-dark-surface/50 backdrop-blur px-2 py-1 rounded border border-slate-200 dark:border-google-dark-border">
+                <div className="rounded border border-border-black bg-panel-bg px-2 py-1 text-xs text-text-secondary shadow-sm">
                     {mode === 'hardware' ? t.hardware : t.detail} {t.modeLabel}
                 </div>
             </div>
@@ -554,9 +560,9 @@ export function URDFViewer({
             {/* Show overlay when WebGL context is lost */}
             {contextLost && (
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl text-center">
-                        <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4" />
-                        <p className="text-gray-700 dark:text-gray-300">{t.webglContextRestoring}</p>
+                    <div className="rounded-lg border border-border-black bg-panel-bg p-6 text-center shadow-xl">
+                        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-system-blue border-t-transparent" />
+                        <p className="text-text-secondary">{t.webglContextRestoring}</p>
                     </div>
                 </div>
             )}
@@ -605,6 +611,7 @@ export function URDFViewer({
                         showCollision={showCollision}
                         showVisual={showVisual}
                         onSelect={handleSelectWrapper}
+                        onHover={handleHoverWrapper}
                         onMeshSelect={onMeshSelect}
                         onJointChange={handleJointAngleChange}
                         onJointChangeCommit={handleJointChangeCommit}
@@ -615,7 +622,7 @@ export function URDFViewer({
                         t={t}
                         mode={mode}
                         selection={selection}
-                        hoveredSelection={hoveredSelection}
+                        hoverSelectionEnabled={hoverSelectionEnabled}
                         highlightMode={highlightMode}
                         showInertia={showInertia}
                         showInertiaOverlay={showInertiaOverlay}
@@ -630,9 +637,11 @@ export function URDFViewer({
                         jointAxisSize={jointAxisSize}
                         modelOpacity={modelOpacity}
                         robotLinks={robotLinks}
+                        robotJoints={robotJoints}
                         focusTarget={focusTarget}
                         transformMode={transformMode}
                         toolMode={toolMode}
+                        onCollisionTransformPreview={onCollisionTransformPreview}
                         onCollisionTransformEnd={onCollisionTransform}
                         isOrbitDragging={isOrbitDragging}
                         onTransformPending={handleTransformPending}

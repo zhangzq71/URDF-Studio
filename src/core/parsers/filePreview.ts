@@ -1,7 +1,6 @@
 import {
   generateURDF,
   processXacro,
-  parseMJCF,
   parseURDF,
   parseUSDA,
 } from '@/core/parsers';

@@ -9,18 +9,24 @@ import React, { useState, useEffect } from 'react';
 import { Eye, Box } from 'lucide-react';
 import type { RobotState, AppMode, UrdfLink } from '@/types';
 import { translations } from '@/shared/i18n';
+import type { Language } from '@/store';
 import {
   MAX_TRANSFORM_DECIMALS,
-  TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
+import {
+  PROPERTY_EDITOR_POSITION_STEP,
+  PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS,
+} from '../constants';
 import {
   InputGroup,
   CollapsibleSection,
   NumberInput,
   Vec3InlineInput,
+  PROPERTY_EDITOR_SUBLABEL_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
 } from './FormControls';
 import { GeometryEditor } from './GeometryEditor';
+import { RotationValueInput } from './RotationValueInput';
 
 interface LinkPropertiesProps {
   data: UrdfLink;
@@ -32,10 +38,11 @@ interface LinkPropertiesProps {
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
   t: typeof translations['en'];
+  lang: Language;
 }
 
 export const LinkProperties: React.FC<LinkPropertiesProps> = ({
-  data, robot, mode, selection, onUpdate, onSelect, assets, onUploadAsset, t
+  data, robot, mode, selection, onUpdate, onSelect, assets, onUploadAsset, t, lang
 }) => {
   // Tab state for Visual vs Collision
   const [linkTab, setLinkTab] = useState<'visual' | 'collision'>('visual');
@@ -117,6 +124,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
               assets={assets}
               onUploadAsset={onUploadAsset}
               t={t}
+              lang={lang}
               isTabbed={true}
             />
           </div>
@@ -131,6 +139,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
               assets={assets}
               onUploadAsset={onUploadAsset}
               t={t}
+              lang={lang}
               isTabbed={true}
             />
           </div>
@@ -152,25 +161,29 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
 
           {/* Center of Mass (Origin) */}
           <InputGroup label={t.centerOfMass || "Center of Mass"}>
-            <div className="space-y-2">
-              <Vec3InlineInput
-                value={data.inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
-                onChange={(xyz) => onUpdate('link', selection.id!, {
-                  ...data,
-                  inertial: {
-                    ...data.inertial,
-                    origin: {
-                      xyz: xyz as { x: number; y: number; z: number },
-                      rpy: data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 }
+            <div className="space-y-2.5">
+              <div className="space-y-1.5">
+                <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
+                <Vec3InlineInput
+                  value={data.inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
+                  onChange={(xyz) => onUpdate('link', selection.id!, {
+                    ...data,
+                    inertial: {
+                      ...data.inertial,
+                      origin: {
+                        xyz: xyz as { x: number; y: number; z: number },
+                        rpy: data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 }
+                      }
                     }
-                  }
-                })}
-                labels={['X', 'Y', 'Z']}
-                compact
-                step={TRANSFORM_STEP}
-                precision={MAX_TRANSFORM_DECIMALS}
-              />
-              <Vec3InlineInput
+                  })}
+                  labels={['X', 'Y', 'Z']}
+                  compact
+                  step={PROPERTY_EDITOR_POSITION_STEP}
+                  precision={MAX_TRANSFORM_DECIMALS}
+                  repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+                />
+              </div>
+              <RotationValueInput
                 value={data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
                 onChange={(rpy) => onUpdate('link', selection.id!, {
                   ...data,
@@ -178,15 +191,14 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
                     ...data.inertial,
                     origin: {
                       xyz: data.inertial.origin?.xyz || { x: 0, y: 0, z: 0 },
-                      rpy: rpy as { r: number; p: number; y: number }
+                      rpy
                     }
                   }
                 })}
-                labels={[t.roll, t.pitch, t.yaw]}
-                keys={['r', 'p', 'y']}
+                lang={lang}
+                label={t.rotation}
                 compact
-                step={TRANSFORM_STEP}
-                precision={MAX_TRANSFORM_DECIMALS}
+                holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
               />
             </div>
           </InputGroup>

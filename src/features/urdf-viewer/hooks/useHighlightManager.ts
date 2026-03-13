@@ -7,6 +7,7 @@ import {
     collisionHighlightMaterial
 } from '../utils/materials';
 import { _pooledRay, _pooledBox3 } from '../constants';
+import { collectPickTargets, type PickTargetMode } from '../utils/pickTargets';
 
 export interface UseHighlightManagerOptions {
     robot: THREE.Object3D | null;
@@ -15,7 +16,7 @@ export interface UseHighlightManagerOptions {
     showCollision: boolean;
     showVisual: boolean;
     robotLinks?: Record<string, UrdfLink>;
-    linkMeshMapRef: React.MutableRefObject<Map<string, THREE.Mesh[]>>;
+    linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
 }
 
 export interface UseHighlightManagerResult {
@@ -28,8 +29,8 @@ export interface UseHighlightManagerResult {
     revertAllHighlights: () => void;
     getRobotBoundingBox: (forceRefresh?: boolean) => THREE.Box3 | null;
     rayIntersectsBoundingBox: (raycaster: THREE.Raycaster, forceRefresh?: boolean) => boolean;
-    highlightedMeshesRef: React.MutableRefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
-    boundingBoxNeedsUpdateRef: React.MutableRefObject<boolean>;
+    highlightedMeshesRef: React.RefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
+    boundingBoxNeedsUpdateRef: React.RefObject<boolean>;
     getTriangleVertices: (
         geometry: THREE.BufferGeometry,
         faceIndex: number,
@@ -76,9 +77,6 @@ export function useHighlightManager({
     const robotLinksRef = useRef(robotLinks);
 
     // PERFORMANCE: Pre-allocated vectors for triangle vertices (object pooling)
-    const _triVert0 = useRef(new THREE.Vector3());
-    const _triVert1 = useRef(new THREE.Vector3());
-    const _triVert2 = useRef(new THREE.Vector3());
 
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
@@ -138,6 +136,14 @@ export function useHighlightManager({
             && linkData?.visual.visible !== false;
     }, [getColliderIndex, getCollisionGeometryByIndex]);
 
+    const getActiveBoundingMode = useCallback((): PickTargetMode | null => {
+        if (highlightMode === 'collision') {
+            return showCollisionRef.current ? 'collision' : null;
+        }
+
+        return showVisualRef.current ? 'visual' : null;
+    }, [highlightMode]);
+
     // Helper to get/update robot bounding box (cached)
     const getRobotBoundingBox = useCallback((forceRefresh = false) => {
         if (!robot) return null;
@@ -154,14 +160,44 @@ export function useHighlightManager({
             || now - robotBoundingBoxUpdatedAtRef.current >= BOUNDING_BOX_CACHE_MS;
 
         if (shouldRefresh) {
-            robotBoundingBoxRef.current.setFromObject(robot);
-            robotBoundingBoxRef.current.expandByScalar(0.05);
+            const targetMode = getActiveBoundingMode();
+            const boundingBox = robotBoundingBoxRef.current;
+            const pickTargets = targetMode
+                ? collectPickTargets(linkMeshMapRef.current, targetMode)
+                : [];
+
+            boundingBox.makeEmpty();
+
+            if (pickTargets.length > 0) {
+                if (forceRefresh || boundingBoxNeedsUpdateRef.current || robotBoundingBoxUpdatedAtRef.current === 0) {
+                    robot.updateMatrixWorld(true);
+                }
+
+                for (let i = 0; i < pickTargets.length; i += 1) {
+                    const mesh = pickTargets[i] as THREE.Mesh;
+                    const geometry = mesh.geometry;
+
+                    if (!geometry) continue;
+                    if (!geometry.boundingBox) {
+                        geometry.computeBoundingBox();
+                    }
+                    if (!geometry.boundingBox) continue;
+
+                    _pooledBox3.copy(geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+                    boundingBox.union(_pooledBox3);
+                }
+
+                if (!boundingBox.isEmpty()) {
+                    boundingBox.expandByScalar(0.05);
+                }
+            }
+
             boundingBoxNeedsUpdateRef.current = false;
             robotBoundingBoxUpdatedAtRef.current = now;
         }
 
-        return robotBoundingBoxRef.current;
-    }, [robot]);
+        return robotBoundingBoxRef.current.isEmpty() ? null : robotBoundingBoxRef.current;
+    }, [robot, getActiveBoundingMode, linkMeshMapRef]);
 
     // PERFORMANCE: Two-phase detection - check bounding box first
     const rayIntersectsBoundingBox = useCallback((raycaster: THREE.Raycaster, forceRefresh = false): boolean => {

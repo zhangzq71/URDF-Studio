@@ -3,7 +3,6 @@
  * Displays XYZ coordinate axes with adjustable thickness and size
  */
 
-import React from 'react';
 
 interface CoordinateAxesProps {
   size?: number;

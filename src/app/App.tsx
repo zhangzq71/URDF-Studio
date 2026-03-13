@@ -2,7 +2,7 @@
  * Main App Component
  * Root component that assembles all pieces together
  */
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
@@ -92,15 +92,20 @@ function AppContent() {
 
   // Build robot state for AI modal
   // In workspace mode, AI inspection/select should target merged assembly ids.
+  const mergedWorkspaceRobot = useMemo(() => {
+    if (!assemblyState || sidebarTab !== 'workspace') {
+      return null;
+    }
+
+    return getMergedRobotData();
+  }, [assemblyState, getMergedRobotData, sidebarTab]);
+
   const robot: RobotState = useMemo(() => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      const mergedRobot = getMergedRobotData();
-      if (mergedRobot) {
-        return {
-          ...mergedRobot,
-          selection,
-        };
-      }
+    if (mergedWorkspaceRobot) {
+      return {
+        ...mergedWorkspaceRobot,
+        selection,
+      };
     }
 
     return {
@@ -116,9 +121,7 @@ function AppContent() {
     robotJoints,
     rootLinkId,
     selection,
-    assemblyState,
-    sidebarTab,
-    getMergedRobotData,
+    mergedWorkspaceRobot,
   ]);
 
   // Load robot file handler

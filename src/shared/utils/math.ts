@@ -7,8 +7,8 @@ import * as THREE from 'three';
 export class MathUtils {
     /**
      * Compute eigenvalue decomposition of 3x3 symmetric matrix (using Jacobi method)
-     * @param {THREE.Matrix3} matrix - Symmetric matrix
-     * @returns {Object} { eigenvalues: [λ1, λ2, λ3], eigenvectors: [[v1x, v1y, v1z], [v2x, v2y, v2z], [v3x, v3y, v3z]] }
+     * @param matrix - Symmetric matrix
+     * @returns Eigenvalues and eigenvectors for the 3x3 matrix
      */
     static computeEigenDecomposition3x3(matrix: THREE.Matrix3) {
         const m = matrix.elements;
@@ -43,7 +43,9 @@ export class MathUtils {
             if (maxVal < 1e-10) break;
 
             // Calculate rotation angle
-            let apq, app, aqq;
+            let apq: number;
+            let app: number;
+            let aqq: number;
             if (p === 0 && q === 1) {
                 apq = a01; app = a00; aqq = a11;
             } else if (p === 0 && q === 2) {
@@ -71,7 +73,6 @@ export class MathUtils {
                 // Update eigenvectors
                 const tv00 = v00, tv01 = v01, tv02 = v02;
                 const tv10 = v10, tv11 = v11, tv12 = v12;
-                const tv20 = v20, tv21 = v21, tv22 = v22;
 
                 v00 = c * tv00 - s * tv10;
                 v01 = c * tv01 - s * tv11;
@@ -91,7 +92,6 @@ export class MathUtils {
 
                 // Update eigenvectors
                 const tv00 = v00, tv01 = v01, tv02 = v02;
-                const tv10 = v10, tv11 = v11, tv12 = v12;
                 const tv20 = v20, tv21 = v21, tv22 = v22;
 
                 v00 = c * tv00 - s * tv20;
@@ -110,8 +110,6 @@ export class MathUtils {
                 a01 = c * temp01 - s * temp02;
                 a02 = s * temp01 + c * temp02;
 
-                // Update eigenvectors
-                const tv00 = v00, tv01 = v01, tv02 = v02;
                 const tv10 = v10, tv11 = v11, tv12 = v12;
                 const tv20 = v20, tv21 = v21, tv22 = v22;
 
@@ -150,7 +148,7 @@ export class MathUtils {
      *
      * @param inertial - Inertial data with mass and inertia tensor
      * @param maxSize - Optional maximum size limit (e.g., from link bounding box)
-     * @returns {Object|null} Returns box data, or null if inertia parameters are unreasonable
+     * @returns Returns box data, or null if inertia parameters are unreasonable
      */
     static computeInertiaBox(inertial: {
         mass: number;

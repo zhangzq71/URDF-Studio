@@ -24,8 +24,8 @@ interface WorkspaceCanvasProps {
   robotName?: string;
   className?: string;
   containerRef?: React.RefObject<HTMLDivElement>;
-  sceneRef?: React.MutableRefObject<THREE.Scene | null>;
-  snapshotAction?: React.MutableRefObject<(() => void) | null>;
+  sceneRef?: React.RefObject<THREE.Scene | null>;
+  snapshotAction?: React.RefObject<(() => void) | null>;
   children: React.ReactNode;
   overlays?: React.ReactNode;
   onPointerMissed?: () => void;
@@ -37,6 +37,7 @@ interface WorkspaceCanvasProps {
   environmentIntensity?: number;
   cameraFollowPrimary?: boolean;
   orbitControlsProps?: Partial<OrbitControlProps>;
+  controlLayerKey?: string;
   background?: {
     light: string;
     dark: string;
@@ -45,7 +46,6 @@ interface WorkspaceCanvasProps {
 }
 
 export const WorkspaceCanvas = ({
-  theme,
   lang,
   robotName = 'robot',
   className = 'relative w-full h-full',
@@ -63,6 +63,7 @@ export const WorkspaceCanvas = ({
   environmentIntensity = 0.36,
   cameraFollowPrimary = false,
   orbitControlsProps,
+  controlLayerKey = 'default',
   background = WORKSPACE_CANVAS_BACKGROUND,
   contextLostMessage,
 }: WorkspaceCanvasProps) => {
@@ -158,8 +159,8 @@ export const WorkspaceCanvas = ({
           {children}
           <ReferenceGrid theme={effectiveTheme} />
           <WorldOriginAxes />
-          <OrbitControls {...finalOrbitControlsProps} />
-          <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
+          <OrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
+          <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
             <GizmoViewport
               axisColors={['#ef4444', '#22c55e', '#3b82f6']}
               labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
@@ -174,9 +175,9 @@ export const WorkspaceCanvas = ({
 
       {contextLost && contextLostMessage && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg bg-white p-6 text-center shadow-xl dark:bg-gray-800">
-            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-            <p className="text-gray-700 dark:text-gray-300">{contextLostMessage}</p>
+          <div className="rounded-lg border border-border-black bg-panel-bg p-6 text-center shadow-xl">
+            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-system-blue border-t-transparent" />
+            <p className="text-text-secondary">{contextLostMessage}</p>
           </div>
         </div>
       )}

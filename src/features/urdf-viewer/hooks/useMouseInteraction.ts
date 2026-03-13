@@ -6,6 +6,7 @@ import { THROTTLE_INTERVAL } from '../constants';
 import type { ToolMode } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import { collectGizmoRaycastTargets, findFirstIntersection, isGizmoObject } from '../utils/raycast';
+import { collectPickTargets, findPickIntersections, type PickTargetMode } from '../utils/pickTargets';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
 
 const JOINT_DRAG_EPSILON = 1e-5;
@@ -13,20 +14,23 @@ const MAX_REVOLUTE_DELTA_PER_EVENT = Math.PI / 8;
 
 export interface UseMouseInteractionOptions {
     robot: THREE.Object3D | null;
+    robotVersion: number;
     toolMode: ToolMode;
     mode?: 'detail' | 'hardware';
     highlightMode: 'link' | 'collision';
     showCollision: boolean;
     showVisual: boolean;
+    linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
     onJointChangeCommit?: (name: string, angle: number) => void;
     setIsDragging?: (dragging: boolean) => void;
     setActiveJoint?: (jointName: string | null) => void;
-    justSelectedRef?: React.MutableRefObject<boolean>;
-    isOrbitDragging?: React.MutableRefObject<boolean>;
-    isSelectionLockedRef?: React.MutableRefObject<boolean>;
+    justSelectedRef?: React.RefObject<boolean>;
+    isOrbitDragging?: React.RefObject<boolean>;
+    isSelectionLockedRef?: React.RefObject<boolean>;
     highlightGeometry: (
         linkName: string | null,
         revert: boolean,
@@ -36,21 +40,24 @@ export interface UseMouseInteractionOptions {
 }
 
 export interface UseMouseInteractionResult {
-    mouseRef: React.MutableRefObject<THREE.Vector2>;
-    raycasterRef: React.MutableRefObject<THREE.Raycaster>;
-    hoveredLinkRef: React.MutableRefObject<string | null>;
-    isDraggingJoint: React.MutableRefObject<boolean>;
-    needsRaycastRef: React.MutableRefObject<boolean>;
-    lastMousePosRef: React.MutableRefObject<{ x: number; y: number }>;
+    mouseRef: React.RefObject<THREE.Vector2>;
+    raycasterRef: React.RefObject<THREE.Raycaster>;
+    hoveredLinkRef: React.RefObject<string | null>;
+    isDraggingJoint: React.RefObject<boolean>;
+    needsRaycastRef: React.RefObject<boolean>;
+    lastMousePosRef: React.RefObject<{ x: number; y: number }>;
 }
 
 export function useMouseInteraction({
     robot,
+    robotVersion,
     toolMode,
     mode,
     highlightMode,
     showCollision,
     showVisual,
+    linkMeshMapRef,
+    onHover,
     onSelect,
     onMeshSelect,
     onJointChange,
@@ -68,6 +75,7 @@ export function useMouseInteraction({
     const mouseRef = useRef(new THREE.Vector2(-1000, -1000));
     const raycasterRef = useRef(new THREE.Raycaster());
     const hoveredLinkRef = useRef<string | null>(null);
+    const useExternalHover = typeof onHover === 'function';
 
     // PERFORMANCE: Track last mouse position for state locking (skip small movements)
     const lastMousePosRef = useRef({ x: 0, y: 0 });
@@ -85,6 +93,15 @@ export function useMouseInteraction({
     const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
     const gizmoTargetsCacheKeyRef = useRef('');
     const gizmoTargetsUpdatedAtRef = useRef(0);
+    const pickTargetCachesRef = useRef<Record<PickTargetMode, {
+        key: string;
+        updatedAt: number;
+        targets: THREE.Object3D[];
+    }>>({
+        all: { key: '', updatedAt: 0, targets: [] },
+        visual: { key: '', updatedAt: 0, targets: [] },
+        collision: { key: '', updatedAt: 0, targets: [] }
+    });
 
     // Keep refs up to date
     const onJointChangeRef = useRef(onJointChange);
@@ -119,6 +136,30 @@ export function useMouseInteraction({
             return gizmoTargetsRef.current;
         };
 
+        const getPickTargets = (targetMode: PickTargetMode) => {
+            const cache = pickTargetCachesRef.current[targetMode];
+            const nextCacheKey = [
+                robotVersion,
+                targetMode,
+                highlightMode,
+                showCollision ? 'col:1' : 'col:0',
+                showVisual ? 'vis:1' : 'vis:0',
+                linkMeshMapRef.current.size
+            ].join(':');
+            const now = performance.now();
+
+            if (
+                cache.key !== nextCacheKey
+                || now - cache.updatedAt > 120
+            ) {
+                cache.targets = collectPickTargets(linkMeshMapRef.current, targetMode);
+                cache.key = nextCacheKey;
+                cache.updatedAt = now;
+            }
+
+            return cache.targets;
+        };
+
         const setOrbitControlsEnabled = (enabled: boolean) => {
             if (orbitControls && typeof orbitControls.enabled === 'boolean') {
                 orbitControls.enabled = enabled;
@@ -141,6 +182,15 @@ export function useMouseInteraction({
 
             const isStandardSelectionMode = ['select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
             if (!isStandardSelectionMode) return false;
+            const isTransformTool = toolMode === 'translate' || toolMode === 'rotate' || toolMode === 'universal';
+
+            // In detail mode with transform tools, UnifiedTransformControls handles
+            // gizmo picking and orbit passthrough via its own picker-based mechanism.
+            // Avoid blocking orbit here based on visible gizmo mesh hits, which can
+            // diverge from picker mesh hits after thickness patching.
+            if (mode === 'detail' && isTransformTool) {
+                return false;
+            }
 
             updatePointerFromClient(clientX, clientY);
 
@@ -152,7 +202,7 @@ export function useMouseInteraction({
                 return true;
             }
 
-            return raycasterRef.current.intersectObject(robot, true).length > 0;
+            return findPickIntersections(robot, raycasterRef.current, getPickTargets('all'), 'all').length > 0;
         };
 
         const handlePointerDownCapture = (event: PointerEvent) => {
@@ -488,6 +538,7 @@ export function useMouseInteraction({
             // If we only raycast `robot`, clicking gizmo will "pass through" and select
             // underlying collision/visual meshes by mistake.
             const gizmoTargets = getGizmoTargets();
+            const pickTargets = getPickTargets(isCollisionMode ? 'collision' : 'visual');
             const nearestSceneHit = gizmoTargets.length > 0
                 ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
                 : undefined;
@@ -495,7 +546,12 @@ export function useMouseInteraction({
                 return;
             }
 
-            const intersections = raycasterRef.current.intersectObject(robot, true);
+            const intersections = findPickIntersections(
+                robot,
+                raycasterRef.current,
+                pickTargets,
+                isCollisionMode ? 'collision' : 'visual'
+            );
 
             const hit = findFirstIntersection(intersections, (rayHit) => {
                 if (rayHit.object.userData?.isGizmo) return false;
@@ -566,6 +622,9 @@ export function useMouseInteraction({
 
                     hoveredLinkRef.current = null;
                     (hoveredLinkRef as any).currentMesh = null;
+                    (hoveredLinkRef as any).currentObjectIndex = null;
+                    (hoveredLinkRef as any).currentSubType = null;
+                    onHover?.(null, null);
                 }
 
                 // Find the parent joint of the clicked link
@@ -644,9 +703,14 @@ export function useMouseInteraction({
 
             if (hoveredLinkRef.current) {
                 const isCollisionMode = highlightMode === 'collision';
-                highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
+                if (!useExternalHover) {
+                    highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
+                }
                 hoveredLinkRef.current = null;
                 (hoveredLinkRef as any).currentMesh = null;
+                (hoveredLinkRef as any).currentObjectIndex = null;
+                (hoveredLinkRef as any).currentSubType = null;
+                onHover?.(null, null);
             }
 
             handleMouseUp();
@@ -658,9 +722,9 @@ export function useMouseInteraction({
         gl.domElement.addEventListener('mouseup', handleMouseUp);
         gl.domElement.addEventListener('mouseleave', handleMouseLeave);
         window.addEventListener('mouseup', handleMouseUp);
-        window.addEventListener('pointerup', handleMouseUp);
-        window.addEventListener('blur', handleWindowBlur);
-        document.addEventListener('visibilitychange', handleVisibilityChange);
+            window.addEventListener('pointerup', handleMouseUp);
+            window.addEventListener('blur', handleWindowBlur);
+            document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
             // Cancel throttled handler to prevent pending callbacks
@@ -679,8 +743,11 @@ export function useMouseInteraction({
             window.removeEventListener('pointerup', handleMouseUp);
             window.removeEventListener('blur', handleWindowBlur);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
+            pickTargetCachesRef.current.all.targets = [];
+            pickTargetCachesRef.current.visual.targets = [];
+            pickTargetCachesRef.current.collision.targets = [];
         };
-    }, [gl, camera, scene, robot, orbitControls, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual]);
+    }, [gl, camera, scene, robot, robotVersion, orbitControls, onHover, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual, linkMeshMapRef, useExternalHover]);
 
     return {
         mouseRef,

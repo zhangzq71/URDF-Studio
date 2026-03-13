@@ -836,7 +836,7 @@ export async function prepareCollisionOptimizationBaseAnalysis(
     signal: options.signal,
   });
 
-  meshTargets.forEach((target, index) => {
+  meshTargets.forEach((target) => {
     throwIfAborted(options.signal);
     meshAnalysisByTargetId[target.id] = workerResults[target.id] ?? null;
   });

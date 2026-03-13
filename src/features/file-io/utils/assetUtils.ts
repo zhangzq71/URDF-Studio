@@ -14,7 +14,6 @@ export function createAssetUrls(assetFiles: AssetFile[]): Record<string, string>
   const assets: Record<string, string> = {};
 
   assetFiles.forEach(f => {
-    const ext = f.name.split('.').pop()?.toLowerCase();
     if (!isAssetFile(f.name)) return;
 
     const url = URL.createObjectURL(f.blob);

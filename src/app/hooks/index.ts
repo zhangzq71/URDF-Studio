@@ -6,6 +6,7 @@
 export { useAppEffects, useKeyboardShortcuts, useSelectionCleanup } from './useAppEffects';
 export { useAppShellState } from './useAppShellState';
 export { useAppState } from './useAppState';
+export { useActiveHistory } from './useActiveHistory';
 export { useFileImport } from './useFileImport';
 export { useFileExport } from './useFileExport';
 export { useImportInputBinding } from './useImportInputBinding';

@@ -163,6 +163,11 @@ export async function createGeometryMesh(
     // Determine geometry type: mesh attribute takes priority, otherwise use parsed type
     const type = geom.mesh ? 'mesh' : geom.type;
 
+    if (type === 'plane') {
+        console.debug(`[MJCFLoader] Skipping non-importable plane geom "${geom.name || 'unnamed'}"`);
+        return null;
+    }
+
     // Debug logging for collision geometry creation
     if (geom.name || (!geom.mesh && geom.size)) {
         console.debug(`[MJCFLoader] Creating geom: type="${type}", size=[${geom.size?.join(', ') || 'none'}], name="${geom.name || 'unnamed'}"`);
@@ -237,15 +242,6 @@ export async function createGeometryMesh(
             const mesh = new THREE.Mesh(geometry, createDefaultMaterial());
             mesh.scale.set(sx, sy, sz);
             return mesh;
-        }
-
-        case 'plane': {
-            // MuJoCo plane - typically a large ground plane
-            const sx = (geom.size?.[0] || 10) * 2;
-            const sy = (geom.size?.[1] || 10) * 2;
-            const geometry = new THREE.PlaneGeometry(sx, sy);
-            geometry.rotateX(-Math.PI / 2); // Plane faces +Z in MuJoCo, but we want it horizontal
-            return new THREE.Mesh(geometry, createDefaultMaterial());
         }
 
         case 'mesh': {

@@ -31,7 +31,6 @@ export const useURDFViewerController = ({
   onJointChange,
   jointAngleState,
   onSelect,
-  onMeshSelect,
   onHover,
   selection,
   showVisual: propShowVisual,

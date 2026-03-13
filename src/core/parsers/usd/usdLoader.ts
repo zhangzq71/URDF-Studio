@@ -3,7 +3,7 @@
  *
  * Based on robot_viewer/USDAdapter.js
  *
- * USD formats use OpenUSD WASM loader or Three.js USDZLoader for rendering.
+ * USD formats use OpenUSD WASM loader or Three.js USDLoader for rendering.
  * This module provides a unified interface for loading USD files.
  */
 
@@ -70,39 +70,6 @@ function parseUSDArray(value: string): number[] {
 // GEOMETRY EXTRACTION
 // ============================================================
 
-function extractGeometryInfo(geometry: THREE.BufferGeometry): USDGeometry {
-    const geomType: USDGeometry = { type: 'mesh' };
-
-    if (geometry.type === 'BoxGeometry') {
-        geomType.type = 'box';
-        const params = (geometry as any).parameters;
-        geomType.size = {
-            x: params?.width || 1,
-            y: params?.height || 1,
-            z: params?.depth || 1
-        };
-    } else if (geometry.type === 'SphereGeometry') {
-        geomType.type = 'sphere';
-        const params = (geometry as any).parameters;
-        geomType.size = {
-            radius: params?.radius || 0.5
-        };
-    } else if (geometry.type === 'CylinderGeometry') {
-        geomType.type = 'cylinder';
-        const params = (geometry as any).parameters;
-        geomType.size = {
-            radius: params?.radiusTop || 0.5,
-            height: params?.height || 1
-        };
-    }
-
-    return geomType;
-}
-
-// ============================================================
-// GEOMETRY MESH CREATION
-// ============================================================
-
 function createGeometryMesh(geometry: USDGeometry): THREE.Mesh | null {
     let threeGeometry: THREE.BufferGeometry | null = null;
 
@@ -145,42 +112,6 @@ function createGeometryMesh(geometry: USDGeometry): THREE.Mesh | null {
 // THREE.JS GROUP CONVERSION
 // ============================================================
 
-function convertThreeGroupToModel(group: THREE.Object3D, fileName: string): USDModel {
-    const model: USDModel = {
-        name: fileName.replace(/\.(usdz|usdc|usd|usda)$/i, ''),
-        links: new Map(),
-        threeObject: group
-    };
-
-    let linkIndex = 0;
-    group.traverse((child: any) => {
-        if (child.isMesh || child.isGroup) {
-            const linkName = child.name || `link_${linkIndex++}`;
-            const link: USDLink = {
-                name: linkName,
-                visuals: [],
-                threeObject: child
-            };
-
-            if (child.isMesh && child.geometry) {
-                const visual: USDVisual = {
-                    name: child.name || linkName,
-                    geometry: extractGeometryInfo(child.geometry),
-                    origin: {
-                        xyz: [0, 0, 0],
-                        rpy: [0, 0, 0]
-                    },
-                    threeObject: child
-                };
-                link.visuals.push(visual);
-            }
-
-            model.links.set(linkName, link);
-        }
-    });
-
-    return model;
-}
 
 // ============================================================
 // USD ASCII PARSER (Basic)
@@ -232,12 +163,12 @@ function parseUSDAGeometry(type: string, lines: string[], startIndex: number): U
 // ============================================================
 
 /**
- * Load USDZ file using Three.js USDZLoader
+ * Load USDZ file using Three.js USDLoader
  */
 export async function loadUSDZ(file: File): Promise<THREE.Object3D | null> {
     try {
-        const { USDZLoader } = await import('three/examples/jsm/loaders/USDZLoader.js');
-        const loader = new USDZLoader();
+        const { USDLoader } = await import('three/examples/jsm/loaders/USDLoader.js');
+        const loader = new USDLoader();
 
         const blobUrl = URL.createObjectURL(file);
 

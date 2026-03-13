@@ -8,7 +8,6 @@ import {
   Checkbox, 
   Slider as UiSlider, 
   SegmentedControl as UiSegmentedControl,
-  Separator,
   SegmentedControlOption as UiSegmentedControlOption
 } from '@/shared/components/ui';
 
@@ -463,11 +462,6 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
 };
 
 // ============== Draggable Options Panel Hook ==============
-interface DraggablePanelState {
-  position: { x: number; y: number } | null;
-  isCollapsed: boolean;
-}
-
 interface UseDraggablePanelReturn {
   panelRef: React.RefObject<HTMLDivElement | null>;
   position: { x: number; y: number } | null;
@@ -514,7 +508,6 @@ export function useDraggablePanel(
        // However, we need to save the 'x' and 'y' numbers.
        // Let's parse them from the style or bounding rect?
        // Bounding rect is safest.
-       const rect = panelRef.current.getBoundingClientRect();
        // NOTE: We need the position relative to the viewport/offset parent.
        // Since OptionsPanel uses `fixed` or `absolute` positioning typically...
        // The original logic used `clientX - offset`.

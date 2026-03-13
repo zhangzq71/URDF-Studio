@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from 'react';
+import { useCallback, type RefObject } from 'react';
 import { useSelectionStore } from '@/store';
 import type { RobotState } from '@/types';
 
@@ -7,7 +7,7 @@ interface UseViewerOrchestrationOptions {
   pulseSelection: (selection: RobotState['selection'], durationMs?: number) => void;
   setHoveredSelection: (selection: RobotState['selection']) => void;
   focusOn: (id: string) => void;
-  transformPendingRef: MutableRefObject<boolean>;
+  transformPendingRef: RefObject<boolean>;
 }
 
 export function useViewerOrchestration({
@@ -45,13 +45,23 @@ export function useViewerOrchestration({
     transformPendingRef.current = pending;
   }, [transformPendingRef]);
 
-  const handleHover = useCallback((type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
+  const handleHover = useCallback((
+    type: 'link' | 'joint' | null,
+    id: string | null,
+    subType?: 'visual' | 'collision',
+    objectIndex?: number
+  ) => {
     const current = useSelectionStore.getState().hoveredSelection;
-    if (current.type === type && current.id === id && current.subType === subType) {
+    if (
+      current.type === type
+      && current.id === id
+      && current.subType === subType
+      && (current.objectIndex ?? 0) === (objectIndex ?? 0)
+    ) {
       return;
     }
 
-    setHoveredSelection({ type, id, subType });
+    setHoveredSelection({ type, id, subType, objectIndex });
   }, [setHoveredSelection]);
 
   const handleFocus = useCallback((id: string) => {

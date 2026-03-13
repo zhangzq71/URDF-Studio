@@ -1,15 +1,28 @@
 import JSZip from 'jszip';
-import { 
-  AssemblyState, 
-  RobotData, 
-  RobotFile, 
+import {
+  AssemblyState,
   BridgeJoint,
   GeometryType,
+  JointType,
+  RobotData,
+  RobotFile,
   UrdfLink,
-  JointType
 } from '@/types';
-import { generateURDF, generateMujocoXML } from '@/core/parsers';
+import { generateMujocoXML, generateURDF } from '@/core/parsers';
 import { generateBOM } from './bomGenerator';
+import {
+  buildAssetArchivePath,
+  buildLibraryArchivePath,
+  chooseCanonicalLogicalPath,
+  ensureUniqueLogicalPath,
+  PROJECT_ALL_FILE_CONTENTS_FILE,
+  PROJECT_ASSEMBLY_HISTORY_FILE,
+  PROJECT_ASSET_MANIFEST_FILE,
+  PROJECT_MOTOR_LIBRARY_FILE,
+  PROJECT_ORIGINAL_URDF_FILE,
+  PROJECT_ROBOT_HISTORY_FILE,
+  PROJECT_VERSION,
+} from './projectArchive';
 
 const AXIS_EXPORT_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -32,24 +45,28 @@ const DYNAMICS_EXPORT_TYPES = new Set<JointType>([
 
 const USP_README_EN = `# URDF Studio Project (.usp) File Format
 
-The .usp file is a ZIP-compressed package that contains all necessary data to restore a URDF Studio project.
+The .usp file is a ZIP-compressed package that contains the full URDF Studio workspace state.
 
 ## Directory Structure
-- project.json: Project manifest and UI state.
-- components/: Robot components used in the project.
-- assets/: Global assets (shared resources).
+- project.json: Project manifest, UI state, and workspace pointers.
+- components/: Self-contained assembly components.
+- assets/: Packed project asset blobs and manifest.
+- library/: Asset library source files and extra text content.
+- history/: Undo/redo checkpoints and change logs.
 - bridges/: Multi-robot assembly connection data.
 - output/: Auto-generated export artifacts.
 `;
 
 const USP_README_ZH = `# URDF Studio 工程文件 (.usp) 格式说明
 
-.usp 文件是一个 ZIP 压缩包，包含了恢复 URDF Studio 项目所需的所有数据。
+.usp 文件是一个 ZIP 压缩包，包含 URDF Studio 的完整工程状态。
 
 ## 目录结构
-- project.json: 项目清单和 UI 状态元数据。
-- components/: 项目中使用的机器人组件。
-- assets/: 全局资源（共享资源）。
+- project.json: 工程清单、UI 状态和工作区指针。
+- components/: 自包含的装配组件。
+- assets/: 打包后的工程素材及清单。
+- library/: 素材库源文件与额外文本内容。
+- history/: 撤销/重做快照与变更日志。
 - bridges/: 多机器人装配连接数据。
 - output/: 自动生成的导出产物。
 `;
@@ -61,7 +78,7 @@ A component folder is a self-contained robot definition.
 ## Directory Structure
 - model.urdf: Original robot description.
 - state.json: JSON snapshot of the component's RobotData.
-- <assets>: Component-specific 3D assets.
+- meshes/: Component-specific 3D assets.
 `;
 
 const COMPONENT_README_ZH = `# URDF Studio 组件格式说明
@@ -71,49 +88,90 @@ const COMPONENT_README_ZH = `# URDF Studio 组件格式说明
 ## 目录结构
 - model.urdf: 原始机器人描述文件。
 - state.json: 组件 RobotData 的当前状态快照。
-- <assets>: 组件专用的 3D 资源。
+- meshes/: 组件专用的 3D 资源。
 `;
+
+type ProjectActivityEntry = {
+  id: string;
+  timestamp: string;
+  label: string;
+};
+
+type ProjectHistorySnapshot<T> = {
+  present: T;
+  past: T[];
+  future: T[];
+  activity: ProjectActivityEntry[];
+};
+
+const MAX_HISTORY = 50;
+const MAX_ACTIVITY_LOG = 200;
+
+const clampHistoryEntries = <T>(entries: T[] | undefined): T[] => (entries ?? []).slice(-MAX_HISTORY);
+const clampFutureEntries = <T>(entries: T[] | undefined): T[] => (entries ?? []).slice(0, MAX_HISTORY);
+
+type ProjectAssetEntry = {
+  logicalPath: string;
+  archivePath: string;
+};
 
 export interface ProjectManifest {
   version: string;
   name: string;
   lastModified: string;
   ui: {
-    appMode: string;
-    lang: string;
-    theme: string;
+    appMode?: string;
+  };
+  workspace?: {
+    selectedFile: string | null;
   };
   assets: {
     availableFiles: { name: string; format: string }[];
-    originalFileFormat: string | null;
+    originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
+    assetEntries?: ProjectAssetEntry[];
+    allFileContentsFile?: string;
+    motorLibraryFile?: string;
+    originalUrdfContentFile?: string;
+  };
+  history?: {
+    robotFile?: string;
+    assemblyFile?: string;
   };
   assembly?: {
     name: string;
-    components: Record<string, {
-      id: string;
-      name: string;
-      sourceFile: string;
-      visible: boolean;
-    }>;
+    components: Record<
+      string,
+      {
+        id: string;
+        name: string;
+        sourceFile: string;
+        visible: boolean;
+      }
+    >;
   };
 }
 
-/**
- * Generate bridge.xml content from bridges state
- */
-function generateBridgeXml(bridges: Record<string, BridgeJoint>): string {
+const normalizeActivityLog = (
+  activity: Array<{ id?: string; timestamp?: string; label?: string }> | undefined,
+): ProjectActivityEntry[] =>
+  (activity ?? []).slice(-MAX_ACTIVITY_LOG).map((entry, index) => ({
+    id: entry.id ?? `activity_${index}`,
+    timestamp: entry.timestamp ?? new Date(0).toISOString(),
+    label: entry.label ?? 'Unknown change',
+  }));
+
+const generateBridgeXml = (bridges: Record<string, BridgeJoint>): string => {
   let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<bridges>\n';
-  
-  Object.values(bridges).forEach(bridge => {
+
+  Object.values(bridges).forEach((bridge) => {
     const { joint } = bridge;
     xml += `  <bridge id="${bridge.id}" name="${bridge.name}" `;
     xml += `parent_comp="${bridge.parentComponentId}" parent_link="${bridge.parentLinkId}" `;
     xml += `child_comp="${bridge.childComponentId}" child_link="${bridge.childLinkId}">\n`;
-    
     xml += `    <joint name="${joint.name}" type="${joint.type}">\n`;
     xml += `      <origin xyz="${joint.origin.xyz.x} ${joint.origin.xyz.y} ${joint.origin.xyz.z}" `;
     xml += `rpy="${joint.origin.rpy.r} ${joint.origin.rpy.p} ${joint.origin.rpy.y}" />\n`;
-    
+
     if (AXIS_EXPORT_TYPES.has(joint.type)) {
       xml += `      <axis xyz="${joint.axis.x} ${joint.axis.y} ${joint.axis.z}" />\n`;
 
@@ -124,29 +182,30 @@ function generateBridgeXml(bridges: Record<string, BridgeJoint>): string {
       }
     }
 
-    if (DYNAMICS_EXPORT_TYPES.has(joint.type)) {
-      if (joint.dynamics && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)) {
-        xml += `      <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
-      }
+    if (
+      DYNAMICS_EXPORT_TYPES.has(joint.type)
+      && joint.dynamics
+      && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)
+    ) {
+      xml += `      <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
     }
-    xml += `    </joint>\n`;
-    xml += `  </bridge>\n`;
+
+    xml += '    </joint>\n';
+    xml += '  </bridge>\n';
   });
-  
+
   xml += '</bridges>';
   return xml;
-}
+};
 
-/**
- * Helper to collect referenced meshes from a robot
- */
-function getReferencedMeshes(robot: RobotData): Set<string> {
+const getReferencedMeshes = (robot: RobotData): Set<string> => {
   const referencedFiles = new Set<string>();
+
   Object.values(robot.links).forEach((link: UrdfLink) => {
     if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
       referencedFiles.add(link.visual.meshPath);
     }
-    if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
+    if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referencedFiles.add(link.collision.meshPath);
     }
     (link.collisionBodies || []).forEach((body) => {
@@ -155,162 +214,294 @@ function getReferencedMeshes(robot: RobotData): Set<string> {
       }
     });
   });
-  return referencedFiles;
-}
 
-/**
- * Main function to export the project as a .usp (ZIP) file
- */
+  return referencedFiles;
+};
+
+const stripTransientJointState = (data: RobotData): RobotData => {
+  const clone = structuredClone(data);
+  Object.values(clone.joints).forEach((joint) => {
+    delete joint.angle;
+  });
+  return clone;
+};
+
+const stripTransientAssemblyState = (state: AssemblyState | null): AssemblyState | null => {
+  if (!state) return null;
+  const clone = structuredClone(state);
+  Object.values(clone.components).forEach((component) => {
+    component.robot = stripTransientJointState(component.robot);
+  });
+  Object.values(clone.bridges).forEach((bridge) => {
+    delete bridge.joint.angle;
+  });
+  return clone;
+};
+
+const writeTextLibraryFiles = (
+  zip: JSZip,
+  availableFiles: RobotFile[],
+): void => {
+  availableFiles.forEach((file) => {
+    if (file.content.length === 0) return;
+    zip.file(buildLibraryArchivePath(file.name), file.content);
+  });
+};
+
+const writePackedAssets = async (
+  zip: JSZip,
+  assetMap: Record<string, string>,
+): Promise<ProjectAssetEntry[]> => {
+  const urlToKeys = new Map<string, string[]>();
+  Object.entries(assetMap).forEach(([key, url]) => {
+    if (!url) return;
+    const existingKeys = urlToKeys.get(url) ?? [];
+    existingKeys.push(key);
+    urlToKeys.set(url, existingKeys);
+  });
+
+  const usedLogicalPaths = new Set<string>();
+  const assetEntries: ProjectAssetEntry[] = [];
+
+  await Promise.all(
+    Array.from(urlToKeys.entries()).map(async ([url, keys], index) => {
+      try {
+        const fallbackName = keys.find((key) => /\.[a-z0-9]+$/i.test(key)) ?? `asset_${index}`;
+        const canonicalPath = chooseCanonicalLogicalPath(keys, fallbackName);
+        const logicalPath = ensureUniqueLogicalPath(canonicalPath, usedLogicalPaths, fallbackName);
+        const archivePath = buildAssetArchivePath(logicalPath);
+        const response = await fetch(url);
+        const blob = await response.blob();
+        zip.file(archivePath, blob);
+        assetEntries.push({ logicalPath, archivePath });
+      } catch (error) {
+        console.warn('[ProjectExport] Failed to pack asset', keys[0] ?? url, error);
+      }
+    }),
+  );
+
+  assetEntries.sort((left, right) => left.logicalPath.localeCompare(right.logicalPath));
+  zip.file(PROJECT_ASSET_MANIFEST_FILE, JSON.stringify(assetEntries, null, 2));
+  return assetEntries;
+};
+
 export async function exportProject(params: {
   name: string;
-  uiState: { appMode: string; lang: string; theme: string };
+  uiState: {
+    appMode: string;
+    lang: string;
+  };
   assetsState: {
     availableFiles: RobotFile[];
     assets: Record<string, string>;
-    originalFileFormat: string | null;
+    allFileContents: Record<string, string>;
+    motorLibrary: Record<string, unknown>;
+    selectedFileName: string | null;
+    originalUrdfContent: string;
+    originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
   };
-  assemblyState: AssemblyState | null;
+  robotState: {
+    present: RobotData;
+    history: { past: RobotData[]; future: RobotData[] };
+    activity: Array<{ id?: string; timestamp?: string; label?: string }>;
+  };
+  assemblyState: {
+    present: AssemblyState | null;
+    history: { past: Array<AssemblyState | null>; future: Array<AssemblyState | null> };
+    activity: Array<{ id?: string; timestamp?: string; label?: string }>;
+  };
   getMergedRobotData: () => RobotData | null;
 }) {
-  const { name, uiState, assetsState, assemblyState, getMergedRobotData } = params;
-  const zip = new JSZip();
+  const {
+    name,
+    uiState,
+    assetsState,
+    robotState,
+    assemblyState,
+    getMergedRobotData,
+  } = params;
 
-  // 1. Create Manifest
+  const zip = new JSZip();
+  const currentAssembly = stripTransientAssemblyState(assemblyState.present);
+  const currentRobot = stripTransientJointState(robotState.present);
+  const assetEntries = await writePackedAssets(zip, assetsState.assets);
+  writeTextLibraryFiles(zip, assetsState.availableFiles);
+
+  zip.file(PROJECT_ALL_FILE_CONTENTS_FILE, JSON.stringify(assetsState.allFileContents, null, 2));
+  zip.file(PROJECT_MOTOR_LIBRARY_FILE, JSON.stringify(assetsState.motorLibrary, null, 2));
+
+  if (assetsState.originalUrdfContent) {
+    zip.file(PROJECT_ORIGINAL_URDF_FILE, assetsState.originalUrdfContent);
+  }
+
+  const serializedRobotHistory: ProjectHistorySnapshot<RobotData> = {
+    present: currentRobot,
+    past: clampHistoryEntries(robotState.history.past).map((snapshot) => stripTransientJointState(snapshot)),
+    future: clampFutureEntries(robotState.history.future).map((snapshot) => stripTransientJointState(snapshot)),
+    activity: normalizeActivityLog(robotState.activity),
+  };
+  zip.file(PROJECT_ROBOT_HISTORY_FILE, JSON.stringify(serializedRobotHistory, null, 2));
+
+  const serializedAssemblyHistory: ProjectHistorySnapshot<AssemblyState | null> = {
+    present: currentAssembly,
+    past: clampHistoryEntries(assemblyState.history.past).map((snapshot) => stripTransientAssemblyState(snapshot)),
+    future: clampFutureEntries(assemblyState.history.future).map((snapshot) => stripTransientAssemblyState(snapshot)),
+    activity: normalizeActivityLog(assemblyState.activity),
+  };
+  zip.file(PROJECT_ASSEMBLY_HISTORY_FILE, JSON.stringify(serializedAssemblyHistory, null, 2));
+
   const manifest: ProjectManifest = {
-    version: '1.0',
+    version: PROJECT_VERSION,
     name: name || 'unnamed_project',
     lastModified: new Date().toISOString(),
     ui: {
       appMode: uiState.appMode,
-      lang: uiState.lang,
-      theme: uiState.theme,
+    },
+    workspace: {
+      selectedFile: assetsState.selectedFileName,
     },
     assets: {
-      availableFiles: assetsState.availableFiles.map(f => ({ name: f.name, format: f.format })),
+      availableFiles: assetsState.availableFiles.map((file) => ({
+        name: file.name,
+        format: file.format,
+      })),
       originalFileFormat: assetsState.originalFileFormat,
+      assetEntries,
+      allFileContentsFile: PROJECT_ALL_FILE_CONTENTS_FILE,
+      motorLibraryFile: PROJECT_MOTOR_LIBRARY_FILE,
+      originalUrdfContentFile: assetsState.originalUrdfContent
+        ? PROJECT_ORIGINAL_URDF_FILE
+        : undefined,
     },
-    assembly: assemblyState ? {
-      name: assemblyState.name,
-      components: Object.fromEntries(
-        Object.entries(assemblyState.components).map(([id, comp]) => [
-          id,
-          {
-            id: comp.id,
-            name: comp.name,
-            sourceFile: comp.sourceFile,
-            visible: comp.visible !== false,
-          }
-        ])
-      )
-    } : undefined,
+    history: {
+      robotFile: PROJECT_ROBOT_HISTORY_FILE,
+      assemblyFile: PROJECT_ASSEMBLY_HISTORY_FILE,
+    },
+    assembly: currentAssembly
+      ? {
+          name: currentAssembly.name,
+          components: Object.fromEntries(
+            Object.entries(currentAssembly.components).map(([id, component]) => [
+              id,
+              {
+                id: component.id,
+                name: component.name,
+                sourceFile: component.sourceFile,
+                visible: component.visible !== false,
+              },
+            ]),
+          ),
+        }
+      : undefined,
   };
 
   zip.file('project.json', JSON.stringify(manifest, null, 2));
   zip.file('README.md', USP_README_EN);
   zip.file('README_ZH.md', USP_README_ZH);
 
-  // 2. Components Folder
   const componentsFolder = zip.folder('components');
   if (componentsFolder) {
-    if (assemblyState) {
-      // For each component, create a self-contained folder
-      const compPromises: Promise<void>[] = [];
+    if (currentAssembly) {
+      const componentAssetTasks: Promise<void>[] = [];
 
-      Object.values(assemblyState.components).forEach(comp => {
-        const compSubfolder = componentsFolder.folder(comp.id);
-        if (!compSubfolder) return;
+      Object.values(currentAssembly.components).forEach((component) => {
+        const componentFolder = componentsFolder.folder(component.id);
+        if (!componentFolder) return;
 
-        // Save state snapshot
-        compSubfolder.file('state.json', JSON.stringify(comp.robot, null, 2));
-        compSubfolder.file('README.md', COMPONENT_README_EN);
-        compSubfolder.file('README_ZH.md', COMPONENT_README_ZH);
+        componentFolder.file('state.json', JSON.stringify(component.robot, null, 2));
+        componentFolder.file('README.md', COMPONENT_README_EN);
+        componentFolder.file('README_ZH.md', COMPONENT_README_ZH);
 
-        // Save original source file if it exists in assetsState
-        const sourceFile = assetsState.availableFiles.find(f => f.name === comp.sourceFile);
-        if (sourceFile) {
-          compSubfolder.file(sourceFile.name.split('/').pop() || 'model.urdf', sourceFile.content);
+        const sourceFile = assetsState.availableFiles.find((file) => file.name === component.sourceFile);
+        if (sourceFile?.content) {
+          componentFolder.file(sourceFile.name.split('/').pop() || 'model.urdf', sourceFile.content);
         }
 
-        // Save meshes specific to this component
-        const referencedMeshes = getReferencedMeshes(comp.robot);
-        if (referencedMeshes.size > 0) {
-          const compMeshesFolder = compSubfolder.folder('meshes');
-          referencedMeshes.forEach(meshName => {
-            const blobUrl = assetsState.assets[meshName];
-            if (blobUrl && compMeshesFolder) {
-              const p = fetch(blobUrl)
-                .then(res => res.blob())
-                .then(blob => {
-                  compMeshesFolder.file(meshName.split('/').pop() || meshName, blob);
-                })
-                .catch(err => console.error(`Failed to load asset ${meshName} for component ${comp.id}`, err));
-              compPromises.push(p);
-            }
-          });
-        }
+        const referencedMeshes = getReferencedMeshes(component.robot);
+        if (referencedMeshes.size === 0) return;
+
+        const componentMeshesFolder = componentFolder.folder('meshes');
+        if (!componentMeshesFolder) return;
+
+        referencedMeshes.forEach((meshPath) => {
+          const blobUrl = assetsState.assets[meshPath];
+          if (!blobUrl) return;
+          const task = fetch(blobUrl)
+            .then((response) => response.blob())
+            .then((blob) => {
+              componentMeshesFolder.file(meshPath.split('/').pop() || meshPath, blob);
+            })
+            .catch((error) => {
+              console.warn(
+                `[ProjectExport] Failed to package component mesh "${meshPath}" for ${component.id}`,
+                error,
+              );
+            });
+          componentAssetTasks.push(task);
+        });
       });
-      await Promise.all(compPromises);
+
+      await Promise.all(componentAssetTasks);
     } else {
-      // Single robot mode - save into a default component folder
-      const compSubfolder = componentsFolder.folder('main_robot');
-      const merged = getMergedRobotData();
-      if (compSubfolder && merged) {
-        compSubfolder.file('state.json', JSON.stringify(merged, null, 2));
-        compSubfolder.file('README.md', COMPONENT_README_EN);
-        compSubfolder.file('README_ZH.md', COMPONENT_README_ZH);
-        
-        const referencedMeshes = getReferencedMeshes(merged);
-        if (referencedMeshes.size > 0) {
-          const compMeshesFolder = compSubfolder.folder('meshes');
-          const assetPromises: Promise<void>[] = [];
-          referencedMeshes.forEach(meshName => {
-            const blobUrl = assetsState.assets[meshName];
-            if (blobUrl && compMeshesFolder) {
-              const p = fetch(blobUrl)
-                .then(res => res.blob())
-                .then(blob => {
-                  compMeshesFolder.file(meshName.split('/').pop() || meshName, blob);
-                })
-                .catch(err => console.error(`Failed to load asset ${meshName}`, err));
-              assetPromises.push(p);
-            }
-          });
-          await Promise.all(assetPromises);
+      const mainRobotFolder = componentsFolder.folder('main_robot');
+      const mergedRobot = getMergedRobotData() ?? robotState.present;
+
+      if (mainRobotFolder && mergedRobot) {
+        mainRobotFolder.file('state.json', JSON.stringify(mergedRobot, null, 2));
+        mainRobotFolder.file('README.md', COMPONENT_README_EN);
+        mainRobotFolder.file('README_ZH.md', COMPONENT_README_ZH);
+
+        const referencedMeshes = getReferencedMeshes(mergedRobot);
+        const componentMeshesFolder = mainRobotFolder.folder('meshes');
+
+        if (componentMeshesFolder) {
+          await Promise.all(
+            Array.from(referencedMeshes).map(async (meshPath) => {
+              const blobUrl = assetsState.assets[meshPath];
+              if (!blobUrl) return;
+              try {
+                const response = await fetch(blobUrl);
+                const blob = await response.blob();
+                componentMeshesFolder.file(meshPath.split('/').pop() || meshPath, blob);
+              } catch (error) {
+                console.warn(`[ProjectExport] Failed to package mesh "${meshPath}"`, error);
+              }
+            }),
+          );
         }
 
-        // Also save the available files in root of components for backward compatibility or reference
-        assetsState.availableFiles.forEach(file => {
+        assetsState.availableFiles.forEach((file) => {
+          if (file.content.length === 0) return;
           componentsFolder.file(file.name, file.content);
         });
       }
     }
   }
 
-  // 3. Global Assets Folder (Global/Shared resources)
-  zip.folder('assets');
-  // Currently we don't have a concept of global assets in the store yet, 
-  // but we provide the folder structure as requested.
-
-  // 4. Bridges Folder
-  if (assemblyState && Object.keys(assemblyState.bridges).length > 0) {
+  if (currentAssembly && Object.keys(currentAssembly.bridges).length > 0) {
     const bridgesFolder = zip.folder('bridges');
-    if (bridgesFolder) {
-      bridgesFolder.file('bridge.xml', generateBridgeXml(assemblyState.bridges));
-    }
+    bridgesFolder?.file('bridge.xml', generateBridgeXml(currentAssembly.bridges));
   }
 
-  // 5. Output Folder
   const outputFolder = zip.folder('output');
   if (outputFolder) {
-    const mergedRobot = getMergedRobotData();
+    const mergedRobot = getMergedRobotData() ?? robotState.present;
     if (mergedRobot) {
-      const robotState = { ...mergedRobot, selection: { type: null, id: null } } as any;
-      outputFolder.file(`${mergedRobot.name}.urdf`, generateURDF(robotState, false));
-      outputFolder.file(`${mergedRobot.name}_extended.urdf`, generateURDF(robotState, true));
-      outputFolder.file(`${mergedRobot.name}.xml`, generateMujocoXML(robotState));
-      outputFolder.file('bom.csv', generateBOM(robotState, uiState.lang as any));
+      const robotForExport = {
+        ...mergedRobot,
+        selection: { type: null, id: null },
+      } as RobotData & { selection: { type: null; id: null } };
+
+      outputFolder.file(`${mergedRobot.name}.urdf`, generateURDF(robotForExport, false));
+      outputFolder.file(`${mergedRobot.name}_extended.urdf`, generateURDF(robotForExport, true));
+      outputFolder.file(`${mergedRobot.name}.xml`, generateMujocoXML(robotForExport));
+      outputFolder.file('bom.csv', generateBOM(robotForExport, uiState.lang as 'en' | 'zh'));
     }
   }
 
-  return await zip.generateAsync({ type: 'blob' });
+  return zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
 }

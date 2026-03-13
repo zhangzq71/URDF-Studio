@@ -53,26 +53,19 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const updateLimit = (key: 'lower' | 'upper' | 'effort' | 'velocity', val: number) => {
         const newLimits = { ...localLimits, [key]: val };
         setLocalLimits(newLimits);
-        
-        if (joint.limit) {
-            joint.limit[key] = val;
-            
-            if (key === 'lower' && value < val) {
-                handleJointAngleChange(name, val);
-                handleJointChangeCommit(name, val);
-            } else if (key === 'upper' && value > val) {
-                handleJointAngleChange(name, val);
-                handleJointChangeCommit(name, val);
-            }
+
+        if (key === 'lower' && value < val) {
+            handleJointAngleChange(name, val);
+            handleJointChangeCommit(name, val);
+        } else if (key === 'upper' && value > val) {
+            handleJointAngleChange(name, val);
+            handleJointChangeCommit(name, val);
         }
 
         const jointId = joint.id || name;
         if (jointId) {
             updateJoint(jointId, {
-                limit: {
-                    ...(joint.limit || {}),
-                    [key]: val
-                }
+                limit: newLimits
             });
         }
     };
@@ -190,15 +183,15 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             }
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-10 h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-right text-[10px] leading-none font-mono text-text-primary outline-none"
+                        className="h-4 w-10 rounded border border-border-strong bg-input-bg px-0.5 py-0 text-right text-[10px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                     />
                 ) : (
-                    <div className="w-10 h-4 flex items-center justify-end text-[10px] text-slate-900 dark:text-slate-200 hover:text-google-blue dark:hover:text-google-blue-light cursor-text px-0.5 py-0 border border-transparent hover:border-slate-200 dark:hover:border-white/10 rounded transition-colors whitespace-nowrap text-right leading-none font-mono">
+                    <div className="flex h-4 w-10 items-center justify-end whitespace-nowrap rounded border border-transparent px-0.5 py-0 text-right font-mono text-[10px] leading-none text-text-primary transition-colors hover:border-border-strong/70 hover:text-system-blue">
                         {displayValue.toFixed(2)}
                     </div>
                 )}
             </div>
-            <span className="text-[9px] text-slate-400 w-4 text-right leading-none">{angleUnit === 'deg' ? 'deg' : 'rad'}</span>
+            <span className="w-4 text-right text-[9px] leading-none text-text-tertiary">{angleUnit === 'deg' ? 'deg' : 'rad'}</span>
         </div>
     );
 
@@ -208,7 +201,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                 className="flex items-center gap-1.5 cursor-text group"
                 onClick={(e) => { e.stopPropagation(); setIsEditingEffort(true); }}
             >
-                <span className="inline-flex items-center justify-center text-[10px] text-slate-400 font-serif italic h-4 w-3 leading-none">τ</span>
+                <span className="inline-flex h-4 w-3 items-center justify-center font-serif text-[10px] italic leading-none text-text-tertiary">τ</span>
                 {isEditingEffort ? (
                     <input 
                         autoFocus
@@ -218,10 +211,10 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                         onBlur={() => handleAdvancedCommit('effort', effortInput)}
                         onKeyDown={(e) => e.key === 'Enter' && handleAdvancedCommit('effort', effortInput)}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-10 h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[10px] leading-none font-mono outline-none"
+                        className="h-4 w-10 rounded border border-border-strong bg-input-bg px-0.5 py-0 text-center text-[10px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                     />
                 ) : (
-                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-10 text-center h-4 flex items-center justify-center leading-none">
+                    <span className="flex h-4 w-10 items-center justify-center border-b border-transparent text-center text-[10px] leading-none text-text-secondary transition-colors group-hover:border-border-strong/80 group-hover:text-text-primary">
                         {localLimits.effort.toFixed(2)}
                     </span>
                 )}
@@ -230,7 +223,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                 className="flex items-center gap-1.5 cursor-text group"
                 onClick={(e) => { e.stopPropagation(); setIsEditingVelocity(true); }}
             >
-                <span className="inline-flex items-center justify-center text-[10px] text-slate-400 font-serif italic h-4 w-3 leading-none">v</span>
+                <span className="inline-flex h-4 w-3 items-center justify-center font-serif text-[10px] italic leading-none text-text-tertiary">v</span>
                 {isEditingVelocity ? (
                     <input 
                         autoFocus
@@ -240,10 +233,10 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                         onBlur={() => handleAdvancedCommit('velocity', velocityInput)}
                         onKeyDown={(e) => e.key === 'Enter' && handleAdvancedCommit('velocity', velocityInput)}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-10 h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[10px] leading-none font-mono outline-none"
+                        className="h-4 w-10 rounded border border-border-strong bg-input-bg px-0.5 py-0 text-center text-[10px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                     />
                 ) : (
-                    <span className="text-[10px] text-slate-700 dark:text-slate-300 border-b border-transparent group-hover:border-slate-300 dark:group-hover:border-white/20 transition-colors w-10 text-center h-4 flex items-center justify-center">
+                    <span className="flex h-4 w-10 items-center justify-center border-b border-transparent text-center text-[10px] text-text-secondary transition-colors group-hover:border-border-strong/80 group-hover:text-text-primary">
                         {localLimits.velocity.toFixed(2)}
                     </span>
                 )}
@@ -259,18 +252,18 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                 onSelect?.('joint', name);
             }}
             onMouseEnter={() => onHover?.('joint', name, 'visual')}
-            className={`space-y-1.5 p-2 rounded-lg transition-colors cursor-pointer border ${
+            className={`cursor-pointer space-y-1.5 rounded-lg border p-2 transition-colors ${
                 isActive
-                    ? 'bg-blue-50 dark:bg-google-blue/10 border-blue-200 dark:border-google-blue/30'
-                    : 'bg-transparent border-transparent hover:bg-slate-50 dark:hover:bg-white/5'
+                    ? 'border-system-blue/20 bg-system-blue/10 dark:border-system-blue/30 dark:bg-system-blue/18'
+                    : 'border-transparent bg-transparent hover:bg-element-hover/80'
             }`}
         >
             <div className="flex justify-between items-center gap-2 h-6">
                 <span
                     className={`text-[11px] font-medium truncate min-w-0 ${
                         isActive 
-                            ? 'text-google-blue dark:text-google-blue-light' 
-                            : 'text-slate-700 dark:text-slate-300'
+                            ? 'text-system-blue' 
+                            : 'text-text-secondary'
                     } flex-1`}
                     title={name}
                 >
@@ -302,10 +295,10 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleLimitCommit('lower', lowerInput);
                             }}
-                            className="w-full h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[9px] leading-none font-mono outline-none"
+                            className="h-4 w-full rounded border border-border-strong bg-input-bg px-0.5 py-0 text-center text-[9px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                         />
                     ) : (
-                        <div className="text-[9px] text-slate-400 text-right font-mono hover:text-blue-500 cursor-text truncate">
+                        <div className="cursor-text truncate text-right font-mono text-[9px] text-text-tertiary hover:text-system-blue">
                             {displayMin.toFixed(2)}
                         </div>
                     )}
@@ -340,10 +333,10 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleLimitCommit('upper', upperInput);
                             }}
-                            className="w-full h-4 bg-input-bg border border-system-blue/60 rounded px-0.5 py-0 text-center text-[9px] leading-none font-mono outline-none"
+                            className="h-4 w-full rounded border border-border-strong bg-input-bg px-0.5 py-0 text-center text-[9px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                         />
                     ) : (
-                        <div className="text-[9px] text-slate-400 font-mono hover:text-blue-500 cursor-text truncate">
+                        <div className="cursor-text truncate font-mono text-[9px] text-text-tertiary hover:text-system-blue">
                             {displayMax.toFixed(2)}
                         </div>
                     )}

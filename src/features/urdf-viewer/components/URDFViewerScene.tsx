@@ -1,4 +1,4 @@
-import React, { Suspense } from 'react';
+import { Suspense } from 'react';
 import { JointInteraction } from './JointInteraction';
 import { MeasureTool } from './MeasureTool';
 import { RobotModel } from './RobotModel';
@@ -11,10 +11,13 @@ interface URDFViewerSceneProps {
   assets: Record<string, string>;
   mode: 'detail' | 'hardware';
   selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  hoverSelectionEnabled?: boolean;
+  onHover?: URDFViewerProps['onHover'];
   onMeshSelect?: URDFViewerProps['onMeshSelect'];
   robotLinks?: URDFViewerProps['robotLinks'];
+  robotJoints?: URDFViewerProps['robotJoints'];
   focusTarget?: URDFViewerProps['focusTarget'];
+  onCollisionTransformPreview?: URDFViewerProps['onCollisionTransformPreview'];
   onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
   isMeshPreview?: boolean;
   t: RobotModelProps['t'];
@@ -26,10 +29,13 @@ export const URDFViewerScene = ({
   assets,
   mode,
   selection,
-  hoveredSelection,
+  hoverSelectionEnabled = true,
+  onHover,
   onMeshSelect,
   robotLinks,
+  robotJoints,
   focusTarget,
+  onCollisionTransformPreview,
   onCollisionTransform,
   isMeshPreview = false,
   t,
@@ -52,6 +58,7 @@ export const URDFViewerScene = ({
           showCollision={controller.showCollision}
           showVisual={controller.showVisual}
           onSelect={controller.handleSelectWrapper}
+          onHover={onHover}
           onMeshSelect={onMeshSelect}
           onJointChange={controller.handleJointAngleChange}
           onJointChangeCommit={controller.handleJointChangeCommit}
@@ -62,7 +69,7 @@ export const URDFViewerScene = ({
           t={t}
           mode={mode}
           selection={selection}
-          hoveredSelection={hoveredSelection}
+          hoverSelectionEnabled={hoverSelectionEnabled}
           highlightMode={controller.highlightMode}
           showInertia={controller.showInertia}
           showInertiaOverlay={controller.showInertiaOverlay}
@@ -77,9 +84,11 @@ export const URDFViewerScene = ({
           jointAxisSize={controller.jointAxisSize}
           modelOpacity={controller.modelOpacity}
           robotLinks={robotLinks}
+          robotJoints={robotJoints}
           focusTarget={focusTarget}
           transformMode={controller.transformMode}
           toolMode={controller.toolMode}
+          onCollisionTransformPreview={onCollisionTransformPreview}
           onCollisionTransformEnd={onCollisionTransform}
           isOrbitDragging={controller.isOrbitDragging}
           onTransformPending={controller.handleTransformPending}

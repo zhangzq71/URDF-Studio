@@ -74,10 +74,26 @@ export const useSelectionStore = create<SelectionState>()((set) => ({
 
   // Hover state
   hoveredSelection: emptySelection,
-  setHoveredSelection: (selection) => set({ hoveredSelection: selection }),
-  hoverLink: (id) => set({ hoveredSelection: { type: 'link', id: id } }),
-  hoverJoint: (id) => set({ hoveredSelection: { type: 'joint', id: id } }),
-  clearHover: () => set({ hoveredSelection: emptySelection }),
+  setHoveredSelection: (selection) => set((state) => (
+    matchesSelection(state.hoveredSelection, selection)
+      ? state
+      : { hoveredSelection: selection }
+  )),
+  hoverLink: (id) => set((state) => (
+    matchesSelection(state.hoveredSelection, { type: 'link', id })
+      ? state
+      : { hoveredSelection: { type: 'link', id } }
+  )),
+  hoverJoint: (id) => set((state) => (
+    matchesSelection(state.hoveredSelection, { type: 'joint', id })
+      ? state
+      : { hoveredSelection: { type: 'joint', id } }
+  )),
+  clearHover: () => set((state) => (
+    matchesSelection(state.hoveredSelection, emptySelection)
+      ? state
+      : { hoveredSelection: emptySelection }
+  )),
 
   // Transient emphasis
   attentionSelection: emptySelection,

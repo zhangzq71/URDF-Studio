@@ -6,25 +6,41 @@
  * - Hardware: Motor config, Limits, Dynamics
  */
 import React from 'react';
-import { ExternalLink } from 'lucide-react';
+import {
+  ArrowRightLeft,
+  ExternalLink,
+  Lock,
+  Move3D,
+  Plane,
+  RefreshCw,
+  RotateCw,
+} from 'lucide-react';
 import { JointType, type AppMode, type MotorSpec } from '@/types';
 import { translations } from '@/shared/i18n';
+import type { Language } from '@/store';
 import {
   MAX_TRANSFORM_DECIMALS,
   TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
+import {
+  PROPERTY_EDITOR_POSITION_STEP,
+  PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS,
+} from '../constants';
 import {
   InputGroup,
   CollapsibleSection,
   NumberInput,
   Vec3Input,
   Vec3InlineInput,
+  IconSegmentedControl,
+  PROPERTY_EDITOR_SUBLABEL_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
   PROPERTY_EDITOR_LINK_CLASS,
   PROPERTY_EDITOR_SELECT_CLASS,
   type Vec3Value,
 } from './FormControls';
 import { useMotorConfig } from '../hooks/useMotorConfig';
+import { RotationValueInput } from './RotationValueInput';
 
 const AXIS_BASED_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -87,6 +103,25 @@ const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): 
   }
 };
 
+const getJointTypeIcon = (jointType: JointType) => {
+  switch (jointType) {
+    case JointType.FIXED:
+      return Lock;
+    case JointType.REVOLUTE:
+      return RotateCw;
+    case JointType.CONTINUOUS:
+      return RefreshCw;
+    case JointType.PRISMATIC:
+      return ArrowRightLeft;
+    case JointType.PLANAR:
+      return Plane;
+    case JointType.FLOATING:
+      return Move3D;
+    default:
+      return RotateCw;
+  }
+};
+
 interface JointData {
   name?: string;
   type?: string;
@@ -104,10 +139,11 @@ interface JointPropertiesProps {
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
   motorLibrary: Record<string, MotorSpec[]>;
   t: typeof translations['en'];
+  lang: Language;
 }
 
 export const JointProperties: React.FC<JointPropertiesProps> = ({
-  data, mode, selection, onUpdate, motorLibrary, t
+  data, mode, selection, onUpdate, motorLibrary, t, lang
 }) => {
   const jointType = (data.type as JointType | undefined) || JointType.REVOLUTE;
   const origin = data.origin ?? DEFAULT_ORIGIN;
@@ -154,6 +190,12 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
     onUpdate
   });
 
+  const jointTypeOptions = JOINT_TYPE_OPTIONS.map((option) => ({
+    value: option,
+    label: getJointTypeLabel(option, t),
+    icon: getJointTypeIcon(option),
+  }));
+
   return (
     <>
       {/* Detail Mode: Name Only */}
@@ -168,17 +210,12 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
             />
           </InputGroup>
           <InputGroup label={t.type}>
-            <select
+            <IconSegmentedControl
               value={jointType}
-              onChange={(e) => handleJointTypeChange(e.target.value as JointType)}
-              className={PROPERTY_EDITOR_SELECT_CLASS}
-            >
-              {JOINT_TYPE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {getJointTypeLabel(option, t)}
-                </option>
-              ))}
-            </select>
+              onChange={handleJointTypeChange}
+              options={jointTypeOptions}
+              ariaLabel={t.type}
+            />
           </InputGroup>
         </>
       )}
@@ -187,44 +224,42 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
       {mode === 'skeleton' && (
         <>
           <InputGroup label={t.type}>
-            <select
+            <IconSegmentedControl
               value={jointType}
-              onChange={(e) => handleJointTypeChange(e.target.value as JointType)}
-              className={PROPERTY_EDITOR_SELECT_CLASS}
-            >
-              {JOINT_TYPE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {getJointTypeLabel(option, t)}
-                </option>
-              ))}
-            </select>
+              onChange={handleJointTypeChange}
+              options={jointTypeOptions}
+              ariaLabel={t.type}
+            />
           </InputGroup>
 
           <CollapsibleSection title={t.kinematics} storageKey="kinematics">
-            <InputGroup label={t.originRelativeParent + " (XYZ)"}>
-              <Vec3InlineInput
-                value={origin.xyz}
-                onChange={(v) => updateJoint({
-                  origin: { ...origin, xyz: toXYZ(v, origin.xyz) }
-                })}
-                labels={['X', 'Y', 'Z']}
-                compact
-                step={TRANSFORM_STEP}
-                precision={MAX_TRANSFORM_DECIMALS}
-              />
-            </InputGroup>
-            <InputGroup label={t.originRelativeParent + " (RPY)"}>
-              <Vec3InlineInput
-                value={origin.rpy}
-                onChange={(v) => updateJoint({
-                  origin: { ...origin, rpy: toRPY(v, origin.rpy) }
-                })}
-                labels={[t.roll, t.pitch, t.yaw]}
-                keys={['r', 'p', 'y']}
-                compact
-                step={TRANSFORM_STEP}
-                precision={MAX_TRANSFORM_DECIMALS}
-              />
+            <InputGroup label={t.originRelativeParent}>
+              <div className="space-y-2.5">
+                <div className="space-y-1.5">
+                  <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
+                  <Vec3InlineInput
+                    value={origin.xyz}
+                    onChange={(v) => updateJoint({
+                      origin: { ...origin, xyz: toXYZ(v, origin.xyz) }
+                    })}
+                    labels={['X', 'Y', 'Z']}
+                    compact
+                    step={PROPERTY_EDITOR_POSITION_STEP}
+                    precision={MAX_TRANSFORM_DECIMALS}
+                    repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+                  />
+                </div>
+                <RotationValueInput
+                  value={origin.rpy}
+                  onChange={(rpy) => updateJoint({
+                    origin: { ...origin, rpy: toRPY(rpy, origin.rpy) }
+                  })}
+                  lang={lang}
+                  label={t.rotation}
+                  compact
+                  holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+                />
+              </div>
             </InputGroup>
 
             {supportsAxis && (
@@ -246,17 +281,12 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
       {mode === 'hardware' && (
         <div className="space-y-3">
           <InputGroup label={t.type}>
-            <select
+            <IconSegmentedControl
               value={jointType}
-              onChange={(e) => handleJointTypeChange(e.target.value as JointType)}
-              className={PROPERTY_EDITOR_SELECT_CLASS}
-            >
-              {JOINT_TYPE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {getJointTypeLabel(option, t)}
-                </option>
-              ))}
-            </select>
+              onChange={handleJointTypeChange}
+              options={jointTypeOptions}
+              ariaLabel={t.type}
+            />
           </InputGroup>
 
           {/* 1. Hardware Section */}

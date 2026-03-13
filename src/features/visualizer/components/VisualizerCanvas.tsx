@@ -16,15 +16,15 @@ import { useEffectiveTheme } from '@/shared/hooks';
 
 interface VisualizerCanvasProps {
   theme: Theme;
-  snapshotAction?: React.MutableRefObject<(() => void) | null>;
-  sceneRef?: React.MutableRefObject<THREE.Scene | null>;
+  snapshotAction?: React.RefObject<(() => void) | null>;
+  sceneRef?: React.RefObject<THREE.Scene | null>;
   robotName?: string;
   onPointerMissed?: () => void;
   children: React.ReactNode;
 }
 
 /** Captures Three.js scene into an external ref */
-function SceneCapture({ sceneRef }: { sceneRef: React.MutableRefObject<THREE.Scene | null> }) {
+function SceneCapture({ sceneRef }: { sceneRef: React.RefObject<THREE.Scene | null> }) {
   const { scene } = useThree();
   useEffect(() => { sceneRef.current = scene; }, [scene, sceneRef]);
   return null;
@@ -41,7 +41,6 @@ function SceneCapture({ sceneRef }: { sceneRef: React.MutableRefObject<THREE.Sce
  * - Manages snapshot functionality
  */
 export const VisualizerCanvas = memo(function VisualizerCanvas({
-  theme: propTheme,
   snapshotAction,
   robotName = 'robot',
   sceneRef,

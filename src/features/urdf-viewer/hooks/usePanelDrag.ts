@@ -7,11 +7,6 @@ interface DragState {
     dragStart: { mouseX: number; mouseY: number; panelX: number; panelY: number } | null;
 }
 
-interface PanelPositions {
-    optionsPanelPos: { x: number; y: number } | null;
-    jointPanelPos: { x: number; y: number } | null;
-    measurePanelPos: { x: number; y: number } | null;
-}
 
 export function usePanelDrag(
     containerRef: React.RefObject<HTMLDivElement>,

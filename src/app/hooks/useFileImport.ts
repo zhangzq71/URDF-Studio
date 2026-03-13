@@ -8,10 +8,9 @@ import type { RobotFile, MotorSpec, RobotState } from '@/types';
 import { GeometryType } from '@/types';
 import { parseURDF, parseMJCF, isMJCF, parseUSDA, isUSDA, parseXacro, isXacro } from '@/core/parsers';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
-import { useAssetsStore, useRobotStore, useUIStore, useAssemblyStore } from '@/store';
+import { useAssemblyStore, useAssetsStore, useRobotStore, useSelectionStore, useUIStore } from '@/store';
 import { importProject, isMeshFile } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
-import type { Language } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 interface UseFileImportOptions {
@@ -24,17 +23,17 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
   const lang = useUIStore((state) => state.lang);
   const setAppMode = useUIStore((state) => state.setAppMode);
-  const setTheme = useUIStore((state) => state.setTheme);
-  const setLang = useUIStore((state) => state.setLang);
   const setSidebarTab = useUIStore((state) => state.setSidebarTab);
 
   // Assets store
-  const setAssets = useAssetsStore((state) => state.setAssets);
   const addAssets = useAssetsStore((state) => state.addAssets);
   const clearAssets = useAssetsStore((state) => state.clearAssets);
   const setAvailableFiles = useAssetsStore((state) => state.setAvailableFiles);
+  const setAllFileContents = useAssetsStore((state) => state.setAllFileContents);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
+  const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
+  const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const assets = useAssetsStore((state) => state.assets);
   const showImportWarning = useUIStore((state) => state.showImportWarning);
@@ -42,12 +41,13 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
   // Robot store
   const robotName = useRobotStore((state) => state.name);
-  const resetRobot = useRobotStore((state) => state.resetRobot);
   const setRobot = useRobotStore((state) => state.setRobot);
+
+  // Selection store
+  const setSelection = useSelectionStore((state) => state.setSelection);
 
   // Assembly store
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
-  const setAssembly = useAssemblyStore((state) => state.setAssembly);
   const addComponent = useAssemblyStore((state) => state.addComponent);
 
   // Detect file format from content
@@ -165,26 +165,51 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       // Mode 0: .usp Project File
       if (files.length === 1 && files[0].name.toLowerCase().endsWith('.usp')) {
         const result = await importProject(files[0], lang);
-        const { manifest, assets: newAssetUrls, availableFiles: newFiles, assemblyState: newAssembly } = result;
+        const { manifest, assets: newAssetUrls, availableFiles: newFiles } = result;
+
         if (manifest.ui) {
           if (manifest.ui.appMode) setAppMode(manifest.ui.appMode as any);
-          if (manifest.ui.theme) setTheme(manifest.ui.theme as any);
-          if (manifest.ui.lang) setLang(manifest.ui.lang as any);
         }
+
         clearAssets();
         addAssets(newAssetUrls);
         setAvailableFiles(newFiles);
-        if (newAssembly) {
-          setAssembly(newAssembly);
-          setSidebarTab('workspace');
-          const firstCompId = Object.keys(newAssembly.components)[0];
-          if (firstCompId) {
-            setRobot(newAssembly.components[firstCompId].robot);
-          }
+        setAllFileContents(result.allFileContents);
+        setMotorLibrary(result.motorLibrary);
+        setOriginalUrdfContent(result.originalUrdfContent);
+        setOriginalFileFormat(result.originalFileFormat);
+        setSelection({ type: null, id: null });
+
+        const restoredSelectedFile = result.selectedFileName
+          ? newFiles.find((file) => file.name === result.selectedFileName) ?? null
+          : null;
+        setSelectedFile(restoredSelectedFile);
+
+        if (result.robotState) {
+          useRobotStore.setState({
+            name: result.robotState.name,
+            links: result.robotState.links,
+            joints: result.robotState.joints,
+            rootLinkId: result.robotState.rootLinkId,
+            materials: result.robotState.materials,
+            _history: result.robotHistory,
+            _activity: result.robotActivity,
+          });
+        } else {
+          useRobotStore.setState({
+            _history: result.robotHistory,
+            _activity: result.robotActivity,
+          });
         }
-        if (manifest.assets?.originalFileFormat) {
-          setOriginalFileFormat(manifest.assets.originalFileFormat as any);
-        }
+
+        useAssemblyStore.setState({
+          assemblyState: result.assemblyState,
+          _history: result.assemblyHistory,
+          _activity: result.assemblyActivity,
+        });
+
+        setSidebarTab(result.assemblyState ? 'workspace' : 'structure');
+
         if (onShowToast) {
           onShowToast(t.importUspSuccess, 'success');
         }
@@ -290,7 +315,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       const newAssets: Record<string, string> = {};
       const assetPromises = assetFiles.map(async f => {
         const ext = f.name.split('.').pop()?.toLowerCase();
-        if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '')) {
+        if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp', 'hdr'].includes(ext || '')) {
           const url = URL.createObjectURL(f.blob);
           newAssets[f.name] = url;
           const filename = f.name.split('/').pop()!;
@@ -353,7 +378,31 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       console.error("Import failed:", error);
       alert(t.importFailedCheckFiles);
     }
-  }, [assets, availableFiles, robotName, detectFormat, loadRobot, onLoadRobot, onShowToast, setAssets, addAssets, clearAssets, setAvailableFiles, setMotorLibrary, setAppMode, setTheme, setLang, setSidebarTab, setOriginalFileFormat, setRobot, initAssembly, setAssembly, addComponent, showImportWarning, t]);
+  }, [
+    assets,
+    availableFiles,
+    robotName,
+    detectFormat,
+    loadRobot,
+    onLoadRobot,
+    onShowToast,
+    addAssets,
+    clearAssets,
+    setAvailableFiles,
+    setAllFileContents,
+    setMotorLibrary,
+    setSelectedFile,
+    setOriginalUrdfContent,
+    setOriginalFileFormat,
+    setAppMode,
+    setSidebarTab,
+    setSelection,
+    setRobot,
+    initAssembly,
+    addComponent,
+    showImportWarning,
+    t,
+  ]);
 
   return {
     handleImport,

@@ -9,20 +9,25 @@ import { DEFAULT_LINK, GeometryType } from '@/types';
 import { generateURDF, generateMujocoXML, injectGazeboTags } from '@/core/parsers';
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { compressSTLBlob } from '@/core/stl-compressor';
-import { useRobotStore, useAssetsStore, useUIStore, useAssemblyStore } from '@/store';
+import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
 import { exportProject, type ExportDialogConfig } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
 
 export function useFileExport() {
   const lang = useUIStore((state) => state.lang);
   const t = translations[lang];
-  const theme = useUIStore((state) => state.theme);
   const appMode = useUIStore((state) => state.appMode);
   const sidebarTab = useUIStore((state) => state.sidebarTab);
   const assets = useAssetsStore((state) => state.assets);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
+  const allFileContents = useAssetsStore((state) => state.allFileContents);
+  const motorLibrary = useAssetsStore((state) => state.motorLibrary);
+  const selectedFile = useAssetsStore((state) => state.selectedFile);
+  const originalUrdfContent = useAssetsStore((state) => state.originalUrdfContent);
   const originalFileFormat = useAssetsStore((state) => state.originalFileFormat);
   const assemblyState = useAssemblyStore((state) => state.assemblyState);
+  const assemblyHistory = useAssemblyStore((state) => state._history);
+  const assemblyActivity = useAssemblyStore((state) => state._activity);
   const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
 
   // Get robot state from store
@@ -30,6 +35,9 @@ export function useFileExport() {
   const robotLinks = useRobotStore((state) => state.links);
   const robotJoints = useRobotStore((state) => state.joints);
   const rootLinkId = useRobotStore((state) => state.rootLinkId);
+  const robotMaterials = useRobotStore((state) => state.materials);
+  const robotHistory = useRobotStore((state) => state._history);
+  const robotActivity = useRobotStore((state) => state._activity);
 
   const downloadBlob = useCallback((blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -92,6 +100,10 @@ export function useFileExport() {
   const getRobotExportName = useCallback((robot: RobotState): string => {
     const trimmed = robot.name?.trim();
     return trimmed && trimmed.length > 0 ? trimmed : 'robot';
+  }, []);
+
+  const createArchiveRoot = useCallback((zip: JSZip, exportName: string): JSZip => {
+    return zip.folder(exportName) ?? zip;
   }, []);
 
   const addMeshesToZip = useCallback(async (
@@ -176,25 +188,27 @@ export function useFileExport() {
     const robot = buildRobotForExport();
     const exportName = getRobotExportName(robot);
     const zip = new JSZip();
+    const archiveRoot = createArchiveRoot(zip, exportName);
 
-    zip.file(`${exportName}.urdf`, generateURDF(robot, false));
-    await addMeshesToZip(robot, zip);
+    archiveRoot.file(`${exportName}.urdf`, generateURDF(robot, false));
+    await addMeshesToZip(robot, archiveRoot);
 
     const content = await zip.generateAsync({ type: "blob" });
     downloadBlob(content, `${exportName}_urdf.zip`);
-  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob]);
+  }, [buildRobotForExport, getRobotExportName, createArchiveRoot, addMeshesToZip, downloadBlob]);
 
   const handleExportMJCF = useCallback(async () => {
     const robot = buildRobotForExport();
     const exportName = getRobotExportName(robot);
     const zip = new JSZip();
+    const archiveRoot = createArchiveRoot(zip, exportName);
 
-    zip.file(`${exportName}.xml`, generateMujocoXML(robot, { meshdir: 'meshes/' }));
-    await addMeshesToZip(robot, zip);
+    archiveRoot.file(`${exportName}.xml`, generateMujocoXML(robot, { meshdir: 'meshes/' }));
+    await addMeshesToZip(robot, archiveRoot);
 
     const content = await zip.generateAsync({ type: "blob" });
     downloadBlob(content, `${exportName}_mjcf.zip`);
-  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob]);
+  }, [buildRobotForExport, getRobotExportName, createArchiveRoot, addMeshesToZip, downloadBlob]);
 
   // Export handler
   const handleExport = useCallback(async () => {
@@ -202,15 +216,16 @@ export function useFileExport() {
     const exportName = getRobotExportName(robot);
 
     const zip = new JSZip();
-    const hardwareFolder = zip.folder("hardware");
+    const archiveRoot = createArchiveRoot(zip, exportName);
+    const hardwareFolder = archiveRoot.folder("hardware");
 
     // 1. Generate Standard URDF
     const xml = generateURDF(robot, false);
-    zip.file(`${exportName}.urdf`, xml);
+    archiveRoot.file(`${exportName}.urdf`, xml);
 
     // 2. Generate Extended URDF (with hardware info)
     const extendedXml = generateURDF(robot, true);
-    zip.file(`${exportName}_extended.urdf`, extendedXml);
+    archiveRoot.file(`${exportName}_extended.urdf`, extendedXml);
 
     // 3. Generate BOM
     const bomCsv = generateBOM(robot);
@@ -218,57 +233,84 @@ export function useFileExport() {
 
     // 4. Generate MuJoCo XML
     const mujocoXml = generateMujocoXML(robot, { meshdir: 'meshes/' });
-    zip.file(`${exportName}.xml`, mujocoXml);
+    archiveRoot.file(`${exportName}.xml`, mujocoXml);
 
     // 5. Add Meshes
-    await addMeshesToZip(robot, zip);
+    await addMeshesToZip(robot, archiveRoot);
 
     // Generate and download ZIP
     const content = await zip.generateAsync({ type: "blob" });
     downloadBlob(content, `${exportName}_package.zip`);
-  }, [buildRobotForExport, getRobotExportName, generateBOM, addMeshesToZip, downloadBlob]);
+  }, [buildRobotForExport, getRobotExportName, createArchiveRoot, generateBOM, addMeshesToZip, downloadBlob]);
 
   const handleExportWithConfig = useCallback(async (config: ExportDialogConfig) => {
     const robot = buildRobotForExport();
     const exportName = getRobotExportName(robot);
     const zip = new JSZip();
+    const archiveRoot = createArchiveRoot(zip, exportName);
 
     if (config.format === 'mjcf') {
       const { meshdir, addFloatBase, includeActuators, actuatorType, includeMeshes, compressSTL, stlQuality } = config.mjcf;
-      zip.file(
+      archiveRoot.file(
         `${exportName}.xml`,
         generateMujocoXML(robot, { meshdir, addFloatBase, includeActuators, actuatorType }),
       );
-      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      if (includeMeshes) await addMeshesToZip(robot, archiveRoot, { compressSTL, stlQuality });
       const content = await zip.generateAsync({ type: 'blob' });
       downloadBlob(content, `${exportName}_mjcf.zip`);
     } else if (config.format === 'urdf') {
-      const { includeExtended, includeBOM, includeMeshes, compressSTL, stlQuality } = config.urdf;
-      zip.file(`${exportName}.urdf`, generateURDF(robot, includeExtended));
+      const { includeExtended, includeBOM, useRelativePaths, includeMeshes, compressSTL, stlQuality } = config.urdf;
+      archiveRoot.file(`${exportName}.urdf`, generateURDF(robot, { extended: includeExtended, useRelativePaths }));
       if (includeBOM) {
-        const hardwareFolder = zip.folder('hardware');
+        const hardwareFolder = archiveRoot.folder('hardware');
         hardwareFolder?.file('bom_list.csv', generateBOM(robot));
       }
-      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      if (includeMeshes) await addMeshesToZip(robot, archiveRoot, { compressSTL, stlQuality });
       const content = await zip.generateAsync({ type: 'blob' });
       downloadBlob(content, `${exportName}_urdf.zip`);
     } else if (config.format === 'xacro') {
-      const { rosVersion, rosHardwareInterface, includeMeshes, compressSTL, stlQuality } = config.xacro;
-      const xacroContent = injectGazeboTags(generateURDF(robot, false), robot, rosVersion, rosHardwareInterface);
-      zip.file(`${exportName}.urdf.xacro`, xacroContent);
-      if (includeMeshes) await addMeshesToZip(robot, zip, { compressSTL, stlQuality });
+      const { rosVersion, rosHardwareInterface, useRelativePaths, includeMeshes, compressSTL, stlQuality } = config.xacro;
+      const xacroContent = injectGazeboTags(generateURDF(robot, { useRelativePaths }), robot, rosVersion, rosHardwareInterface);
+      archiveRoot.file(`${exportName}.urdf.xacro`, xacroContent);
+      if (includeMeshes) await addMeshesToZip(robot, archiveRoot, { compressSTL, stlQuality });
       const content = await zip.generateAsync({ type: 'blob' });
       downloadBlob(content, `${exportName}_xacro.zip`);
     }
-  }, [buildRobotForExport, getRobotExportName, addMeshesToZip, downloadBlob, generateBOM]);
+  }, [buildRobotForExport, getRobotExportName, createArchiveRoot, addMeshesToZip, downloadBlob, generateBOM]);
 
   // Export project as .usp
   const handleExportProject = useCallback(async () => {
     const blob = await exportProject({
       name: robotName || assemblyState?.name || 'my_project',
-      uiState: { appMode, lang, theme },
-      assetsState: { availableFiles, assets, originalFileFormat },
-      assemblyState,
+      uiState: {
+        appMode,
+        lang,
+      },
+      assetsState: {
+        availableFiles,
+        assets,
+        allFileContents,
+        motorLibrary,
+        selectedFileName: selectedFile?.name ?? null,
+        originalUrdfContent,
+        originalFileFormat,
+      },
+      robotState: {
+        present: {
+          name: robotName,
+          links: robotLinks,
+          joints: robotJoints,
+          rootLinkId,
+          materials: robotMaterials,
+        },
+        history: robotHistory,
+        activity: robotActivity,
+      },
+      assemblyState: {
+        present: assemblyState,
+        history: assemblyHistory,
+        activity: assemblyActivity,
+      },
       getMergedRobotData,
     });
     const url = URL.createObjectURL(blob);
@@ -279,7 +321,28 @@ export function useFileExport() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [robotName, assemblyState, appMode, lang, theme, availableFiles, assets, originalFileFormat, getMergedRobotData]);
+  }, [
+    robotName,
+    robotLinks,
+    robotJoints,
+    rootLinkId,
+    robotMaterials,
+    robotHistory,
+    robotActivity,
+    assemblyState,
+    assemblyHistory,
+    assemblyActivity,
+    appMode,
+    lang,
+    availableFiles,
+    assets,
+    allFileContents,
+    motorLibrary,
+    selectedFile?.name,
+    originalUrdfContent,
+    originalFileFormat,
+    getMergedRobotData,
+  ]);
 
   return {
     handleExportURDF,

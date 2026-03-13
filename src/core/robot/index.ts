@@ -34,6 +34,12 @@ export {
 
 export type { ValidationError, ValidationResult } from './validators';
 
+export {
+    getPrimaryTreeDisplayRootLinkId,
+    getTreeDisplayRootLinkIds,
+    isSyntheticWorldRoot,
+} from './treeRoots';
+
 // Collision body manipulation
 export {
     appendCollisionBody,
@@ -43,6 +49,11 @@ export {
     removeCollisionGeometryByObjectIndex,
     updateCollisionGeometryByObjectIndex,
 } from './collisionBodies';
+
+export {
+    resolveJointKey,
+    resolveLinkKey,
+} from './identity';
 
 // Assembly Merger - Merge AssemblyState to RobotData
 export { mergeAssembly } from './assemblyMerger';

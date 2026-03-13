@@ -15,13 +15,12 @@ export const UsageGuide: React.FC<UsageGuideProps> = ({ lang }) => {
     const detectOS = (): DetectedOS => {
       if (typeof navigator === 'undefined') return 'other';
 
-      const platform = navigator.platform || '';
       const userAgent = navigator.userAgent || '';
       const userAgentDataPlatform = (navigator as Navigator & {
         userAgentData?: { platform?: string };
       }).userAgentData?.platform || '';
 
-      const raw = `${platform} ${userAgent} ${userAgentDataPlatform}`.toLowerCase();
+      const raw = `${userAgent} ${userAgentDataPlatform}`.toLowerCase();
 
       if (raw.includes('mac') || raw.includes('darwin')) return 'mac';
       if (raw.includes('win')) return 'windows';
@@ -47,7 +46,7 @@ export const UsageGuide: React.FC<UsageGuideProps> = ({ lang }) => {
 
   return (
     <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none select-none">
-      <div className="text-slate-500 dark:text-slate-400 text-xs bg-white/50 dark:bg-google-dark-surface/50 backdrop-blur px-3 py-1.5 rounded-full border border-slate-200 dark:border-google-dark-border shadow-sm">
+      <div className="rounded-full border border-border-black bg-panel-bg px-3 py-1.5 text-xs text-text-secondary shadow-sm">
         {instructionText}
       </div>
     </div>

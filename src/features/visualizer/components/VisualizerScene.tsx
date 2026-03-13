@@ -21,8 +21,6 @@ interface VisualizerSceneProps {
   assets: Record<string, string>;
   lang: Language;
   controller: VisualizerController;
-  confirmTitle: string;
-  cancelTitle: string;
 }
 
 export const VisualizerScene = React.memo(({
@@ -33,8 +31,6 @@ export const VisualizerScene = React.memo(({
   assets,
   lang,
   controller,
-  confirmTitle,
-  cancelTitle,
 }: VisualizerSceneProps) => {
   const collisionTransformControlRef = React.useRef<any>(null);
   const {
@@ -46,7 +42,6 @@ export const VisualizerScene = React.memo(({
     handleRegisterCollisionRef,
     transformControlsState,
     handleCollisionTransformEnd,
-    handleAutoFitGround,
   } = controller;
   const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
     const grouped: Record<string, UrdfJoint[]> = {};
@@ -62,20 +57,13 @@ export const VisualizerScene = React.memo(({
     return grouped;
   }, [robot.joints]);
 
-  React.useEffect(() => {
-    if (mode !== 'skeleton' || !robotRootRef.current) return;
-
-    const timers = [0, 80, 220].map((delay) =>
-      window.setTimeout(() => {
-        if (!robotRootRef.current) return;
-        handleAutoFitGround();
-      }, delay)
-    );
-
-    return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-    };
-  }, [handleAutoFitGround, mode, robot.joints, robot.links, robotRootRef]);
+  const handleCollisionDraggingChanged = React.useCallback(
+    (event: { value?: boolean }) => {
+      if (event?.value) return;
+      handleCollisionTransformEnd();
+    },
+    [handleCollisionTransformEnd]
+  );
 
   return (
     <>
@@ -115,10 +103,8 @@ export const VisualizerScene = React.memo(({
         mode={mode}
         selectedJointPivot={selectedJointPivot}
         robot={robot}
-        transformMode={state.transformMode}
+        transformMode="universal"
         transformControlsState={transformControlsState}
-        confirmTitle={confirmTitle}
-        cancelTitle={cancelTitle}
       />
 
       {mode === 'detail' &&
@@ -130,11 +116,13 @@ export const VisualizerScene = React.memo(({
             <UnifiedTransformControls
               ref={collisionTransformControlRef}
               object={selectedCollisionRef}
-              mode={state.transformMode === 'select' ? 'translate' : state.transformMode}
-              gizmoPreset="official"
-              axesOnly
+              mode={state.transformMode}
               size={VISUALIZER_UNIFIED_GIZMO_SIZE}
-              space="local"
+              translateSpace="world"
+              rotateSpace="local"
+              hoverStyle="single-axis"
+              displayStyle="thick-primary"
+              onDraggingChanged={handleCollisionDraggingChanged}
               onMouseUp={handleCollisionTransformEnd}
             />
           </>

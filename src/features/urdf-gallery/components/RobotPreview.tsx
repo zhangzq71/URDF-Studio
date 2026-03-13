@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { RobotThumbnail3D } from './RobotThumbnail3D';
 
 interface RobotPreviewProps {

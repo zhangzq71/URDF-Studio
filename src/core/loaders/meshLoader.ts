@@ -297,6 +297,11 @@ export const createLoadingManager = (
         const found = findAssetByPath(url, assets, urdfDir);
         if (found) return found;
 
+        // Allow HTTP/HTTPS URLs to pass through (e.g. cloud storage or CDN links)
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+            return url;
+        }
+
         console.warn('[MeshLoader] Asset not found:', url);
         // Return a transparent 1x1 pixel for missing textures instead of invalid URL
         // This prevents the browser from trying to load package:// URLs
@@ -327,7 +332,6 @@ export const createPlaceholderMesh = (path: string): THREE.Object3D => {
 // Once we detect the scale factor, apply it to all subsequent meshes
 // ============================================================
 // State moved to createMeshLoader closure
-const MAX_UNIT_DETECTION_SAMPLES = 3; // Sample first few meshes then use cached scale
 
 // Reset unit detection (call when loading new model)
 // Deprecated: State is now scoped to createMeshLoader closure

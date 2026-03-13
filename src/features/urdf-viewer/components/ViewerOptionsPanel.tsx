@@ -69,7 +69,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     isOptionsCollapsed,
     toggleOptionsCollapsed,
     setShowOptionsPanel,
-    lang,
     highlightMode,
     setHighlightMode,
     showJointControls,
@@ -195,7 +194,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 />
                                 {showOrigins && (
                                     <button
-                                        className={`p-0.5 rounded transition-colors ${showOriginsOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                        className={`rounded p-0.5 transition-colors ${showOriginsOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
                                         onClick={() => setShowOriginsOverlay(!showOriginsOverlay)}
                                         title={t.alwaysOnTop}
                                     >
@@ -219,7 +218,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 />
                                 {showJointAxes && (
                                     <button
-                                        className={`p-0.5 rounded transition-colors ${showJointAxesOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                        className={`rounded p-0.5 transition-colors ${showJointAxesOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
                                         onClick={() => setShowJointAxesOverlay(!showJointAxesOverlay)}
                                         title={t.alwaysOnTop}
                                     >
@@ -250,7 +249,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 />
                                 {showCenterOfMass && (
                                     <button
-                                        className={`p-0.5 rounded transition-colors ${showCoMOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                        className={`rounded p-0.5 transition-colors ${showCoMOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
                                         onClick={() => setShowCoMOverlay(!showCoMOverlay)}
                                         title={t.alwaysOnTop}
                                     >
@@ -273,7 +272,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 />
                                 {showInertia && (
                                     <button
-                                        className={`p-0.5 rounded transition-colors ${showInertiaOverlay ? 'text-google-blue bg-blue-50 dark:bg-blue-900/30' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                        className={`rounded p-0.5 transition-colors ${showInertiaOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
                                         onClick={() => setShowInertiaOverlay(!showInertiaOverlay)}
                                         title={t.alwaysOnTop}
                                     >
@@ -305,7 +304,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 {onAutoFitGround && (
                                     <button
                                         onClick={onAutoFitGround}
-                                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                                        className="flex-1 flex items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25"
                                     >
                                         <Crosshair size={11} />
                                         {t.autoFitGround}

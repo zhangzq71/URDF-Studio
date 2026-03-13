@@ -20,6 +20,7 @@ export interface MjcfExportConfig {
 export interface UrdfExportConfig {
   includeExtended: boolean;
   includeBOM: boolean;
+  useRelativePaths: boolean;
   includeMeshes: boolean;
   compressSTL: boolean;
   stlQuality: number;
@@ -31,6 +32,7 @@ export type RosHwInterface = 'effort' | 'position' | 'velocity';
 export interface XacroExportConfig {
   rosVersion: RosVersion;
   rosHardwareInterface: RosHwInterface;
+  useRelativePaths: boolean;
   includeMeshes: boolean;
   compressSTL: boolean;
   stlQuality: number;
@@ -61,6 +63,7 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
   urdf: {
     includeExtended: false,
     includeBOM: false,
+    useRelativePaths: true,
     includeMeshes: true,
     compressSTL: false,
     stlQuality: 50,
@@ -68,6 +71,7 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
   xacro: {
     rosVersion: 'ros2',
     rosHardwareInterface: 'effort',
+    useRelativePaths: true,
     includeMeshes: true,
     compressSTL: false,
     stlQuality: 50,
@@ -150,28 +154,6 @@ function SelectField({
   );
 }
 
-function NumberField({
-  value,
-  onChange,
-  min,
-  max,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <input
-      type="number"
-      value={value}
-      min={min}
-      max={max}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="w-20 bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 text-right focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all"
-    />
-  );
-}
 
 function TextField({
   value,
@@ -413,7 +395,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   <STLQualitySelector
                     compressSTL={config.mjcf.compressSTL}
                     stlQuality={config.mjcf.stlQuality}
-                    lang={lang}
+                    t={t}
                     onCompressChange={(v) => updateMjcf('compressSTL', v)}
                     onQualityChange={(v) => updateMjcf('stlQuality', v)}
                   />
@@ -432,6 +414,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 </Row>
                 <Row label={t.exportIncludeBOM} desc={t.exportIncludeBOMDesc}>
                   <Toggle value={config.urdf.includeBOM} onChange={(v) => updateUrdf('includeBOM', v)} />
+                </Row>
+                <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc}>
+                  <Toggle value={config.urdf.useRelativePaths} onChange={(v) => updateUrdf('useRelativePaths', v)} />
                 </Row>
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
@@ -487,6 +472,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                     ]}
                     onChange={(v) => updateXacro('rosHardwareInterface', v as RosHwInterface)}
                   />
+                </Row>
+                <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc}>
+                  <Toggle value={config.xacro.useRelativePaths} onChange={(v) => updateXacro('useRelativePaths', v)} />
                 </Row>
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>

@@ -197,6 +197,8 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
                 showZ={rotationAxis === 'Z'}
                 size={1.2}
                 space="local"
+                hoverStyle="single-axis"
+                displayStyle="thick-primary"
                 onMouseDown={() => {
                     isDragging.current = true;
                     lockInteraction();
