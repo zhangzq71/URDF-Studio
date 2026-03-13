@@ -12,7 +12,6 @@ export type {
   PanelsState,
   SidebarState,
   RotationDisplayMode,
-  TransformReferenceFrame,
 } from './uiStore';
 
 // Selection Store - link/joint selection and hover state

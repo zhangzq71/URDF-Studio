@@ -2,7 +2,6 @@ import React from 'react';
 import * as THREE from 'three';
 import type { Language, translations } from '@/shared/i18n';
 import type { Theme, UrdfJoint, UrdfLink } from '@/types';
-import type { TransformReferenceFrame } from '@/store';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
 
@@ -38,7 +37,6 @@ export interface URDFViewerProps {
     setShowJointPanel?: (show: boolean) => void;
     onCollisionTransformPreview?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
-    transformReferenceFrame?: TransformReferenceFrame;
     snapshotAction?: React.RefObject<(() => void) | null>;
     /** True when previewing a standalone mesh asset from the library (STL/DAE/OBJ/GLB). */
     isMeshPreview?: boolean;
@@ -83,7 +81,6 @@ export interface RobotModelProps {
     toolMode?: ToolMode;
     onCollisionTransformPreview?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
-    transformReferenceFrame?: TransformReferenceFrame;
     isOrbitDragging?: React.RefObject<boolean>;
     onTransformPending?: (pending: boolean) => void;
     isSelectionLockedRef?: React.RefObject<boolean>;
@@ -97,12 +94,10 @@ export interface CollisionTransformControlsProps {
     robotVersion?: number;
     selection: URDFViewerProps['selection'];
     transformMode: 'select' | 'translate' | 'rotate' | 'universal';
-    transformReferenceFrame?: TransformReferenceFrame;
     setIsDragging: (dragging: boolean) => void;
     onTransformChange?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onTransformEnd?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     robotLinks?: Record<string, UrdfLink>;
-    lang?: Language;
     onTransformPending?: (pending: boolean) => void;
 }
 

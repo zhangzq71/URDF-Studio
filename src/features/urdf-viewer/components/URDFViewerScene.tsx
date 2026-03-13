@@ -87,7 +87,6 @@ export const URDFViewerScene = ({
           robotJoints={robotJoints}
           focusTarget={focusTarget}
           transformMode={controller.transformMode}
-          transformReferenceFrame={controller.transformReferenceFrame}
           toolMode={controller.toolMode}
           onCollisionTransformPreview={onCollisionTransformPreview}
           onCollisionTransformEnd={onCollisionTransform}

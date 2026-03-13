@@ -15,7 +15,6 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   robotVersion,
   selection,
   transformMode,
-  transformReferenceFrame = 'urdf',
   setIsDragging,
   onTransformChange,
   onTransformEnd,
@@ -26,11 +25,13 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   const rotateTransformRef = useRef<any>(null);
   const { invalidate } = useThree();
   const [targetObject, setTargetObject] = useState<THREE.Object3D | null>(null);
+  const [translateProxy, setTranslateProxy] = useState<THREE.Group | null>(null);
 
   const originalPositionRef = useRef(new THREE.Vector3());
   const originalRotationRef = useRef(new THREE.Euler());
   const originalQuaternionRef = useRef(new THREE.Quaternion());
   const targetObjectRef = useRef<THREE.Object3D | null>(null);
+  const translateProxyRef = useRef<THREE.Group | null>(null);
   const activeSelectionRef = useRef<{ id: string; objectIndex?: number } | null>(null);
   const setIsDraggingRef = useRef(setIsDragging);
   const onTransformChangeRef = useRef(onTransformChange);
@@ -40,6 +41,11 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
 
   const isDraggingRef = useRef(false);
   const activeControlsRef = useRef<any>(null);
+  const proxyWorldPositionRef = useRef(new THREE.Vector3());
+  const proxyLocalPositionRef = useRef(new THREE.Vector3());
+  const proxyParentQuaternionRef = useRef(new THREE.Quaternion());
+  const shouldUseTranslateProxy =
+    transformMode === 'translate' || transformMode === 'universal';
 
   const resolveSelectionLinkId = useCallback((identity: string | null | undefined) => {
     if (!identity) return null;
@@ -71,6 +77,49 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   useEffect(() => {
     onTransformPendingRef.current = onTransformPending;
   }, [onTransformPending]);
+
+  const syncTranslateProxy = useCallback((proxyTarget: THREE.Object3D | null, object = targetObjectRef.current) => {
+    if (!proxyTarget || !object) return;
+
+    object.updateMatrixWorld(true);
+    object.getWorldPosition(proxyWorldPositionRef.current);
+    proxyTarget.position.copy(proxyWorldPositionRef.current);
+
+    const parent = object.parent;
+    if (parent) {
+      parent.getWorldQuaternion(proxyParentQuaternionRef.current);
+      proxyTarget.quaternion.copy(proxyParentQuaternionRef.current);
+    } else {
+      proxyTarget.quaternion.identity();
+    }
+
+    proxyTarget.scale.setScalar(1);
+    proxyTarget.updateMatrixWorld(true);
+  }, []);
+
+  const applyTranslateProxyToTarget = useCallback(() => {
+    const proxy = translateProxyRef.current;
+    const object = targetObjectRef.current;
+    if (!proxy || !object) return;
+
+    proxy.updateMatrixWorld(true);
+    proxy.getWorldPosition(proxyWorldPositionRef.current);
+    proxyLocalPositionRef.current.copy(proxyWorldPositionRef.current);
+
+    const parent = object.parent;
+    if (parent) {
+      parent.worldToLocal(proxyLocalPositionRef.current);
+    }
+
+    object.position.copy(proxyLocalPositionRef.current);
+    object.updateMatrixWorld(true);
+  }, []);
+
+  const handleTranslateProxyRef = useCallback((proxy: THREE.Group | null) => {
+    translateProxyRef.current = proxy;
+    setTranslateProxy(proxy);
+    syncTranslateProxy(proxy);
+  }, [syncTranslateProxy]);
 
   useEffect(() => {
     if (selection?.id && selection.subType === 'collision') {
@@ -143,6 +192,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
       activeTargetObject.position.copy(originalPositionRef.current);
       activeTargetObject.quaternion.copy(originalQuaternionRef.current);
       activeTargetObject.updateMatrixWorld(true);
+      syncTranslateProxy(translateProxyRef.current, activeTargetObject);
     }
 
     isDraggingRef.current = false;
@@ -167,8 +217,10 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
       commitTransform();
     }
 
+    syncTranslateProxy(translateProxyRef.current, activeTargetObject);
+
     invalidate();
-  }, [commitTransform, hasTransformChanged, invalidate]);
+  }, [commitTransform, hasTransformChanged, invalidate, syncTranslateProxy]);
 
   const beginDrag = useCallback((controls?: any) => {
     const activeTargetObject = targetObjectRef.current;
@@ -289,6 +341,12 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   }, [cancelDrag, robot, robotLinks, robotVersion, selection, transformMode]);
 
   useEffect(() => {
+    if (!isDraggingRef.current) {
+      syncTranslateProxy(translateProxyRef.current, targetObject);
+    }
+  }, [syncTranslateProxy, targetObject]);
+
+  useEffect(() => {
     cancelDragRef.current = cancelDrag;
   }, [cancelDrag]);
 
@@ -312,12 +370,17 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     }
 
     const activeTargetObject = targetObjectRef.current;
+    const isTranslateDragging = Boolean(translateControls?.dragging);
+    if (shouldUseTranslateProxy && isTranslateDragging) {
+      applyTranslateProxyToTarget();
+    }
+
     if (activeTargetObject && isDraggingRef.current) {
       emitTransformPreview(activeTargetObject);
     }
 
     invalidate();
-  }, [beginDrag, emitTransformPreview, invalidate]);
+  }, [applyTranslateProxyToTarget, beginDrag, emitTransformPreview, invalidate, shouldUseTranslateProxy]);
 
   useFrame(() => {
     const translateControls = transformRef.current;
@@ -350,20 +413,30 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     return null;
   }
 
+  const canRenderControls = transformMode === 'rotate' || !shouldUseTranslateProxy || Boolean(translateProxy);
+
   return (
-    <UnifiedTransformControls
-      ref={transformRef}
-      rotateRef={rotateTransformRef}
-      object={targetObject}
-      mode={getControlMode()}
-      size={COLLISION_TRANSLATE_GIZMO_SIZE}
-      rotateSize={COLLISION_ROTATE_GIZMO_SIZE}
-      space={transformMode === 'rotate' && transformReferenceFrame === 'local' ? 'local' : 'world'}
-      hoverStyle="single-axis"
-      displayStyle="thick-primary"
-      displayThicknessScale={COLLISION_GIZMO_THICKNESS_SCALE}
-      onObjectChange={handleObjectChange}
-      onDraggingChanged={handleDraggingChanged}
-    />
+    <>
+      {shouldUseTranslateProxy && <group ref={handleTranslateProxyRef} visible={false} />}
+
+      {canRenderControls && (
+        <UnifiedTransformControls
+          ref={transformRef}
+          rotateRef={rotateTransformRef}
+          object={targetObject}
+          translateObject={shouldUseTranslateProxy ? translateProxy ?? undefined : undefined}
+          mode={getControlMode()}
+          size={COLLISION_TRANSLATE_GIZMO_SIZE}
+          rotateSize={COLLISION_ROTATE_GIZMO_SIZE}
+          translateSpace="local"
+          rotateSpace="local"
+          hoverStyle="single-axis"
+          displayStyle="thick-primary"
+          displayThicknessScale={COLLISION_GIZMO_THICKNESS_SCALE}
+          onObjectChange={handleObjectChange}
+          onDraggingChanged={handleDraggingChanged}
+        />
+      )}
+    </>
   );
 };

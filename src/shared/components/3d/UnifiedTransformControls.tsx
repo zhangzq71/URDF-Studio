@@ -15,8 +15,12 @@ const DEFAULT_DISPLAY_THICKNESS_SCALE = 1;
 
 interface UnifiedTransformControlsProps extends Omit<DreiTransformControlsProps, 'mode'> {
   mode: UnifiedTransformMode;
+  translateObject?: THREE.Object3D;
+  translateSpace?: DreiTransformControlsProps['space'];
   rotateRef?: SharedControlRef;
+  rotateObject?: THREE.Object3D;
   rotateSize?: number;
+  rotateSpace?: DreiTransformControlsProps['space'];
   rotateEnabled?: boolean;
   onRotateChange?: DreiTransformControlsProps['onChange'];
   enableUniversalPriority?: boolean;
@@ -1876,8 +1880,12 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     {
       mode,
       object,
+      translateObject,
+      translateSpace,
       rotateRef,
+      rotateObject,
       rotateSize,
+      rotateSpace,
       rotateEnabled,
       onChange,
       onRotateChange,
@@ -1905,7 +1913,17 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     const defaultControlsSuppressedRef = useRef(false);
     const defaultControlsEnabledBeforeSuppressRef = useRef(true);
     const orbitPassthroughRef = useRef(false);
-    const attachedObject = isObjectAttachedToSceneGraph(scene, object) ? object : undefined;
+    const resolvedTranslateObject = translateObject ?? object;
+    const resolvedRotateObject = rotateObject ?? object;
+    const attachedTranslateObject = isObjectAttachedToSceneGraph(scene, resolvedTranslateObject)
+      ? resolvedTranslateObject
+      : undefined;
+    const attachedRotateObject = isObjectAttachedToSceneGraph(scene, resolvedRotateObject)
+      ? resolvedRotateObject
+      : undefined;
+    const primaryMode = mode === 'universal' ? 'translate' : mode;
+    const primaryObject = primaryMode === 'rotate' ? attachedRotateObject : attachedTranslateObject;
+    const primarySpace = primaryMode === 'rotate' ? (rotateSpace ?? space) : (translateSpace ?? space);
 
     useImperativeHandle(ref, () => translateRef.current);
 
@@ -2303,7 +2321,7 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       rotateControls.enabled = false;
     }, 1000);
 
-    if (!attachedObject) {
+    if (!primaryObject || (mode === 'universal' && !attachedRotateObject)) {
       return null;
     }
 
@@ -2311,10 +2329,10 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       <>
         <DreiTransformControls
           ref={translateRef}
-          object={attachedObject}
-          mode={mode === 'universal' ? 'translate' : mode}
+          object={primaryObject}
+          mode={primaryMode}
           enabled={enabled}
-          space={space}
+          space={primarySpace}
           size={mode === 'rotate' ? (rotateSize ?? size) : size}
           onChange={onChange}
           onMouseDown={handleControlMouseDown}
@@ -2325,10 +2343,10 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
         {mode === 'universal' && (
           <DreiTransformControls
             ref={effectiveRotateRef}
-            object={attachedObject}
+            object={attachedRotateObject}
             mode="rotate"
             enabled={rotateEnabled ?? enabled}
-            space={space}
+            space={rotateSpace ?? space}
             size={rotateSize ?? size}
             onChange={onRotateChange ?? onChange}
             onMouseDown={handleControlMouseDown}

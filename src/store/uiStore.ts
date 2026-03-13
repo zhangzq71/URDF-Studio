@@ -10,7 +10,6 @@ import { translations } from '@/shared/i18n';
 // Language type
 export type Language = 'en' | 'zh';
 export type RotationDisplayMode = 'euler_deg' | 'euler_rad' | 'quaternion';
-export type TransformReferenceFrame = 'urdf' | 'local';
 
 // View configuration for different modes
 export interface ViewConfig {
@@ -111,10 +110,6 @@ interface UIState {
   // Property editor rotation format
   rotationDisplayMode: RotationDisplayMode;
   setRotationDisplayMode: (mode: RotationDisplayMode) => void;
-
-  // Transform gizmo reference frame
-  transformReferenceFrame: TransformReferenceFrame;
-  setTransformReferenceFrame: (frame: TransformReferenceFrame) => void;
 
   // Structure tree geometry detail disclosure
   structureTreeShowGeometryDetails: boolean;
@@ -366,10 +361,6 @@ export const useUIStore = create<UIState>()(
       rotationDisplayMode: 'euler_deg',
       setRotationDisplayMode: (rotationDisplayMode) => set({ rotationDisplayMode }),
 
-      // Rotation reference frame
-      transformReferenceFrame: 'local',
-      setTransformReferenceFrame: (transformReferenceFrame) => set({ transformReferenceFrame }),
-
       // Structure tree geometry detail disclosure
       structureTreeShowGeometryDetails: false,
       setStructureTreeShowGeometryDetails: (structureTreeShowGeometryDetails) =>
@@ -377,17 +368,10 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 2,
-      migrate: (persistedState: unknown, version) => {
+      version: 4,
+      migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
-        }
-
-        if (version < 2) {
-          return {
-            ...(persistedState as Record<string, unknown>),
-            transformReferenceFrame: 'local',
-          };
         }
 
         return persistedState;
@@ -400,7 +384,6 @@ export const useUIStore = create<UIState>()(
         panelSections: state.panelSections,
         fontSize: state.fontSize,
         rotationDisplayMode: state.rotationDisplayMode,
-        transformReferenceFrame: state.transformReferenceFrame,
         structureTreeShowGeometryDetails: state.structureTreeShowGeometryDetails,
       }),
       onRehydrateStorage: () => (state) => {

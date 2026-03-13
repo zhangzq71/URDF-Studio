@@ -4,7 +4,6 @@ import { Html } from '@react-three/drei';
 import { useUIStore } from '@/store';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { HoverSelectionSync } from './HoverSelectionSync';
-import { translations } from '@/shared/i18n';
 import type { RobotModelProps } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import { offsetRobotToGround } from '../utils/robotPositioning';
@@ -55,7 +54,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     robotJoints,
     focusTarget,
     transformMode = 'select',
-    transformReferenceFrame = 'urdf',
     toolMode = 'select',
     onCollisionTransformPreview,
     onCollisionTransformEnd,
@@ -321,13 +319,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                         robotVersion={robotVersion}
                         selection={selection}
                         transformMode={transformMode}
-                        transformReferenceFrame={transformReferenceFrame}
                         setIsDragging={handleCollisionTransformDragging}
                         onTransformChange={onCollisionTransformPreview}
                         onTransformEnd={onCollisionTransformEnd}
                         robotLinks={robotLinks}
                         onTransformPending={onTransformPending}
-                        lang={t === translations['zh'] ? 'zh' : 'en'}
                     />
                 ) : null;
             })()}
