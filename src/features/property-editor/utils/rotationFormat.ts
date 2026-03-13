@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { degToRad, radToDeg } from '@/core/robot/transforms';
-import type { TransformReferenceFrame } from '@/store';
 
 export interface EulerRadiansValue {
   r: number;
@@ -15,9 +14,7 @@ export interface QuaternionValue {
   w: number;
 }
 
-const getEulerOrder = (
-  referenceFrame: TransformReferenceFrame = 'urdf',
-): THREE.EulerOrder => (referenceFrame === 'local' ? 'XYZ' : 'ZYX');
+const URDF_EULER_ORDER: THREE.EulerOrder = 'ZYX';
 
 export const DEFAULT_EULER_RADIANS: EulerRadiansValue = {
   r: 0,
@@ -67,10 +64,9 @@ export const normalizeQuaternionValue = (
 
 export const eulerRadiansToQuaternion = (
   value: EulerRadiansValue,
-  referenceFrame: TransformReferenceFrame = 'urdf',
 ): QuaternionValue => {
   const quaternion = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(value.r, value.p, value.y, getEulerOrder(referenceFrame)),
+    new THREE.Euler(value.r, value.p, value.y, URDF_EULER_ORDER),
   );
 
   return {
@@ -83,12 +79,11 @@ export const eulerRadiansToQuaternion = (
 
 export const quaternionToEulerRadians = (
   value: QuaternionValue,
-  referenceFrame: TransformReferenceFrame = 'urdf',
 ): EulerRadiansValue => {
   const normalized = normalizeQuaternionValue(value);
   const euler = new THREE.Euler().setFromQuaternion(
     new THREE.Quaternion(normalized.x, normalized.y, normalized.z, normalized.w),
-    getEulerOrder(referenceFrame),
+    URDF_EULER_ORDER,
   );
 
   return {
@@ -96,19 +91,4 @@ export const quaternionToEulerRadians = (
     p: euler.y,
     y: euler.z,
   };
-};
-
-export const convertEulerReferenceFrame = (
-  value: EulerRadiansValue,
-  fromReferenceFrame: TransformReferenceFrame,
-  toReferenceFrame: TransformReferenceFrame,
-): EulerRadiansValue => {
-  if (fromReferenceFrame === toReferenceFrame) {
-    return value;
-  }
-
-  return quaternionToEulerRadians(
-    eulerRadiansToQuaternion(value, fromReferenceFrame),
-    toReferenceFrame,
-  );
 };

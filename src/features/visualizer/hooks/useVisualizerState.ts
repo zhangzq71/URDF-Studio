@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useUIStore } from '@/store';
-import type { TransformReferenceFrame } from '@/store';
 
 export interface VisualizerState {
   // Skeleton mode settings
@@ -20,8 +18,6 @@ export interface VisualizerState {
   setLabelScale: (scale: number) => void;
   transformMode: 'translate' | 'rotate';
   setTransformMode: (mode: 'translate' | 'rotate') => void;
-  transformReferenceFrame: TransformReferenceFrame;
-  setTransformReferenceFrame: (frame: TransformReferenceFrame) => void;
 
   // Detail mode settings
   showDetailOrigin: boolean;
@@ -59,9 +55,6 @@ export function useVisualizerState({
   propShowVisual,
   propSetShowVisual,
 }: UseVisualizerStateProps = {}): VisualizerState {
-  const transformReferenceFrame = useUIStore((state) => state.transformReferenceFrame);
-  const setTransformReferenceFrame = useUIStore((state) => state.setTransformReferenceFrame);
-
   // Skeleton Settings
   const [showGeometry, setShowGeometry] = useState(false);
   const [showLabels, setShowLabels] = useState(false);
@@ -122,8 +115,6 @@ export function useVisualizerState({
     setLabelScale,
     transformMode,
     setTransformMode,
-    transformReferenceFrame,
-    setTransformReferenceFrame,
 
     // Detail
     showDetailOrigin,

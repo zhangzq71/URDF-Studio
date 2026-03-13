@@ -699,7 +699,6 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         label={t.rotation}
                         compact
                         holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                        referenceFrameScope="geometry"
                     />
                     </div>
                 </InputGroup>

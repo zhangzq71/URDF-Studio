@@ -258,7 +258,6 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   label={t.rotation}
                   compact
                   holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                  referenceFrameScope="joint"
                 />
               </div>
             </InputGroup>

@@ -192,13 +192,7 @@ export interface TranslationKeys {
   hardwareOptions: string;
   move: string;
   rotate: string;
-  transformReferenceFrame: string;
   urdfFrame: string;
-  localFrame: string;
-  parentLinkFrame: string;
-  transformReferenceFrameSkeletonHint: string;
-  transformReferenceFrameDetailHint: string;
-  transformReferenceFrameLocalHint: string;
   showGeometry: string;
   showLabels: string;
   showJointAxes: string;

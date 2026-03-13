@@ -118,7 +118,8 @@ export const VisualizerScene = React.memo(({
               object={selectedCollisionRef}
               mode={state.transformMode}
               size={VISUALIZER_UNIFIED_GIZMO_SIZE}
-              space={state.transformMode === 'rotate' && state.transformReferenceFrame === 'local' ? 'local' : 'world'}
+              translateSpace="world"
+              rotateSpace="local"
               hoverStyle="single-axis"
               displayStyle="thick-primary"
               onDraggingChanged={handleCollisionDraggingChanged}

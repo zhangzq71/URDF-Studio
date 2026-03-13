@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { SegmentedControl } from '@/shared/components/ui';
-import type { Language, TransformReferenceFrame } from '@/store';
+import type { Language } from '@/store';
 import { useUIStore } from '@/store';
 import { translations } from '@/shared/i18n';
 import { AxisNumberGridInput, PROPERTY_EDITOR_SUBLABEL_CLASS } from './FormControls';
 import {
-  convertEulerReferenceFrame,
   eulerDegreesToRadians,
   eulerRadiansToDegrees,
   eulerRadiansToQuaternion,
@@ -30,7 +29,6 @@ interface RotationValueInputProps {
   label?: string;
   compact?: boolean;
   holdRepeatIntervalMs?: number;
-  referenceFrameScope?: 'joint' | 'geometry';
 }
 
 export const RotationValueInput: React.FC<RotationValueInputProps> = ({
@@ -40,17 +38,13 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
   label,
   compact = false,
   holdRepeatIntervalMs,
-  referenceFrameScope,
 }) => {
   const t = translations[lang];
   const rotationDisplayMode = useUIStore((state) => state.rotationDisplayMode);
   const setRotationDisplayMode = useUIStore((state) => state.setRotationDisplayMode);
-  const transformReferenceFrame = useUIStore((state) => state.transformReferenceFrame);
-  const setTransformReferenceFrame = useUIStore((state) => state.setTransformReferenceFrame);
-
   const displayEulerRadians = useMemo(
-    () => convertEulerReferenceFrame(value, 'urdf', transformReferenceFrame),
-    [transformReferenceFrame, value.p, value.r, value.y],
+    () => value,
+    [value.p, value.r, value.y],
   );
 
   const eulerDegrees = useMemo(
@@ -67,15 +61,11 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
   }, [value.p, value.r, value.y]);
 
   const handleDegreeChange = (nextValue: Partial<EulerRadiansValue>) => {
-    onChange(convertEulerReferenceFrame(
-      eulerDegreesToRadians({
-        r: nextValue.r ?? eulerDegrees.r,
-        p: nextValue.p ?? eulerDegrees.p,
-        y: nextValue.y ?? eulerDegrees.y,
-      }),
-      transformReferenceFrame,
-      'urdf',
-    ));
+    onChange(eulerDegreesToRadians({
+      r: nextValue.r ?? eulerDegrees.r,
+      p: nextValue.p ?? eulerDegrees.p,
+      y: nextValue.y ?? eulerDegrees.y,
+    }));
   };
 
   const handleQuaternionChange = (nextValue: Partial<QuaternionValue>) => {
@@ -90,29 +80,11 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
     onChange(quaternionToEulerRadians(normalizedQuaternion));
   };
 
-  const referenceFrameTooltip =
-    transformReferenceFrame === 'local'
-      ? t.transformReferenceFrameLocalHint
-      : (referenceFrameScope === 'joint'
-          ? t.transformReferenceFrameSkeletonHint
-          : t.transformReferenceFrameDetailHint);
-
-  const referenceFrameOptions: Array<{ value: TransformReferenceFrame; label: string }> =
-    referenceFrameScope === 'joint'
-      ? [
-          { value: 'urdf', label: t.parentLinkFrame },
-          { value: 'local', label: t.localFrame },
-        ]
-      : [
-          { value: 'urdf', label: t.linkFrame },
-          { value: 'local', label: t.localFrame },
-        ];
-
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{label ?? t.rotation}</span>
-        <span className="text-[10px] leading-4 text-text-tertiary">{t.rotationFormat}</span>
+        <span className="text-[10px] leading-4 text-text-tertiary">{t.urdfFrame}</span>
       </div>
       <SegmentedControl
         options={[
@@ -144,11 +116,11 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
       ) : rotationDisplayMode === 'euler_rad' ? (
         <AxisNumberGridInput
           value={displayEulerRadians}
-          onChange={(nextValue) => onChange(convertEulerReferenceFrame({
+          onChange={(nextValue) => onChange({
             r: nextValue.r ?? displayEulerRadians.r,
             p: nextValue.p ?? displayEulerRadians.p,
             y: nextValue.y ?? displayEulerRadians.y,
-          }, transformReferenceFrame, 'urdf'))}
+          })}
           labels={[
             `${t.roll} (rad)`,
             `${t.pitch} (rad)`,
@@ -171,18 +143,6 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
           precision={QUATERNION_PRECISION}
           repeatIntervalMs={holdRepeatIntervalMs}
         />
-      )}
-
-      {referenceFrameScope && (
-        <div className="pt-1" title={referenceFrameTooltip}>
-          <SegmentedControl
-            options={referenceFrameOptions}
-            value={transformReferenceFrame}
-            onChange={(value) => setTransformReferenceFrame(value as TransformReferenceFrame)}
-            size="xs"
-            className="w-full"
-          />
-        </div>
       )}
     </div>
   );
