@@ -76,7 +76,7 @@ function parseXacroArgs(content: string): Map<string, string> {
     const args = new Map<string, string>();
     const argRegex = /<xacro:arg\b([^>]*?)\/>/g;
 
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = argRegex.exec(content)) !== null) {
         const attrs = match[1];
         const nameMatch = attrs.match(/\bname=["']([^"']+)["']/);
@@ -96,7 +96,7 @@ function parseProperties(content: string, ctx: XacroContext): void {
     // Match <xacro:property name="..." value="..."/>
     const propRegex = /<xacro:property\s+name=["']([^"']+)["']\s+value=["']([^"']*)["']\s*\/>/g;
 
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = propRegex.exec(content)) !== null) {
         const name = match[1];
         let value = match[2];
@@ -122,14 +122,14 @@ function parseMacros(content: string, ctx: XacroContext): void {
     // Match <xacro:macro name="..." params="...">...</xacro:macro>
     const macroRegex = /<xacro:macro\s+name=["']([^"']+)["']\s+params=["']([^"']*)["']\s*>([\s\S]*?)<\/xacro:macro>/g;
 
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = macroRegex.exec(content)) !== null) {
         const name = match[1];
         const paramsStr = match[2];
         const body = match[3];
 
         // Parse params - handle default values like "param:=default"
-        const params = paramsStr.split(/\s+/).filter(p => p.length > 0);
+        const params = paramsStr.split(/\s+/).filter((param) => param.length > 0);
 
         ctx.macros.set(name, { params, body });
     }
@@ -167,14 +167,14 @@ function substituteVariables(content: string, ctx: XacroContext): string {
         try {
             // Handle simple math expressions
             const numericExpr = trimmedExpr
-                .replace(/(\w+)/g, (m) => {
-                    if (ctx.properties.has(m)) {
-                        return ctx.properties.get(m)!;
+                .replace(/(\w+)/g, (identifier: string) => {
+                    if (ctx.properties.has(identifier)) {
+                        return ctx.properties.get(identifier)!;
                     }
-                    if (ctx.args[m] !== undefined) {
-                        return ctx.args[m];
+                    if (ctx.args[identifier] !== undefined) {
+                        return ctx.args[identifier];
                     }
-                    return m;
+                    return identifier;
                 });
 
             // Only evaluate if it looks like a safe numeric expression
@@ -299,7 +299,7 @@ function processIncludes(content: string, ctx: XacroContext): string {
     // Match both self-closing and block-style include tags.
     const includeRegex = /<xacro:include\s+filename=["']([^"']+)["']\s*(?:\/>|>\s*<\/xacro:include>)/g;
 
-    return content.replace(includeRegex, (match, filename) => {
+    return content.replace(includeRegex, (_match, filename) => {
         const resolvedFilename = substituteVariables(filename, ctx);
         const foundPath = findFileInMap(resolvedFilename, ctx);
 
@@ -360,7 +360,7 @@ function expandMacros(content: string, ctx: XacroContext): string {
             'g'
         );
 
-        content = content.replace(selfClosingRegex, (match, attrsStr) => {
+        content = content.replace(selfClosingRegex, (_match, attrsStr) => {
             return expandMacroCall(macroName, attrsStr, '', macroDef, ctx);
         });
 
@@ -370,7 +370,7 @@ function expandMacros(content: string, ctx: XacroContext): string {
             'g'
         );
 
-        content = content.replace(blockRegex, (match, attrsStr, innerContent) => {
+        content = content.replace(blockRegex, (_match, attrsStr, innerContent) => {
             return expandMacroCall(macroName, attrsStr, innerContent, macroDef, ctx);
         });
     }
@@ -382,7 +382,6 @@ function expandMacros(content: string, ctx: XacroContext): string {
  * Expand a single macro call
  */
 function expandMacroCall(
-    name: string,
     attrsStr: string,
     innerContent: string,
     macroDef: { params: string[], body: string },
@@ -391,7 +390,7 @@ function expandMacroCall(
     // Parse attributes
     const attrs: Map<string, string> = new Map();
     const attrRegex = /(\w+)=["']([^"']*)["']/g;
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = attrRegex.exec(attrsStr)) !== null) {
         attrs.set(match[1], match[2]);
     }
@@ -445,13 +444,13 @@ function processConditionals(content: string, ctx: XacroContext): string {
 
     // Process xacro:if
     const ifRegex = /<xacro:if\s+value=["']([^"']+)["']>([\s\S]*?)<\/xacro:if>/g;
-    content = content.replace(ifRegex, (match, conditionExpr, body) => {
+    content = content.replace(ifRegex, (_match, conditionExpr, body) => {
         return isTruthy(conditionExpr) ? body : '';
     });
 
     // Process xacro:unless
     const unlessRegex = /<xacro:unless\s+value=["']([^"']+)["']>([\s\S]*?)<\/xacro:unless>/g;
-    content = content.replace(unlessRegex, (match, conditionExpr, body) => {
+    content = content.replace(unlessRegex, (_match, conditionExpr, body) => {
         return isTruthy(conditionExpr) ? '' : body;
     });
 
@@ -547,7 +546,7 @@ export function processXacro(
     content = cleanupXacroElements(content);
 
     // Convert package:// paths to relative paths for browser compatibility
-    content = content.replace(/package:\/\/([^\/]+)\/([^"'<>\s]+)/g, (match, pkg, path) => {
+    content = content.replace(/package:\/\/([^\/]+)\/([^"'<>\s]+)/g, (_match, pkg, path) => {
         // Try to find the actual file in the file map
         const pathsToTry = [
             `${pkg}/${path}`,
@@ -606,7 +605,7 @@ export function getXacroArgs(content: string): { name: string, defaultValue: str
     const args: { name: string, defaultValue: string }[] = [];
     const argRegex = /<xacro:arg\b([^>]*?)\/>/g;
 
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = argRegex.exec(content)) !== null) {
         const attrs = match[1];
         const nameMatch = attrs.match(/\bname=["']([^"']+)["']/);

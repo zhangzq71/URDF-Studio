@@ -10,7 +10,6 @@ import { translations } from '@/shared/i18n';
 import { useUIStore, useRobotStore } from '@/store';
 import type { InspectionReport } from '@/types';
 import { InspectionReportTemplate } from '../components/InspectionReportTemplate';
-import { generatePdfFromHtml } from '../utils/generatePdfFromHtml';
 
 interface UsePdfExportReturn {
   handleDownloadPDF: (inspectionReport: InspectionReport | null) => void;

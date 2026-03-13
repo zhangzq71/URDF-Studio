@@ -2,7 +2,7 @@
  * BridgeCreateModal - Dialog to create a bridge joint between two components
  */
 import React, { useState, useCallback } from 'react';
-import type { AssemblyState, AssemblyComponent, BridgeJoint } from '@/types';
+import type { AssemblyState } from '@/types';
 import { JointType } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';

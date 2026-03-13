@@ -42,6 +42,10 @@ function getFileBaseName(path: string): string {
   return trimmed.length > 0 ? trimmed : 'robot';
 }
 
+function createArchiveRoot(zip: JSZip, baseName: string): JSZip {
+  return zip.folder(baseName) ?? zip;
+}
+
 function collectReferencedMeshes(robot: RobotState): string[] {
   const referenced = new Set<string>();
   Object.values(robot.links).forEach((link) => {
@@ -119,20 +123,21 @@ export async function exportLibraryRobotFile(
 
   const baseName = getFileBaseName(file.name);
   const zip = new JSZip();
+  const archiveRoot = createArchiveRoot(zip, baseName);
 
   if (targetFormat === 'urdf') {
     const urdfContent = file.format === 'urdf'
       ? file.content
       : generateURDF(robotState, false);
-    zip.file(`${baseName}.urdf`, urdfContent);
+    archiveRoot.file(`${baseName}.urdf`, urdfContent);
   } else {
     const mjcfContent = file.format === 'mjcf'
       ? file.content
       : generateMujocoXML(robotState, { meshdir: 'meshes/' });
-    zip.file(`${baseName}.xml`, mjcfContent);
+    archiveRoot.file(`${baseName}.xml`, mjcfContent);
   }
 
-  const missingMeshPaths = await addReferencedMeshesToZip(robotState, assets, zip);
+  const missingMeshPaths = await addReferencedMeshesToZip(robotState, assets, archiveRoot);
   const blob = await zip.generateAsync({ type: 'blob' });
   const zipFileName = `${baseName}_${targetFormat}.zip`;
   downloadBlob(blob, zipFileName);

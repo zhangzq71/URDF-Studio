@@ -29,8 +29,6 @@ export function SettingsModal() {
   const showImportWarning = useUIStore((state) => state.showImportWarning);
   const setShowImportWarning = useUIStore((state) => state.setShowImportWarning);
 
-  const viewOptions = useUIStore((state) => state.viewOptions);
-  const setViewOption = useUIStore((state) => state.setViewOption);
 
   const fontSize = useUIStore((state) => state.fontSize);
   const setFontSize = useUIStore((state) => state.setFontSize);

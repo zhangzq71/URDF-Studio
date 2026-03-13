@@ -1,4 +1,4 @@
-import { GeometryType, Vector3 } from '@/types/geometry';
+import { GeometryType } from '@/types/geometry';
 import { DEFAULT_LINK } from '@/types/constants';
 import { parseVec3 } from './utils';
 

@@ -1,4 +1,3 @@
-import React from 'react';
 import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
 import type { Language } from '@/shared/i18n';
 import type { VisualizerController } from '../hooks/useVisualizerController';
@@ -45,8 +44,6 @@ export const VisualizerPanels = ({
           setFrameSize={state.setFrameSize}
           labelScale={state.labelScale}
           setLabelScale={state.setLabelScale}
-          transformMode={state.transformMode}
-          setTransformMode={state.setTransformMode}
           isCollapsed={panel.isOptionsCollapsed}
           toggleCollapsed={panel.toggleOptionsCollapsed}
           onMouseDown={panel.handleMouseDown}

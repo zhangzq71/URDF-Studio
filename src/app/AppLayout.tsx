@@ -9,14 +9,16 @@ import { UnifiedViewer } from './components/UnifiedViewer';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
-import { useViewerOrchestration, useWorkspaceSourceSync } from './hooks';
-import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useCanUndo, useCanRedo, useAssemblyStore } from '@/store';
+import { useActiveHistory, useViewerOrchestration, useWorkspaceSourceSync } from './hooks';
+import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { parseMJCF, parseURDF } from '@/core/parsers';
 import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io';
-import { GeometryType, type RobotState, type UrdfLink, type UrdfJoint, type RobotFile, type AssemblyState } from '@/types';
+import { GeometryType, type AssemblyState, type RobotData, type UrdfLink, type UrdfJoint, type RobotFile } from '@/types';
 import {
   appendCollisionBody,
   getCollisionGeometryEntries,
+  resolveJointKey,
+  resolveLinkKey,
   updateCollisionGeometryByObjectIndex,
 } from '@/core/robot';
 import { translations } from '@/shared/i18n';
@@ -27,6 +29,7 @@ import type {
 } from '@/features/property-editor/utils';
 import { applyCollisionOptimizationOperationsToLinks } from '@/features/property-editor/utils';
 import { processMJCFIncludes } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { registerPendingHistoryFlusher } from './utils/pendingHistory';
 
 const loadSourceCodeEditorModule = () => import('@/features/code-editor/components/SourceCodeEditor');
 const loadCollisionOptimizationDialogModule = () => import('@/features/property-editor/components/CollisionOptimizationDialog');
@@ -48,6 +51,24 @@ const preloadSourceCodeEditor = async () => {
   const module = await loadSourceCodeEditorModule();
   return module.preloadSourceCodeEditor();
 };
+
+const PROPERTY_HISTORY_COMMIT_DELAY_MS = 220;
+
+type UpdateCommitMode = 'debounced' | 'immediate' | 'manual';
+
+interface UpdateCommitOptions {
+  historyKey?: string;
+  historyLabel?: string;
+  commitMode?: UpdateCommitMode;
+  debounceMs?: number;
+}
+
+interface PendingHistoryEntry<T> {
+  key: string;
+  label: string;
+  snapshot: T;
+  timeoutId: number | null;
+}
 
 interface AppLayoutProps {
   // Import handlers (passed from App)
@@ -113,11 +134,10 @@ export function AppLayout({
   const t = translations[lang];
 
   // Selection Store
-  const { selection, setSelection, hoveredSelection, setHoveredSelection, focusTarget, focusOn, pulseSelection } = useSelectionStore(
+  const { selection, setSelection, setHoveredSelection, focusTarget, focusOn, pulseSelection } = useSelectionStore(
     useShallow((state) => ({
       selection: state.selection,
       setSelection: state.setSelection,
-      hoveredSelection: state.hoveredSelection,
       setHoveredSelection: state.setHoveredSelection,
       focusTarget: state.focusTarget,
       focusOn: state.focusOn,
@@ -127,8 +147,8 @@ export function AppLayout({
 
   // Assets Store
   const {
-    assets, motorLibrary, availableFiles, selectedFile,
-    setAvailableFiles, setSelectedFile, originalUrdfContent, setOriginalUrdfContent,
+    assets, motorLibrary, availableFiles, selectedFile, allFileContents,
+    setAvailableFiles, setSelectedFile, setAllFileContents, originalUrdfContent, setOriginalUrdfContent,
     uploadAsset, removeRobotFile, removeRobotFolder, clearRobotLibrary,
   } = useAssetsStore(
     useShallow((state) => ({
@@ -136,8 +156,10 @@ export function AppLayout({
       motorLibrary: state.motorLibrary,
       availableFiles: state.availableFiles,
       selectedFile: state.selectedFile,
+      allFileContents: state.allFileContents,
       setAvailableFiles: state.setAvailableFiles,
       setSelectedFile: state.setSelectedFile,
+      setAllFileContents: state.setAllFileContents,
       originalUrdfContent: state.originalUrdfContent,
       setOriginalUrdfContent: state.setOriginalUrdfContent,
       uploadAsset: state.uploadAsset,
@@ -151,7 +173,7 @@ export function AppLayout({
   const {
     robotName, robotLinks, robotJoints, rootLinkId, robotMaterials,
     setName, setRobot, resetRobot, addChild, deleteSubtree,
-    updateLink, updateJoint, setAllLinksVisibility, setJointAngle, undo, redo,
+    updateLink, updateJoint, setAllLinksVisibility, setJointAngle,
   } = useRobotStore(
     useShallow((state) => ({
       robotName: state.name,
@@ -168,12 +190,9 @@ export function AppLayout({
       updateJoint: state.updateJoint,
       setAllLinksVisibility: state.setAllLinksVisibility,
       setJointAngle: state.setJointAngle,
-      undo: state.undo,
-      redo: state.redo,
     }))
   );
-  const canUndo = useCanUndo();
-  const canRedo = useCanRedo();
+  const { undo, redo, canUndo, canRedo } = useActiveHistory();
 
   // Assembly Store
   const {
@@ -196,9 +215,134 @@ export function AppLayout({
   // Snapshot ref
   const snapshotActionRef = useRef<(() => void) | null>(null);
   const transformPendingRef = useRef(false);
+  const pendingRobotHistoryRef = useRef<PendingHistoryEntry<RobotData> | null>(null);
+  const pendingAssemblyHistoryRef = useRef<PendingHistoryEntry<AssemblyState | null> | null>(null);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
+
+  const clearPendingHistoryTimer = useCallback((entry: PendingHistoryEntry<unknown> | null) => {
+    if (!entry || entry.timeoutId === null) return;
+    window.clearTimeout(entry.timeoutId);
+    entry.timeoutId = null;
+  }, []);
+
+  const createRobotSnapshot = useCallback((): RobotData => {
+    const state = useRobotStore.getState();
+    return structuredClone({
+      name: state.name,
+      links: state.links,
+      joints: state.joints,
+      rootLinkId: state.rootLinkId,
+      materials: state.materials,
+    });
+  }, []);
+
+  const createAssemblySnapshot = useCallback((): AssemblyState | null => {
+    return structuredClone(useAssemblyStore.getState().assemblyState);
+  }, []);
+
+  const snapshotsMatch = useCallback((before: unknown, after: unknown) => {
+    return JSON.stringify(before) === JSON.stringify(after);
+  }, []);
+
+  const commitPendingRobotHistory = useCallback((expectedKey?: string) => {
+    const pending = pendingRobotHistoryRef.current;
+    if (!pending || (expectedKey && pending.key !== expectedKey)) return;
+
+    clearPendingHistoryTimer(pending);
+    pendingRobotHistoryRef.current = null;
+
+    const currentSnapshot = createRobotSnapshot();
+    if (snapshotsMatch(pending.snapshot, currentSnapshot)) return;
+
+    useRobotStore.getState().pushHistorySnapshot(pending.snapshot, pending.label);
+  }, [clearPendingHistoryTimer, createRobotSnapshot, snapshotsMatch]);
+
+  const commitPendingAssemblyHistory = useCallback((expectedKey?: string) => {
+    const pending = pendingAssemblyHistoryRef.current;
+    if (!pending || (expectedKey && pending.key !== expectedKey)) return;
+
+    clearPendingHistoryTimer(pending);
+    pendingAssemblyHistoryRef.current = null;
+
+    const currentSnapshot = createAssemblySnapshot();
+    if (snapshotsMatch(pending.snapshot, currentSnapshot)) return;
+
+    useAssemblyStore.getState().pushHistorySnapshot(pending.snapshot, pending.label);
+  }, [clearPendingHistoryTimer, createAssemblySnapshot, snapshotsMatch]);
+
+  const ensurePendingRobotHistory = useCallback((key: string, label: string) => {
+    const pending = pendingRobotHistoryRef.current;
+    if (pending?.key === key) {
+      pending.label = label;
+      clearPendingHistoryTimer(pending);
+      return;
+    }
+
+    commitPendingRobotHistory();
+    pendingRobotHistoryRef.current = {
+      key,
+      label,
+      snapshot: createRobotSnapshot(),
+      timeoutId: null,
+    };
+  }, [clearPendingHistoryTimer, commitPendingRobotHistory, createRobotSnapshot]);
+
+  const ensurePendingAssemblyHistory = useCallback((key: string, label: string) => {
+    const pending = pendingAssemblyHistoryRef.current;
+    if (pending?.key === key) {
+      pending.label = label;
+      clearPendingHistoryTimer(pending);
+      return;
+    }
+
+    commitPendingAssemblyHistory();
+    pendingAssemblyHistoryRef.current = {
+      key,
+      label,
+      snapshot: createAssemblySnapshot(),
+      timeoutId: null,
+    };
+  }, [clearPendingHistoryTimer, commitPendingAssemblyHistory, createAssemblySnapshot]);
+
+  const schedulePendingRobotHistoryCommit = useCallback((key: string, delayMs = PROPERTY_HISTORY_COMMIT_DELAY_MS) => {
+    const pending = pendingRobotHistoryRef.current;
+    if (!pending || pending.key !== key) return;
+
+    clearPendingHistoryTimer(pending);
+    pending.timeoutId = window.setTimeout(() => {
+      commitPendingRobotHistory(key);
+    }, delayMs);
+  }, [clearPendingHistoryTimer, commitPendingRobotHistory]);
+
+  const schedulePendingAssemblyHistoryCommit = useCallback((key: string, delayMs = PROPERTY_HISTORY_COMMIT_DELAY_MS) => {
+    const pending = pendingAssemblyHistoryRef.current;
+    if (!pending || pending.key !== key) return;
+
+    clearPendingHistoryTimer(pending);
+    pending.timeoutId = window.setTimeout(() => {
+      commitPendingAssemblyHistory(key);
+    }, delayMs);
+  }, [clearPendingHistoryTimer, commitPendingAssemblyHistory]);
+
+  useEffect(() => {
+    const flushPendingHistory = () => {
+      commitPendingRobotHistory();
+      commitPendingAssemblyHistory();
+    };
+
+    registerPendingHistoryFlusher(flushPendingHistory);
+    return () => {
+      flushPendingHistory();
+      registerPendingHistoryFlusher(null);
+    };
+  }, [commitPendingAssemblyHistory, commitPendingRobotHistory]);
+
+  useEffect(() => {
+    commitPendingRobotHistory();
+    commitPendingAssemblyHistory();
+  }, [sidebarTab, commitPendingAssemblyHistory, commitPendingRobotHistory]);
   const {
     emptyRobot,
     robot,
@@ -223,7 +367,9 @@ export function AppLayout({
     selectedFile,
     setSelectedFile,
     availableFiles,
+    allFileContents,
     setAvailableFiles,
+    setAllFileContents,
     originalUrdfContent,
     setOriginalUrdfContent,
   });
@@ -243,6 +389,8 @@ export function AppLayout({
     setHoveredSelection,
     focusOn,
   });
+  const setPendingCollisionTransform = useCollisionTransformStore((state) => state.setPendingCollisionTransform);
+  const clearPendingCollisionTransform = useCollisionTransformStore((state) => state.clearPendingCollisionTransform);
 
   const handleNameChange = useCallback((name: string) => {
     if (assemblyState && sidebarTab === 'workspace') {
@@ -252,7 +400,11 @@ export function AppLayout({
     }
   }, [setName, assemblyState, sidebarTab]);
 
-  const renameComponentRootWithDefaults = useCallback((componentId: string, nextRootNameRaw: string) => {
+  const renameComponentRootWithDefaults = useCallback((
+    componentId: string,
+    nextRootNameRaw: string,
+    options?: { skipHistory?: boolean; label?: string }
+  ) => {
     const nextRootName = nextRootNameRaw.trim();
     if (!nextRootName) return;
 
@@ -289,66 +441,263 @@ export function AppLayout({
       };
     });
 
-    updateComponentRobot(componentId, { links: nextLinks, joints: nextJoints });
-    updateComponentName(componentId, nextRootName);
+    updateComponentRobot(componentId, { links: nextLinks, joints: nextJoints }, options);
+    updateComponentName(componentId, nextRootName, options);
   }, [updateComponentName, updateComponentRobot]);
 
-  const handleUpdate = useCallback((type: 'link' | 'joint', id: string, data: UrdfLink | UrdfJoint) => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      // Find which component owns this link/joint
-      for (const comp of Object.values(assemblyState.components)) {
-        if (type === 'link' && comp.robot.links[id]) {
+  const applyUpdate = useCallback((
+    type: 'link' | 'joint',
+    id: string,
+    data: UrdfLink | UrdfJoint,
+    options: UpdateCommitOptions = {},
+  ) => {
+    const commitMode = options.commitMode ?? 'debounced';
+    const latestAssemblyState = sidebarTab === 'workspace'
+      ? useAssemblyStore.getState().assemblyState
+      : null;
+
+    if (latestAssemblyState) {
+      for (const comp of Object.values(latestAssemblyState.components)) {
+        const resolvedLinkId = type === 'link' ? resolveLinkKey(comp.robot.links, id) : null;
+        if (type === 'link' && resolvedLinkId) {
           const nextLink = data as UrdfLink;
-          const isRootLink = id === comp.robot.rootLinkId;
-          if (isRootLink && comp.robot.links[id].name !== nextLink.name) {
-            renameComponentRootWithDefaults(comp.id, nextLink.name);
+          const historyKey = options.historyKey ?? `assembly:component:${comp.id}:link:${resolvedLinkId}`;
+          const historyLabel = options.historyLabel ?? 'Update assembly component';
+          const isRootLink = resolvedLinkId === comp.robot.rootLinkId;
+
+          if (isRootLink && comp.robot.links[resolvedLinkId].name !== nextLink.name) {
+            ensurePendingAssemblyHistory(historyKey, historyLabel);
+            renameComponentRootWithDefaults(comp.id, nextLink.name, {
+              skipHistory: true,
+              label: historyLabel,
+            });
 
             const latestAssembly = useAssemblyStore.getState().assemblyState;
             const latestComp = latestAssembly?.components[comp.id];
-            const latestRoot = latestComp?.robot.links[id];
+            const latestRoot = latestComp?.robot.links[resolvedLinkId];
             if (latestComp && latestRoot) {
               updateComponentRobot(comp.id, {
                 links: {
                   ...latestComp.robot.links,
-                  [id]: { ...latestRoot, ...nextLink, name: nextLink.name.trim() || latestRoot.name },
+                  [resolvedLinkId]: { ...latestRoot, ...nextLink, name: nextLink.name.trim() || latestRoot.name },
                 },
+              }, {
+                skipHistory: true,
+                label: historyLabel,
               });
+            }
+
+            if (commitMode === 'immediate') {
+              commitPendingAssemblyHistory(historyKey);
+            } else if (commitMode !== 'manual') {
+              schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
             }
             return;
           }
 
+          ensurePendingAssemblyHistory(historyKey, historyLabel);
           updateComponentRobot(comp.id, {
-            links: { ...comp.robot.links, [id]: nextLink },
+            links: { ...comp.robot.links, [resolvedLinkId]: nextLink },
+          }, {
+            skipHistory: true,
+            label: historyLabel,
           });
+
+          if (commitMode === 'immediate') {
+            commitPendingAssemblyHistory(historyKey);
+          } else if (commitMode !== 'manual') {
+            schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
+          }
           return;
         }
-        if (type === 'joint' && comp.robot.joints[id]) {
+
+        const resolvedJointId = type === 'joint' ? resolveJointKey(comp.robot.joints, id) : null;
+        if (type === 'joint' && resolvedJointId) {
+          const historyKey = options.historyKey ?? `assembly:component:${comp.id}:joint:${resolvedJointId}`;
+          const historyLabel = options.historyLabel ?? 'Update assembly component';
+
+          ensurePendingAssemblyHistory(historyKey, historyLabel);
           updateComponentRobot(comp.id, {
-            joints: { ...comp.robot.joints, [id]: data as UrdfJoint },
+            joints: { ...comp.robot.joints, [resolvedJointId]: data as UrdfJoint },
+          }, {
+            skipHistory: true,
+            label: historyLabel,
           });
+
+          if (commitMode === 'immediate') {
+            commitPendingAssemblyHistory(historyKey);
+          } else if (commitMode !== 'manual') {
+            schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
+          }
           return;
         }
       }
-      // Check if it's a bridge joint
-      if (type === 'joint' && assemblyState.bridges[id]) {
-        const store = useAssemblyStore.getState();
-        store.updateBridge(id, { joint: data as UrdfJoint });
+
+      if (type === 'joint' && latestAssemblyState.bridges[id]) {
+        const historyKey = options.historyKey ?? `assembly:bridge:${id}`;
+        const historyLabel = options.historyLabel ?? 'Update bridge joint';
+
+        ensurePendingAssemblyHistory(historyKey, historyLabel);
+        useAssemblyStore.getState().updateBridge(id, { joint: data as UrdfJoint }, {
+          skipHistory: true,
+          label: historyLabel,
+        });
+
+        if (commitMode === 'immediate') {
+          commitPendingAssemblyHistory(historyKey);
+        } else if (commitMode !== 'manual') {
+          schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
+        }
         return;
       }
     }
+
     if (type === 'link') {
-      updateLink(id, data as Partial<UrdfLink>);
+      const resolvedLinkId = resolveLinkKey(useRobotStore.getState().links, id);
+      if (resolvedLinkId) {
+        const historyKey = options.historyKey ?? `robot:link:${resolvedLinkId}`;
+        const historyLabel = options.historyLabel ?? 'Update link';
+
+        ensurePendingRobotHistory(historyKey, historyLabel);
+        updateLink(resolvedLinkId, data as Partial<UrdfLink>, {
+          skipHistory: true,
+          label: historyLabel,
+        });
+
+        if (commitMode === 'immediate') {
+          commitPendingRobotHistory(historyKey);
+        } else if (commitMode !== 'manual') {
+          schedulePendingRobotHistoryCommit(historyKey, options.debounceMs);
+        }
+      }
     } else {
-      updateJoint(id, data as Partial<UrdfJoint>);
+      const resolvedJointId = resolveJointKey(useRobotStore.getState().joints, id);
+      if (resolvedJointId) {
+        const historyKey = options.historyKey ?? `robot:joint:${resolvedJointId}`;
+        const historyLabel = options.historyLabel ?? 'Update joint';
+
+        ensurePendingRobotHistory(historyKey, historyLabel);
+        updateJoint(resolvedJointId, data as Partial<UrdfJoint>, {
+          skipHistory: true,
+          label: historyLabel,
+        });
+
+        if (commitMode === 'immediate') {
+          commitPendingRobotHistory(historyKey);
+        } else if (commitMode !== 'manual') {
+          schedulePendingRobotHistoryCommit(historyKey, options.debounceMs);
+        }
+      }
     }
   }, [
+    commitPendingAssemblyHistory,
+    commitPendingRobotHistory,
+    ensurePendingAssemblyHistory,
+    ensurePendingRobotHistory,
+    schedulePendingAssemblyHistoryCommit,
+    schedulePendingRobotHistoryCommit,
     updateLink,
     updateJoint,
-    assemblyState,
     sidebarTab,
     updateComponentRobot,
     renameComponentRootWithDefaults,
+    resolveLinkKey,
+    resolveJointKey,
   ]);
+
+  const handleUpdate = useCallback((type: 'link' | 'joint', id: string, data: UrdfLink | UrdfJoint) => {
+    applyUpdate(type, id, data, { commitMode: 'debounced' });
+  }, [applyUpdate]);
+
+  const applyCollisionTransformUpdate = useCallback((
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    commitMode: UpdateCommitMode,
+    objectIndex?: number,
+  ) => {
+    const latestAssemblyState = sidebarTab === 'workspace'
+      ? useAssemblyStore.getState().assemblyState
+      : null;
+
+    if (latestAssemblyState) {
+      for (const comp of Object.values(latestAssemblyState.components)) {
+        const resolvedLinkId = resolveLinkKey(comp.robot.links, linkId);
+        if (!resolvedLinkId) continue;
+
+        const link = comp.robot.links[resolvedLinkId];
+        if (!link) return;
+
+        const updatedLink = updateCollisionGeometryByObjectIndex(link, objectIndex ?? 0, {
+          origin: {
+            xyz: position,
+            rpy: rotation,
+          },
+        });
+
+        applyUpdate('link', resolvedLinkId, updatedLink, {
+          historyKey: `collision-transform:${comp.id}:${resolvedLinkId}:${objectIndex ?? 0}`,
+          historyLabel: 'Transform collision body',
+          commitMode,
+        });
+        return;
+      }
+
+      return;
+    }
+
+    const latestLinks = useRobotStore.getState().links;
+    const resolvedLinkId = resolveLinkKey(latestLinks, linkId);
+    if (!resolvedLinkId) return;
+
+    const link = latestLinks[resolvedLinkId];
+    if (!link) return;
+
+    const updatedLink = updateCollisionGeometryByObjectIndex(link, objectIndex ?? 0, {
+      origin: {
+        xyz: position,
+        rpy: rotation,
+      },
+    });
+
+    applyUpdate('link', resolvedLinkId, updatedLink, {
+      historyKey: `collision-transform:${resolvedLinkId}:${objectIndex ?? 0}`,
+      historyLabel: 'Transform collision body',
+      commitMode,
+    });
+  }, [applyUpdate, resolveLinkKey, sidebarTab]);
+
+  const handleCollisionTransformPreview = useCallback((
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    objectIndex?: number,
+  ) => {
+    const resolvedLinkId = resolveLinkKey(robot.links, linkId) ?? linkId;
+    setPendingCollisionTransform({
+      linkId: resolvedLinkId,
+      objectIndex: objectIndex ?? 0,
+      position,
+      rotation,
+    });
+  }, [resolveLinkKey, robot.links, setPendingCollisionTransform]);
+
+  const handleCollisionTransform = useCallback((
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    objectIndex?: number,
+  ) => {
+    clearPendingCollisionTransform();
+    applyCollisionTransformUpdate(linkId, position, rotation, 'immediate', objectIndex);
+  }, [applyCollisionTransformUpdate, clearPendingCollisionTransform]);
+
+  const handleCollisionTransformPendingChange = useCallback((pending: boolean) => {
+    handleTransformPendingChange(pending);
+    if (!pending) {
+      clearPendingCollisionTransform();
+    }
+  }, [clearPendingCollisionTransform, handleTransformPendingChange]);
 
   const handleAddComponent = useCallback((file: RobotFile) => {
     const component = addComponent(file, { availableFiles, assets });
@@ -953,23 +1302,9 @@ export function AppLayout({
             jointAngleState={jointAngleState}
             onJointChange={handleJointChange}
             selection={robot.selection}
-            hoveredSelection={hoveredSelection}
             focusTarget={focusTarget}
             isMeshPreview={selectedFile?.format === 'mesh'}
-            onTransformPendingChange={handleTransformPendingChange}
-            onCollisionTransform={(linkId, position, rotation, objectIndex) => {
-              if (linkId && robot.links[linkId]) {
-                const link = robot.links[linkId];
-                const updatedLink = updateCollisionGeometryByObjectIndex(link, objectIndex ?? 0, {
-                  origin: {
-                    xyz: position,
-                    rpy: rotation,
-                  },
-                });
-
-                handleUpdate('link', linkId, updatedLink);
-              }
-            }}
+            onCollisionTransform={handleCollisionTransform}
             filePreview={filePreview}
             onClosePreview={handleClosePreview}
           />

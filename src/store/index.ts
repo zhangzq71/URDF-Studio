@@ -11,6 +11,8 @@ export type {
   ViewOptions,
   PanelsState,
   SidebarState,
+  RotationDisplayMode,
+  TransformReferenceFrame,
 } from './uiStore';
 
 // Selection Store - link/joint selection and hover state
@@ -33,7 +35,11 @@ export {
 export type { RobotData } from './robotStore';
 
 // Assembly Store - multi-URDF assembly
-export { useAssemblyStore } from './assemblyStore';
+export { useAssemblyStore, useAssemblyCanUndo, useAssemblyCanRedo } from './assemblyStore';
+
+// Collision transform store - transient drag state for collision gizmos
+export { useCollisionTransformStore } from './collisionTransformStore';
+export type { PendingCollisionTransform } from './collisionTransformStore';
 
 // History helper (for custom stores that need undo/redo)
 export { createHistoryManager } from './historyMiddleware';

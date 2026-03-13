@@ -28,11 +28,11 @@ export const InertiaBox = React.memo(({ link }: InertiaBoxProps) => {
     origin.rpy?.r || 0,
     origin.rpy?.p || 0,
     origin.rpy?.y || 0,
-    'XYZ'
+    'ZYX'
   );
   const originQuat = new THREE.Quaternion().setFromEuler(originRot);
   const finalQuat = originQuat.multiply(rotation);
-  const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat);
+  const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat, 'ZYX');
 
   return (
     <group position={[pos.x, pos.y, pos.z]} rotation={finalEuler}>

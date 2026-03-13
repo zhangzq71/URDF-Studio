@@ -18,7 +18,6 @@ interface InspectionProgressProps {
 export function InspectionProgress({
   progress,
   reportGenerationTimer,
-  lang,
   t
 }: InspectionProgressProps) {
   const percentage = Math.round((progress.completed / progress.total) * 100)

@@ -30,7 +30,6 @@ interface ClusterResult {
 function vertexClusteringSimplify(
   vertices: Float32Array,
   normals: Float32Array,
-  triangleCount: number,
   targetCount: number,
   boundingBox: STLMeshData['boundingBox'],
 ): ClusterResult {
@@ -177,7 +176,6 @@ export function compressMesh(meshData: STLMeshData, quality: number): STLMeshDat
   const result = vertexClusteringSimplify(
     srcVertices,
     srcNormals,
-    srcTriangleCount,
     targetCount,
     meshData.boundingBox,
   );

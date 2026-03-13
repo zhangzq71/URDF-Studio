@@ -4,7 +4,7 @@
  */
 
 import type { UrdfLink, UrdfJoint, RobotState } from '@/types';
-import { DEFAULT_LINK, DEFAULT_JOINT, JointType, GeometryType } from '@/types';
+import { DEFAULT_LINK, DEFAULT_JOINT, JointType } from '@/types';
 import {
     LINK_ID_PREFIX,
     JOINT_ID_PREFIX,
@@ -16,7 +16,7 @@ import {
  * Generate a unique ID with the given prefix
  */
 export const generateId = (prefix: string): string => {
-    return `${prefix}${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    return `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 };
 
 /**

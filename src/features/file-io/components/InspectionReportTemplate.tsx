@@ -107,11 +107,6 @@ export function InspectionReportTemplate({ inspectionReport, robotName, lang }: 
               <div style={styles.issuesContainer}>
                 {categoryIssues.map((issue, idx) => {
                   const issueScore = issue.score ?? 10;
-                  let issueTypeLabel: string = issue.type;
-                  if (issue.type === 'error') issueTypeLabel = t.issueError;
-                  if (issue.type === 'warning') issueTypeLabel = t.issueWarning;
-                  if (issue.type === 'suggestion') issueTypeLabel = t.issueSuggestion;
-
                   const icon = issue.type === 'error' ? '✗' : issue.type === 'warning' ? '⚠' : 'ℹ';
 
                   return (

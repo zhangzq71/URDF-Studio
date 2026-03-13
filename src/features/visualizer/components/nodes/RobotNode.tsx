@@ -1,11 +1,8 @@
-import React, { memo, useState, useEffect, useCallback, useRef } from 'react';
+import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { RobotState, UrdfJoint } from '@/types';
-import {
-  getCollisionGeometryEntries,
-  updateCollisionGeometryByObjectIndex,
-} from '@/core/robot';
+import { getCollisionGeometryEntries } from '@/core/robot';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
 import { Language, translations } from '@/shared/i18n';
@@ -35,7 +32,7 @@ interface CommonVisualizerProps {
   showHardwareLabels: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
-  transformMode: 'translate' | 'rotate' | 'select';
+  transformMode: 'translate' | 'rotate';
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
@@ -116,7 +113,7 @@ export const RobotNode = memo(function RobotNode({
   const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
 
   // Refs for dragging geometry in Detail mode
-  const [visualRef, setVisualRef] = useState<THREE.Group | null>(null);
+  const [, setVisualRef] = useState<THREE.Group | null>(null);
   const [collisionRefs, setCollisionRefs] = useState<Record<number, THREE.Group | null>>({});
   const collisionRefHandlersRef = useRef<Record<number, (ref: THREE.Group | null) => void>>({});
   const collisionEntries = getCollisionGeometryEntries(link);
@@ -156,38 +153,6 @@ export const RobotNode = memo(function RobotNode({
       }
     };
   }, [linkId, onRegisterCollisionRef, selectedCollisionObjectIndex, selectedCollisionRef]);
-
-  // Dragging logic for Detail Mode
-  const activeGeometryRef = showCollision ? selectedCollisionRef : visualRef;
-  const geometryTargetType = showCollision ? 'collision' : 'visual';
-
-  const handleGeometryTransformEnd = () => {
-    if (activeGeometryRef) {
-      const pos = activeGeometryRef.position;
-      const rot = activeGeometryRef.rotation;
-
-      const nextOrigin = {
-        xyz: { x: pos.x, y: pos.y, z: pos.z },
-        rpy: { r: rot.x, p: rot.y, y: rot.z }
-      };
-
-      const nextLink = geometryTargetType === 'collision'
-        ? updateCollisionGeometryByObjectIndex(link, selectedCollisionObjectIndex ?? 0, {
-            origin: nextOrigin,
-          })
-        : {
-            ...link,
-            visual: {
-              ...link.visual,
-              origin: nextOrigin,
-            },
-          };
-
-      onUpdate('link', linkId, {
-        ...nextLink
-      });
-    }
-  };
 
   const handleLinkHoverEnter = useCallback(() => {
     setHoveredSelection({ type: 'link', id: linkId });

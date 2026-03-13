@@ -5,7 +5,6 @@
 
 export async function generatePdfFromHtml(
   elementId: string,
-  fileName: string,
   title?: string
 ): Promise<void> {
   const element = document.getElementById(elementId);
@@ -140,7 +139,6 @@ export async function generatePdfFromHtml(
 export async function generatePdfWithJsPDF(
   inspectionReport: any,
   robotName: string,
-  lang: 'zh' | 'en',
   fileName: string
 ): Promise<void> {
   // This is a fallback implementation that uses html2canvas + jsPDF
@@ -156,7 +154,6 @@ export async function generatePdfWithJsPDF(
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
   let yPos = margin;
 

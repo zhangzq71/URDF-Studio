@@ -1,4 +1,3 @@
-import React from 'react';
 
 interface LazyOverlayFallbackProps {
   label: string;
@@ -6,7 +5,7 @@ interface LazyOverlayFallbackProps {
 
 export function LazyOverlayFallback({ label }: LazyOverlayFallbackProps) {
   return (
-    <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
+    <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/35">
       <div
         role="status"
         aria-live="polite"

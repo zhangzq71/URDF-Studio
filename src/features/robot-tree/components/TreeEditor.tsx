@@ -12,13 +12,16 @@ import {
   FileCode,
   LayoutGrid,
   Plus,
+  Shapes,
+  Shield,
   Trash2,
   Trees,
 } from 'lucide-react';
+import { getPrimaryTreeDisplayRootLinkId, getTreeDisplayRootLinkIds } from '@/core/robot';
 import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import { Button, Dialog } from '@/shared/components/ui';
-import { useAssemblyStore, useAssetsStore, useUIStore, type Language } from '@/store';
+import { useAssemblyStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
 import { AssemblyTreeView } from './AssemblyTreeView';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
@@ -96,9 +99,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const t = translations[lang];
   const sidebarTab = useUIStore((state) => state.sidebarTab);
   const setSidebarTab = useUIStore((state) => state.setSidebarTab);
+  const structureTreeShowGeometryDetails = useUIStore((state) => state.structureTreeShowGeometryDetails);
+  const setStructureTreeShowGeometryDetails = useUIStore((state) => state.setStructureTreeShowGeometryDetails);
   const toggleComponentVisibility = useAssemblyStore((state) => state.toggleComponentVisibility);
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
-  const assets = useAssetsStore((state) => state.assets);
 
   const isProMode = sidebarTab === 'workspace';
   const isAssemblyView = sidebarTab === 'workspace' && Boolean(assemblyState);
@@ -141,6 +145,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const showStructureFilePath = Boolean(currentFileName && sidebarTab === 'structure');
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
+  const topLevelLibraryFoldersKey = useMemo(() => {
+    const firstLevel = new Set<string>();
+
+    availableFiles.forEach((file) => {
+      const firstPart = file.name.split('/')[0];
+      if (firstPart) {
+        firstLevel.add(firstPart);
+      }
+    });
+
+    return Array.from(firstLevel).sort().join('\u0000');
+  }, [availableFiles]);
   const childJointsByParent = useMemo<Record<string, RobotState['joints'][string][]>>(() => {
     const grouped: Record<string, RobotState['joints'][string][]> = {};
 
@@ -153,6 +169,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
     return grouped;
   }, [robot.joints]);
+  const treeRootLinkIds = useMemo(() => getTreeDisplayRootLinkIds(robot), [robot]);
   const selectionBranchLinkIds = useMemo(() => {
     const branchLinkIds = new Set<string>();
     const { selection } = robot;
@@ -199,17 +216,34 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, []);
 
   useEffect(() => {
-    if (availableFiles.length > 0) {
-      const firstLevel = new Set<string>();
-      availableFiles.forEach((file) => {
-        const firstPart = file.name.split('/')[0];
-        if (firstPart) {
-          firstLevel.add(firstPart);
+    if (!topLevelLibraryFoldersKey) {
+      return;
+    }
+
+    const topLevelLibraryFolders = topLevelLibraryFoldersKey.split('\u0000');
+    const topLevelLibraryFolderSet = new Set(topLevelLibraryFolders);
+
+    setExpandedFolders((prev) => {
+      const next = new Set<string>();
+
+      prev.forEach((path) => {
+        const topLevelPath = path.split('/')[0];
+        if (topLevelLibraryFolderSet.has(topLevelPath)) {
+          next.add(path);
         }
       });
-      setExpandedFolders(firstLevel);
-    }
-  }, [availableFiles]);
+
+      topLevelLibraryFolders.forEach((folder) => {
+        next.add(folder);
+      });
+
+      if (next.size === prev.size && Array.from(next).every((path) => prev.has(path))) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [topLevelLibraryFoldersKey]);
 
   useEffect(() => {
     if (!isProMode) {
@@ -614,12 +648,30 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
               </div>
 
               <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${
+                    structureTreeShowGeometryDetails
+                      ? 'bg-element-hover text-text-primary ring-1 ring-inset ring-border-black/60'
+                      : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setStructureTreeShowGeometryDetails(!structureTreeShowGeometryDetails);
+                  }}
+                  title={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
+                  aria-label={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
+                >
+                  <Shapes size={11} />
+                  <Shield size={11} />
+                </button>
+
                 {mode === 'skeleton' && sidebarTab === 'structure' && (
                   <button
                     className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      let targetId = robot.rootLinkId;
+                      let targetId = getPrimaryTreeDisplayRootLinkId(robot) ?? robot.rootLinkId;
                       if (robot.selection.type === 'link' && robot.selection.id) {
                         targetId = robot.selection.id;
                       } else if (robot.selection.type === 'joint' && robot.selection.id) {
@@ -659,6 +711,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                     <AssemblyTreeView
                       assemblyState={assemblyState}
                       robot={robot}
+                      showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
                       onSelect={onSelect}
                       onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}
@@ -675,21 +728,25 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
                       t={t}
                     />
                   ) : (
-                    <TreeNode
-                      linkId={robot.rootLinkId}
-                      robot={robot}
-                      childJointsByParent={childJointsByParent}
-                      selectionBranchLinkIds={selectionBranchLinkIds}
-                      onSelect={onSelect}
-                      onSelectGeometry={onSelectGeometry}
-                      onFocus={onFocus}
-                      onAddChild={onAddChild}
-                      onAddCollisionBody={onAddCollisionBody}
-                      onDelete={onDelete}
-                      onUpdate={onUpdate}
-                      mode={mode}
-                      t={t}
-                    />
+                    treeRootLinkIds.map((treeRootLinkId) => (
+                      <TreeNode
+                        key={treeRootLinkId}
+                        linkId={treeRootLinkId}
+                        robot={robot}
+                        showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
+                        childJointsByParent={childJointsByParent}
+                        selectionBranchLinkIds={selectionBranchLinkIds}
+                        onSelect={onSelect}
+                        onSelectGeometry={onSelectGeometry}
+                        onFocus={onFocus}
+                        onAddChild={onAddChild}
+                        onAddCollisionBody={onAddCollisionBody}
+                        onDelete={onDelete}
+                        onUpdate={onUpdate}
+                        mode={mode}
+                        t={t}
+                      />
+                    ))
                   )}
                   </div>
                 </div>

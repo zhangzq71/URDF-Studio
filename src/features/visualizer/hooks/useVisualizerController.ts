@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
 import type { RobotState } from '@/types';
-import { updateCollisionGeometryByObjectIndex } from '@/core/robot';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
@@ -27,6 +27,7 @@ export const useVisualizerController = ({
   propShowVisual,
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
+  const tempRotationRef = useRef(new THREE.Euler(0, 0, 0, 'ZYX'));
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   const clearHover = useSelectionStore((state) => state.clearHover);
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
@@ -48,7 +49,7 @@ export const useVisualizerController = ({
 
   const transformControlsState = useTransformControls(
     selectedJointPivot,
-    state.transformMode === 'select' ? 'translate' : state.transformMode,
+    mode === 'skeleton' ? 'universal' : state.transformMode,
     robot,
     onUpdate,
     mode
@@ -75,12 +76,16 @@ export const useVisualizerController = ({
   const handleCollisionTransformEnd = useCallback(() => {
     if (!selectedCollisionRef || !robot.selection.id || robot.selection.type !== 'link') return;
 
-    const linkId = robot.selection.id;
+    selectedCollisionRef.updateMatrixWorld(true);
+
+    const linkId = resolveLinkKey(robot.links, robot.selection.id);
+    if (!linkId) return;
+
     const link = robot.links[linkId];
     if (!link) return;
 
     const pos = selectedCollisionRef.position;
-    const rot = selectedCollisionRef.rotation;
+    const rot = tempRotationRef.current.setFromQuaternion(selectedCollisionRef.quaternion, 'ZYX');
     const objectIndex = robot.selection.objectIndex ?? 0;
 
     onUpdate('link', linkId, {

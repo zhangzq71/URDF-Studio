@@ -1,7 +1,8 @@
 import React from 'react';
 import * as THREE from 'three';
 import type { Language, translations } from '@/shared/i18n';
-import type { Theme, UrdfLink } from '@/types';
+import type { Theme, UrdfJoint, UrdfLink } from '@/types';
+import type { TransformReferenceFrame } from '@/store';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
 
@@ -20,11 +21,12 @@ export interface URDFViewerProps {
     mode?: 'detail' | 'hardware';
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
     theme: Theme;
     selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
     hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
     robotLinks?: Record<string, UrdfLink>;
+    robotJoints?: Record<string, UrdfJoint>;
     focusTarget?: string | null;
     showVisual?: boolean;
     setShowVisual?: (show: boolean) => void;
@@ -34,8 +36,10 @@ export interface URDFViewerProps {
     setShowOptionsPanel?: (show: boolean) => void;
     showJointPanel?: boolean;
     setShowJointPanel?: (show: boolean) => void;
+    onCollisionTransformPreview?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
-    snapshotAction?: React.MutableRefObject<(() => void) | null>;
+    transformReferenceFrame?: TransformReferenceFrame;
+    snapshotAction?: React.RefObject<(() => void) | null>;
     /** True when previewing a standalone mesh asset from the library (STL/DAE/OBJ/GLB). */
     isMeshPreview?: boolean;
     /** Notify parent when collision transform has a pending confirm/cancel state */
@@ -49,13 +53,14 @@ export interface RobotModelProps {
     showCollision?: boolean;
     showVisual?: boolean;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
     onJointChangeCommit?: (name: string, angle: number) => void;
     jointAngles?: Record<string, number>;
     setIsDragging?: (dragging: boolean) => void;
     setActiveJoint?: (jointName: string | null) => void;
-    justSelectedRef?: React.MutableRefObject<boolean>;
+    justSelectedRef?: React.RefObject<boolean>;
     t: typeof translations['en'];
     mode?: 'detail' | 'hardware';
     highlightMode?: 'link' | 'collision';
@@ -72,23 +77,29 @@ export interface RobotModelProps {
     jointAxisSize?: number;
     modelOpacity?: number;
     robotLinks?: Record<string, UrdfLink>;
+    robotJoints?: Record<string, UrdfJoint>;
     focusTarget?: string | null;
     transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
     toolMode?: ToolMode;
+    onCollisionTransformPreview?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onCollisionTransformEnd?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
-    isOrbitDragging?: React.MutableRefObject<boolean>;
+    transformReferenceFrame?: TransformReferenceFrame;
+    isOrbitDragging?: React.RefObject<boolean>;
     onTransformPending?: (pending: boolean) => void;
-    isSelectionLockedRef?: React.MutableRefObject<boolean>;
+    isSelectionLockedRef?: React.RefObject<boolean>;
     selection?: URDFViewerProps['selection'];
-    hoveredSelection?: URDFViewerProps['selection'];
+    hoverSelectionEnabled?: boolean;
     isMeshPreview?: boolean;
 }
 
 export interface CollisionTransformControlsProps {
     robot: THREE.Object3D | null;
+    robotVersion?: number;
     selection: URDFViewerProps['selection'];
     transformMode: 'select' | 'translate' | 'rotate' | 'universal';
+    transformReferenceFrame?: TransformReferenceFrame;
     setIsDragging: (dragging: boolean) => void;
+    onTransformChange?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onTransformEnd?: (linkId: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     robotLinks?: Record<string, UrdfLink>;
     lang?: Language;

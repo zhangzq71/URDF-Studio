@@ -2,7 +2,7 @@
  * Assembly Merger - Merges AssemblyState into a single RobotData
  * Used for rendering and URDF export
  */
-import type { AssemblyState, AssemblyComponent, BridgeJoint, RobotData, UrdfJoint } from '@/types';
+import type { AssemblyState, RobotData, UrdfJoint } from '@/types';
 
 export function mergeAssembly(assembly: AssemblyState): RobotData {
   const links: RobotData['links'] = {};

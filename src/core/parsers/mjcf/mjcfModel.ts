@@ -218,7 +218,7 @@ function parseGeomElement(
     const geom: MJCFModelGeom = {
         name: sourceGeomName || `${bodyPath}::geom[${geomIndex}]`,
         sourceName: sourceGeomName,
-        type: inferGeomType(geomAttrs.type, meshName, resolvedFromTo, size),
+        type: inferGeomType(geomAttrs.type, meshName, resolvedFromTo),
         size,
         mesh: meshName,
         material: geomAttrs.material || undefined,
@@ -297,7 +297,6 @@ function inferGeomType(
     explicitType: string | undefined,
     meshName: string | undefined,
     fromto: number[] | undefined,
-    size: number[],
 ): string {
     const normalizedExplicitType = explicitType?.trim();
     if (normalizedExplicitType) {

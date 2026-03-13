@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useUIStore } from '@/store';
+import type { TransformReferenceFrame } from '@/store';
 
 export interface ViewerSettings {
     showCollision: boolean;
@@ -37,9 +39,13 @@ export interface ViewerSettings {
     toggleOptionsCollapsed: () => void;
     isJointsCollapsed: boolean;
     toggleJointsCollapsed: () => void;
+    transformReferenceFrame: TransformReferenceFrame;
+    setTransformReferenceFrame: (frame: TransformReferenceFrame) => void;
 }
 
 export function useViewerSettings(): ViewerSettings {
+    const transformReferenceFrame = useUIStore((state) => state.transformReferenceFrame);
+    const setTransformReferenceFrame = useUIStore((state) => state.setTransformReferenceFrame);
     const [showCollision, setShowCollision] = useState(false);
     const [localShowVisual, setLocalShowVisual] = useState(true);
     const [showJointControls, setShowJointControls] = useState(true);
@@ -187,6 +193,7 @@ export function useViewerSettings(): ViewerSettings {
         modelOpacity, setModelOpacity,
         highlightMode, setHighlightMode,
         isOptionsCollapsed, toggleOptionsCollapsed,
-        isJointsCollapsed, toggleJointsCollapsed
+        isJointsCollapsed, toggleJointsCollapsed,
+        transformReferenceFrame, setTransformReferenceFrame
     };
 }

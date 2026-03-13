@@ -9,6 +9,8 @@ import { translations } from '@/shared/i18n';
 
 // Language type
 export type Language = 'en' | 'zh';
+export type RotationDisplayMode = 'euler_deg' | 'euler_rad' | 'quaternion';
+export type TransformReferenceFrame = 'urdf' | 'local';
 
 // View configuration for different modes
 export interface ViewConfig {
@@ -105,6 +107,18 @@ interface UIState {
   // Font Size Preference
   fontSize: 'small' | 'medium' | 'large';
   setFontSize: (size: 'small' | 'medium' | 'large') => void;
+
+  // Property editor rotation format
+  rotationDisplayMode: RotationDisplayMode;
+  setRotationDisplayMode: (mode: RotationDisplayMode) => void;
+
+  // Transform gizmo reference frame
+  transformReferenceFrame: TransformReferenceFrame;
+  setTransformReferenceFrame: (frame: TransformReferenceFrame) => void;
+
+  // Structure tree geometry detail disclosure
+  structureTreeShowGeometryDetails: boolean;
+  setStructureTreeShowGeometryDetails: (show: boolean) => void;
 }
 
 // Default values
@@ -152,7 +166,13 @@ const getSystemLang = (): Language => {
 // Detect OS
 const detectOs = (): 'mac' | 'win' => {
   if (typeof navigator !== 'undefined') {
-    if (navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
+    const userAgent = navigator.userAgent.toLowerCase();
+    const userAgentDataPlatform = (navigator as Navigator & {
+      userAgentData?: { platform?: string };
+    }).userAgentData?.platform?.toLowerCase() || '';
+    const osHint = `${userAgentDataPlatform} ${userAgent}`;
+
+    if (osHint.includes('mac') || osHint.includes('darwin')) {
       return 'mac';
     }
   }
@@ -341,9 +361,37 @@ export const useUIStore = create<UIState>()(
         applyFontSize(size);
         set({ fontSize: size });
       },
+
+      // Property editor rotation format
+      rotationDisplayMode: 'euler_deg',
+      setRotationDisplayMode: (rotationDisplayMode) => set({ rotationDisplayMode }),
+
+      // Rotation reference frame
+      transformReferenceFrame: 'local',
+      setTransformReferenceFrame: (transformReferenceFrame) => set({ transformReferenceFrame }),
+
+      // Structure tree geometry detail disclosure
+      structureTreeShowGeometryDetails: false,
+      setStructureTreeShowGeometryDetails: (structureTreeShowGeometryDetails) =>
+        set({ structureTreeShowGeometryDetails }),
     }),
     {
       name: 'urdf-studio-ui',
+      version: 2,
+      migrate: (persistedState: unknown, version) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState;
+        }
+
+        if (version < 2) {
+          return {
+            ...(persistedState as Record<string, unknown>),
+            transformReferenceFrame: 'local',
+          };
+        }
+
+        return persistedState;
+      },
       partialize: (state) => ({
         theme: state.theme,
         lang: state.lang,
@@ -351,6 +399,9 @@ export const useUIStore = create<UIState>()(
         showImportWarning: state.showImportWarning,
         panelSections: state.panelSections,
         fontSize: state.fontSize,
+        rotationDisplayMode: state.rotationDisplayMode,
+        transformReferenceFrame: state.transformReferenceFrame,
+        structureTreeShowGeometryDetails: state.structureTreeShowGeometryDetails,
       }),
       onRehydrateStorage: () => (state) => {
         // Re-apply theme and font size on hydration

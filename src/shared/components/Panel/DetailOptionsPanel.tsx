@@ -87,6 +87,9 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
           <OptionsPanelContent isCollapsed={isCollapsed}>
             {/* Main Transform - Always Visible */}
             <div className="p-2 pb-0">
+                <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+                  {t.move} / {t.rotate}
+                </div>
                 <SegmentedControl
                   options={[
                     { value: 'translate', label: t.move },

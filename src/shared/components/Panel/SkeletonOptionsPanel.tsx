@@ -8,7 +8,6 @@ import {
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  SegmentedControl,
   CollapsibleSection
 } from './OptionsPanel';
 
@@ -28,8 +27,6 @@ interface SkeletonOptionsPanelProps {
   setShowJointAxes: (show: boolean) => void;
   jointAxisSize: number;
   setJointAxisSize: (size: number) => void;
-  transformMode: 'translate' | 'rotate' | 'select';
-  setTransformMode: (mode: 'translate' | 'rotate' | 'select') => void;
   isCollapsed: boolean;
   toggleCollapsed: () => void;
   onMouseDown: (e: React.MouseEvent) => void;
@@ -57,8 +54,6 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
       setShowJointAxes,
       jointAxisSize,
       setJointAxisSize,
-      transformMode,
-      setTransformMode,
       isCollapsed,
       toggleCollapsed,
       onMouseDown,
@@ -110,19 +105,6 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
           />
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
-            {/* Main Transform Control - Always Visible */}
-            <div className="p-2 pb-0">
-               <SegmentedControl
-                 options={[
-                   { value: 'translate', label: t.move },
-                   { value: 'rotate', label: t.rotate },
-                 ]}
-                 value={transformMode}
-                 onChange={setTransformMode}
-                 size="xs"
-               />
-            </div>
-            
             {/* Visuals Group */}
             <CollapsibleSection
               title={t.visuals}
