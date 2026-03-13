@@ -60,7 +60,7 @@ export function isRobotDefinitionFile(filename: string): boolean {
  */
 export function isAssetFile(filename: string): boolean {
   const ext = filename.split('.').pop()?.toLowerCase();
-  return ['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp'].includes(ext || '');
+  return ['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp', 'hdr'].includes(ext || '');
 }
 
 /**

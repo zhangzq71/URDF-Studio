@@ -7,7 +7,12 @@ import {
   Edit3,
   Eye,
   EyeOff,
+  Lock,
+  Move3D,
+  Plane,
   Plus,
+  RefreshCw,
+  RotateCw,
   Shapes,
   Shield,
   Trash2,
@@ -24,6 +29,7 @@ import { useShallow } from 'zustand/react/shallow';
 export interface TreeNodeProps {
   linkId: string;
   robot: RobotState;
+  showGeometryDetailsByDefault?: boolean;
   childJointsByParent?: Record<string, RobotState['joints'][string][]>;
   selectionBranchLinkIds?: Set<string>;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
@@ -54,6 +60,25 @@ function getJointTypeLabel(type: JointType, t: TranslationKeys): string {
       return t.jointTypeFloating;
     default:
       return type;
+  }
+}
+
+function getJointTypeIcon(type: JointType) {
+  switch (type) {
+    case JointType.FIXED:
+      return Lock;
+    case JointType.REVOLUTE:
+      return RotateCw;
+    case JointType.CONTINUOUS:
+      return RefreshCw;
+    case JointType.PRISMATIC:
+      return ArrowRightLeft;
+    case JointType.PLANAR:
+      return Plane;
+    case JointType.FLOATING:
+      return Move3D;
+    default:
+      return ArrowRightLeft;
   }
 }
 
@@ -89,9 +114,31 @@ function resolveTreeRowStateClass(
   return `${treeRowHoverClass} ${baseClassName}`;
 }
 
+function getTreeConnectorRailClass(emphasized: boolean): string {
+  return emphasized
+    ? 'bg-system-blue/20 dark:bg-system-blue/30'
+    : 'bg-border-black/60 dark:bg-border-strong/55';
+}
+
+function getTreeConnectorElbowClass(emphasized: boolean): string {
+  return emphasized
+    ? 'absolute rounded-bl-md border-b-[1.5px] border-l-[1.5px] border-system-blue/55 dark:border-system-blue/65'
+    : 'absolute rounded-bl-md border-b-[1.5px] border-l-[1.5px] border-border-strong/80 dark:border-border-strong/70';
+}
+
+function getTreeConnectorElbowStyle(indentPx: number): React.CSSProperties {
+  return {
+    left: `${indentPx * -1}px`,
+    top: 'calc(50% - 10px)',
+    width: `${indentPx}px`,
+    height: '10px',
+  };
+}
+
 export const TreeNode = memo(({
   linkId,
   robot,
+  showGeometryDetailsByDefault = false,
   childJointsByParent,
   selectionBranchLinkIds,
   onSelect,
@@ -106,6 +153,7 @@ export const TreeNode = memo(({
   depth = 0,
 }: TreeNodeProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isGeometryExpanded, setIsGeometryExpanded] = useState(showGeometryDetailsByDefault);
   const [editingTarget, setEditingTarget] = useState<{
     type: 'link' | 'joint';
     id: string;
@@ -195,7 +243,8 @@ export const TreeNode = memo(({
       objectIndex: (hasPrimaryCollision ? 1 : 0) + visibleIndex,
     }));
   const hasCollision = collisionBodyCount > 0;
-  const hasExpandableContent = hasVisual || hasCollision || hasChildren;
+  const hasGeometry = Boolean(hasVisual || hasCollision);
+  const hasExpandableContent = hasChildren;
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
   const isLinkHovered = hoveredSelection.type === 'link' && hoveredSelection.id === linkId;
   const isLinkAttentionHighlighted = attentionSelection.type === 'link' && attentionSelection.id === linkId;
@@ -221,6 +270,9 @@ export const TreeNode = memo(({
     attentionSelection,
     { type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }
   );
+  const hasSelectedExtraCollision = visibleCollisionBodies.some(
+    ({ objectIndex }) => objectIndex === selectedObjectIndex
+  );
   const selectionInBranch = selectionBranchLinkIds?.has(linkId) ?? false;
   const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
   const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
@@ -245,28 +297,47 @@ export const TreeNode = memo(({
   }, [selectionInBranch, hasExpandableContent]);
 
   useEffect(() => {
+    setIsGeometryExpanded(showGeometryDetailsByDefault);
+  }, [showGeometryDetailsByDefault]);
+
+  useEffect(() => {
+    if (
+      isVisualSelected
+      || isPrimaryCollisionSelected
+      || (isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)
+    ) {
+      setIsGeometryExpanded(true);
+    }
+  }, [
+    isVisualSelected,
+    isPrimaryCollisionSelected,
+    isLinkSelected,
+    robot.selection.subType,
+    hasSelectedExtraCollision,
+  ]);
+
+  useEffect(() => {
     if (isLinkSelected && !robot.selection.subType) {
       scrollElementIntoView(linkRowRef.current);
     }
   }, [isLinkSelected, robot.selection.subType]);
 
   useEffect(() => {
-    if (isExpanded && isVisualSelected) {
+    if (isGeometryExpanded && isVisualSelected) {
       scrollElementIntoView(visualRowRef.current);
     }
-  }, [isExpanded, isVisualSelected]);
+  }, [isGeometryExpanded, isVisualSelected]);
 
   useEffect(() => {
-    if (isExpanded && isPrimaryCollisionSelected) {
+    if (isGeometryExpanded && isPrimaryCollisionSelected) {
       scrollElementIntoView(primaryCollisionRowRef.current);
     }
-  }, [isExpanded, isPrimaryCollisionSelected]);
+  }, [isGeometryExpanded, isPrimaryCollisionSelected]);
 
   useEffect(() => {
-    const hasSelectedExtraCollision = visibleCollisionBodies.some(({ objectIndex }) => objectIndex === selectedObjectIndex);
-    if (!(isExpanded && isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)) return;
+    if (!(isGeometryExpanded && isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)) return;
     scrollElementIntoView(collisionBodyRowRefs.current[selectedObjectIndex]);
-  }, [isExpanded, isLinkSelected, robot.selection.subType, selectedObjectIndex, visibleCollisionBodies]);
+  }, [isGeometryExpanded, isLinkSelected, robot.selection.subType, selectedObjectIndex, hasSelectedExtraCollision]);
 
   useEffect(() => {
     if (!isExpanded || robot.selection.type !== 'joint' || !robot.selection.id) return;
@@ -274,6 +345,7 @@ export const TreeNode = memo(({
   }, [isExpanded, robot.selection.type, robot.selection.id]);
 
   const handleSelectVisual = () => {
+    setIsGeometryExpanded(true);
     if (onSelectGeometry) {
       onSelectGeometry(linkId, 'visual', 0);
       return;
@@ -282,6 +354,7 @@ export const TreeNode = memo(({
   };
 
   const handleSelectPrimaryCollision = () => {
+    setIsGeometryExpanded(true);
     if (onSelectGeometry) {
       onSelectGeometry(linkId, 'collision', 0);
       return;
@@ -290,6 +363,7 @@ export const TreeNode = memo(({
   };
 
   const handleSelectCollisionBody = (objectIndex: number) => {
+    setIsGeometryExpanded(true);
     if (onSelectGeometry) {
       onSelectGeometry(linkId, 'collision', objectIndex);
       return;
@@ -341,9 +415,14 @@ export const TreeNode = memo(({
       ? 'text-text-tertiary hover:text-text-primary hover:bg-element-hover'
       : 'text-text-secondary hover:text-text-primary hover:bg-element-hover'
   }`;
-  const jointRowIndent = '10px';
-  const geometryRowIndent = '24px';
+  const linkRowIndentPx = 8;
+  const jointRowIndentPx = 10;
+  const geometryRowIndentPx = 24;
   const selectedLinkActionClass = 'text-system-blue hover:bg-system-blue/15 hover:text-system-blue-hover dark:hover:bg-system-blue/25';
+  const isLinkConnectorHighlighted = isLinkSelected
+    || isLinkHovered
+    || isLinkAttentionHighlighted
+    || selectionInBranch;
 
   const beginRenaming = (
     type: 'link' | 'joint',
@@ -470,7 +549,7 @@ export const TreeNode = memo(({
       return;
     }
     onAddCollisionBody(targetLinkId);
-    setIsExpanded(true);
+    setIsGeometryExpanded(true);
     setContextMenu(null);
   };
 
@@ -619,13 +698,17 @@ export const TreeNode = memo(({
         onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId })}
         onMouseLeave={clearHover}
         title={link.name || linkId}
-        style={{ marginLeft: depth > 0 ? '8px' : '0' }}
+        style={{ marginLeft: depth > 0 ? `${linkRowIndentPx}px` : '0' }}
       >
         {depth > 0 && (
-          <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+          <div
+            className={getTreeConnectorElbowClass(isLinkConnectorHighlighted)}
+            style={getTreeConnectorElbowStyle(linkRowIndentPx)}
+          />
         )}
 
-        <div
+        <button
+          type="button"
           className={`w-6 h-6 flex items-center justify-center shrink-0 mr-0.5 rounded
             ${hasExpandableContent
               ? (isLinkSelected || isLinkHovered || isLinkAttentionHighlighted)
@@ -638,6 +721,9 @@ export const TreeNode = memo(({
               setIsExpanded(!isExpanded);
             }
           }}
+          aria-label={`${isExpanded ? t.hide : t.show} ${link.name || linkId}`}
+          title={`${isExpanded ? t.hide : t.show} ${link.name || linkId}`}
+          disabled={!hasExpandableContent}
         >
           {hasExpandableContent
             && (isExpanded ? (
@@ -645,7 +731,7 @@ export const TreeNode = memo(({
             ) : (
               <ChevronRight size={12} className={isLinkSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
             ))}
-        </div>
+        </button>
 
         <div
           className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
@@ -686,13 +772,36 @@ export const TreeNode = memo(({
             >
               {link.name}
             </span>
-            {hasVisual && <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-emerald-500" title={t.visual} />}
-            {hasCollision && <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-amber-500" title={t.collision} />}
           </div>
         )}
 
         <div className="flex items-center gap-0.5 ml-1 shrink-0">
+          {hasGeometry && (
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${
+                isGeometryExpanded
+                  ? 'bg-element-hover text-text-primary ring-1 ring-inset ring-border-black/60'
+                  : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
+              }`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsGeometryExpanded((prev) => !prev);
+              }}
+              title={`${isGeometryExpanded ? t.collapse : t.expand} ${t.visualGeometry} / ${t.collisionGeometry}`}
+              aria-label={`${isGeometryExpanded ? t.collapse : t.expand} ${t.visualGeometry} / ${t.collisionGeometry}`}
+            >
+              {hasVisual && <Shapes size={10} className="text-emerald-500 dark:text-emerald-400" />}
+              {hasCollision && <Shield size={10} className="text-amber-500 dark:text-amber-400" />}
+              <span className="text-[9px] font-semibold tabular-nums text-text-secondary">
+                {Number(Boolean(hasVisual)) + collisionBodyCount}
+              </span>
+              {isGeometryExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            </button>
+          )}
+
           <button
+            type="button"
             className={`p-1 rounded cursor-pointer transition-colors ${
               isLinkSelected
                 ? selectedLinkActionClass
@@ -703,12 +812,14 @@ export const TreeNode = memo(({
               onUpdate('link', linkId, { ...link, visible: !isVisible });
             }}
             title={isVisible ? t.hide : t.show}
+            aria-label={isVisible ? t.hide : t.show}
           >
             {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
           </button>
 
           {isSkeleton && (
             <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onAddChild(linkId);
@@ -720,6 +831,7 @@ export const TreeNode = memo(({
                   : 'opacity-0 group-hover:opacity-100 hover:bg-system-blue/10 dark:hover:bg-system-blue/20'
               }`}
               title={t.addChildJoint}
+              aria-label={t.addChildJoint}
             >
               <Plus size={12} />
             </button>
@@ -727,11 +839,13 @@ export const TreeNode = memo(({
         </div>
       </div>
 
-      {hasExpandableContent && isExpanded && (
+      {(isExpanded || isGeometryExpanded) && (
         <div className="relative ml-3">
-          <div className="absolute left-0 top-0 bottom-2 w-px bg-border-black" />
+          <div
+            className={`absolute left-0 top-0 bottom-2 w-[1.5px] rounded-full ${getTreeConnectorRailClass(isLinkConnectorHighlighted)}`}
+          />
 
-          {hasVisual && (
+          {isGeometryExpanded && hasVisual && (
             <div
               ref={visualRowRef}
               className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
@@ -747,10 +861,15 @@ export const TreeNode = memo(({
               }}
               onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'visual', objectIndex: 0 })}
               onMouseLeave={clearHover}
-              style={{ marginLeft: geometryRowIndent }}
+              style={{ marginLeft: `${geometryRowIndentPx}px` }}
               title={t.visualGeometry}
             >
-              <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+              <div
+                className={getTreeConnectorElbowClass(
+                  isVisualSelected || isVisualHovered || isVisualAttentionHighlighted
+                )}
+                style={getTreeConnectorElbowStyle(geometryRowIndentPx)}
+              />
               <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${(isVisualSelected || isVisualHovered || isVisualAttentionHighlighted) ? 'bg-emerald-500/15 dark:bg-emerald-400/15 border-emerald-500/20 dark:border-emerald-400/20' : 'bg-emerald-500/10 dark:bg-emerald-400/10 border-transparent'}`}>
                 <Shapes size={9} className={(isVisualSelected || isVisualHovered || isVisualAttentionHighlighted) ? 'text-emerald-700 dark:text-emerald-300' : 'text-emerald-500 dark:text-emerald-400'} />
               </div>
@@ -758,16 +877,18 @@ export const TreeNode = memo(({
                 {t.visualGeometry}
               </span>
               <button
+                type="button"
                 className={geometryVisibilityButtonClass(isVisualVisible)}
                 onClick={toggleVisualVisibility}
                 title={isVisualVisible ? t.hide : t.show}
+                aria-label={isVisualVisible ? t.hide : t.show}
               >
                 {isVisualVisible ? <Eye size={10} /> : <EyeOff size={10} />}
               </button>
             </div>
           )}
 
-          {link.collision?.type && link.collision.type !== GeometryType.NONE && (
+          {isGeometryExpanded && link.collision?.type && link.collision.type !== GeometryType.NONE && (
             <div
               ref={primaryCollisionRowRef}
               className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
@@ -783,10 +904,15 @@ export const TreeNode = memo(({
               }}
               onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex: 0 })}
               onMouseLeave={clearHover}
-              style={{ marginLeft: geometryRowIndent }}
+              style={{ marginLeft: `${geometryRowIndentPx}px` }}
               title={t.collision}
             >
-              <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+              <div
+                className={getTreeConnectorElbowClass(
+                  isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted
+                )}
+                style={getTreeConnectorElbowStyle(geometryRowIndentPx)}
+              />
               <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${(isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted) ? 'bg-amber-500/15 dark:bg-amber-400/15 border-amber-500/20 dark:border-amber-400/20' : 'bg-amber-500/10 dark:bg-amber-400/10 border-transparent'}`}>
                 <Shield size={9} className={(isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted) ? 'text-amber-700 dark:text-amber-300' : 'text-amber-500 dark:text-amber-400'} />
               </div>
@@ -794,16 +920,18 @@ export const TreeNode = memo(({
                 {t.collision}
               </span>
               <button
+                type="button"
                 className={geometryVisibilityButtonClass(isPrimaryCollisionVisible)}
                 onClick={togglePrimaryCollisionVisibility}
                 title={isPrimaryCollisionVisible ? t.hide : t.show}
+                aria-label={isPrimaryCollisionVisible ? t.hide : t.show}
               >
                 {isPrimaryCollisionVisible ? <Eye size={10} /> : <EyeOff size={10} />}
               </button>
             </div>
           )}
 
-          {visibleCollisionBodies.map(({ body, bodyIndex, objectIndex }, index) => {
+          {isGeometryExpanded && visibleCollisionBodies.map(({ body, bodyIndex, objectIndex }, index) => {
             const isCollisionBodyHovered = matchesSelection(
               hoveredSelection,
               { type: 'link', id: linkId, subType: 'collision', objectIndex }
@@ -835,10 +963,15 @@ export const TreeNode = memo(({
                 }}
                 onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex })}
                 onMouseLeave={clearHover}
-                style={{ marginLeft: geometryRowIndent }}
+                style={{ marginLeft: `${geometryRowIndentPx}px` }}
                 title={`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
               >
-                <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+                <div
+                  className={getTreeConnectorElbowClass(
+                    isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted
+                  )}
+                  style={getTreeConnectorElbowStyle(geometryRowIndentPx)}
+                />
                 <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${
                   (isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted)
                     ? 'bg-amber-500/15 dark:bg-amber-400/15 border-amber-500/20 dark:border-amber-400/20'
@@ -857,9 +990,11 @@ export const TreeNode = memo(({
                   {`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
                 </span>
                 <button
+                  type="button"
                   className={geometryVisibilityButtonClass(body.visible !== false)}
                   onClick={(event) => toggleCollisionBodyVisibility(event, bodyIndex)}
                   title={body.visible !== false ? t.hide : t.show}
+                  aria-label={body.visible !== false ? t.hide : t.show}
                 >
                   {body.visible !== false ? <Eye size={10} /> : <EyeOff size={10} />}
                 </button>
@@ -867,12 +1002,17 @@ export const TreeNode = memo(({
             );
           })}
 
-          {childJoints.map((joint) => {
+          {isExpanded && childJoints.map((joint) => {
             const isJointSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
             const isJointHovered = matchesSelection(hoveredSelection, { type: 'joint', id: joint.id });
             const isJointAttentionHighlighted = matchesSelection(attentionSelection, { type: 'joint', id: joint.id });
             const isEditingJoint = editingTarget?.type === 'joint' && editingTarget.id === joint.id;
             const jointTypeLabel = getJointTypeLabel(joint.type, t);
+            const JointTypeIcon = getJointTypeIcon(joint.type);
+            const isJointSubtreeHighlighted = isJointSelected
+              || isJointHovered
+              || isJointAttentionHighlighted
+              || (selectionBranchLinkIds?.has(joint.childLinkId) ?? false);
 
             return (
               <div key={joint.id} className="relative">
@@ -892,15 +1032,20 @@ export const TreeNode = memo(({
                   onMouseEnter={() => setHoveredSelection({ type: 'joint', id: joint.id })}
                   onMouseLeave={clearHover}
                   title={`${joint.name || joint.id} · ${jointTypeLabel}`}
-                  style={{ marginLeft: jointRowIndent }}
+                  style={{ marginLeft: `${jointRowIndentPx}px` }}
                 >
-                  <div className="absolute -left-2 top-1/2 w-2 h-px bg-border-black" />
+                  <div
+                    className={getTreeConnectorElbowClass(
+                      isJointSelected || isJointHovered || isJointAttentionHighlighted
+                    )}
+                    style={getTreeConnectorElbowStyle(jointRowIndentPx)}
+                  />
 
                   <div
                     className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
                       ${(isJointSelected || isJointHovered || isJointAttentionHighlighted) ? 'bg-orange-500/15 dark:bg-orange-400/15 border-orange-500/20 dark:border-orange-400/20' : 'bg-orange-500/10 dark:bg-orange-400/10 border-transparent'}`}
                   >
-                    <ArrowRightLeft
+                    <JointTypeIcon
                       size={10}
                       className={(isJointSelected || isJointHovered || isJointAttentionHighlighted) ? 'text-orange-700 dark:text-orange-300' : 'text-orange-600 dark:text-orange-300'}
                     />
@@ -936,15 +1081,6 @@ export const TreeNode = memo(({
                       >
                         {joint.name}
                       </span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold shrink-0 ${
-                          isJointSelected
-                            ? 'bg-orange-500/12 text-orange-700 dark:bg-orange-400/12 dark:text-orange-300'
-                            : 'bg-orange-500/10 text-orange-700 dark:bg-orange-400/10 dark:text-orange-300'
-                        }`}
-                      >
-                        {jointTypeLabel}
-                      </span>
                     </div>
                   )}
 
@@ -955,6 +1091,7 @@ export const TreeNode = memo(({
                       }`}
                     >
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(joint.childLinkId);
@@ -965,6 +1102,7 @@ export const TreeNode = memo(({
                             : 'hover:bg-element-hover'
                         }`}
                         title={t.deleteBranch}
+                        aria-label={t.deleteBranch}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -972,22 +1110,28 @@ export const TreeNode = memo(({
                   )}
                 </div>
 
-                <TreeNode
-                  linkId={joint.childLinkId}
-                  robot={robot}
-                  childJointsByParent={childJointsByParent}
-                  selectionBranchLinkIds={selectionBranchLinkIds}
-                  onSelect={onSelect}
-                  onSelectGeometry={onSelectGeometry}
-                  onFocus={onFocus}
-                  onAddChild={onAddChild}
-                  onAddCollisionBody={onAddCollisionBody}
-                  onDelete={onDelete}
-                  onUpdate={onUpdate}
-                  mode={mode}
-                  t={t}
-                  depth={depth + 1}
-                />
+                <div className="relative" style={{ marginLeft: `${jointRowIndentPx}px` }}>
+                  <div
+                    className={`absolute left-0 top-0 bottom-2 w-[1.5px] rounded-full ${getTreeConnectorRailClass(isJointSubtreeHighlighted)}`}
+                  />
+                  <TreeNode
+                    linkId={joint.childLinkId}
+                    robot={robot}
+                    showGeometryDetailsByDefault={showGeometryDetailsByDefault}
+                    childJointsByParent={childJointsByParent}
+                    selectionBranchLinkIds={selectionBranchLinkIds}
+                    onSelect={onSelect}
+                    onSelectGeometry={onSelectGeometry}
+                    onFocus={onFocus}
+                    onAddChild={onAddChild}
+                    onAddCollisionBody={onAddCollisionBody}
+                    onDelete={onDelete}
+                    onUpdate={onUpdate}
+                    mode={mode}
+                    t={t}
+                    depth={depth + 1}
+                  />
+                </div>
               </div>
             );
           })}

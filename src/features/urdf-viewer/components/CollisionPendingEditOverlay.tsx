@@ -65,7 +65,7 @@ export const CollisionPendingEditOverlay: React.FC<CollisionPendingEditOverlayPr
                         onChange={onValueChange}
                         onKeyDown={onKeyDown}
                         autoFocus
-                        className="w-20 px-1.5 py-0.5 text-xs font-mono bg-white/90 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-600 rounded text-slate-800 dark:text-white focus:outline-none focus:border-blue-500 shadow"
+                        className="w-20 rounded border border-border-strong bg-panel-bg px-1.5 py-0.5 text-xs font-mono text-text-primary shadow-sm focus:border-system-blue focus:outline-none"
                     />
                     <span className="text-[10px] text-slate-500 dark:text-slate-400">
                         {pendingEdit.isRotate ? '°' : 'm'} ({deltaDisplay})

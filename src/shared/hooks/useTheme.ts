@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useUIStore } from '@/store/uiStore';
-import { Theme } from '@/types';
 
 /**
  * Hook to get the effective theme (light or dark)

@@ -12,11 +12,9 @@ import {
   Upload,
   Check,
   Globe,
-  ScanSearch,
   Info,
   ChevronDown,
   FileText,
-  RefreshCw,
   Sun,
   Moon,
   Monitor,
@@ -31,9 +29,11 @@ import {
   Folder,
   LayoutGrid,
 } from 'lucide-react';
-import { useUIStore, useCanUndo, useCanRedo, useRobotStore, useSelectionStore } from '@/store';
+import { useUIStore, useSelectionStore } from '@/store';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
+import { ToolboxMenu } from './header/ToolboxMenu';
+import { useActiveHistory } from '../hooks/useActiveHistory';
 
 /**
  * Unified Header Button Component
@@ -129,11 +129,7 @@ export function Header({
   const activeMenu = useUIStore((state) => state.activeMenu);
   const setActiveMenu = useUIStore((state) => state.setActiveMenu);
 
-  // Robot store
-  const undo = useRobotStore((state) => state.undo);
-  const redo = useRobotStore((state) => state.redo);
-  const canUndo = useCanUndo();
-  const canRedo = useCanRedo();
+  const { undo, redo, canUndo, canRedo } = useActiveHistory();
 
   const t = translations[lang];
 
@@ -327,18 +323,6 @@ export function Header({
                     </span>
                     <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Shift+Z</span>
                   </button>
-                  <div className="h-px bg-element-bg dark:bg-border-black my-1" />
-                  <button
-                    onClick={() => {
-                      onOpenCollisionOptimizer();
-                      setActiveMenu(null);
-                    }}
-                    aria-label={t.collisionOptimizerDialog}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
-                  >
-                    <RefreshCw className="w-4 h-4 text-slate-400" />
-                    {t.collisionOptimizerDialog}
-                  </button>
                 </div>
               </>
             )}
@@ -356,64 +340,12 @@ export function Header({
             </HeaderButton>
 
             {activeMenu === 'toolbox' && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 p-2">
-                  <div className="space-y-1">
-                    <button
-                      onClick={() => { setActiveMenu(null); onOpenAI(); }}
-                      className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-element-bg dark:hover:bg-element-bg transition-all group"
-                    >
-                      <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent text-system-blue dark:bg-element-bg dark:text-system-blue shrink-0">
-                        <ScanSearch className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div className="text-xs font-medium text-text-primary dark:text-text-secondary">{t.aiAssistant}</div>
-                        <div className="text-[10px] text-text-tertiary dark:text-text-tertiary">{t.aiAssistantDesc}</div>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => { setActiveMenu(null); window.open('https://motion-tracking.axell.top/', '_blank'); }}
-                      className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-element-bg dark:hover:bg-element-bg transition-all group"
-                    >
-                      <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent text-emerald-500 dark:bg-element-bg dark:text-emerald-400 shrink-0">
-                        <RefreshCw className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div className="text-xs font-medium text-text-primary dark:text-text-secondary">{t.robotRedirect}</div>
-                        <div className="text-[10px] text-text-tertiary dark:text-text-tertiary">{t.motionTrackingDesc}</div>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => { setActiveMenu(null); window.open('https://motion-editor.cyoahs.dev/', '_blank'); }}
-                      className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-element-bg dark:hover:bg-element-bg transition-all group"
-                    >
-                      <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent text-violet-500 dark:bg-element-bg dark:text-violet-400 shrink-0">
-                        <Activity className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div className="text-xs font-medium text-text-primary dark:text-text-secondary">{t.trajectoryEditing}</div>
-                        <div className="text-[10px] text-text-tertiary dark:text-text-tertiary">{t.trajectoryEditingDesc}</div>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => { setActiveMenu(null); window.open('https://engine.bridgedp.com/', '_blank'); }}
-                      className="w-full flex items-center gap-3 px-2.5 py-2 rounded-md hover:bg-element-bg dark:hover:bg-element-bg transition-all group"
-                    >
-                      <div className="w-9 h-9 rounded-lg overflow-hidden border border-border-black bg-white dark:bg-element-bg p-1.5 shrink-0">
-                        <img src="/logos/bridgedp-logo.png" alt="BridgeDP" className="w-full h-full object-contain" />
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div className="text-xs font-medium text-text-primary dark:text-text-secondary">{t.bridgedpEngine}</div>
-                        <div className="text-[10px] text-text-tertiary dark:text-text-tertiary">{t.bridgedpEngineDesc}</div>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-              </>
+              <ToolboxMenu
+                t={t}
+                onClose={() => setActiveMenu(null)}
+                onOpenAI={onOpenAI}
+                onOpenCollisionOptimizer={onOpenCollisionOptimizer}
+              />
             )}
           </div>
 

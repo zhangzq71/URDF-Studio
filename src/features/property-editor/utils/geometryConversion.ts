@@ -15,8 +15,8 @@ const _tempVec3B = new THREE.Vector3();
 const _tempVec3C = new THREE.Vector3();
 const _tempQuat = new THREE.Quaternion();
 const _tempQuatB = new THREE.Quaternion();
-const _tempEuler = new THREE.Euler();
-const _tempEulerB = new THREE.Euler();
+const _tempEuler = new THREE.Euler(0, 0, 0, 'ZYX');
+const _tempEulerB = new THREE.Euler(0, 0, 0, 'ZYX');
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const MAX_MESH_ANALYSIS_POINTS = 4096;
 const DEFAULT_MESH_SURFACE_POINT_LIMIT = 1536;
@@ -605,32 +605,6 @@ function choosePreferredInterval(intervals: ScalarInterval[]): ScalarInterval | 
 
     return best;
   }, null);
-}
-
-function isPreferredCapsuleMetrics(
-  candidateVolume: number,
-  candidateLength: number,
-  incumbentVolume: number,
-  incumbentLength: number
-): boolean {
-  const volumeTolerance = Math.max(incumbentVolume * 0.03, 1e-8);
-
-  if (candidateVolume < incumbentVolume - volumeTolerance) {
-    return true;
-  }
-
-  return Math.abs(candidateVolume - incumbentVolume) <= volumeTolerance
-    && candidateLength < incumbentLength - 1e-8;
-}
-
-function isPreferredCapsuleFit(candidate: PrimitiveFit, incumbent: PrimitiveFit): boolean {
-  if (isPreferredCapsuleMetrics(candidate.volume, candidate.length, incumbent.volume, incumbent.length)) {
-    return true;
-  }
-
-  return Math.abs(candidate.volume - incumbent.volume) <= Math.max(incumbent.volume * 0.03, 1e-8)
-    && Math.abs(candidate.length - incumbent.length) <= 1e-8
-    && candidate.radius < incumbent.radius - 1e-8;
 }
 
 function rotateLocalVectorByOrigin(
@@ -2097,7 +2071,7 @@ function alignOriginToPrimaryAxis(
   _tempEuler.set(origin.rpy.r, origin.rpy.p, origin.rpy.y);
   _tempQuat.setFromEuler(_tempEuler);
   _tempQuat.multiply(getAxisAlignmentQuaternion(primaryAxis));
-  _tempEulerB.setFromQuaternion(_tempQuat, 'XYZ');
+  _tempEulerB.setFromQuaternion(_tempQuat, 'ZYX');
 
   return {
     xyz: {
@@ -2120,7 +2094,7 @@ function alignOriginToAxis(
   _tempEuler.set(origin.rpy.r, origin.rpy.p, origin.rpy.y);
   _tempQuat.setFromEuler(_tempEuler);
   _tempQuat.multiply(getDirectionalAlignmentQuaternion(axis));
-  _tempEulerB.setFromQuaternion(_tempQuat, 'XYZ');
+  _tempEulerB.setFromQuaternion(_tempQuat, 'ZYX');
 
   return {
     xyz: {

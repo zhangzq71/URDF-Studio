@@ -13,6 +13,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
+import { getTreeDisplayRootLinkIds } from '@/core/robot';
 import type { TranslationKeys } from '@/shared/i18n';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import type { AppMode, AssemblyState, RobotState } from '@/types';
@@ -22,6 +23,7 @@ import { TreeNode } from './TreeNode';
 export interface AssemblyTreeViewProps {
   assemblyState: AssemblyState;
   robot: RobotState;
+  showGeometryDetailsByDefault?: boolean;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
   onFocus?: (id: string) => void;
@@ -41,6 +43,7 @@ export interface AssemblyTreeViewProps {
 export const AssemblyTreeView = memo(({
   assemblyState,
   robot,
+  showGeometryDetailsByDefault = false,
   onSelect,
   onSelectGeometry,
   onFocus,
@@ -267,20 +270,24 @@ export const AssemblyTreeView = memo(({
 
                   {isExpanded && (
                     <div className="ml-2">
-                      <TreeNode
-                        linkId={component.robot.rootLinkId}
-                        robot={robot}
-                        onSelect={onSelect}
-                        onSelectGeometry={onSelectGeometry}
-                        onFocus={onFocus}
-                        onAddChild={onAddChild}
-                        onAddCollisionBody={onAddCollisionBody}
-                        onDelete={onDelete}
-                        onUpdate={onUpdate}
-                        mode={mode}
-                        t={t}
-                        depth={0}
-                      />
+                      {getTreeDisplayRootLinkIds(component.robot).map((treeRootLinkId) => (
+                        <TreeNode
+                          key={treeRootLinkId}
+                          linkId={treeRootLinkId}
+                          robot={robot}
+                          showGeometryDetailsByDefault={showGeometryDetailsByDefault}
+                          onSelect={onSelect}
+                          onSelectGeometry={onSelectGeometry}
+                          onFocus={onFocus}
+                          onAddChild={onAddChild}
+                          onAddCollisionBody={onAddCollisionBody}
+                          onDelete={onDelete}
+                          onUpdate={onUpdate}
+                          mode={mode}
+                          t={t}
+                          depth={0}
+                        />
+                      ))}
                     </div>
                   )}
                 </div>

@@ -1,6 +1,6 @@
 /**
  * RobotThumbnail3D - Mini 3D preview for URDF Gallery
- * Pure real-time rendering with continuous rotation
+ * Static preview to avoid multiple thumbnails saturating the render loop
  */
 
 import React, { Suspense, useRef, useEffect, useState } from 'react';
@@ -20,7 +20,7 @@ interface RobotThumbnail3DProps {
 }
 
 /**
- * RobotPreviewModel - Loads and displays URDF model with continuous rotation
+ * RobotPreviewModel - Loads and displays a static URDF preview
  */
 function RobotPreviewModel({ 
   urdfPath,
@@ -35,7 +35,6 @@ function RobotPreviewModel({
   const [loading, setLoading] = useState(true);
   const [fullyLoaded, setFullyLoaded] = useState(false);
   const [error, setError] = useState(false);
-  const groupRef = useRef<THREE.Group>(null);
   const { invalidate, camera } = useThree();
   const loadedRef = useRef(false);
   const robotRef = useRef<THREE.Object3D | null>(null);
@@ -137,8 +136,8 @@ function RobotPreviewModel({
                   mat.metalness = 0.1;
                 }
               }
-              child.castShadow = true;
-              child.receiveShadow = true;
+              child.castShadow = false;
+              child.receiveShadow = false;
             }
           });
 
@@ -258,13 +257,6 @@ function RobotPreviewModel({
     };
   }, [urdfPath, urdfFile, invalidate, camera]);
 
-  // Continuous rotation
-  useFrame((_, delta) => {
-    if (groupRef.current && robot && fullyLoaded) {
-      groupRef.current.rotation.z += delta * 0.5;
-    }
-  });
-
   if (error) {
     return null;
   }
@@ -276,7 +268,7 @@ function RobotPreviewModel({
   return (
     <>
       <ReferenceGrid theme={theme} />
-      <group ref={groupRef}>
+      <group>
         <primitive object={robot} />
       </group>
     </>
@@ -360,9 +352,8 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({
       {isVisible ? (
         <Canvas
           camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 50 }}
-          shadows
-          frameloop="always"
-          dpr={[1, 1.5]}
+          frameloop="demand"
+          dpr={1}
           gl={{
             antialias: true,
             toneMapping: THREE.ACESFilmicToneMapping,
@@ -372,7 +363,7 @@ export const RobotThumbnail3D: React.FC<RobotThumbnail3DProps> = ({
           onError={() => setHasError(true)}
         >
           <color attach="background" args={[theme === 'light' ? '#f8f9fa' : '#000000']} />
-          <SceneLighting />
+          <SceneLighting theme={theme} enableShadows={false} />
           <Environment
             files="/potsdamer_platz_1k.hdr"
             environmentIntensity={theme === 'light' ? 0.8 : 1.0}

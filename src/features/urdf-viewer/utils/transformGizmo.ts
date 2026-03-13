@@ -1,23 +1,42 @@
 import * as THREE from 'three';
 
 type TransformGizmoRoot = THREE.Object3D & {
+    isTransformControlsGizmo?: boolean;
     gizmo?: Record<string, THREE.Object3D>;
     picker?: Record<string, THREE.Object3D>;
     helper?: Record<string, THREE.Object3D>;
+};
+
+const resolveTransformGizmoRoot = (controls: unknown) => {
+    const candidate = controls as {
+        gizmo?: THREE.Object3D;
+        children?: THREE.Object3D[];
+    } | null;
+
+    if (candidate?.gizmo && (candidate.gizmo as TransformGizmoRoot).isTransformControlsGizmo) {
+        return candidate.gizmo as TransformGizmoRoot;
+    }
+
+    const childGizmo = candidate?.children?.find((child) => (child as TransformGizmoRoot).isTransformControlsGizmo);
+    if (childGizmo) {
+        return childGizmo as TransformGizmoRoot;
+    }
+
+    return candidate?.children?.[0] as TransformGizmoRoot | undefined;
 };
 
 const AXIS_NAMES = new Set(['X', 'Y', 'Z']);
 const FREE_ROTATE_NAMES = new Set(['E', 'XYZE']);
 const FREE_TRANSLATE_NAMES = new Set(['XY', 'YZ', 'XZ', 'XYZ']);
 const TRANSLATE_PICKER_REMOVE_NAMES = new Set(['XY', 'YZ', 'XZ', 'XYZ']);
-const TRANSLATE_ARROW_RADIUS = 0.075;
-const TRANSLATE_ARROW_HEIGHT = 0.24;
-const TRANSLATE_TIP_KNOB_RADIUS = 0.08;
-const TRANSLATE_ARROW_HIT_RADIUS = 0.22;
-const ROTATE_KNOB_RADIUS = 0.065;
-const ROTATE_KNOB_HIT_RADIUS = 0.1;
-const THICK_TRANSLATE_SHAFT_RADIUS = 0.028;
-const THICK_ROTATE_ARC_RADIUS = 0.014;
+const TRANSLATE_ARROW_RADIUS = 0.11;
+const TRANSLATE_ARROW_HEIGHT = 0.34;
+const TRANSLATE_TIP_KNOB_RADIUS = 0.13;
+const TRANSLATE_ARROW_HIT_RADIUS = 0.26;
+const ROTATE_KNOB_RADIUS = 0.11;
+const ROTATE_KNOB_HIT_RADIUS = 0.15;
+const THICK_TRANSLATE_SHAFT_RADIUS = 0.075;
+const THICK_ROTATE_ARC_RADIUS = 0.06;
 const TRANSLATE_AXIS_PICKER_SCALE = { x: 1.35, y: 1.8, z: 1.35 } as const;
 const TRANSLATE_PLANE_PICKER_SCALE = 0.68;
 const ROTATE_PICKER_REMOVE_NAMES = new Set(['X', 'Y', 'Z', 'E', 'XYZE']);
@@ -38,6 +57,10 @@ const normalizeVisibleGizmoMaterials = (root?: TransformGizmoRoot) => {
     const groups = [root.gizmo.translate, root.gizmo.rotate, root.gizmo.scale].filter(Boolean) as THREE.Object3D[];
     for (const group of groups) {
         group.traverse((node) => {
+            if (node.userData?.urdfHideStockAxisLine) {
+                node.visible = false;
+            }
+
             const renderOrder = typeof node.userData?.urdfRenderOrder === 'number'
                 ? node.userData.urdfRenderOrder
                 : GIZMO_RENDER_ORDER;
@@ -221,6 +244,31 @@ const removeHandlesByName = (group: THREE.Object3D | undefined, names: Set<strin
         node.parent?.remove(node);
         disposeObjectResources(node);
     }
+};
+
+const hideStockAxisLines = (group?: THREE.Object3D) => {
+    if (!group) return;
+
+    group.traverse((node) => {
+        const line = node as THREE.Line;
+        if (!line.isLine || !AXIS_NAMES.has(line.name)) return;
+
+        line.userData.urdfHideStockAxisLine = true;
+        line.visible = false;
+
+        const material = (line as any).material;
+        if (!material) return;
+
+        const materials = Array.isArray(material) ? material : [material];
+        for (const mat of materials) {
+            if (!mat) continue;
+            mat.transparent = true;
+            mat.opacity = 0;
+            mat.depthTest = false;
+            mat.depthWrite = false;
+            mat.needsUpdate = true;
+        }
+    });
 };
 
 const enhanceTranslateGizmo = (group?: THREE.Object3D) => {
@@ -742,7 +790,7 @@ const tuneRotatePickers = (group?: THREE.Object3D) => {
 };
 
 export const enhanceTransformControlsGizmo = (controls: unknown) => {
-    const root = (controls as { children?: THREE.Object3D[] } | null)?.children?.[0] as TransformGizmoRoot | undefined;
+    const root = resolveTransformGizmoRoot(controls);
     if (!root || root.userData.urdfStudioGizmoEnhanced) return;
 
     const translateGizmo = root.gizmo?.translate;
@@ -772,6 +820,8 @@ export const enhanceTransformControlsGizmo = (controls: unknown) => {
     addTranslateArrowTipPickers(translatePicker, translateTips);
     tuneTranslatePickers(translatePicker);
     tuneRotatePickers(rotatePicker);
+    hideStockAxisLines(translateGizmo);
+    hideStockAxisLines(rotateGizmo);
     normalizeVisibleGizmoMaterials(root);
     patchGizmoUpdateMatrixWorld(root);
 

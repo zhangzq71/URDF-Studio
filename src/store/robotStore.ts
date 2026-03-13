@@ -24,6 +24,17 @@ interface HistoryState {
   future: RobotData[];
 }
 
+interface ChangeLogEntry {
+  id: string;
+  timestamp: string;
+  label: string;
+}
+
+interface UpdateOptions {
+  skipHistory?: boolean;
+  label?: string;
+}
+
 interface RobotActions {
   // Robot name
   setName: (name: string) => void;
@@ -34,14 +45,14 @@ interface RobotActions {
 
   // Link operations
   addLink: (link: UrdfLink) => void;
-  updateLink: (id: string, updates: Partial<UrdfLink>) => void;
+  updateLink: (id: string, updates: Partial<UrdfLink>, options?: UpdateOptions) => void;
   deleteLink: (linkId: string) => void;
   setLinkVisibility: (id: string, visible: boolean) => void;
   setAllLinksVisibility: (visible: boolean) => void;
 
   // Joint operations
   addJoint: (joint: UrdfJoint) => void;
-  updateJoint: (id: string, updates: Partial<UrdfJoint>) => void;
+  updateJoint: (id: string, updates: Partial<UrdfJoint>, options?: UpdateOptions) => void;
   deleteJoint: (jointId: string) => void;
   setJointAngle: (jointName: string, angle: number) => void;
 
@@ -55,6 +66,7 @@ interface RobotActions {
   canUndo: () => boolean;
   canRedo: () => boolean;
   clearHistory: () => void;
+  pushHistorySnapshot: (snapshot: RobotData, label: string) => void;
 
   // Computed values
   getJointAngles: () => Record<string, number>;
@@ -82,28 +94,43 @@ const INITIAL_ROBOT_DATA: RobotData = {
 
 // Maximum history entries
 const MAX_HISTORY = 50;
+const MAX_ACTIVITY_LOG = 200;
 
-export const useRobotStore = create<RobotData & RobotActions & { _history: HistoryState }>()(
+const cloneRobotData = (data: RobotData): RobotData => structuredClone(data);
+const createChangeLogEntry = (label: string): ChangeLogEntry => ({
+  id: `robot_log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  timestamp: new Date().toISOString(),
+  label,
+});
+
+export const useRobotStore = create<RobotData & RobotActions & {
+  _history: HistoryState;
+  _activity: ChangeLogEntry[];
+}>()(
   immer((set, get) => {
-    // Helper to save current state to history
-    const saveToHistory = () => {
-      const { name, links, joints, rootLinkId, materials, _history } = get();
-      const currentData: RobotData = { name, links, joints, rootLinkId, materials };
-
+    const appendHistorySnapshot = (snapshot: RobotData, label: string) => {
       set((state) => {
-        state._history.past = [...state._history.past, currentData].slice(-MAX_HISTORY);
+        state._history.past = [...state._history.past, cloneRobotData(snapshot)].slice(-MAX_HISTORY);
         state._history.future = [];
+        state._activity = [...state._activity, createChangeLogEntry(label)].slice(-MAX_ACTIVITY_LOG);
       });
+    };
+
+    // Helper to save current state to history
+    const saveToHistory = (label: string) => {
+      const { name, links, joints, rootLinkId, materials } = get();
+      appendHistorySnapshot({ name, links, joints, rootLinkId, materials }, label);
     };
 
     return {
       // Initial state
       ...INITIAL_ROBOT_DATA,
       _history: { past: [], future: [] },
+      _activity: [],
 
       // Robot name
       setName: (name) => {
-        saveToHistory();
+        saveToHistory('Rename robot');
         set((state) => {
           state.name = name;
         });
@@ -111,7 +138,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
 
       // Full robot data
       setRobot: (data) => {
-        saveToHistory();
+        saveToHistory('Load robot state');
         set((state) => {
           state.name = data.name;
           state.links = data.links;
@@ -135,14 +162,16 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
 
       // Link operations
       addLink: (link) => {
-        saveToHistory();
+        saveToHistory('Add link');
         set((state) => {
           state.links[link.id] = link;
         });
       },
 
-      updateLink: (id, updates) => {
-        saveToHistory();
+      updateLink: (id, updates, options) => {
+        if (!options?.skipHistory) {
+          saveToHistory(options?.label ?? 'Update link');
+        }
         set((state) => {
           if (state.links[id]) {
             Object.assign(state.links[id], updates);
@@ -152,7 +181,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
 
       deleteLink: (linkId) => {
         if (linkId === get().rootLinkId) return; // Cannot delete root
-        saveToHistory();
+        saveToHistory('Delete link');
         set((state) => {
           delete state.links[linkId];
           // Also delete joints connected to this link
@@ -166,7 +195,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
       },
 
       setLinkVisibility: (id, visible) => {
-        saveToHistory();
+        saveToHistory('Toggle link visibility');
         set((state) => {
           if (state.links[id]) {
             state.links[id].visible = visible;
@@ -175,7 +204,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
       },
 
       setAllLinksVisibility: (visible) => {
-        saveToHistory();
+        saveToHistory('Toggle all link visibility');
         set((state) => {
           Object.keys(state.links).forEach((id) => {
             state.links[id].visible = visible;
@@ -185,14 +214,16 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
 
       // Joint operations
       addJoint: (joint) => {
-        saveToHistory();
+        saveToHistory('Add joint');
         set((state) => {
           state.joints[joint.id] = joint;
         });
       },
 
-      updateJoint: (id, updates) => {
-        saveToHistory();
+      updateJoint: (id, updates, options) => {
+        if (!options?.skipHistory) {
+          saveToHistory(options?.label ?? 'Update joint');
+        }
         set((state) => {
           if (state.joints[id]) {
             Object.assign(state.joints[id], updates);
@@ -201,7 +232,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
       },
 
       deleteJoint: (jointId) => {
-        saveToHistory();
+        saveToHistory('Delete joint');
         set((state) => {
           delete state.joints[jointId];
         });
@@ -255,7 +286,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
           },
         };
 
-        saveToHistory();
+        saveToHistory('Add child subtree');
         set((state) => {
           state.links[newLinkId] = newLink;
           state.joints[newJointId] = newJoint;
@@ -290,7 +321,7 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
 
         collect(linkId, new Set<string>());
 
-        saveToHistory();
+        saveToHistory('Delete subtree');
         set((state) => {
           toDeleteLinks.forEach((id) => delete state.links[id]);
           toDeleteJoints.forEach((id) => delete state.joints[id]);
@@ -302,8 +333,8 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
         const { _history, name, links, joints, rootLinkId, materials } = get();
         if (_history.past.length === 0) return;
 
-        const previous = _history.past[_history.past.length - 1];
-        const currentData: RobotData = { name, links, joints, rootLinkId, materials };
+        const previous = cloneRobotData(_history.past[_history.past.length - 1]);
+        const currentData = cloneRobotData({ name, links, joints, rootLinkId, materials });
 
         set((state) => {
           state.name = previous.name;
@@ -311,8 +342,8 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
           state.joints = previous.joints;
           state.rootLinkId = previous.rootLinkId;
           state.materials = previous.materials;
-          state._history.past = state._history.past.slice(0, -1);
-          state._history.future = [currentData, ...state._history.future];
+          state._history.past = state._history.past.slice(-(MAX_HISTORY + 1), -1);
+          state._history.future = [currentData, ...state._history.future].slice(0, MAX_HISTORY);
         });
       },
 
@@ -320,8 +351,8 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
         const { _history, name, links, joints, rootLinkId, materials } = get();
         if (_history.future.length === 0) return;
 
-        const next = _history.future[0];
-        const currentData: RobotData = { name, links, joints, rootLinkId, materials };
+        const next = cloneRobotData(_history.future[0]);
+        const currentData = cloneRobotData({ name, links, joints, rootLinkId, materials });
 
         set((state) => {
           state.name = next.name;
@@ -329,8 +360,8 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
           state.joints = next.joints;
           state.rootLinkId = next.rootLinkId;
           state.materials = next.materials;
-          state._history.past = [...state._history.past, currentData];
-          state._history.future = state._history.future.slice(1);
+          state._history.past = [...state._history.past, currentData].slice(-MAX_HISTORY);
+          state._history.future = state._history.future.slice(1, MAX_HISTORY + 1);
         });
       },
 
@@ -341,6 +372,10 @@ export const useRobotStore = create<RobotData & RobotActions & { _history: Histo
         set((state) => {
           state._history = { past: [], future: [] };
         });
+      },
+
+      pushHistorySnapshot: (snapshot, label) => {
+        appendHistorySnapshot(snapshot, label);
       },
 
       // Computed values

@@ -3,16 +3,14 @@
  * Handles global side effects like keyboard shortcuts and selection cleanup
  */
 import { useEffect } from 'react';
-import { useRobotStore, useSelectionStore, useCanUndo, useCanRedo, useUIStore } from '@/store';
+import { useRobotStore, useSelectionStore, useUIStore } from '@/store';
+import { useActiveHistory } from './useActiveHistory';
 
 /**
  * Hook for keyboard shortcuts (undo/redo)
  */
 export function useKeyboardShortcuts() {
-  const undo = useRobotStore((state) => state.undo);
-  const redo = useRobotStore((state) => state.redo);
-  const canUndo = useCanUndo();
-  const canRedo = useCanRedo();
+  const { undo, redo, canUndo, canRedo } = useActiveHistory();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

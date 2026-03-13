@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react';
+import { memo, useCallback, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { GeometryType, UrdfLink, UrdfVisual } from '@/types';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
@@ -60,12 +60,21 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   }
 
   const { type, dimensions, color, origin, meshPath } = data;
+  // Keep Visualizer origin handling aligned with URDF/Viewer quaternion conversion.
+  const originRotation = origin
+    ? new THREE.Euler(origin.rpy.r, origin.rpy.p, origin.rpy.y, 'ZYX')
+    : undefined;
 
   // IF TYPE IS NONE, RENDER NOTHING
   if (type === GeometryType.NONE) return null;
 
-  // Create a unique key based on geometry properties
-  const geometryKey = `${isCollision ? 'col' : 'vis'}-${geometryId || 'primary'}-${type}-${dimensions.x}-${dimensions.y}-${dimensions.z}-${meshPath || 'none'}`;
+  // Material cache key: includes all visual properties. Dimensions are intentionally excluded
+  // because they don't affect material appearance (they're applied to geometry args instead).
+  const geometryKey = `${isCollision ? 'col' : 'vis'}-${geometryId || 'primary'}-${type}-${meshPath || 'none'}`;
+  // Group key: only changes when geometry TYPE or MESH PATH changes (requiring full remount).
+  // Dimension changes are handled in-place by R3F and must NOT change this key, otherwise
+  // React unmounts/remounts the group on every +/- press causing a one-frame blank flicker.
+  const groupKey = geometryKey;
 
   const isSkeleton = mode === 'skeleton';
   const geometrySubType = isCollision ? 'collision' : 'visual';
@@ -135,7 +144,6 @@ export const GeometryRenderer = memo(function GeometryRenderer({
 
   // Use cached material to avoid shader recompilation
   const material = getCachedMaterial({
-    key: geometryKey,
     isSkeleton,
     finalColor,
     matOpacity,
@@ -166,56 +174,56 @@ export const GeometryRenderer = memo(function GeometryRenderer({
     position: origin
       ? ([origin.xyz.x, origin.xyz.y, origin.xyz.z] as [number, number, number])
       : undefined,
-    rotation: origin
-      ? ([origin.rpy.r, origin.rpy.p, origin.rpy.y] as [number, number, number])
-      : undefined,
+    rotation: originRotation,
     ref: isCollision ? setCollisionRef : setVisualRef,
     userData: {
       geometryRole: isCollision ? 'collision' : 'visual',
     },
   };
 
-  let geometryNode;
+  let geometryNode: ReactNode;
   const radialSegments = isSkeleton ? 8 : 32;
   const boxSegments = isSkeleton ? 1 : 2;
   // For cylinder, we need to rotate to align with Z-up
   let meshRotation: [number, number, number] = [0, 0, 0];
 
+  // Three.js best practice (threejs-geometry skill): create geometry at unit size
+  // and apply dimensions via mesh.scale. This avoids disposing + recreating
+  // BufferGeometry objects on every dimension change, eliminating flicker when
+  // the user continuously presses +/- to resize collision bodies.
   if (type === GeometryType.BOX) {
-    // Box dimensions: x=width (along X), y=depth (along Y), z=height (along Z)
+    // Unit box (1×1×1) scaled to target dimensions
     geometryNode = (
-      <mesh>
-        <boxGeometry args={[dimensions.x, dimensions.y, dimensions.z, boxSegments, boxSegments, boxSegments]} />
+      <mesh scale={[dimensions.x, dimensions.y, dimensions.z]}>
+        <boxGeometry args={[1, 1, 1, boxSegments, boxSegments, boxSegments]} />
         <primitive object={material} attach="material" />
       </mesh>
     );
   } else if (type === GeometryType.CYLINDER) {
-    // Three.js CylinderGeometry is Y-axis aligned by default (extends along +Y)
-    // Our scene uses Z-up coordinate system
-    // To align cylinder along +Z: rotate -90 degrees around X axis
+    // Unit cylinder (radius=1, height=1) scaled to target dimensions.
+    // Rotated -90° around X to align with Z-up coordinate system.
     meshRotation = [-Math.PI / 2, 0, 0];
-    // args: [radiusTop, radiusBottom, height, radialSegments]
-    // dimensions.x = radius, dimensions.y = height/length
+    // scale: X/Z = radius, Y = height
     geometryNode = (
-      <mesh rotation={meshRotation}>
-        <cylinderGeometry args={[dimensions.x, dimensions.x, dimensions.y, radialSegments, 1]} />
+      <mesh rotation={meshRotation} scale={[dimensions.x, dimensions.y, dimensions.z || dimensions.x]}>
+        <cylinderGeometry args={[1, 1, 1, radialSegments, 1]} />
         <primitive object={material} attach="material" />
       </mesh>
     );
   } else if (type === GeometryType.SPHERE) {
+    // Unit sphere (radius=1) uniformly scaled
+    const r = dimensions.x;
     geometryNode = (
-      <mesh>
-        <sphereGeometry args={[dimensions.x, radialSegments, radialSegments]} />
+      <mesh scale={[r, r, r]}>
+        <sphereGeometry args={[1, radialSegments, radialSegments]} />
         <primitive object={material} attach="material" />
       </mesh>
     );
   } else if (type === GeometryType.CAPSULE) {
-    // Three.js CapsuleGeometry is Y-axis aligned by default
-    // Rotate -90 degrees around X axis to align with Z-up coordinate system
+    // Capsule shape depends on the radius-to-length ratio, so the geometry
+    // topology changes with each resize — must recreate args. This is expected
+    // for capsule but rare compared to box/sphere/cylinder.
     meshRotation = [-Math.PI / 2, 0, 0];
-    // args: [radius, length, capSegments, radialSegments]
-    // dimensions.x = radius, dimensions.y = total length (including caps)
-    // CapsuleGeometry length is the cylindrical section only, so subtract the sphere caps
     const cylinderLength = Math.max(0, dimensions.y - 2 * dimensions.x);
     geometryNode = (
       <mesh rotation={meshRotation}>
@@ -267,7 +275,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   }
 
   return (
-    <group key={geometryKey} {...wrapperProps}>
+    <group key={groupKey} {...wrapperProps}>
       {geometryNode}
     </group>
   );

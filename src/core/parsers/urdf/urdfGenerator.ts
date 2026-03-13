@@ -3,7 +3,7 @@
  * Generates URDF XML format from RobotState
  */
 
-import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState, RobotData } from '@/types';
+import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
@@ -46,6 +46,7 @@ const generateCollisionElement = (
   rotStr: (v: { r: number; p: number; y: number }) => string,
   formatShape: (n: number) => string,
   exportRobotName: string,
+  useRelativePaths: boolean = false,
 ): string => {
   if (!collision || collision.type === GeometryType.NONE) return '';
 
@@ -64,7 +65,9 @@ const generateCollisionElement = (
     xml += `        <capsule radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
   } else if (collision.type === GeometryType.MESH) {
     const meshPath = collision.meshPath ? normalizeMeshPathForExport(collision.meshPath) : 'part_collision.stl';
-    const filename = `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
+    const filename = useRelativePaths
+      ? `meshes/${meshPath || 'part_collision.stl'}`
+      : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
     xml += `        <mesh filename="${filename}" />\n`;
   }
   xml += `      </geometry>\n`;
@@ -73,13 +76,22 @@ const generateCollisionElement = (
   return xml;
 };
 
-export const generateAssemblyURDF = (assembly: AssemblyState, extended: boolean = false): string => {
+export interface UrdfGeneratorOptions {
+  extended?: boolean;
+  useRelativePaths?: boolean;
+}
+
+export const generateAssemblyURDF = (assembly: AssemblyState, options: UrdfGeneratorOptions = {}): string => {
   const mergedData = mergeAssembly(assembly);
-  return generateURDF(mergedData as unknown as RobotState, extended);
+  return generateURDF(mergedData as unknown as RobotState, options);
 };
 
-export const generateURDF = (robot: RobotState, extended: boolean = false): string => {
-  const { name, links, joints, rootLinkId } = robot;
+export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | boolean = false): string => {
+  // Backward compat: accept boolean as legacy `extended` param
+  const opts: UrdfGeneratorOptions = typeof options === 'boolean' ? { extended: options } : options;
+  const extended = opts.extended ?? false;
+  const useRelativePaths = opts.useRelativePaths ?? false;
+  const { name, links, joints } = robot;
   const exportRobotName = name?.trim() ? name : 'robot';
 
   let xml = `<?xml version="1.0"?>\n<robot name="${name}">\n\n`;
@@ -112,7 +124,9 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
           xml += `        <capsule radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
            const meshPath = link.visual.meshPath ? normalizeMeshPathForExport(link.visual.meshPath) : 'part.stl';
-           const filename = `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
+           const filename = useRelativePaths
+             ? `meshes/${meshPath || 'part.stl'}`
+             : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
            xml += `        <mesh filename="${filename}" />\n`;
         }
         xml += `      </geometry>\n`;
@@ -123,9 +137,9 @@ export const generateURDF = (robot: RobotState, extended: boolean = false): stri
     }
 
     // Collision (primary + additional bodies on the same link)
-    xml += generateCollisionElement(link.collision, vecStr, rotStr, formatShape, exportRobotName);
-    (link.collisionBodies || []).forEach((collisionBody) => {
-      xml += generateCollisionElement(collisionBody, vecStr, rotStr, formatShape, exportRobotName);
+    xml += generateCollisionElement(link.collision, vecStr, rotStr, formatShape, exportRobotName, useRelativePaths);
+    (link.collisionBodies || []).forEach((collisionBody: UrdfLink['collision']) => {
+      xml += generateCollisionElement(collisionBody, vecStr, rotStr, formatShape, exportRobotName, useRelativePaths);
     });
 
     // Inertial

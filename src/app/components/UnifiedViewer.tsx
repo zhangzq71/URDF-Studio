@@ -18,14 +18,14 @@ interface UnifiedViewerProps {
   mode: 'skeleton' | 'detail' | 'hardware';
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
-  onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
+  onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   assets: Record<string, string>;
   lang: Language;
   theme: Theme;
   showVisual?: boolean;
   setShowVisual?: (show: boolean) => void;
-  snapshotAction?: React.MutableRefObject<(() => void) | null>;
+  snapshotAction?: React.RefObject<(() => void) | null>;
   showToolbar?: boolean;
   setShowToolbar?: (show: boolean) => void;
   showOptionsPanel?: boolean;
@@ -38,10 +38,10 @@ interface UnifiedViewerProps {
   jointAngleState?: Record<string, number>;
   onJointChange?: (jointName: string, angle: number) => void;
   selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
-  hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
   focusTarget?: string | null;
   isMeshPreview?: boolean;
   onTransformPendingChange?: (pending: boolean) => void;
+  onCollisionTransformPreview?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
   onCollisionTransform?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
   filePreview?: FilePreviewState;
   onClosePreview?: () => void;
@@ -70,14 +70,14 @@ function FilePreviewBanner({
   }, [onClose]);
 
   return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-lg bg-white/90 dark:bg-elevated-bg/90 border border-slate-200 dark:border-border-black px-3 py-2 shadow-lg backdrop-blur-sm">
-      <FileCode className="w-4 h-4 shrink-0 text-blue-500" />
-      <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate max-w-[320px]" title={fileName}>
+    <div className="absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-border-black bg-panel-bg px-3 py-2 shadow-lg">
+      <FileCode className="w-4 h-4 shrink-0 text-system-blue" />
+      <span className="max-w-[320px] truncate text-sm font-medium text-text-primary" title={fileName}>
         {t.filePreview}: {displayName}
       </span>
       <button
         onClick={onClose}
-        className="ml-1 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-500 dark:text-slate-400 transition-colors"
+        className="ml-1 rounded p-0.5 text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-secondary"
         title={t.closePreview}
       >
         <X className="w-4 h-4" />
@@ -121,10 +121,10 @@ export const UnifiedViewer = React.memo(({
   jointAngleState,
   onJointChange,
   selection,
-  hoveredSelection,
   focusTarget,
   isMeshPreview = false,
   onTransformPendingChange,
+  onCollisionTransformPreview,
   onCollisionTransform,
   filePreview,
   onClosePreview,
@@ -156,9 +156,10 @@ export const UnifiedViewer = React.memo(({
 
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
   const effectiveSelection = activePreview ? emptySelection : selection;
-  const effectiveHoveredSelection = activePreview ? undefined : hoveredSelection;
+  const hoverSelectionEnabled = !activePreview;
   const effectiveFocusTarget = activePreview ? undefined : focusTarget;
   const effectiveIsMeshPreview = activePreview ? false : isMeshPreview;
+  const controlLayerKey = isViewerMode ? 'viewer' : 'visualizer';
 
   return (
     <WorkspaceCanvas
@@ -182,6 +183,7 @@ export const UnifiedViewer = React.memo(({
       environment={isViewerMode ? 'studio' : 'hdr'}
       environmentIntensity={0.36}
       cameraFollowPrimary={isViewerMode}
+      controlLayerKey={controlLayerKey}
       orbitControlsProps={
         isViewerMode
           ? {
@@ -239,10 +241,13 @@ export const UnifiedViewer = React.memo(({
           assets={assets}
           mode={activePreview ? 'detail' : (mode as 'detail' | 'hardware')}
           selection={effectiveSelection}
-          hoveredSelection={effectiveHoveredSelection}
+          hoverSelectionEnabled={hoverSelectionEnabled}
+          onHover={activePreview ? undefined : onHover}
           onMeshSelect={activePreview ? undefined : onMeshSelect}
           robotLinks={activePreview ? undefined : robot.links}
+          robotJoints={activePreview ? undefined : robot.joints}
           focusTarget={effectiveFocusTarget}
+          onCollisionTransformPreview={activePreview ? undefined : onCollisionTransformPreview}
           onCollisionTransform={activePreview ? undefined : onCollisionTransform}
           isMeshPreview={effectiveIsMeshPreview}
           t={t}
@@ -256,8 +261,6 @@ export const UnifiedViewer = React.memo(({
           assets={assets}
           lang={lang}
           controller={visualizerController}
-          confirmTitle={t.confirmEnter}
-          cancelTitle={t.cancelEsc}
         />
       )}
     </WorkspaceCanvas>

@@ -17,7 +17,7 @@ interface VisualizerProps {
   os?: 'mac' | 'win';
   showVisual?: boolean;
   setShowVisual?: (show: boolean) => void;
-  snapshotAction?: React.MutableRefObject<(() => void) | null>;
+  snapshotAction?: React.RefObject<(() => void) | null>;
   showOptionsPanel?: boolean;
   setShowOptionsPanel?: (show: boolean) => void;
 }
@@ -53,6 +53,7 @@ export const Visualizer = React.memo(({
       onMouseMove={controller.panel.handleMouseMove}
       onMouseUp={controller.panel.handleMouseUp}
       onMouseLeave={controller.panel.handleMouseUp}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <VisualizerPanels
         mode={mode}
@@ -77,8 +78,6 @@ export const Visualizer = React.memo(({
           assets={assets}
           lang={lang}
           controller={controller}
-          confirmTitle={t.confirmEnter}
-          cancelTitle={t.cancelEsc}
         />
       </VisualizerCanvas>
     </div>

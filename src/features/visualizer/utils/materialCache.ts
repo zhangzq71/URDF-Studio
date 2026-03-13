@@ -8,7 +8,6 @@ const materialCache = new Map<string, THREE.Material>();
 const MAX_MATERIAL_CACHE_SIZE = 512;
 
 interface MaterialOptions {
-  key: string;
   isSkeleton: boolean;
   finalColor: string;
   matOpacity: number;
@@ -23,7 +22,6 @@ interface MaterialOptions {
  * @returns A cached or newly created THREE.Material
  */
 export function getCachedMaterial({
-  key,
   isSkeleton,
   finalColor,
   matOpacity,
@@ -32,8 +30,10 @@ export function getCachedMaterial({
   emissiveColor,
   emissiveIntensity,
 }: MaterialOptions): THREE.Material {
-  // Generate a unique cache key based on all material properties
-  const cacheKey = `${key}-${isSkeleton}-${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
+  // Generate a unique cache key based on visual properties only.
+  // Geometry dimensions are intentionally excluded: they affect BufferGeometry args,
+  // not the shader/material, so the same material can be reused across dimension changes.
+  const cacheKey = `${isSkeleton}-${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
 
   let material = materialCache.get(cacheKey);
   if (!material) {

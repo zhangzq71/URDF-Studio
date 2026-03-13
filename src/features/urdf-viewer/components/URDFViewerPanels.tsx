@@ -1,4 +1,3 @@
-import React from 'react';
 import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 import { MeasurePanel } from './MeasurePanel';
 import { ViewerOptionsPanel } from './ViewerOptionsPanel';
@@ -44,7 +43,7 @@ export const URDFViewerPanels = ({
   return (
     <>
       <div className="pointer-events-none absolute left-4 top-4 z-20 select-none">
-        <div className="rounded border border-slate-200 bg-white/50 px-2 py-1 text-xs text-slate-500 backdrop-blur dark:border-google-dark-border dark:bg-google-dark-surface/50 dark:text-slate-400">
+        <div className="rounded border border-border-black bg-panel-bg px-2 py-1 text-xs text-text-secondary shadow-sm">
           {mode === 'hardware' ? t.hardware : t.detail} {t.modeLabel}
         </div>
       </div>

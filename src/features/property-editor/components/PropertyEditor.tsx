@@ -6,6 +6,7 @@
 import React from 'react';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
 import type { RobotState, AppMode, UrdfLink, MotorSpec, Theme } from '@/types';
+import { resolveJointKey, resolveLinkKey } from '@/core/robot';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
 import { useResizablePanel } from '../hooks/useResizablePanel';
@@ -45,7 +46,22 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
 }) => {
   const { selection } = robot;
   const isLink = selection.type === 'link';
-  const data = selection.id ? (isLink ? robot.links[selection.id] : robot.joints[selection.id]) : null;
+  const resolvedSelectionId = selection.id
+    ? (isLink ? resolveLinkKey(robot.links, selection.id) : resolveJointKey(robot.joints, selection.id))
+    : null;
+  const resolvedRobot = React.useMemo<RobotState>(() => {
+    if (!resolvedSelectionId) return robot;
+    return {
+      ...robot,
+      selection: {
+        ...robot.selection,
+        id: resolvedSelectionId,
+      },
+    };
+  }, [resolvedSelectionId, robot]);
+  const data = resolvedSelectionId
+    ? (isLink ? resolvedRobot.links[resolvedSelectionId] : resolvedRobot.joints[resolvedSelectionId])
+    : null;
   const t = translations[lang];
 
   const { displayWidth, isDragging, handleResizeMouseDown } = useResizablePanel(collapsed);
@@ -98,23 +114,25 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
               {isLink ? (
                 <LinkProperties
                   data={data as UrdfLink}
-                  robot={robot}
+                  robot={resolvedRobot}
                   mode={mode}
-                  selection={selection}
+                  selection={resolvedRobot.selection}
                   onUpdate={onUpdate}
                   onSelect={onSelect}
                   assets={assets}
                   onUploadAsset={onUploadAsset}
                   t={t}
+                  lang={lang}
                 />
               ) : (
                 <JointProperties
                   data={data}
                   mode={mode}
-                  selection={selection}
+                  selection={resolvedRobot.selection}
                   onUpdate={onUpdate}
                   motorLibrary={motorLibrary}
                   t={t}
+                  lang={lang}
                 />
               )}
             </div>

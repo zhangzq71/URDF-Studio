@@ -1,8 +1,12 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import * as THREE from 'three';
 import { RobotState } from '@/types';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { TransformControlsState } from '../../hooks/useTransformControls';
+
+const COLLISION_TRANSLATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE;
+const COLLISION_ROTATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE * 0.84;
+const COLLISION_GIZMO_THICKNESS_SCALE = 1.9;
 import { TransformConfirmUI } from './TransformConfirmUI';
 
 interface CollisionTransformControlsProps {
@@ -60,10 +64,12 @@ export const CollisionTransformControls = memo(function CollisionTransformContro
         ref={transformControlRef}
         object={selectedCollisionRef}
         mode={transformMode}
-        gizmoPreset="official"
-        axesOnly
-        size={VISUALIZER_UNIFIED_GIZMO_SIZE}
+        size={COLLISION_TRANSLATE_GIZMO_SIZE}
+        rotateSize={COLLISION_ROTATE_GIZMO_SIZE}
         space="local"
+        hoverStyle="single-axis"
+        displayStyle="thick-primary"
+        displayThicknessScale={COLLISION_GIZMO_THICKNESS_SCALE}
         enabled={!pendingEdit}
         onChange={handleObjectChange}
       />

@@ -29,7 +29,7 @@ interface CommonVisualizerProps {
   showHardwareLabels: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
-  transformMode: 'translate' | 'rotate' | 'select';
+  transformMode: 'translate' | 'rotate';
   assets: Record<string, string>;
   lang: Language;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
@@ -61,7 +61,6 @@ export const JointNode = memo(function JointNode({
   mode,
   showGeometry,
   showVisual,
-  selectionTarget,
   showLabels,
   showJointAxes,
   jointAxisSize,
@@ -89,6 +88,8 @@ export const JointNode = memo(function JointNode({
 
   const { x, y, z } = joint.origin.xyz;
   const { r, p, y: yaw } = joint.origin.rpy;
+  // URDF stores roll/pitch/yaw values that should be composed in ZYX order.
+  const jointRotation = new THREE.Euler(r, p, yaw, 'ZYX');
 
   const showAxes = (mode === 'skeleton' && showSkeletonOrigin) || (mode === 'detail' && showDetailOrigin) || (mode === 'hardware' && showHardwareOrigin);
   const showJointLabel = (mode === 'skeleton' && showLabels) || (mode === 'hardware' && showHardwareLabels);
@@ -97,7 +98,7 @@ export const JointNode = memo(function JointNode({
   // TransformControls attaches to this, modifying its position in parent-local frame
   const [jointPivot, setJointPivot] = useState<THREE.Group | null>(null);
   // Joint group: contains visualization, positioned at [0,0,0] relative to pivot
-  const [jointGroup, setJointGroup] = useState<THREE.Group | null>(null);
+  const [, setJointGroup] = useState<THREE.Group | null>(null);
   const [isHovered, setIsHovered] = useState(false);
 
   // Register pivot with parent Visualizer component
@@ -142,7 +143,7 @@ export const JointNode = memo(function JointNode({
         <group
             ref={setJointPivot}
             position={[x, y, z]}
-            rotation={[r, p, yaw]}
+            rotation={jointRotation}
         >
             {/* Joint group: at origin relative to pivot, contains visualization and child link */}
             <group

@@ -132,6 +132,34 @@ const URDF_SNIPPETS = {
 
 const MIN_WIDTH = 400;
 const MIN_HEIGHT = 300;
+const FIND_WIDGET_TOOLTIP_TARGET_SELECTOR = '.find-widget .button, .find-widget .monaco-custom-toggle';
+
+const attachFindWidgetTooltipSuppression = (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  editor: { getDomNode: () => any }
+) => {
+  const editorDomNode = editor.getDomNode();
+  if (!(editorDomNode instanceof HTMLElement)) {
+    return () => undefined;
+  }
+
+  const handleMouseOverCapture = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    if (target.closest(FIND_WIDGET_TOOLTIP_TARGET_SELECTOR)) {
+      event.stopPropagation();
+    }
+  };
+
+  editorDomNode.addEventListener('mouseover', handleMouseOverCapture, true);
+
+  return () => {
+    editorDomNode.removeEventListener('mouseover', handleMouseOverCapture, true);
+  };
+};
 
 // Find line number of an element in XML string
 const findElementLine = (xmlString: string, tagName: string, index: number): number => {
@@ -391,6 +419,14 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     });
     return () => cancelAnimationFrame(id);
   }, [isMaximized, size.height, size.width]);
+
+  useEffect(() => {
+    if (!isEditorReady || !editorRef.current) {
+      return;
+    }
+
+    return attachFindWidgetTooltipSuppression(editorRef.current);
+  }, [isEditorReady]);
 
   return (
     <DraggableWindow

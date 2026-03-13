@@ -16,8 +16,8 @@ interface HardwareOptionsPanelProps {
   setShowHardwareOrigin: (show: boolean) => void;
   showHardwareLabels: boolean;
   setShowHardwareLabels: (show: boolean) => void;
-  transformMode: 'translate' | 'rotate' | 'select';
-  setTransformMode: (mode: 'translate' | 'rotate' | 'select') => void;
+  transformMode: 'translate' | 'rotate';
+  setTransformMode: (mode: 'translate' | 'rotate') => void;
   isCollapsed: boolean;
   toggleCollapsed: () => void;
   onMouseDown: (e: React.MouseEvent) => void;

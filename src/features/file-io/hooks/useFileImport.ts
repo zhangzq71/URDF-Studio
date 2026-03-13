@@ -13,7 +13,6 @@ import type { AssetFile, LibraryFile, ImportResult } from '../types';
 import {
   detectFormat,
   isRobotDefinitionFile,
-  isAssetFile,
   isMeshFile,
   isMotorLibraryFile,
   shouldSkipPath,
@@ -42,7 +41,6 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
 
   const lang = useUIStore((s) => s.lang);
   const t = translations[lang];
-  const assets = useAssetsStore((s) => s.assets);
   const revokeAllAssets = useAssetsStore((s) => s.revokeAllAssets);
   const addAssets = useAssetsStore((s) => s.addAssets);
   const setAvailableFiles = useAssetsStore((s) => s.setAvailableFiles);
@@ -82,7 +80,6 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
           // Skip hidden files/folders
           if (shouldSkipPath(relativePath)) return;
 
-          const lowerPath = relativePath.toLowerCase();
           const p = (async () => {
             // Check for robot definition files
             if (isRobotDefinitionFile(relativePath)) {
@@ -113,7 +110,6 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
         // files is already File[]
 
         const promises = files.map(async (f) => {
-          const lowerName = f.name.toLowerCase();
           // Use webkitRelativePath if available (from folder upload or our traverser), else fallback to name
           const path = f.webkitRelativePath || f.name;
 

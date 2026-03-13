@@ -22,7 +22,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
       <div className="relative flex items-center">
         <input
           type="checkbox"
-          className="peer appearance-none w-4 h-4 border border-border-black rounded bg-input-bg checked:bg-system-blue-solid checked:border-system-blue-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 transition-all duration-200"
+          className="peer h-[15px] w-[15px] appearance-none rounded-[4px] border border-border-strong bg-panel-bg shadow-sm transition-[background-color,border-color,box-shadow] duration-150 hover:border-system-blue/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 checked:border-system-blue checked:bg-system-blue"
           checked={checked}
           onChange={(e) => !disabled && onChange(e.target.checked)}
           disabled={disabled}
@@ -31,12 +31,12 @@ export const Checkbox: React.FC<CheckboxProps> = ({
           }}
         />
         <svg
-          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 text-white pointer-events-none opacity-0 peer-checked:opacity-100 transition-opacity duration-200"
+          className="pointer-events-none absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 transition-opacity duration-150 peer-checked:opacity-100"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
         >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.75" d="M5 13l4 4L19 7" />
         </svg>
       </div>
       {label && (

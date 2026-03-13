@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
+import { URDFCollider, URDFVisual } from '../urdf/loader/URDFClasses';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
 import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial } from './mjcfUtils';
@@ -92,15 +93,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         geoms: MJCFHierarchyGeom[],
         targetGroup: THREE.Group
     ): Promise<void> {
-        // Create separate containers for visual and collision
-        const visualGroup = new THREE.Group();
-        visualGroup.name = 'visual';
-
-        const collisionGroup = new THREE.Group();
-        collisionGroup.name = 'collision';
-        (collisionGroup as any).isURDFCollider = true;
-        collisionGroup.visible = false; // Hidden by default
-
         for (const geom of geoms) {
             const hasVisualGroup = geom.group === 1 || geom.group === 2;
             const hasContype0 = geom.contype === 0 && geom.conaffinity === 0;
@@ -116,17 +108,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
             const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache);
             if (!mesh) continue;
 
-            // Apply geom position
-            if (geom.pos) {
-                mesh.position.set(geom.pos[0], geom.pos[1], geom.pos[2]);
-            }
-
-            // Apply geom rotation (MuJoCo quaternion: w,x,y,z)
-            if (geom.quat) {
-                const q = new THREE.Quaternion(geom.quat[1], geom.quat[2], geom.quat[3], geom.quat[0]);
-                mesh.quaternion.copy(q);
-            }
-
             if (geom.material) {
                 const materialDef = materialMap.get(geom.material);
                 if (materialDef) {
@@ -140,7 +121,23 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
             mesh.name = geom.name || geom.type || 'geom';
 
+            const applyGeomTransformToContainer = (container: THREE.Object3D) => {
+                if (geom.pos) {
+                    container.position.set(geom.pos[0], geom.pos[1], geom.pos[2]);
+                }
+
+                if (geom.quat) {
+                    container.quaternion.copy(mjcfQuatToThreeQuat(geom.quat));
+                }
+            };
+
             if (isVisualGeom) {
+                const visualGroup = new URDFVisual();
+                visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
+                visualGroup.urdfName = visualGroup.name;
+                visualGroup.userData.isVisualGroup = true;
+                applyGeomTransformToContainer(visualGroup);
+
                 // Mark all meshes in this object as visual
                 mesh.userData.isVisual = true;
                 mesh.userData.isVisualMesh = true;
@@ -151,6 +148,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     }
                 });
                 visualGroup.add(mesh);
+                targetGroup.add(visualGroup);
             }
 
             if (isCollisionGeom) {
@@ -159,6 +157,13 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
                 // Clone if already added to visual, otherwise use directly
                 const collisionMesh = isVisualGeom ? mesh.clone(true) : mesh;
+                const collisionGroup = new URDFCollider();
+                collisionGroup.name = geom.name || `collision_${geom.type || 'geom'}`;
+                collisionGroup.urdfName = collisionGroup.name;
+                collisionGroup.userData.isCollisionGroup = true;
+                collisionGroup.visible = false;
+                applyGeomTransformToContainer(collisionGroup);
+
                 collisionMesh.userData.isCollisionMesh = true;
                 collisionMesh.userData.isCollision = true;
 
@@ -185,22 +190,19 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                 });
 
                 collisionGroup.add(collisionMesh);
+                targetGroup.add(collisionGroup);
             }
 
             // If neither visual nor collision classification matches, default to visual
             if (!isVisualGeom && !isCollisionGeom) {
+                const visualGroup = new URDFVisual();
+                visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
+                visualGroup.urdfName = visualGroup.name;
+                visualGroup.userData.isVisualGroup = true;
+                applyGeomTransformToContainer(visualGroup);
                 visualGroup.add(mesh);
+                targetGroup.add(visualGroup);
             }
-        }
-
-        visualGroup.userData.isVisualGroup = true;
-        collisionGroup.userData.isCollisionGroup = true;
-
-        if (visualGroup.children.length > 0) {
-            targetGroup.add(visualGroup);
-        }
-        if (collisionGroup.children.length > 0) {
-            targetGroup.add(collisionGroup);
         }
     }
 

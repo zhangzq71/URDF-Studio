@@ -1,8 +1,9 @@
-import React, { memo, useRef, useEffect } from 'react';
+import React, { memo, useRef, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { useUIStore } from '@/store';
 import { CollisionTransformControls } from './CollisionTransformControls';
+import { HoverSelectionSync } from './HoverSelectionSync';
 import { translations } from '@/shared/i18n';
 import type { RobotModelProps } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
@@ -26,6 +27,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     showCollision = false,
     showVisual = true,
     onSelect,
+    onHover,
     onMeshSelect,
     onJointChange,
     onJointChangeCommit,
@@ -36,7 +38,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     t,
     mode,
     selection,
-    hoveredSelection,
+    hoverSelectionEnabled = true,
     highlightMode = 'link',
     showInertia = false,
     showCenterOfMass = false,
@@ -50,9 +52,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     jointAxisSize = 1.0,
     modelOpacity = 1.0,
     robotLinks,
+    robotJoints,
     focusTarget,
     transformMode = 'select',
+    transformReferenceFrame = 'urdf',
     toolMode = 'select',
+    onCollisionTransformPreview,
     onCollisionTransformEnd,
     isOrbitDragging,
     onTransformPending,
@@ -76,6 +81,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         setIsDraggingRef.current = setIsDragging;
     }, [setIsDragging]);
 
+    const handleCollisionTransformDragging = useCallback((dragging: boolean) => {
+        setIsDraggingRef.current?.(dragging);
+    }, []);
+
     // ============================================================
     // HOOK: Robot Loading
     // ============================================================
@@ -91,6 +100,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         showVisual,
         isMeshPreview,
         robotLinks,
+        robotJoints,
         initialJointAngles: jointAngles,
         onRobotLoaded
     });
@@ -119,6 +129,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     useCameraFocus({
         robot,
         focusTarget,
+        selection,
         mode
     });
 
@@ -133,11 +144,14 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         needsRaycastRef
     } = useMouseInteraction({
         robot,
+        robotVersion,
         toolMode,
         mode,
         highlightMode,
         showCollision,
         showVisual,
+        linkMeshMapRef,
+        onHover,
         onSelect,
         onMeshSelect,
         onJointChange,
@@ -155,12 +169,15 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     // ============================================================
     useHoverDetection({
         robot,
+        robotVersion,
         toolMode,
         mode,
         highlightMode,
         showCollision,
         showVisual,
         selection,
+        onHover,
+        linkMeshMapRef,
         mouseRef,
         raycasterRef,
         hoveredLinkRef,
@@ -176,7 +193,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     // ============================================================
     // HOOK: Visualization Effects
     // ============================================================
-    useVisualizationEffects({
+    const { syncHoverHighlight } = useVisualizationEffects({
         robot,
         robotVersion,
         showCollision,
@@ -196,7 +213,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robotLinks,
         toolMode,
         selection,
-        hoveredSelection,
         highlightGeometry,
         highlightedMeshesRef
     });
@@ -292,19 +308,26 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
     return (
         <>
+            <HoverSelectionSync
+                enabled={hoverSelectionEnabled}
+                onHoverSelectionChange={syncHoverHighlight}
+            />
             <primitive object={robot} />
             {(() => {
                 const shouldShow = mode === 'detail' && highlightMode === 'collision' && transformMode !== 'select' && selection?.subType === 'collision';
                 return shouldShow ? (
                     <CollisionTransformControls
                         robot={robot}
+                        robotVersion={robotVersion}
                         selection={selection}
                         transformMode={transformMode}
-                        setIsDragging={(dragging) => setIsDraggingRef.current?.(dragging)}
+                        transformReferenceFrame={transformReferenceFrame}
+                        setIsDragging={handleCollisionTransformDragging}
+                        onTransformChange={onCollisionTransformPreview}
                         onTransformEnd={onCollisionTransformEnd}
                         robotLinks={robotLinks}
-                        lang={t === translations['zh'] ? 'zh' : 'en'}
                         onTransformPending={onTransformPending}
+                        lang={t === translations['zh'] ? 'zh' : 'en'}
                     />
                 ) : null;
             })()}

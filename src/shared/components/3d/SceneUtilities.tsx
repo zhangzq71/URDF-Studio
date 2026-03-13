@@ -205,7 +205,7 @@ export const SnapshotManager = ({
   actionRef,
   robotName
 }: {
-  actionRef?: React.MutableRefObject<(() => void) | null>;
+  actionRef?: React.RefObject<(() => void) | null>;
   robotName: string;
 }) => {
   const SNAPSHOT_MIN_LONG_EDGE = 3840;
@@ -433,7 +433,7 @@ export function NeutralStudioEnvironment({
     const previousEnvironmentIntensity = (scene as any).environmentIntensity;
     const pmremGenerator = new THREE.PMREMGenerator(gl);
     const envScene = new RoomEnvironment();
-    const renderTarget = pmremGenerator.fromScene(envScene, 0.05);
+    const renderTarget = pmremGenerator.fromScene(envScene, 0.04);
     scene.environment = renderTarget.texture;
     (scene as any).environmentIntensity = intensity;
 
@@ -512,9 +512,13 @@ export const WORKSPACE_CANVAS_BACKGROUND = {
 export function SceneLighting({
   theme = 'system',
   cameraFollowPrimary = false,
+  enableShadows = true,
+  shadowMapSize,
 }: {
   theme?: Theme;
   cameraFollowPrimary?: boolean;
+  enableShadows?: boolean;
+  shadowMapSize?: number;
 }) {
   const { scene, gl } = useThree();
   const cameraKeyLightRef = useRef<THREE.DirectionalLight>(null);
@@ -525,10 +529,14 @@ export function SceneLighting({
   const cameraTargetRef = useRef(new THREE.Vector3());
   const cameraRightRef = useRef(new THREE.Vector3());
   const cameraUpRef = useRef(new THREE.Vector3());
+  const lastCameraPositionRef = useRef(new THREE.Vector3(Number.NaN, Number.NaN, Number.NaN));
+  const lastCameraQuaternionRef = useRef(new THREE.Quaternion(Number.NaN, Number.NaN, Number.NaN, Number.NaN));
 
   const effectiveTheme = theme === 'system' 
     ? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     : theme;
+  const shouldUseShadows = enableShadows && effectiveTheme !== 'light';
+  const resolvedShadowMapSize = shadowMapSize ?? (cameraFollowPrimary ? 1024 : 768);
   const staticDirectionalScale = cameraFollowPrimary ? 0.72 : 1;
   const rimDirectionalScale = cameraFollowPrimary ? 0.18 : staticDirectionalScale;
   const ambientIntensity = cameraFollowPrimary
@@ -556,9 +564,10 @@ export function SceneLighting({
     : 0;
 
   useEffect(() => {
-    // Enable high-quality soft shadows
-    gl.shadowMap.enabled = true;
-    gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    gl.shadowMap.enabled = shouldUseShadows;
+    if (shouldUseShadows) {
+      gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    }
     scene.receiveShadow = true;
 
     // Configure tone mapping: ACESFilmicToneMapping for realistic color reproduction
@@ -571,7 +580,7 @@ export function SceneLighting({
     // Ensure proper sRGB output color space
     gl.outputColorSpace = THREE.SRGBColorSpace;
 
-  }, [scene, gl, effectiveTheme, cameraFollowPrimary]);
+  }, [scene, gl, effectiveTheme, cameraFollowPrimary, shouldUseShadows]);
 
   useEffect(() => {
     const keyLight = cameraKeyLightRef.current;
@@ -598,6 +607,15 @@ export function SceneLighting({
     const fillRightLight = cameraFillRightLightRef.current;
     const fillLeftLight = cameraFillLeftLightRef.current;
     if (!keyLight || !softFrontLight || !fillRightLight || !fillLeftLight) return;
+    if (
+      lastCameraPositionRef.current.equals(camera.position)
+      && lastCameraQuaternionRef.current.equals(camera.quaternion)
+    ) {
+      return;
+    }
+
+    lastCameraPositionRef.current.copy(camera.position);
+    lastCameraQuaternionRef.current.copy(camera.quaternion);
 
     camera.getWorldDirection(cameraDirectionRef.current);
     cameraTargetRef.current.copy(camera.position).addScaledVector(cameraDirectionRef.current, 10);
@@ -649,9 +667,9 @@ export function SceneLighting({
         position={LIGHTING_CONFIG.mainLightPosition}
         intensity={(effectiveTheme === 'light' ? 0.5 : LIGHTING_CONFIG.mainLightIntensity) * staticDirectionalScale}
         color="#ffffff"
-        castShadow={effectiveTheme !== 'light'} // Disable shadows in light mode to fix artifacts
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
+        castShadow={shouldUseShadows}
+        shadow-mapSize-width={resolvedShadowMapSize}
+        shadow-mapSize-height={resolvedShadowMapSize}
         shadow-camera-far={50}
         shadow-camera-left={-10}
         shadow-camera-right={10}
@@ -743,6 +761,18 @@ interface ReferenceGridProps {
   groundOffset?: number;
 }
 
+const REFERENCE_GRID_RENDER_ORDER = -100;
+const REFERENCE_GRID_STYLE = {
+  light: {
+    cellColor: '#e5e7eb',
+    sectionColor: '#cbd5e1',
+  },
+  dark: {
+    cellColor: '#3d3d3d',
+    sectionColor: '#5a5a5a',
+  },
+} as const;
+
 export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
   const gridRef = useRef<THREE.Mesh>(null);
   const storedGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
@@ -752,38 +782,38 @@ export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
     ? (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     : theme;
 
-  useEffect(() => {
+  const gridStyle = REFERENCE_GRID_STYLE[effectiveTheme];
+
+  useLayoutEffect(() => {
     if (gridRef.current) {
-      // Set low renderOrder so grid renders before collision meshes (renderOrder=999)
-      gridRef.current.renderOrder = -100;
-
-      // Ensure all children also inherit this
-      gridRef.current.traverse((child) => {
-        child.renderOrder = -100;
-      });
-
       const gridMaterial = gridRef.current.material as THREE.Material | undefined;
       if (gridMaterial) {
+        gridMaterial.depthWrite = false;
         gridMaterial.polygonOffset = true;
         gridMaterial.polygonOffsetFactor = 1;
         gridMaterial.polygonOffsetUnits = 1;
+        gridMaterial.needsUpdate = true;
       }
     }
   }, []);
 
   return (
     <Grid
-      ref={gridRef as any}
+      ref={gridRef}
       name="ReferenceGrid"
+      renderOrder={REFERENCE_GRID_RENDER_ORDER}
       side={THREE.DoubleSide}
       infiniteGrid
+      followCamera
       fadeDistance={100}
+      fadeFrom={0.35}
+      fadeStrength={1.35}
       sectionSize={1}
       cellSize={0.1}
-      sectionThickness={1.5}
-      cellThickness={0.5}
-      cellColor={effectiveTheme === 'light' ? '#e2e8f0' : '#444444'}
-      sectionColor={effectiveTheme === 'light' ? '#cbd5e1' : '#555555'}
+      sectionThickness={1.15}
+      cellThickness={0.3}
+      cellColor={gridStyle.cellColor}
+      sectionColor={gridStyle.sectionColor}
       rotation={[Math.PI / 2, 0, 0]}
       position={[0, 0, groundPlaneOffset]}
       receiveShadow={false}

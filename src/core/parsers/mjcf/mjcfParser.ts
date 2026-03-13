@@ -3,19 +3,9 @@
  * Parses MuJoCo XML format and converts to RobotState
  */
 
+import * as THREE from 'three';
 import { RobotState, UrdfLink, UrdfJoint, DEFAULT_LINK, DEFAULT_JOINT, GeometryType, JointType, UrdfVisual } from '@/types';
-import {
-    parseMJCFDefaults,
-    parseMeshAssets,
-    parseCompilerSettings,
-    parseNumbers,
-    parsePosAsObject as parsePos,
-    parseQuatAsObject as parseQuat,
-    resolveDefaultClassQName,
-    resolveElementAttributes,
-    type MJCFCompilerSettings,
-    type MJCFMesh
-} from './mjcfUtils';
+import { type MJCFCompilerSettings, type MJCFMesh } from './mjcfUtils';
 import { parseMJCFModel } from './mjcfModel';
 
 interface MJCFBody {
@@ -59,51 +49,15 @@ interface MJCFInertial {
     fullinertia?: number[]; // ixx iyy izz ixy ixz iyz
 }
 
-// Parse euler angles (in radians)
-function parseEuler(str: string | null): { r: number, p: number, y: number } {
-    const nums = parseNumbers(str);
-    return {
-        r: nums.length > 0 ? nums[0] : 0,
-        p: nums.length > 1 ? nums[1] : 0,
-        y: nums.length > 2 ? nums[2] : 0
-    };
-}
-
-// Convert MuJoCo diaginertia + quat to URDF inertia tensor
-function convertInertia(
-    diaginertia: { ixx: number, iyy: number, izz: number },
-    quat?: { w: number, x: number, y: number, z: number }
-): { ixx: number, ixy: number, ixz: number, iyy: number, iyz: number, izz: number } {
-    const { ixx: d1, iyy: d2, izz: d3 } = diaginertia;
-
-    if (!quat) {
-        return { ixx: d1, ixy: 0, ixz: 0, iyy: d2, iyz: 0, izz: d3 };
-    }
-
-    const { w, x, y, z } = quat;
-    const R = [
-        [1 - 2*(y*y + z*z), 2*(x*y - w*z),     2*(x*z + w*y)    ],
-        [2*(x*y + w*z),     1 - 2*(x*x + z*z), 2*(y*z - w*x)    ],
-        [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x*x + y*y)]
-    ];
-
-    const d = [d1, d2, d3];
-    const ixx = d[0]*R[0][0]*R[0][0] + d[1]*R[0][1]*R[0][1] + d[2]*R[0][2]*R[0][2];
-    const iyy = d[0]*R[1][0]*R[1][0] + d[1]*R[1][1]*R[1][1] + d[2]*R[1][2]*R[1][2];
-    const izz = d[0]*R[2][0]*R[2][0] + d[1]*R[2][1]*R[2][1] + d[2]*R[2][2]*R[2][2];
-    const ixy = d[0]*R[0][0]*R[1][0] + d[1]*R[0][1]*R[1][1] + d[2]*R[0][2]*R[1][2];
-    const ixz = d[0]*R[0][0]*R[2][0] + d[1]*R[0][1]*R[2][1] + d[2]*R[0][2]*R[2][2];
-    const iyz = d[0]*R[1][0]*R[2][0] + d[1]*R[1][1]*R[2][1] + d[2]*R[1][2]*R[2][2];
-
-    return { ixx, ixy, ixz, iyy, iyz, izz };
-}
+const tempRPYQuaternion = new THREE.Quaternion();
+const tempRPYEuler = new THREE.Euler(0, 0, 0, 'ZYX');
 
 function convertJointType(mjcfType: string): JointType {
     switch (mjcfType.toLowerCase()) {
         case 'hinge': return JointType.REVOLUTE;
         case 'slide': return JointType.PRISMATIC;
         case 'ball': return JointType.CONTINUOUS;
-        case 'free': return JointType.CONTINUOUS;
+        case 'free': return JointType.FLOATING;
         default: return JointType.FIXED;
     }
 }
@@ -116,9 +70,38 @@ function convertGeomType(mjcfType: string): GeometryType {
         case 'capsule': return GeometryType.CAPSULE;
         case 'ellipsoid': return GeometryType.SPHERE;
         case 'mesh': return GeometryType.MESH;
-        case 'plane': return GeometryType.BOX;
+        case 'plane': return GeometryType.NONE;
         default: return GeometryType.BOX;
     }
+}
+
+function hasImportableGeometry(geom: MJCFGeom): boolean {
+    if (geom.mesh) {
+        return true;
+    }
+
+    return convertGeomType(geom.type) !== GeometryType.NONE;
+}
+
+function shouldPreserveSyntheticWorldRoot(worldBody: MJCFBody): boolean {
+    if (worldBody.inertial && worldBody.inertial.mass > 0) {
+        return true;
+    }
+
+    if (worldBody.joints.length > 0) {
+        return true;
+    }
+
+    if (worldBody.geoms.some(hasImportableGeometry)) {
+        return true;
+    }
+
+    if (worldBody.children.length !== 1) {
+        return true;
+    }
+
+    const [onlyChild] = worldBody.children;
+    return onlyChild.joints.some((joint) => joint.type.toLowerCase() === 'free');
 }
 
 function convertAngle(value: number, settings: MJCFCompilerSettings): number {
@@ -145,6 +128,23 @@ function toQuatObject(tuple: [number, number, number, number] | undefined): { w:
         x: tuple[1],
         y: tuple[2],
         z: tuple[3],
+    };
+}
+
+function toRPYObjectFromQuat(
+    quat: { w: number, x: number, y: number, z: number } | undefined,
+): { r: number, p: number, y: number } | undefined {
+    if (!quat) {
+        return undefined;
+    }
+
+    tempRPYQuaternion.set(quat.x, quat.y, quat.z, quat.w);
+    tempRPYEuler.setFromQuaternion(tempRPYQuaternion, 'ZYX');
+
+    return {
+        r: tempRPYEuler.x,
+        p: tempRPYEuler.y,
+        y: tempRPYEuler.z,
     };
 }
 
@@ -209,139 +209,6 @@ function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody
     };
 }
 
-function parseBody(
-    bodyElement: Element,
-    meshMap: Map<string, MJCFMesh>,
-    defaults: ReturnType<typeof parseMJCFDefaults>,
-    activeClassQName?: string,
-): MJCFBody {
-    const bodyAttrs = resolveElementAttributes(defaults, 'body', bodyElement, activeClassQName);
-    const name = bodyElement.getAttribute('name') || bodyAttrs.name || `body_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const pos = parsePos(bodyAttrs.pos || null);
-    const euler = bodyAttrs.euler ? parseEuler(bodyAttrs.euler) : undefined;
-    const quat = parseQuat(bodyAttrs.quat || null);
-    const nextActiveClassQName = resolveDefaultClassQName(defaults, bodyElement.getAttribute('childclass'), activeClassQName) || activeClassQName;
-
-    const geoms: MJCFGeom[] = [];
-    const geomElements = bodyElement.querySelectorAll(':scope > geom');
-    geomElements.forEach(geomEl => {
-        const geomAttrs = resolveElementAttributes(defaults, 'geom', geomEl, activeClassQName);
-        const sizeArr = parseNumbers(geomAttrs.size || null);
-        const fromtoArr = parseNumbers(geomAttrs.fromto || null);
-        const meshAttr = geomAttrs.mesh;
-        
-        let inferredType = geomAttrs.type;
-        if (!inferredType) {
-            if (meshAttr) {
-                inferredType = 'mesh';
-            } else if (fromtoArr && fromtoArr.length === 6) {
-                inferredType = 'capsule';
-            } else if (sizeArr.length === 1) {
-                inferredType = 'sphere';
-            } else if (sizeArr.length === 2) {
-                inferredType = 'capsule';
-            } else if (sizeArr.length >= 3) {
-                inferredType = 'ellipsoid';
-            } else {
-                inferredType = 'sphere';
-            }
-        }
-        
-        const geom: MJCFGeom = {
-            name: geomEl.getAttribute('name') || geomAttrs.name || undefined,
-            type: inferredType,
-            size: sizeArr,
-            mesh: meshAttr || undefined,
-            pos: geomAttrs.pos ? parsePos(geomAttrs.pos) : undefined,
-            quat: parseQuat(geomAttrs.quat || null),
-            fromto: fromtoArr.length > 0 ? fromtoArr : undefined,
-        };
-
-        const rgbaStr = geomAttrs.rgba;
-        if (rgbaStr) {
-            geom.rgba = parseNumbers(rgbaStr);
-        }
-
-        const contypeStr = geomAttrs.contype;
-        const conaffinityStr = geomAttrs.conaffinity;
-        const groupStr = geomAttrs.group;
-
-        if (contypeStr) geom.contype = parseInt(contypeStr);
-        if (conaffinityStr) geom.conaffinity = parseInt(conaffinityStr);
-        if (groupStr) geom.group = parseInt(groupStr);
-
-        geoms.push(geom);
-    });
-
-    const joints: MJCFJointDef[] = [];
-    const jointElements = bodyElement.querySelectorAll(':scope > joint');
-    jointElements.forEach(jointEl => {
-        const jointAttrs = resolveElementAttributes(defaults, 'joint', jointEl, activeClassQName);
-        const joint: MJCFJointDef = {
-            name: jointEl.getAttribute('name') || jointAttrs.name || `joint_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            type: jointAttrs.type || 'hinge',
-        };
-
-        const axisStr = jointAttrs.axis;
-        if (axisStr) {
-            const nums = parseNumbers(axisStr);
-            joint.axis = {
-                x: nums.length > 0 ? nums[0] : 0,
-                y: nums.length > 1 ? nums[1] : 0,
-                z: nums.length > 2 ? nums[2] : 1
-            };
-        }
-
-        const rangeStr = jointAttrs.range;
-        if (rangeStr) {
-            const nums = parseNumbers(rangeStr);
-            joint.range = [
-                nums.length > 0 ? nums[0] : -Math.PI,
-                nums.length > 1 ? nums[1] : Math.PI
-            ];
-        }
-
-        const posStr = jointAttrs.pos;
-        if (posStr) {
-            joint.pos = parsePos(posStr);
-        }
-
-        joints.push(joint);
-    });
-
-    let inertial: MJCFInertial | undefined;
-    const inertialEl = bodyElement.querySelector(':scope > inertial');
-    if (inertialEl) {
-        const inertialAttrs = resolveElementAttributes(defaults, 'inertial', inertialEl, activeClassQName);
-        const mass = parseFloat(inertialAttrs.mass || '0');
-        const inertialPos = parsePos(inertialAttrs.pos || null);
-        const inertialQuat = parseQuat(inertialAttrs.quat || null);
-
-        const diaginertiaStr = inertialAttrs.diaginertia;
-        let diaginertia: { ixx: number, iyy: number, izz: number } | undefined;
-        if (diaginertiaStr) {
-            const nums = parseNumbers(diaginertiaStr);
-            diaginertia = { ixx: nums[0] || 0, iyy: nums[1] || 0, izz: nums[2] || 0 };
-        }
-
-        const fullinertiaStr = inertialAttrs.fullinertia;
-        let fullinertia: number[] | undefined;
-        if (fullinertiaStr) {
-            fullinertia = parseNumbers(fullinertiaStr);
-        }
-
-        inertial = { mass, pos: inertialPos, quat: inertialQuat, diaginertia, fullinertia };
-    }
-
-    const children: MJCFBody[] = [];
-    const childBodyElements = bodyElement.querySelectorAll(':scope > body');
-    childBodyElements.forEach(childEl => {
-        children.push(parseBody(childEl, meshMap, defaults, nextActiveClassQName));
-    });
-
-    return { name, pos, euler, quat, geoms, joints, inertial, children };
-}
-
 // Convert parsed MJCF to RobotState
 function mjcfToRobotState(
     robotName: string,
@@ -399,6 +266,9 @@ function mjcfToRobotState(
                         z: 0
                     };
                     break;
+                case 'plane':
+                    result.dimensions = { x: 0, y: 0, z: 0 };
+                    break;
                 default:
                     result.dimensions = { x: geom.size[0] || 0.1, y: 0, z: 0 };
                     break;
@@ -414,10 +284,21 @@ function mjcfToRobotState(
             result.color = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
         }
 
-        if (geom.pos) {
+        const geomRotation = toRPYObjectFromQuat(geom.quat);
+        const hasMeaningfulRotation = !!geomRotation && (
+            Math.abs(geomRotation.r) > 1e-9
+            || Math.abs(geomRotation.p) > 1e-9
+            || Math.abs(geomRotation.y) > 1e-9
+        );
+
+        if (geom.pos || hasMeaningfulRotation) {
             result.origin = {
-                xyz: { x: geom.pos.x, y: geom.pos.y, z: geom.pos.z },
-                rpy: { r: 0, p: 0, y: 0 }
+                xyz: {
+                    x: geom.pos?.x ?? 0,
+                    y: geom.pos?.y ?? 0,
+                    z: geom.pos?.z ?? 0,
+                },
+                rpy: geomRotation || { r: 0, p: 0, y: 0 }
             };
         }
         
@@ -523,7 +404,7 @@ function mjcfToRobotState(
             linkInertial.mass = mass;
             linkInertial.origin = {
                 xyz: { x: inertialPos.x, y: inertialPos.y, z: inertialPos.z },
-                rpy: { r: 0, p: 0, y: 0 }
+                rpy: toRPYObjectFromQuat(inertialQuat) || { r: 0, p: 0, y: 0 }
             };
             if (fullinertia && fullinertia.length >= 6) {
                 linkInertial.inertia = {
@@ -531,7 +412,14 @@ function mjcfToRobotState(
                     ixy: fullinertia[3], ixz: fullinertia[4], iyz: fullinertia[5]
                 };
             } else if (diaginertia) {
-                linkInertial.inertia = convertInertia(diaginertia, inertialQuat);
+                linkInertial.inertia = {
+                    ixx: diaginertia.ixx,
+                    ixy: 0,
+                    ixz: 0,
+                    iyy: diaginertia.iyy,
+                    iyz: 0,
+                    izz: diaginertia.izz,
+                };
             }
         }
 
@@ -660,9 +548,14 @@ export function parseMJCF(xmlContent: string): RobotState | null {
         return null;
     }
 
+    const worldBody = toParserBody(parsedModel.worldBody, parsedModel.compilerSettings);
+    const rootBodies = shouldPreserveSyntheticWorldRoot(worldBody)
+        ? [worldBody]
+        : worldBody.children;
+
     return mjcfToRobotState(
         parsedModel.modelName,
-        [toParserBody(parsedModel.worldBody, parsedModel.compilerSettings)],
+        rootBodies,
         parsedModel.meshMap,
     );
 }

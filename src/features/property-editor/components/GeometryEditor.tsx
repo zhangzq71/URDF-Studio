@@ -8,10 +8,10 @@ import { Upload, File, Wand, Check, Trash2 } from 'lucide-react';
 import type { RobotState, UrdfLink, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
-import { useSelectionStore } from '@/store';
+import { useCollisionTransformStore, useSelectionStore } from '@/store';
+import type { Language } from '@/store';
 import {
   getCollisionGeometryByObjectIndex,
-  getCollisionGeometryEntries,
   removeCollisionGeometryByObjectIndex,
   updateCollisionGeometryByObjectIndex,
 } from '@/core/robot';
@@ -21,12 +21,15 @@ import {
   Vec3InlineInput,
   PROPERTY_EDITOR_HELPER_TEXT_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
+  PROPERTY_EDITOR_SUBLABEL_CLASS,
   PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS,
   PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
   PROPERTY_EDITOR_SECTION_TITLE_CLASS,
   PROPERTY_EDITOR_SELECT_CLASS,
 } from './FormControls';
+
 import { MeshPreview } from './MeshPreview';
+import { RotationValueInput } from './RotationValueInput';
 import {
   computeAutoAlign,
   convertGeometryType,
@@ -37,8 +40,11 @@ import {
   GEOMETRY_DIMENSION_STEP,
   MAX_GEOMETRY_DIMENSION_DECIMALS,
   MAX_TRANSFORM_DECIMALS,
-  TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
+import {
+  PROPERTY_EDITOR_POSITION_STEP,
+  PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS,
+} from '../constants';
 
 const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
   includePrimitiveFits: true,
@@ -68,6 +74,7 @@ interface GeometryEditorProps {
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
   t: typeof translations['en'];
+  lang: Language;
   isTabbed?: boolean;
 }
 
@@ -79,6 +86,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   assets,
   onUploadAsset,
   t,
+  lang,
   isTabbed = false
 }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -89,6 +97,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const meshAnalysisPromiseCacheRef = useRef<Record<string, Promise<MeshAnalysis | null>>>({});
     const typeChangeRequestRef = useRef(0);
     const setSelection = useSelectionStore((state) => state.setSelection);
+    const pendingCollisionTransform = useCollisionTransformStore((state) => state.pendingCollisionTransform);
 
     const selectedCollisionObjectIndex = category === 'collision'
       && robot.selection.type === 'link'
@@ -102,7 +111,6 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const geomData = category === 'collision'
       ? (selectedCollisionGeometry?.geometry || data.collision)
       : data.visual;
-
     const geometrySnapshotCacheRef = useRef<Record<string, Partial<Record<GeometryType, {
       dimensions?: { x: number; y: number; z: number };
       origin?: { xyz: { x: number; y: number; z: number }; rpy: { r: number; p: number; y: number } };
@@ -140,6 +148,24 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     });
 
     const normalizeColor = (value?: string) => value?.trim().toLowerCase();
+    const displayedOrigin = useMemo(() => {
+      if (category !== 'collision' || !pendingCollisionTransform) {
+        return geomData.origin;
+      }
+
+      if (pendingCollisionTransform.linkId !== data.id) {
+        return geomData.origin;
+      }
+
+      if ((pendingCollisionTransform.objectIndex ?? 0) !== selectedCollisionObjectIndex) {
+        return geomData.origin;
+      }
+
+      return {
+        xyz: pendingCollisionTransform.position,
+        rpy: pendingCollisionTransform.rotation,
+      };
+    }, [category, data.id, geomData.origin, pendingCollisionTransform, selectedCollisionObjectIndex]);
 
     const createMeshAnalysisKey = (geometry: Pick<UrdfVisual, 'meshPath' | 'dimensions'>) =>
       `${geometry.meshPath ?? ''}:${geometry.dimensions?.x ?? 1}:${geometry.dimensions?.y ?? 1}:${geometry.dimensions?.z ?? 1}`;
@@ -168,21 +194,6 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       return workerResults[analysisKey] ?? null;
     };
 
-    const cloneGeometry = (geometry: UrdfVisual): UrdfVisual => ({
-      ...geometry,
-      dimensions: geometry.dimensions
-        ? { ...geometry.dimensions }
-        : geometry.dimensions,
-      origin: geometry.origin
-        ? {
-            xyz: { ...geometry.origin.xyz },
-            rpy: { ...geometry.origin.rpy },
-          }
-        : geometry.origin,
-      meshPath: geometry.meshPath,
-      color: geometry.color,
-    });
-
     const update = (newData: Partial<typeof geomData>) => {
         if (category === 'collision') {
             if (selectedCollisionGeometry) {
@@ -208,6 +219,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             },
         });
     };
+
 
     useEffect(() => {
       const currentType = geomData.type || GeometryType.CYLINDER;
@@ -663,27 +675,31 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
             {geomData.type !== GeometryType.NONE && (
                 <InputGroup label={t.originRelativeLink}>
-                    <div className="space-y-2">
-                    <Vec3InlineInput
-                        value={geomData.origin?.xyz || {x:0, y:0, z:0}}
-                        onChange={(v) => update({
-                            origin: { ...(geomData.origin || { rpy: {r:0,p:0,y:0} }), xyz: v as { x: number; y: number; z: number } }
+                    <div className="space-y-2.5">
+                    <div className="space-y-1.5">
+                        <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
+                        <Vec3InlineInput
+                            value={displayedOrigin?.xyz || {x:0, y:0, z:0}}
+                            onChange={(v) => update({
+                                origin: { ...(displayedOrigin || { rpy: {r:0,p:0,y:0} }), xyz: v as { x: number; y: number; z: number } }
+                            })}
+                            labels={['X', 'Y', 'Z']}
+                            compact
+                            step={PROPERTY_EDITOR_POSITION_STEP}
+                            precision={MAX_TRANSFORM_DECIMALS}
+                            repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+                        />
+                    </div>
+                    <RotationValueInput
+                        value={displayedOrigin?.rpy || {r:0, p:0, y:0}}
+                        onChange={(rpy) => update({
+                            origin: { ...(displayedOrigin || { xyz: {x:0,y:0,z:0} }), rpy }
                         })}
-                        labels={['X', 'Y', 'Z']}
+                        lang={lang}
+                        label={t.rotation}
                         compact
-                        step={TRANSFORM_STEP}
-                        precision={MAX_TRANSFORM_DECIMALS}
-                    />
-                    <Vec3InlineInput
-                        value={geomData.origin?.rpy || {r:0, p:0, y:0}}
-                        onChange={(v) => update({
-                            origin: { ...(geomData.origin || { xyz: {x:0,y:0,z:0} }), rpy: v as { r: number; p: number; y: number } }
-                        })}
-                        labels={[t.roll, t.pitch, t.yaw]}
-                        keys={['r', 'p', 'y']}
-                        compact
-                        step={TRANSFORM_STEP}
-                        precision={MAX_TRANSFORM_DECIMALS}
+                        holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+                        referenceFrameScope="geometry"
                     />
                     </div>
                 </InputGroup>

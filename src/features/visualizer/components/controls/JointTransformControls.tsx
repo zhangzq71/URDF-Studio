@@ -1,26 +1,22 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import * as THREE from 'three';
 import { JointType, RobotState } from '@/types';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { TransformControlsState } from '../../hooks/useTransformControls';
-import { TransformConfirmUI } from './TransformConfirmUI';
-
 interface JointTransformControlsProps {
   mode: 'skeleton' | 'detail' | 'hardware';
   selectedJointPivot: THREE.Group | null;
   robot: RobotState;
-  transformMode: 'translate' | 'rotate' | 'select';
+  transformMode: 'translate' | 'rotate' | 'universal';
   transformControlsState: TransformControlsState;
-  confirmTitle?: string;
-  cancelTitle?: string;
 }
 
 /**
- * JointTransformControls - Handles TransformControls and confirmation UI for joint editing
+ * JointTransformControls - Handles joint TransformControls in skeleton mode
  *
  * Features:
  * - Renders TransformControls for selected joint pivot
- * - Displays confirmation UI when dragging completes
+ * - Applies drag results immediately
  * - Skips fixed joints (they cannot be transformed)
  * - Only active in skeleton mode
  */
@@ -30,23 +26,14 @@ export const JointTransformControls = memo(function JointTransformControls({
   robot,
   transformMode,
   transformControlsState,
-  confirmTitle,
-  cancelTitle,
 }: JointTransformControlsProps) {
   const {
     transformControlRef,
-    pendingEdit,
-    getDisplayValue,
-    getDeltaDisplay,
-    handleValueChange,
-    handleKeyDown,
-    handleConfirm,
-    handleCancel,
+    rotateTransformControlRef,
     handleObjectChange,
   } = transformControlsState;
 
-  // Only show in skeleton mode, and hide if in 'select' mode
-  if (mode !== 'skeleton' || transformMode === 'select') return null;
+  if (mode !== 'skeleton') return null;
 
   // No joint selected
   if (!selectedJointPivot || robot.selection.type !== 'joint' || !robot.selection.id) return null;
@@ -65,35 +52,16 @@ export const JointTransformControls = memo(function JointTransformControls({
       {/* TransformControls at root Canvas level - not nested in hierarchy */}
       <UnifiedTransformControls
         ref={transformControlRef}
+        rotateRef={rotateTransformControlRef}
         object={selectedJointPivot}
         mode={transformMode}
         size={VISUALIZER_UNIFIED_GIZMO_SIZE}
         space="local"
-        enabled={!pendingEdit}
+        hoverStyle="single-axis"
+        displayStyle="thick-primary"
         onChange={handleObjectChange}
+        onRotateChange={handleObjectChange}
       />
-
-      {/* Confirm/Cancel UI */}
-      {pendingEdit && (() => {
-        // Get world position for correct placement
-        const worldPos = new THREE.Vector3();
-        selectedJointPivot.getWorldPosition(worldPos);
-
-        return (
-          <TransformConfirmUI
-            pendingEdit={pendingEdit}
-            worldPosition={worldPos}
-            getDisplayValue={getDisplayValue}
-            getDeltaDisplay={getDeltaDisplay}
-            handleValueChange={handleValueChange}
-            handleKeyDown={handleKeyDown}
-            handleConfirm={handleConfirm}
-            handleCancel={handleCancel}
-            confirmTitle={confirmTitle}
-            cancelTitle={cancelTitle}
-          />
-        );
-      })()}
     </>
   );
 });

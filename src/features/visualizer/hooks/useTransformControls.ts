@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
+import { resolveJointKey } from '@/core/robot';
 import { RobotState } from '@/types';
 
 interface PendingEdit {
@@ -11,6 +12,7 @@ interface PendingEdit {
 
 export interface TransformControlsState {
   transformControlRef: React.RefObject<any>;
+  rotateTransformControlRef: React.RefObject<any>;
   pendingEdit: PendingEdit | null;
   setPendingEdit: (edit: PendingEdit | null) => void;
   getDisplayValue: () => string;
@@ -24,30 +26,76 @@ export interface TransformControlsState {
 
 /**
  * Custom hook to manage TransformControls state and interactions
- * Handles dragging, confirming, and canceling while preserving
+ * Handles dragging and persisting joint transforms while preserving
  * the stock Three.js TransformControls appearance.
  */
 export function useTransformControls(
   selectedObject: THREE.Group | null,
-  transformMode: 'translate' | 'rotate' | 'select',
+  transformMode: 'translate' | 'rotate' | 'universal',
   robot: RobotState,
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void,
   mode: 'skeleton' | 'detail' | 'hardware'
 ): TransformControlsState {
+  const tempEulerRef = useRef(new THREE.Euler(0, 0, 0, 'ZYX'));
   const transformControlRef = useRef<any>(null);
+  const rotateTransformControlRef = useRef<any>(null);
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
 
   const originalPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
-  const originalRotationRef = useRef<THREE.Euler>(new THREE.Euler());
+  const originalQuaternionRef = useRef<THREE.Quaternion>(new THREE.Quaternion());
   const isDraggingControlRef = useRef(false);
   const currentAxisRef = useRef<string | null>(null);
   const startValueRef = useRef<number>(0);
+
+  const getObjectRPY = useCallback((object: THREE.Object3D) => {
+    const rotation = tempEulerRef.current.setFromQuaternion(object.quaternion, 'ZYX');
+    return { r: rotation.x, p: rotation.y, y: rotation.z };
+  }, []);
+
+  const applyAxisRotationValue = useCallback(
+    (object: THREE.Object3D, axis: string, value: number) => {
+      const rotation = tempEulerRef.current.setFromQuaternion(object.quaternion, 'ZYX');
+      if (axis === 'X') rotation.x = value;
+      else if (axis === 'Y') rotation.y = value;
+      else if (axis === 'Z') rotation.z = value;
+
+      object.quaternion.setFromEuler(rotation);
+    },
+    []
+  );
+
+  const persistSelectedObject = useCallback(() => {
+    if (!selectedObject || !robot.selection.id) return;
+
+    const isJoint = robot.selection.type === 'joint';
+    if (!isJoint) return;
+
+    const id = resolveJointKey(robot.joints, robot.selection.id);
+    if (!id) return;
+
+    const entity = robot.joints[id];
+    if (!entity) return;
+
+    const pos = selectedObject.position;
+    const rot = getObjectRPY(selectedObject);
+
+    onUpdate('joint', id, {
+      ...entity,
+      origin: {
+        xyz: { x: pos.x, y: pos.y, z: pos.z },
+        rpy: { r: rot.x, p: rot.y, y: rot.z },
+      },
+    });
+
+    originalPositionRef.current.copy(pos);
+    originalQuaternionRef.current.copy(selectedObject.quaternion);
+  }, [getObjectRPY, onUpdate, robot.joints, robot.selection.id, robot.selection.type, selectedObject]);
 
   // Clear pending edit when selection changes
   useEffect(() => {
     if (pendingEdit && selectedObject) {
       selectedObject.position.copy(originalPositionRef.current);
-      selectedObject.rotation.copy(originalRotationRef.current);
+      selectedObject.quaternion.copy(originalQuaternionRef.current);
     }
     setPendingEdit(null);
   }, [robot.selection.id, robot.selection.type]);
@@ -57,7 +105,7 @@ export function useTransformControls(
     return () => {
       if (pendingEdit && selectedObject) {
         selectedObject.position.copy(originalPositionRef.current);
-        selectedObject.rotation.copy(originalRotationRef.current);
+        selectedObject.quaternion.copy(originalQuaternionRef.current);
       }
     };
   }, [pendingEdit, selectedObject]);
@@ -66,7 +114,7 @@ export function useTransformControls(
   useEffect(() => {
     if (selectedObject) {
       originalPositionRef.current.copy(selectedObject.position);
-      originalRotationRef.current.copy(selectedObject.rotation);
+      originalQuaternionRef.current.copy(selectedObject.quaternion);
     }
   }, [selectedObject]);
 
@@ -102,9 +150,7 @@ export function useTransformControls(
         // Live preview
         const axis = pendingEdit.axis;
         if (pendingEdit.isRotate) {
-          if (axis === 'X') selectedObject.rotation.x = val;
-          else if (axis === 'Y') selectedObject.rotation.y = val;
-          else if (axis === 'Z') selectedObject.rotation.z = val;
+          applyAxisRotationValue(selectedObject, axis, val);
         } else {
           if (axis === 'X') selectedObject.position.x = val;
           else if (axis === 'Y') selectedObject.position.y = val;
@@ -118,48 +164,25 @@ export function useTransformControls(
   const handleConfirm = useCallback(() => {
     if (!selectedObject || !robot.selection.id || !pendingEdit) return;
 
-    const isJoint = robot.selection.type === 'joint';
-    const id = robot.selection.id;
-    const entity = isJoint ? robot.joints[id] : robot.links[id];
-    if (!entity) return;
-
     // Apply the edited value
     const axis = pendingEdit.axis;
     if (pendingEdit.isRotate) {
-      if (axis === 'X') selectedObject.rotation.x = pendingEdit.value;
-      else if (axis === 'Y') selectedObject.rotation.y = pendingEdit.value;
-      else if (axis === 'Z') selectedObject.rotation.z = pendingEdit.value;
+      applyAxisRotationValue(selectedObject, axis, pendingEdit.value);
     } else {
       if (axis === 'X') selectedObject.position.x = pendingEdit.value;
       else if (axis === 'Y') selectedObject.position.y = pendingEdit.value;
       else if (axis === 'Z') selectedObject.position.z = pendingEdit.value;
     }
 
-    // Save to state
-    const pos = selectedObject.position;
-    const rot = selectedObject.rotation;
-
-    if (isJoint) {
-      onUpdate('joint', id, {
-        ...entity,
-        origin: {
-          xyz: { x: pos.x, y: pos.y, z: pos.z },
-          rpy: { r: rot.x, p: rot.y, y: rot.z },
-        },
-      });
-    }
-
-    // Update original refs
-    originalPositionRef.current.copy(selectedObject.position);
-    originalRotationRef.current.copy(selectedObject.rotation);
+    persistSelectedObject();
 
     setPendingEdit(null);
-  }, [selectedObject, robot, pendingEdit, onUpdate]);
+  }, [applyAxisRotationValue, pendingEdit, persistSelectedObject, robot.selection.id, selectedObject]);
 
   const handleCancel = useCallback(() => {
     if (selectedObject) {
       selectedObject.position.copy(originalPositionRef.current);
-      selectedObject.rotation.copy(originalRotationRef.current);
+      selectedObject.quaternion.copy(originalQuaternionRef.current);
     }
     setPendingEdit(null);
   }, [selectedObject]);
@@ -183,96 +206,86 @@ export function useTransformControls(
 
   // Setup event listeners for TransformControls
   useEffect(() => {
-    const controls = transformControlRef.current;
-    if (!controls || !selectedObject || mode !== 'skeleton') return;
+    if (!selectedObject || mode !== 'skeleton') return;
 
-    const handleDraggingChange = (event: any) => {
-      const dragging = event.value;
+    const getAxisValue = (axis: string | null, isRotate: boolean) => {
+      if (!axis) return 0;
 
-      if (dragging) {
-        // Start dragging
-        isDraggingControlRef.current = true;
-        originalPositionRef.current.copy(selectedObject.position);
-        originalRotationRef.current.copy(selectedObject.rotation);
+      if (isRotate) {
+        const rotation = getObjectRPY(selectedObject);
+        return axis === 'X'
+          ? rotation.r
+          : axis === 'Y'
+          ? rotation.p
+          : axis === 'Z'
+          ? rotation.y
+          : 0;
+      }
 
-        const axis = controls.axis;
-        currentAxisRef.current = axis;
+      return axis === 'X'
+        ? selectedObject.position.x
+        : axis === 'Y'
+        ? selectedObject.position.y
+        : axis === 'Z'
+        ? selectedObject.position.z
+        : 0;
+    };
 
-        const isRotate = transformMode === 'rotate';
-        let startValue = 0;
+    const bindDraggingListener = (controls: any, isRotate: boolean) => {
+      if (!controls) return () => {};
 
-        if (isRotate) {
-          startValue =
-            axis === 'X'
-              ? selectedObject.rotation.x
-              : axis === 'Y'
-              ? selectedObject.rotation.y
-              : axis === 'Z'
-              ? selectedObject.rotation.z
-              : 0;
-        } else {
-          startValue =
-            axis === 'X'
-              ? selectedObject.position.x
-              : axis === 'Y'
-              ? selectedObject.position.y
-              : axis === 'Z'
-              ? selectedObject.position.z
-              : 0;
+      const handleDraggingChange = (event: any) => {
+        const dragging = event.value;
+
+        if (dragging) {
+          isDraggingControlRef.current = true;
+          originalPositionRef.current.copy(selectedObject.position);
+          originalQuaternionRef.current.copy(selectedObject.quaternion);
+
+          const axis = controls.axis;
+          currentAxisRef.current = axis;
+          startValueRef.current = getAxisValue(axis, isRotate);
+          return;
         }
 
-        startValueRef.current = startValue;
-      } else if (isDraggingControlRef.current) {
-        // End dragging
+        if (!isDraggingControlRef.current) return;
+
         isDraggingControlRef.current = false;
 
         const axis = currentAxisRef.current;
-
-        const isRotate = transformMode === 'rotate';
-        let currentVal = 0;
-
-        if (isRotate) {
-          currentVal =
-            axis === 'X'
-              ? selectedObject.rotation.x
-              : axis === 'Y'
-              ? selectedObject.rotation.y
-              : axis === 'Z'
-              ? selectedObject.rotation.z
-              : 0;
-        } else {
-          currentVal =
-            axis === 'X'
-              ? selectedObject.position.x
-              : axis === 'Y'
-              ? selectedObject.position.y
-              : axis === 'Z'
-              ? selectedObject.position.z
-              : 0;
-        }
-
+        const currentVal = getAxisValue(axis, isRotate);
         const delta = currentVal - startValueRef.current;
 
         if (Math.abs(delta) > 0.0001 && axis) {
-          setPendingEdit({
-            axis,
-            value: currentVal,
-            startValue: startValueRef.current,
-            isRotate,
-          });
+          persistSelectedObject();
         }
-      }
+      };
+
+      controls.addEventListener('dragging-changed', handleDraggingChange);
+
+      return () => {
+        controls.removeEventListener('dragging-changed', handleDraggingChange);
+      };
     };
 
-    controls.addEventListener('dragging-changed', handleDraggingChange);
+    const cleanupTranslate = bindDraggingListener(
+      transformControlRef.current,
+      transformMode === 'rotate'
+    );
+    const cleanupRotate =
+      transformMode === 'universal'
+        ? bindDraggingListener(rotateTransformControlRef.current, true)
+        : () => {};
 
     return () => {
-      controls.removeEventListener('dragging-changed', handleDraggingChange);
+      cleanupTranslate();
+      cleanupRotate();
     };
-  }, [selectedObject, transformMode, mode]);
+  }, [getObjectRPY, mode, persistSelectedObject, selectedObject, transformMode]);
 
   return {
     transformControlRef,
+    rotateTransformControlRef,
     pendingEdit,
     setPendingEdit,
     getDisplayValue,

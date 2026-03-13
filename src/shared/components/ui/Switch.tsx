@@ -51,15 +51,16 @@ export const Switch: React.FC<SwitchProps> = ({
         onClick={handleToggle}
         disabled={disabled}
         className={`
-          relative inline-flex items-center shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 p-0.5
+          relative inline-flex items-center shrink-0 cursor-pointer rounded-full border border-transparent transition-[background-color,border-color] duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 p-0.5
           ${checked ? 'bg-system-blue-solid' : 'bg-switch-off'}
+          ${checked ? 'border-system-blue-solid' : 'border-border-strong/70'}
           ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
           ${desktopSizes[size].switch}
         `}
       >
         <span
           className={`
-            pointer-events-none inline-block transform rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.2)] ring-0 
+            pointer-events-none inline-block transform rounded-full border border-border-black/10 bg-panel-bg shadow-sm ring-0
             transition duration-200 ease-in-out
             ${checked ? desktopSizes[size].translate : 'translate-x-0'}
             ${desktopSizes[size].dot}

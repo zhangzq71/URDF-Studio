@@ -3,6 +3,7 @@
  * Generates MuJoCo MJCF format from RobotState
  */
 
+import * as THREE from 'three';
 import { RobotState, GeometryType, JointType, UrdfLink } from '@/types';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
@@ -32,6 +33,10 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   const formatShape = (n: number) => formatNumberWithMaxDecimals(n, MAX_GEOMETRY_DIMENSION_DECIMALS);
   const vecStr = (v: { x: number; y: number; z: number }) => `${formatScalar(v.x)} ${formatScalar(v.y)} ${formatScalar(v.z)}`;
   const rotStr = (v: { r: number; p: number; y: number }) => `${formatScalar(v.r)} ${formatScalar(v.p)} ${formatScalar(v.y)}`; // MuJoCo accepts Euler XYZ by default
+  const quatStr = (v: { r: number; p: number; y: number }) => {
+    const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(v.r, v.p, v.y, 'ZYX'));
+    return `${formatScalar(quaternion.w)} ${formatScalar(quaternion.x)} ${formatScalar(quaternion.y)} ${formatScalar(quaternion.z)}`;
+  };
 
   // Helper to convert hex color to rgba string
   const hexToRgba = (hex: string) => {
@@ -181,7 +186,16 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     }
 
     // 2. Inertial
-    bodyXml += `${indent}  <inertial pos="0 0 0" mass="${formatScalar(link.inertial.mass)}" diaginertia="${formatScalar(link.inertial.inertia.ixx)} ${formatScalar(link.inertial.inertia.iyy)} ${formatScalar(link.inertial.inertia.izz)}"/>\n`;
+    const inertialOrigin = link.inertial.origin || { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
+    const inertialRPY = inertialOrigin.rpy || { r: 0, p: 0, y: 0 };
+    const hasInertialRotation = Math.abs(inertialRPY.r) > 1e-9 || Math.abs(inertialRPY.p) > 1e-9 || Math.abs(inertialRPY.y) > 1e-9;
+    const inertia = link.inertial.inertia;
+    const hasOffDiagonalInertia = Math.abs(inertia.ixy) > 1e-12 || Math.abs(inertia.ixz) > 1e-12 || Math.abs(inertia.iyz) > 1e-12;
+    const inertialTensorAttr = hasOffDiagonalInertia
+      ? `fullinertia="${formatScalar(inertia.ixx)} ${formatScalar(inertia.iyy)} ${formatScalar(inertia.izz)} ${formatScalar(inertia.ixy)} ${formatScalar(inertia.ixz)} ${formatScalar(inertia.iyz)}"`
+      : `diaginertia="${formatScalar(inertia.ixx)} ${formatScalar(inertia.iyy)} ${formatScalar(inertia.izz)}"`;
+    const inertialQuatAttr = hasInertialRotation ? ` quat="${quatStr(inertialRPY)}"` : '';
+    bodyXml += `${indent}  <inertial pos="${vecStr(inertialOrigin.xyz || { x: 0, y: 0, z: 0 })}" mass="${formatScalar(link.inertial.mass)}"${inertialQuatAttr} ${inertialTensorAttr}/>\n`;
 
     // 3. Visual Geom
     // Offset visual geom by its origin
