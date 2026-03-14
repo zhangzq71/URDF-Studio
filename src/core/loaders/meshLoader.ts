@@ -9,6 +9,7 @@
  */
 
 import * as THREE from 'three';
+import { resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
 
 // ============================================================
 // SHARED MATERIALS - Avoid shader recompilation for each mesh
@@ -148,9 +149,18 @@ export const findAssetByIndex = (path: string, index: AssetIndex, urdfDir: strin
         }
     }
 
-    // Remove package:// prefix
+    // Try package-relative lookup before falling back to package-local paths.
     if (cleanPath.startsWith('package://')) {
-        cleanPath = cleanPath.substring(10);
+        const packagePath = cleanFilePath(cleanPath.substring(10).replace(/^\/+/, ''));
+        if (packagePath) {
+            result = index.direct.get(packagePath);
+            if (result) return result;
+
+            result = index.lowercase.get(packagePath.toLowerCase());
+            if (result) return result;
+        }
+
+        cleanPath = packagePath;
         const slashIdx = cleanPath.indexOf('/');
         if (slashIdx !== -1) {
             cleanPath = cleanPath.substring(slashIdx + 1);
@@ -164,14 +174,17 @@ export const findAssetByIndex = (path: string, index: AssetIndex, urdfDir: strin
 
     // Normalize path
     const normalizedPath = cleanFilePath(cleanPath);
+    const resolvedPath = urdfDir
+        ? resolveImportedAssetPath(cleanPath, `${urdfDir}__asset_lookup__`)
+        : normalizedPath;
 
     // Strategy 1: Direct lookup with normalized path
     result = index.direct.get(normalizedPath);
     if (result) return result;
 
     // Strategy 2: With urdfDir
-    if (urdfDir) {
-        result = index.direct.get(urdfDir + normalizedPath);
+    if (urdfDir && resolvedPath) {
+        result = index.direct.get(resolvedPath);
         if (result) return result;
     }
 
@@ -180,13 +193,13 @@ export const findAssetByIndex = (path: string, index: AssetIndex, urdfDir: strin
     if (result) return result;
 
     // Strategy 4: Lowercase lookup
-    const lowerPath = normalizedPath.toLowerCase();
+    const lowerPath = resolvedPath.toLowerCase();
     result = index.lowercase.get(lowerPath);
     if (result) return result;
 
     // Strategy 5: Filename only
-    const lastSlash = normalizedPath.lastIndexOf('/');
-    const filename = lastSlash === -1 ? normalizedPath : normalizedPath.substring(lastSlash + 1);
+    const lastSlash = resolvedPath.lastIndexOf('/');
+    const filename = lastSlash === -1 ? resolvedPath : resolvedPath.substring(lastSlash + 1);
     result = index.filename.get(filename);
     if (result) return result;
 
@@ -213,14 +226,24 @@ export const findAssetByPath = (path: string, assets: Record<string, string>, ur
         if (slashIdx !== -1) cleanPath = cleanPath.substring(slashIdx + 1);
     }
     if (cleanPath.startsWith('package://')) {
-        cleanPath = cleanPath.substring(10);
+        const packagePath = cleanFilePath(cleanPath.substring(10).replace(/^\/+/, ''));
+        if (assets[packagePath]) return assets[packagePath];
+
+        const lowerPackagePath = packagePath.toLowerCase();
+        for (const key of Object.keys(assets)) {
+            if (key.toLowerCase() === lowerPackagePath) return assets[key];
+        }
+
+        cleanPath = packagePath;
         const slashIdx = cleanPath.indexOf('/');
         if (slashIdx !== -1) cleanPath = cleanPath.substring(slashIdx + 1);
     }
     if (cleanPath.startsWith('./')) cleanPath = cleanPath.substring(2);
 
     const normalizedPath = cleanFilePath(cleanPath);
-    const fullPath = urdfDir + normalizedPath;
+    const fullPath = urdfDir
+        ? resolveImportedAssetPath(cleanPath, `${urdfDir}__asset_lookup__`)
+        : normalizedPath;
 
     if (assets[fullPath]) return assets[fullPath];
     if (assets[normalizedPath]) return assets[normalizedPath];

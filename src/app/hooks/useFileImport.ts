@@ -7,9 +7,10 @@ import JSZip from 'jszip';
 import type { RobotFile, MotorSpec, RobotState } from '@/types';
 import { GeometryType } from '@/types';
 import { parseURDF, parseMJCF, isMJCF, parseUSDA, isUSDA, parseXacro, isXacro } from '@/core/parsers';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useSelectionStore, useUIStore } from '@/store';
-import { importProject, isMeshFile } from '@/features/file-io';
+import { createAssetUrls, importProject, isMeshFile } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
@@ -33,6 +34,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
   const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
+  const selectedFile = useAssetsStore((state) => state.selectedFile);
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const assets = useAssetsStore((state) => state.assets);
@@ -49,6 +51,16 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   // Assembly store
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
   const addComponent = useAssemblyStore((state) => state.addComponent);
+
+  const pickPreferredFile = useCallback((files: RobotFile[]) => {
+    const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
+    return robotDefinitionFiles.find((file) => file.format === 'urdf')
+      || robotDefinitionFiles.find((file) => file.format === 'mjcf')
+      || robotDefinitionFiles.find((file) => file.format === 'usd')
+      || robotDefinitionFiles[0]
+      || files[0]
+      || null;
+  }, []);
 
   // Detect file format from content
   const detectFormat = useCallback((content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | 'xacro' | null => {
@@ -149,7 +161,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       onLoadRobot(file);
     }
 
-    return newState;
+    return newState ? rewriteRobotMeshPathsForSource(newState, file.name) : null;
   }, [onLoadRobot]);
 
   // Handle file import
@@ -312,27 +324,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       }
 
       // 2. Load Assets
-      const newAssets: Record<string, string> = {};
-      const assetPromises = assetFiles.map(async f => {
-        const ext = f.name.split('.').pop()?.toLowerCase();
-        if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp', 'hdr'].includes(ext || '')) {
-          const url = URL.createObjectURL(f.blob);
-          newAssets[f.name] = url;
-          const filename = f.name.split('/').pop()!;
-          newAssets[filename] = url;
-          if (f.name.includes('/meshes/')) {
-            newAssets['/meshes/' + filename] = url;
-          }
-          // Store various path patterns
-          const parts = f.name.split('/');
-          for (let i = 0; i < parts.length; i++) {
-            const subPath = parts.slice(i).join('/');
-            if (!newAssets[subPath]) newAssets[subPath] = url;
-            if (!newAssets['/' + subPath]) newAssets['/' + subPath] = url;
-          }
-        }
-      });
-      await Promise.all(assetPromises);
+      const newAssets = createAssetUrls(assetFiles);
 
       // Add new assets (merge with existing)
       addAssets(newAssets);
@@ -345,20 +337,30 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       // Filter to get only real robot definition files (exclude mesh)
-      const robotDefinitionFiles = newRobotFiles.filter(f => f.format !== 'mesh');
       if (newRobotFiles.length > 0) {
-        if (availableFiles.length === 0) {
+        const preferredFile = pickPreferredFile(newRobotFiles);
+
+        if (!preferredFile) {
+          // No loadable file after import; fall through to generic completion handling.
+        } else if (availableFiles.length === 0) {
           // First import: initialize assembly and load robot
           initAssembly(robotName || 'my_project');
-          const preferredFile = robotDefinitionFiles.find(f => f.format === 'urdf')
-            || robotDefinitionFiles.find(f => f.format === 'mjcf')
-            || robotDefinitionFiles.find(f => f.format === 'usd')
-            || robotDefinitionFiles[0]
-            || newRobotFiles[0];
           addComponent(preferredFile, { availableFiles: mergedFiles, assets: { ...assets, ...newAssets } });
           setSidebarTab('structure');
           loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
           setAppMode('detail');
+        } else if (!selectedFile) {
+          // If the current preview was cleared by a library delete, reload the newly imported robot
+          // instead of leaving the workspace on the placeholder base_link state.
+          setSidebarTab('structure');
+          loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
+          setAppMode('detail');
+          if (onShowToast) {
+            onShowToast(
+              t.addedFilesToAssetLibrary.replace('{count}', String(newRobotFiles.length)),
+              'success',
+            );
+          }
         } else {
           // Subsequent import: notify user
           if (onShowToast) {
@@ -397,9 +399,11 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     setAppMode,
     setSidebarTab,
     setSelection,
+    selectedFile,
     setRobot,
     initAssembly,
     addComponent,
+    pickPreferredFile,
     showImportWarning,
     t,
   ]);
