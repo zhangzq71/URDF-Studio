@@ -11,6 +11,10 @@ import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useSelectionStore, useUIStore } from '@/store';
 import { createAssetUrls, importProject, isMeshFile } from '@/features/file-io';
+import {
+  createImportPathCollisionMap,
+  remapImportedPath,
+} from '@/features/file-io/utils/libraryImportPathCollisions';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
@@ -302,10 +306,33 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         await Promise.all(promises);
       }
 
+      const importedPaths = [
+        ...newRobotFiles.map((file) => file.name),
+        ...assetFiles.map((file) => file.name),
+        ...libraryFiles.map((file) => file.path),
+      ];
+      const existingPaths = [
+        ...availableFiles.map((file) => file.name),
+        ...Object.keys(assets),
+      ];
+      const pathCollisionMap = createImportPathCollisionMap(importedPaths, existingPaths);
+      const renamedRobotFiles = newRobotFiles.map((file) => ({
+        ...file,
+        name: remapImportedPath(file.name, pathCollisionMap),
+      }));
+      const renamedAssetFiles = assetFiles.map((file) => ({
+        ...file,
+        name: remapImportedPath(file.name, pathCollisionMap),
+      }));
+      const renamedLibraryFiles = libraryFiles.map((file) => ({
+        ...file,
+        path: remapImportedPath(file.path, pathCollisionMap),
+      }));
+
       // 1. Process Motor Library
-      if (libraryFiles.length > 0) {
+      if (renamedLibraryFiles.length > 0) {
         const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-        libraryFiles.forEach(f => {
+        renamedLibraryFiles.forEach(f => {
           try {
             const parts = f.path.split('/');
             if (parts.length >= 2) {
@@ -324,21 +351,21 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       }
 
       // 2. Load Assets
-      const newAssets = createAssetUrls(assetFiles);
+      const newAssets = createAssetUrls(renamedAssetFiles);
 
       // Add new assets (merge with existing)
       addAssets(newAssets);
 
       // 3. Set Available Files (merge with existing)
       const existingNames = new Set(availableFiles.map(f => f.name));
-      const uniqueNewFiles = newRobotFiles.filter(f => !existingNames.has(f.name));
+      const uniqueNewFiles = renamedRobotFiles.filter(f => !existingNames.has(f.name));
       const mergedFiles = [...availableFiles, ...uniqueNewFiles];
       setAvailableFiles(mergedFiles);
 
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       // Filter to get only real robot definition files (exclude mesh)
-      if (newRobotFiles.length > 0) {
-        const preferredFile = pickPreferredFile(newRobotFiles);
+      if (renamedRobotFiles.length > 0) {
+        const preferredFile = pickPreferredFile(renamedRobotFiles);
 
         if (!preferredFile) {
           // No loadable file after import; fall through to generic completion handling.
@@ -357,7 +384,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           setAppMode('detail');
           if (onShowToast) {
             onShowToast(
-              t.addedFilesToAssetLibrary.replace('{count}', String(newRobotFiles.length)),
+              t.addedFilesToAssetLibrary.replace('{count}', String(renamedRobotFiles.length)),
               'success',
             );
           }
@@ -365,14 +392,14 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           // Subsequent import: notify user
           if (onShowToast) {
             onShowToast(
-              t.addedFilesToAssetLibrary.replace('{count}', String(newRobotFiles.length)),
+              t.addedFilesToAssetLibrary.replace('{count}', String(renamedRobotFiles.length)),
               'success',
             );
           }
         }
-      } else if (libraryFiles.length > 0) {
+      } else if (renamedLibraryFiles.length > 0) {
         alert(t.libraryImportSuccessful);
-      } else if (assetFiles.length === 0 && newRobotFiles.length === 0) {
+      } else if (renamedAssetFiles.length === 0 && renamedRobotFiles.length === 0) {
         alert(t.noDefinitionFilesFound);
       }
 
