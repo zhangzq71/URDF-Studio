@@ -195,6 +195,14 @@ export function useWorkspaceSourceSync({
     return generateMujocoXML(currentRobotSourceState, { meshdir: 'meshes/' });
   }, [currentRobotSourceState, isWorkspaceAssembly, selectedFile?.format]);
 
+  const resolvedMjcfSource = useMemo(() => {
+    if (!selectedFile || selectedFile.format !== 'mjcf') {
+      return null;
+    }
+
+    return resolveMJCFSource(selectedFile, availableFiles);
+  }, [availableFiles, selectedFile]);
+
   const workspaceViewerContent = useMemo(() => {
     if (!isWorkspaceAssembly) {
       return null;
@@ -277,25 +285,33 @@ export function useWorkspaceSourceSync({
     }
 
     if (selectedFile?.format === 'mjcf') {
-      if (generatedMjcfContent) {
-        return generatedMjcfContent;
-      }
-
-      return resolveMJCFSource(selectedFile, availableFiles).content;
+      return resolvedMjcfSource?.content ?? selectedFile.content;
     }
 
     return viewerUrdfContent ?? generateURDF(currentRobotSourceState, { preserveMeshPaths: true });
   }, [
     availableFiles,
     emptyRobot,
-    generatedMjcfContent,
     isWorkspaceAssembly,
     mergedRobotData,
+    resolvedMjcfSource,
     selectedFile,
     viewerUrdfContent,
     workspaceViewerContent,
     currentRobotSourceState,
   ]);
+
+  const viewerSourceFilePath = useMemo(() => {
+    if (isWorkspaceAssembly) {
+      return undefined;
+    }
+
+    if (selectedFile?.format === 'mjcf') {
+      return resolvedMjcfSource?.effectiveFile.name ?? selectedFile.name;
+    }
+
+    return selectedFile?.name;
+  }, [isWorkspaceAssembly, resolvedMjcfSource, selectedFile]);
 
   useEffect(() => {
     if (!selectedFile) {
@@ -427,6 +443,7 @@ export function useWorkspaceSourceSync({
     jointAngleState,
     showVisual,
     urdfContentForViewer,
+    viewerSourceFilePath,
     filePreview,
     previewFileName: filePreviewFile?.name,
     sourceCodeContent,

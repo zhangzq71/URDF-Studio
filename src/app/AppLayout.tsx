@@ -350,6 +350,7 @@ export function AppLayout({
     jointAngleState,
     showVisual,
     urdfContentForViewer,
+    viewerSourceFilePath,
     sourceCodeContent,
     filePreview,
     previewFileName,
@@ -1310,7 +1311,7 @@ export function AppLayout({
             showJointPanel={viewConfig.showJointPanel}
             setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
             urdfContent={urdfContentForViewer}
-            sourceFilePath={selectedFile?.name}
+            sourceFilePath={viewerSourceFilePath}
             jointAngleState={jointAngleState}
             onJointChange={handleJointChange}
             selection={robot.selection}
