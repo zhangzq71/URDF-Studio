@@ -166,12 +166,16 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
                 collisionMesh.userData.isCollisionMesh = true;
                 collisionMesh.userData.isCollision = true;
+                collisionMesh.userData.isVisual = false;
+                collisionMesh.userData.isVisualMesh = false;
 
                 // Apply semi-transparent material for collision visualization
                 collisionMesh.traverse((child: any) => {
                     if (child.isMesh) {
                         child.userData.isCollisionMesh = true;
                         child.userData.isCollision = true;
+                        child.userData.isVisual = false;
+                        child.userData.isVisualMesh = false;
                         const collisionMat = createMatteMaterial({
                             color: 0xa855f7,
                             opacity: 0.35,

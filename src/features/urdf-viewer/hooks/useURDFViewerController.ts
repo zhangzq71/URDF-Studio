@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
+import {
+  setRegressionRuntimeRobot,
+  setRegressionViewerHandlers,
+  type RegressionViewerFlags,
+} from '@/shared/debug/regressionBridge';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import type { MeasureState, ToolMode, URDFViewerProps } from '../types';
 import { usePanelDrag } from './usePanelDrag';
@@ -139,6 +144,105 @@ export const useURDFViewerController = ({
   useEffect(() => {
     jointAnglesRef.current = jointAngles;
   }, [jointAngles]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    setRegressionRuntimeRobot(robot);
+
+    if (!active) {
+      setRegressionViewerHandlers(null);
+      return () => {
+        setRegressionRuntimeRobot(null);
+        setRegressionViewerHandlers(null);
+      };
+    }
+
+    const applyFlags = (flags: RegressionViewerFlags) => {
+      if (flags.showCollision !== undefined) setShowCollision(flags.showCollision);
+      if (flags.showVisual !== undefined) setShowVisual(flags.showVisual);
+      if (flags.showCenterOfMass !== undefined) setShowCenterOfMass(flags.showCenterOfMass);
+      if (flags.showCoMOverlay !== undefined) setShowCoMOverlay(flags.showCoMOverlay);
+      if (flags.centerOfMassSize !== undefined) setCenterOfMassSize(flags.centerOfMassSize);
+      if (flags.showInertia !== undefined) setShowInertia(flags.showInertia);
+      if (flags.showInertiaOverlay !== undefined) setShowInertiaOverlay(flags.showInertiaOverlay);
+      if (flags.showOrigins !== undefined) setShowOrigins(flags.showOrigins);
+      if (flags.showOriginsOverlay !== undefined) setShowOriginsOverlay(flags.showOriginsOverlay);
+      if (flags.originSize !== undefined) setOriginSize(flags.originSize);
+      if (flags.showJointAxes !== undefined) setShowJointAxes(flags.showJointAxes);
+      if (flags.showJointAxesOverlay !== undefined) setShowJointAxesOverlay(flags.showJointAxesOverlay);
+      if (flags.jointAxisSize !== undefined) setJointAxisSize(flags.jointAxisSize);
+      if (flags.highlightMode !== undefined) setHighlightMode(flags.highlightMode);
+      if (flags.modelOpacity !== undefined) setModelOpacity(flags.modelOpacity);
+    };
+
+    setRegressionViewerHandlers({
+      getSnapshot: () => ({
+        jointAngles: { ...jointAnglesRef.current },
+        activeJoint,
+        highlightMode,
+        flags: {
+          showCollision,
+          showVisual,
+          showCenterOfMass,
+          showCoMOverlay,
+          centerOfMassSize,
+          showInertia,
+          showInertiaOverlay,
+          showOrigins,
+          showOriginsOverlay,
+          originSize,
+          showJointAxes,
+          showJointAxesOverlay,
+          jointAxisSize,
+          highlightMode,
+          modelOpacity,
+        },
+      }),
+      setFlags: applyFlags,
+    });
+
+    return () => {
+      setRegressionViewerHandlers(null);
+      setRegressionRuntimeRobot(null);
+    };
+  }, [
+    active,
+    activeJoint,
+    centerOfMassSize,
+    highlightMode,
+    jointAxisSize,
+    modelOpacity,
+    originSize,
+    robot,
+    setCenterOfMassSize,
+    setHighlightMode,
+    setJointAxisSize,
+    setModelOpacity,
+    setOriginSize,
+    setShowCoMOverlay,
+    setShowCenterOfMass,
+    setShowCollision,
+    setShowInertia,
+    setShowInertiaOverlay,
+    setShowJointAxes,
+    setShowJointAxesOverlay,
+    setShowOrigins,
+    setShowOriginsOverlay,
+    setShowVisual,
+    showCenterOfMass,
+    showCoMOverlay,
+    showCollision,
+    showInertia,
+    showInertiaOverlay,
+    showJointAxes,
+    showJointAxesOverlay,
+    showOrigins,
+    showOriginsOverlay,
+    showVisual,
+  ]);
 
   const handleRobotLoaded = useCallback((loadedRobot: any) => {
     setRobot(loadedRobot);

@@ -40,17 +40,19 @@ export const OBJRenderer = React.memo(({
   material,
   color,
   assets,
+  assetBaseDir,
   scale
 }: {
   url: string;
   material: THREE.Material;
   color: string;
   assets: Record<string, string>;
+  assetBaseDir?: string;
   scale?: ScaleProps;
 }) => {
   return (
     <Suspense fallback={null}>
-      <LazyOBJRenderer url={url} material={material} color={color} assets={assets} scale={scale} />
+      <LazyOBJRenderer url={url} material={material} color={color} assets={assets} assetBaseDir={assetBaseDir} scale={scale} />
     </Suspense>
   );
 });
@@ -60,16 +62,18 @@ export const DAERenderer = React.memo(({
   url,
   material,
   assets,
+  assetBaseDir,
   scale
 }: {
   url: string;
   material: THREE.Material;
   assets: Record<string, string>;
+  assetBaseDir?: string;
   scale?: ScaleProps;
 }) => {
   return (
     <Suspense fallback={null}>
-      <LazyDAERenderer url={url} material={material} assets={assets} scale={scale} />
+      <LazyDAERenderer url={url} material={material} assets={assets} assetBaseDir={assetBaseDir} scale={scale} />
     </Suspense>
   );
 });

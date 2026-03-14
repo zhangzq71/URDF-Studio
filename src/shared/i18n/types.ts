@@ -542,6 +542,8 @@ export interface TranslationKeys {
   collisionOptimizerCylinderStrategyDesc: string;
   collisionOptimizerRodBoxStrategyLabel: string;
   collisionOptimizerRodBoxStrategyDesc: string;
+  collisionOptimizerCoaxialMergeStrategyLabel: string;
+  collisionOptimizerCoaxialMergeStrategyDesc: string;
   collisionOptimizerRules: string;
   collisionOptimizerAvoidSiblingOverlap: string;
   collisionOptimizerAvoidSiblingOverlapDesc: string;
@@ -563,10 +565,13 @@ export interface TranslationKeys {
   collisionOptimizerReasonCylinder: string;
   collisionOptimizerReasonRodBox: string;
   collisionOptimizerReasonRodBoxCylinder: string;
+  collisionOptimizerReasonCoaxialCapsule: string;
+  collisionOptimizerReasonCoaxialCylinder: string;
   collisionOptimizerClickToLocate: string;
   collisionOptimizerCollisionIndex: string;
   collisionOptimizerPrimary: string;
   collisionOptimizerComponent: string;
+  collisionOptimizerJointPair: string;
   collisionOptimizerApplySummary: string;
 }
 

@@ -11,10 +11,15 @@ import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import {
+  installRegressionDebugApi,
+  setRegressionAppHandlers,
+} from '@/shared/debug/regressionBridge';
 
 const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
 const loadURDFGalleryModule = () => import('@/features/urdf-gallery/components/URDFGallery');
@@ -198,9 +203,17 @@ function AppContent() {
       }
     }
 
-    if (newState) {
-      const { selection: _, ...data } = newState;
-      setRobot(data);
+    const normalizedState = newState ? rewriteRobotMeshPathsForSource(newState, file.name) : null;
+
+    if (normalizedState) {
+      const normalizedData = {
+        name: normalizedState.name,
+        links: normalizedState.links,
+        joints: normalizedState.joints,
+        rootLinkId: normalizedState.rootLinkId,
+        materials: normalizedState.materials,
+      };
+      setRobot(normalizedData);
       setSelection({ type: null, id: null });
       setSelectedFile(file);
       setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
@@ -221,6 +234,46 @@ function AppContent() {
     setAppMode,
     t,
   ]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') {
+      return;
+    }
+
+    installRegressionDebugApi(window);
+
+    setRegressionAppHandlers({
+      getAvailableFiles: () => useAssetsStore.getState().availableFiles,
+      getSelectedFile: () => useAssetsStore.getState().selectedFile,
+      getRobotState: () => ({
+        name: useRobotStore.getState().name,
+        links: useRobotStore.getState().links,
+        joints: useRobotStore.getState().joints,
+        rootLinkId: useRobotStore.getState().rootLinkId,
+        selection: useSelectionStore.getState().selection,
+      }),
+      loadRobotByName: async (fileName: string) => {
+        const file = useAssetsStore.getState().availableFiles.find((entry) => entry.name === fileName) ?? null;
+        if (!file) {
+          return {
+            loaded: false,
+            selectedFile: useAssetsStore.getState().selectedFile?.name ?? null,
+          };
+        }
+
+        handleLoadRobot(file);
+        return {
+          loaded: true,
+          selectedFile: file.name,
+        };
+      },
+    });
+
+    return () => {
+      setRegressionAppHandlers(null);
+      delete window.__URDF_STUDIO_DEBUG__;
+    };
+  }, [handleLoadRobot]);
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });

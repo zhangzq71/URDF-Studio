@@ -7,6 +7,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
+import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 
 interface MeshPreviewProps {
   meshPath: string;
@@ -112,13 +113,14 @@ function MeshContent({ meshPath, assetUrl, assets }: { meshPath: string; assetUr
   );
   useEffect(() => () => { material.dispose(); }, [material]);
   const ext = meshPath.split('.').pop()?.toLowerCase();
+  const assetBaseDir = getSourceFileDirectory(meshPath);
 
   if (ext === 'stl') {
     return <STLRenderer url={assetUrl} material={material} />;
   } else if (ext === 'obj') {
-    return <OBJRenderer url={assetUrl} material={material} color="#6b9bd2" assets={assets} />;
+    return <OBJRenderer url={assetUrl} material={material} color="#6b9bd2" assets={assets} assetBaseDir={assetBaseDir} />;
   } else if (ext === 'dae') {
-    return <DAERenderer url={assetUrl} material={material} assets={assets} />;
+    return <DAERenderer url={assetUrl} material={material} assets={assets} assetBaseDir={assetBaseDir} />;
   }
   return (
     <mesh>

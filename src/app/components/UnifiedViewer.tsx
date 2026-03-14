@@ -35,6 +35,7 @@ interface UnifiedViewerProps {
   showJointPanel?: boolean;
   setShowJointPanel?: (show: boolean) => void;
   urdfContent: string;
+  sourceFilePath?: string;
   jointAngleState?: Record<string, number>;
   onJointChange?: (jointName: string, angle: number) => void;
   selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
@@ -118,6 +119,7 @@ export const UnifiedViewer = React.memo(({
   showJointPanel = true,
   setShowJointPanel,
   urdfContent,
+  sourceFilePath,
   jointAngleState,
   onJointChange,
   selection,
@@ -155,6 +157,7 @@ export const UnifiedViewer = React.memo(({
   });
 
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
+  const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
   const effectiveSelection = activePreview ? emptySelection : selection;
   const hoverSelectionEnabled = !activePreview;
   const effectiveFocusTarget = activePreview ? undefined : focusTarget;
@@ -239,6 +242,7 @@ export const UnifiedViewer = React.memo(({
           controller={viewerController}
           urdfContent={effectiveUrdfContent}
           assets={assets}
+          sourceFilePath={effectiveSourceFilePath}
           mode={activePreview ? 'detail' : (mode as 'detail' | 'hardware')}
           selection={effectiveSelection}
           hoverSelectionEnabled={hoverSelectionEnabled}

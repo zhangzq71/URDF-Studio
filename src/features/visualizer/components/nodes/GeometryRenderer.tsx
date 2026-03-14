@@ -5,6 +5,7 @@ import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
 import { useSelectionStore } from '@/store/selectionStore';
 import { getCachedMaterial } from '../../utils/materialCache';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
+import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 
 interface GeometryRendererProps {
   isCollision: boolean;
@@ -234,26 +235,34 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   } else if (type === GeometryType.MESH) {
     let assetUrl = meshPath ? findAssetByPath(meshPath, assets) : undefined;
 
-    // Try to find asset with component-specific prefix if available
-    if (!assetUrl && meshPath) {
-      const potentialKeys = Object.keys(assets).filter(k => k.endsWith(meshPath));
-      if (potentialKeys.length > 0) {
-        assetUrl = assets[potentialKeys[potentialKeys.length - 1]];
-      }
-    }
-
     if (meshPath && assetUrl) {
       const url = assetUrl;
       const ext = meshPath.split('.').pop()?.toLowerCase();
+      const assetBaseDir = getSourceFileDirectory(meshPath);
 
       if (ext === 'stl') {
         geometryNode = <STLRenderer url={url} material={material} scale={dimensions} />;
       } else if (ext === 'obj') {
         geometryNode = (
-          <OBJRenderer url={url} material={material} color={finalColor} assets={assets} scale={dimensions} />
+          <OBJRenderer
+            url={url}
+            material={material}
+            color={finalColor}
+            assets={assets}
+            assetBaseDir={assetBaseDir}
+            scale={dimensions}
+          />
         );
       } else if (ext === 'dae') {
-        geometryNode = <DAERenderer url={url} material={material} assets={assets} scale={dimensions} />;
+        geometryNode = (
+          <DAERenderer
+            url={url}
+            material={material}
+            assets={assets}
+            assetBaseDir={assetBaseDir}
+            scale={dimensions}
+          />
+        );
       } else {
         // Fallback for unknown extension
         geometryNode = (

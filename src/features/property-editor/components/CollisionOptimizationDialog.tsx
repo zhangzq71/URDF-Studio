@@ -20,6 +20,7 @@ import type {
   CollisionOptimizationBaseAnalysis,
   CollisionOptimizationSource,
   CollisionOptimizationScope,
+  CoaxialJointMergeStrategy,
   CylinderOptimizationStrategy,
   MeshOptimizationStrategy,
   RodBoxOptimizationStrategy,
@@ -257,6 +258,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     meshStrategyLabel: t.collisionOptimizerMeshStrategyLabel,
     cylinderStrategyLabel: t.collisionOptimizerCylinderStrategyLabel,
     rodBoxStrategyLabel: t.collisionOptimizerRodBoxStrategyLabel,
+    coaxialMergeStrategyLabel: t.collisionOptimizerCoaxialMergeStrategyLabel,
+    coaxialMergeStrategyDesc: t.collisionOptimizerCoaxialMergeStrategyDesc,
     rules: t.collisionOptimizerRules,
     avoidSiblingOverlap: t.collisionOptimizerAvoidSiblingOverlap,
     avoidSiblingOverlapDesc: t.collisionOptimizerAvoidSiblingOverlapDesc,
@@ -283,12 +286,14 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     collisionIndex: t.collisionOptimizerCollisionIndex,
     primary: t.collisionOptimizerPrimary,
     component: t.collisionOptimizerComponent,
+    jointPair: t.collisionOptimizerJointPair,
   };
 
   const [scope, setScope] = useState<CollisionOptimizationScope>('all');
   const [meshStrategy, setMeshStrategy] = useState<MeshOptimizationStrategy>('capsule');
   const [cylinderStrategy, setCylinderStrategy] = useState<CylinderOptimizationStrategy>('capsule');
   const [rodBoxStrategy, setRodBoxStrategy] = useState<RodBoxOptimizationStrategy>('capsule');
+  const [coaxialJointMergeStrategy, setCoaxialJointMergeStrategy] = useState<CoaxialJointMergeStrategy>('capsule');
   const [avoidSiblingOverlap, setAvoidSiblingOverlap] = useState(false);
   const [isPreparingBaseAnalysis, setIsPreparingBaseAnalysis] = useState(true);
   const [isComputingCandidates, setIsComputingCandidates] = useState(false);
@@ -352,6 +357,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       void prepareCollisionOptimizationBaseAnalysis(source, assets, {
         signal: controller.signal,
         includeClearanceData: avoidSiblingOverlap,
+        includePrimitiveFits: coaxialJointMergeStrategy !== 'keep',
       })
         .then((result) => {
           if (controller.signal.aborted) return;
@@ -373,7 +379,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       cancelScheduledStart();
       controller.abort();
     };
-  }, [assets, avoidSiblingOverlap, source]);
+  }, [assets, avoidSiblingOverlap, coaxialJointMergeStrategy, source]);
 
   useEffect(() => {
     if (!baseAnalysis) {
@@ -391,6 +397,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       meshStrategy,
       cylinderStrategy,
       rodBoxStrategy,
+      coaxialJointMergeStrategy,
       avoidSiblingOverlap,
       selectedTargetId: effectiveSelectedTargetId,
     }, {
@@ -417,6 +424,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   }, [
     avoidSiblingOverlap,
     baseAnalysis,
+    coaxialJointMergeStrategy,
     cylinderStrategy,
     effectiveSelectedTargetId,
     meshStrategy,
@@ -429,7 +437,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       return;
     }
 
-    setCheckedIds(new Set(analysis.candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id)));
+    setCheckedIds(new Set(
+      analysis.candidates
+        .filter((candidate) => candidate.eligible && candidate.autoSelect !== false)
+        .map((candidate) => candidate.target.id),
+    ));
   }, [analysis]);
 
   const activeOperations = useMemo(
@@ -561,6 +573,12 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   ];
 
   const rodBoxStrategyOptions: Array<{ value: RodBoxOptimizationStrategy; label: string }> = [
+    { value: 'capsule', label: copy.strategyCapsule },
+    { value: 'cylinder', label: copy.strategyCylinder },
+    { value: 'keep', label: copy.strategyKeep },
+  ];
+
+  const coaxialMergeStrategyOptions: Array<{ value: CoaxialJointMergeStrategy; label: string }> = [
     { value: 'capsule', label: copy.strategyCapsule },
     { value: 'cylinder', label: copy.strategyCylinder },
     { value: 'keep', label: copy.strategyKeep },
@@ -705,6 +723,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                       && (selection.objectIndex ?? 0) === candidate.target.objectIndex;
                     const candidateMeta = (
                       <div className={`flex min-w-0 flex-wrap items-center gap-1 text-[9px] text-text-secondary ${isInlineCandidateMetaLayout ? 'justify-end' : ''}`}>
+                        {candidate.secondaryTarget && (
+                          <span className={`inline-flex items-center rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 ${isInlineCandidateMetaLayout ? 'max-w-[18rem]' : 'max-w-[14rem]'}`}>
+                            <span className="truncate">{copy.jointPair}: {candidate.secondaryTarget.linkName}</span>
+                          </span>
+                        )}
                         {candidate.target.componentName && (
                           <span className={`inline-flex items-center rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 ${isInlineCandidateMetaLayout ? 'max-w-[18rem]' : 'max-w-[14rem]'}`}>
                             <span className="truncate">{candidate.target.componentName}</span>
@@ -826,6 +849,20 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                                 key={option.value}
                                 active={rodBoxStrategy === option.value}
                                 onClick={() => setRodBoxStrategy(option.value)}
+                              >
+                                {option.label}
+                              </OptionButton>
+                            ))}
+                          </StrategyField>
+                        </div>
+
+                        <div className={isWideLayout ? 'col-span-2' : ''}>
+                          <StrategyField label={copy.coaxialMergeStrategyLabel} desc={copy.coaxialMergeStrategyDesc}>
+                            {coaxialMergeStrategyOptions.map((option) => (
+                              <OptionButton
+                                key={option.value}
+                                active={coaxialJointMergeStrategy === option.value}
+                                onClick={() => setCoaxialJointMergeStrategy(option.value)}
                               >
                                 {option.label}
                               </OptionButton>

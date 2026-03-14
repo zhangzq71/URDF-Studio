@@ -15,6 +15,7 @@ interface OBJRendererImplProps {
   material: THREE.Material;
   color: string;
   assets: Record<string, string>;
+  assetBaseDir?: string;
   scale?: ScaleProps;
 }
 
@@ -22,9 +23,10 @@ export function OBJRendererImpl({
   url,
   material,
   assets,
+  assetBaseDir,
   scale,
 }: OBJRendererImplProps) {
-  const manager = useLoadingManager(assets);
+  const manager = useLoadingManager(assets, assetBaseDir);
   const obj = useLoader(OBJLoader, url, (loader) => {
     loader.manager = manager;
   });

@@ -263,7 +263,12 @@ export function useVisualizationEffects({
                 child.visible = isVisualGeometryVisible(linkData, showVisual);
             }
 
-            if (child.isMesh && child.userData?.isVisual) {
+            if (
+                child.isMesh
+                && child.userData?.isVisual
+                && !child.userData?.isCollision
+                && !child.userData?.isCollisionMesh
+            ) {
                 child.visible = isVisualGeometryVisible(linkData, showVisual);
             }
 

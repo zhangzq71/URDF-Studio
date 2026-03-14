@@ -11,6 +11,7 @@ import { SHARED_MATERIALS } from '../constants';
 import { createLoadingManager, createMeshLoader } from '@/core/loaders';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
 import { parseURDF } from '@/core/parsers/urdf/parser';
+import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 import { getCollisionGeometryEntries } from '@/core/robot';
 import { GeometryType } from '@/types';
 import type { UrdfJoint, UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
@@ -370,6 +371,9 @@ function markCollisionObject(obj: THREE.Object3D, linkName: string): void {
         const previousMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
         child.userData.parentLinkName = linkName;
         child.userData.isCollisionMesh = true;
+        child.userData.isCollision = true;
+        child.userData.isVisual = false;
+        child.userData.isVisualMesh = false;
         child.material = collisionBaseMaterial;
         child.renderOrder = 999;
 
@@ -440,6 +444,7 @@ interface PatchCategoryOptions {
     category: 'visual' | 'collision';
     geometry: LinkGeometry;
     assets: Record<string, string>;
+    sourceFileDir?: string;
     showVisual: boolean;
     showCollision: boolean;
     linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
@@ -455,6 +460,7 @@ function patchGeometryCategory({
     category,
     geometry,
     assets,
+    sourceFileDir,
     showVisual,
     showCollision,
     linkMeshMapRef,
@@ -543,7 +549,7 @@ function patchGeometryCategory({
             return;
         }
 
-        const urdfDir = '';
+        const urdfDir = sourceFileDir ?? '';
         const manager = createLoadingManager(assets, urdfDir);
         const meshLoader = createMeshLoader(assets, manager, urdfDir);
 
@@ -596,6 +602,7 @@ function patchCollisionEntriesInPlace({
     previousLinkData,
     nextLinkData,
     assets,
+    sourceFileDir,
     showVisual,
     showCollision,
     linkMeshMapRef,
@@ -608,6 +615,7 @@ function patchCollisionEntriesInPlace({
     previousLinkData: UrdfLink;
     nextLinkData: UrdfLink;
     assets: Record<string, string>;
+    sourceFileDir?: string;
     showVisual: boolean;
     showCollision: boolean;
     linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
@@ -662,6 +670,7 @@ function patchCollisionEntriesInPlace({
             category: 'collision',
             geometry: nextEntry.geometry,
             assets,
+            sourceFileDir,
             showVisual,
             showCollision,
             linkMeshMapRef,
@@ -690,6 +699,7 @@ function patchCollisionEntriesInPlace({
                 category: 'collision',
                 geometry: entry.geometry,
                 assets,
+                sourceFileDir,
                 showVisual,
                 showCollision,
                 linkMeshMapRef,
@@ -859,6 +869,7 @@ interface ApplyGeometryPatchOptions {
     robotModel: THREE.Object3D;
     patch: GeometryPatchCandidate;
     assets: Record<string, string>;
+    sourceFileDir?: string;
     showVisual: boolean;
     showCollision: boolean;
     linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
@@ -870,6 +881,7 @@ function applyGeometryPatchInPlace({
     robotModel,
     patch,
     assets,
+    sourceFileDir,
     showVisual,
     showCollision,
     linkMeshMapRef,
@@ -898,6 +910,7 @@ function applyGeometryPatchInPlace({
                 category: 'visual',
                 geometry: patch.linkData.visual,
                 assets,
+                sourceFileDir,
                 showVisual,
                 showCollision,
                 linkMeshMapRef,
@@ -915,6 +928,7 @@ function applyGeometryPatchInPlace({
             previousLinkData: patch.previousLinkData,
             nextLinkData: patch.linkData,
             assets,
+            sourceFileDir,
             showVisual,
             showCollision,
             linkMeshMapRef,
@@ -941,6 +955,7 @@ function applyGeometryPatchInPlace({
                     category: 'collision',
                     geometry: patch.linkData.collision,
                     assets,
+                    sourceFileDir,
                     showVisual,
                     showCollision,
                     linkMeshMapRef,
@@ -1032,6 +1047,7 @@ export interface UseRobotLoaderOptions {
     robotLinks?: Record<string, UrdfLink>;
     robotJoints?: Record<string, UrdfJoint>;
     initialJointAngles?: Record<string, number>;
+    sourceFilePath?: string;
     onRobotLoaded?: (robot: THREE.Object3D) => void;
 }
 
@@ -1052,6 +1068,7 @@ export function useRobotLoader({
     robotLinks,
     robotJoints,
     initialJointAngles,
+    sourceFilePath,
     onRobotLoaded
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
@@ -1086,6 +1103,7 @@ export function useRobotLoader({
     // incremental patch. A counter is more robust than strict content matching
     // when robotLinks/robotJoints and urdfContent updates are not perfectly in sync.
     const skipReloadCountRef = useRef(0);
+    const sourceFileDir = getSourceFileDirectory(sourceFilePath);
 
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
@@ -1184,6 +1202,7 @@ export function useRobotLoader({
             robotModel: currentRobot,
             patch,
             assets,
+            sourceFileDir,
             showVisual: showVisualRef.current,
             showCollision: showCollisionRef.current,
             linkMeshMapRef,
@@ -1196,7 +1215,7 @@ export function useRobotLoader({
         skipReloadCountRef.current += 1;
         setRobotVersion((v) => v + 1);
         setError(null);
-    }, [robotLinks, urdfContent, assets, invalidate, isMeshPreview]);
+    }, [robotLinks, urdfContent, assets, invalidate, isMeshPreview, sourceFileDir]);
 
     // Incremental path: update exactly one changed joint in-place and skip next full URDF reload.
     useEffect(() => {
@@ -1409,7 +1428,7 @@ export function useRobotLoader({
                     }
                 } else {
                     // Standard URDF loading
-                    const urdfDir = '';
+                    const urdfDir = sourceFileDir;
                     const manager = createLoadingManager(assets, urdfDir);
                     manager.onLoad = () => {
                         if (!robotModel) return;
@@ -1482,7 +1501,7 @@ export function useRobotLoader({
             // We allow the old robot to persist until the new one is ready, 
             // or until the component unmounts (handled by the separate useEffect).
         };
-    }, [assets, clearGroundAlignTimers, invalidate, onRobotLoaded, scheduleGroundAlignment, urdfContent]);
+    }, [assets, clearGroundAlignTimers, invalidate, onRobotLoaded, scheduleGroundAlignment, sourceFileDir, urdfContent]);
 
     return {
         robot,

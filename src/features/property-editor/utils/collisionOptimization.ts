@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { getCollisionGeometryEntries, mergeAssembly, updateCollisionGeometryByObjectIndex } from '@/core/robot';
+import {
+  getCollisionGeometryEntries,
+  mergeAssembly,
+  removeCollisionGeometryByObjectIndex,
+  updateCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import type { AssemblyState, GeometryType as GeometryTypeValue, RobotData, UrdfJoint, UrdfLink, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
 import {
@@ -17,12 +22,14 @@ export type CollisionOptimizationScope = 'all' | 'mesh' | 'primitive' | 'selecte
 export type MeshOptimizationStrategy = 'keep' | 'smart' | 'box' | 'sphere' | 'cylinder' | 'capsule';
 export type CylinderOptimizationStrategy = 'keep' | 'capsule';
 export type RodBoxOptimizationStrategy = 'keep' | 'capsule' | 'cylinder';
+export type CoaxialJointMergeStrategy = 'keep' | 'capsule' | 'cylinder';
 
 export interface CollisionOptimizationSettings {
   scope: CollisionOptimizationScope;
   meshStrategy: MeshOptimizationStrategy;
   cylinderStrategy: CylinderOptimizationStrategy;
   rodBoxStrategy: RodBoxOptimizationStrategy;
+  coaxialJointMergeStrategy: CoaxialJointMergeStrategy;
   avoidSiblingOverlap: boolean;
   selectedTargetId?: string | null;
 }
@@ -45,7 +52,9 @@ export type CollisionOptimizationReason =
   | 'mesh-manual-fit'
   | 'cylinder-to-capsule'
   | 'rod-box-to-capsule'
-  | 'rod-box-to-cylinder';
+  | 'rod-box-to-cylinder'
+  | 'coaxial-merge-to-capsule'
+  | 'coaxial-merge-to-cylinder';
 
 export type CollisionOptimizationStatus =
   | 'ready'
@@ -56,11 +65,23 @@ export type CollisionOptimizationStatus =
 
 export interface CollisionOptimizationCandidate {
   target: CollisionTargetRef;
+  secondaryTarget?: CollisionTargetRef;
   eligible: boolean;
   currentType: GeometryTypeValue;
   suggestedType: GeometryTypeValue | null;
   status: CollisionOptimizationStatus;
   reason?: CollisionOptimizationReason;
+  nextGeometry?: UrdfVisual;
+  mutations?: CollisionOptimizationMutation[];
+  affectedTargetIds?: string[];
+  autoSelect?: boolean;
+}
+
+export interface CollisionOptimizationMutation {
+  componentId?: string;
+  linkId: string;
+  objectIndex: number;
+  type: 'update' | 'remove';
   nextGeometry?: UrdfVisual;
 }
 
@@ -71,8 +92,10 @@ export interface CollisionOptimizationOperation {
   objectIndex: number;
   nextGeometry: UrdfVisual;
   reason: CollisionOptimizationReason;
-  fromType: GeometryTypeValue;
+  fromTypes: GeometryTypeValue[];
   toType: GeometryTypeValue;
+  mutations: CollisionOptimizationMutation[];
+  affectedTargetIds: string[];
 }
 
 export interface CollisionOptimizationAnalysis {
@@ -83,6 +106,7 @@ export interface CollisionOptimizationAnalysis {
 }
 
 export interface CollisionOptimizationBaseAnalysis {
+  source: CollisionOptimizationSource;
   targets: CollisionTargetRef[];
   meshAnalysisByTargetId: Record<string, MeshAnalysis | null>;
   clearanceWorld: CollisionOptimizationClearanceWorld | null;
@@ -101,12 +125,42 @@ interface CollisionClearanceContext {
 
 const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 const DEFAULT_CANDIDATE_ANALYSIS_YIELD_EVERY = 8;
+const LOCAL_Z_AXIS = new THREE.Vector3(0, 0, 1);
+const COAXIAL_AXIS_ALIGNMENT_DOT = Math.cos(THREE.MathUtils.degToRad(8));
+const COAXIAL_AXIS_OFFSET_RATIO = 0.35;
+const COAXIAL_RADIUS_RATIO_LIMIT = 1.25;
+const COAXIAL_MIN_RADIUS = 1e-4;
+const COAXIAL_GAP_FLOOR = 0.01;
+const COAXIAL_JOINT_PROXIMITY_FLOOR = 0.02;
+
+type PrimitiveFitCandidate = NonNullable<
+  NonNullable<MeshAnalysis['primitiveFits']>['capsuleCandidates']
+>[number];
+
+interface PrimitiveAxisWorldDescriptor {
+  centerWorld: THREE.Vector3;
+  axisWorld: THREE.Vector3;
+  radius: number;
+  length: number;
+  sourceType: GeometryTypeValue;
+}
+
+interface CoaxialMergeCandidateParams {
+  parentTarget: CollisionTargetRef;
+  jointAxisWorld: THREE.Vector3;
+  jointOriginWorld: THREE.Vector3;
+  parentDescriptor: PrimitiveAxisWorldDescriptor;
+  childDescriptor: PrimitiveAxisWorldDescriptor;
+  parentLinkMatrix: THREE.Matrix4;
+  strategy: Exclude<CoaxialJointMergeStrategy, 'keep'>;
+}
 
 export interface CollisionOptimizationAsyncOptions {
   signal?: AbortSignal;
   yieldEvery?: number;
   includeClearanceData?: boolean;
   includeMeshClearanceObstacles?: boolean;
+  includePrimitiveFits?: boolean;
   pointCollectionLimit?: number;
   surfacePointLimit?: number;
 }
@@ -194,6 +248,50 @@ function normalizeGeometry(geometry: UrdfVisual): UrdfVisual {
   };
 }
 
+function applyOriginRotationToVector(
+  origin: UrdfVisual['origin'] | undefined,
+  vector: THREE.Vector3,
+): THREE.Vector3 {
+  const quaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      origin?.rpy?.r ?? 0,
+      origin?.rpy?.p ?? 0,
+      origin?.rpy?.y ?? 0,
+      'ZYX',
+    ),
+  );
+
+  return vector.clone().applyQuaternion(quaternion);
+}
+
+function offsetLocalPointByOrigin(
+  origin: UrdfVisual['origin'] | undefined,
+  localPoint: { x: number; y: number; z: number },
+): THREE.Vector3 {
+  const rotatedPoint = applyOriginRotationToVector(
+    origin,
+    new THREE.Vector3(localPoint.x, localPoint.y, localPoint.z),
+  );
+
+  return rotatedPoint.add(new THREE.Vector3(
+    origin?.xyz?.x ?? 0,
+    origin?.xyz?.y ?? 0,
+    origin?.xyz?.z ?? 0,
+  ));
+}
+
+function getDirectionAlignmentEuler(direction: THREE.Vector3): THREE.Euler {
+  const safeDirection = direction.clone();
+  if (safeDirection.lengthSq() <= 1e-12) {
+    safeDirection.copy(LOCAL_Z_AXIS);
+  } else {
+    safeDirection.normalize();
+  }
+
+  const quaternion = new THREE.Quaternion().setFromUnitVectors(LOCAL_Z_AXIS, safeDirection);
+  return new THREE.Euler().setFromQuaternion(quaternion, 'ZYX');
+}
+
 function createOriginMatrix(origin?: UrdfVisual['origin']): THREE.Matrix4 {
   const matrix = new THREE.Matrix4();
   const position = new THREE.Vector3(
@@ -268,6 +366,194 @@ function computeLinkWorldMatrices(robot: RobotData): Record<string, THREE.Matrix
   }
 
   return linkMatrices;
+}
+
+function transformDirectionToWorld(
+  linkMatrix: THREE.Matrix4,
+  localDirection: THREE.Vector3,
+): THREE.Vector3 {
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const position = new THREE.Vector3();
+  linkMatrix.decompose(position, quaternion, scale);
+  return localDirection.clone().applyQuaternion(quaternion).normalize();
+}
+
+function transformDirectionToLinkFrame(
+  linkMatrix: THREE.Matrix4,
+  worldDirection: THREE.Vector3,
+): THREE.Vector3 {
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  const position = new THREE.Vector3();
+  linkMatrix.decompose(position, quaternion, scale);
+  return worldDirection.clone().applyQuaternion(quaternion.invert()).normalize();
+}
+
+function getPrimitiveFitCandidates(
+  analysis: MeshAnalysis,
+  strategy: Exclude<CoaxialJointMergeStrategy, 'keep'>,
+): PrimitiveFitCandidate[] {
+  const primitiveFits = analysis.primitiveFits;
+  if (!primitiveFits) {
+    return [];
+  }
+
+  if (strategy === 'cylinder') {
+    return primitiveFits.cylinderCandidates ?? (primitiveFits.cylinder ? [primitiveFits.cylinder] : []);
+  }
+
+  return primitiveFits.capsuleCandidates ?? (primitiveFits.capsule ? [primitiveFits.capsule] : []);
+}
+
+function buildPrimitiveAxisDescriptorForGeometry(
+  geometry: UrdfVisual,
+  meshAnalysis: MeshAnalysis | null | undefined,
+  strategy: Exclude<CoaxialJointMergeStrategy, 'keep'>,
+  linkMatrix: THREE.Matrix4,
+  preferredAxisWorld?: THREE.Vector3,
+): PrimitiveAxisWorldDescriptor | null {
+  if (geometry.type === GeometryType.CYLINDER || geometry.type === GeometryType.CAPSULE) {
+    const centerLocal = new THREE.Vector3(
+      geometry.origin?.xyz?.x ?? 0,
+      geometry.origin?.xyz?.y ?? 0,
+      geometry.origin?.xyz?.z ?? 0,
+    );
+    const axisLocal = applyOriginRotationToVector(geometry.origin, LOCAL_Z_AXIS).normalize();
+    const centerWorld = centerLocal.clone().applyMatrix4(linkMatrix);
+    const axisWorld = transformDirectionToWorld(linkMatrix, axisLocal);
+
+    return {
+      centerWorld,
+      axisWorld,
+      radius: Math.max(geometry.dimensions?.x ?? 0, COAXIAL_MIN_RADIUS),
+      length: Math.max(geometry.dimensions?.y ?? 0, COAXIAL_MIN_RADIUS * 2),
+      sourceType: geometry.type,
+    };
+  }
+
+  if (geometry.type !== GeometryType.MESH || !meshAnalysis) {
+    return null;
+  }
+
+  const fitCandidates = getPrimitiveFitCandidates(meshAnalysis, strategy);
+  if (fitCandidates.length === 0) {
+    return null;
+  }
+
+  let bestFit: PrimitiveFitCandidate | null = null;
+  let bestAlignment = -Infinity;
+
+  fitCandidates.forEach((fit) => {
+    const axisLocal = applyOriginRotationToVector(
+      geometry.origin,
+      new THREE.Vector3(fit.axis.x, fit.axis.y, fit.axis.z),
+    ).normalize();
+    const axisWorld = transformDirectionToWorld(linkMatrix, axisLocal);
+    const alignment = preferredAxisWorld ? Math.abs(axisWorld.dot(preferredAxisWorld)) : 1;
+    if (alignment > bestAlignment + 1e-8) {
+      bestAlignment = alignment;
+      bestFit = fit;
+      return;
+    }
+
+    if (Math.abs(alignment - bestAlignment) <= 1e-8 && bestFit && fit.volume < bestFit.volume) {
+      bestFit = fit;
+    }
+  });
+
+  if (!bestFit) {
+    return null;
+  }
+
+  const centerLocal = offsetLocalPointByOrigin(geometry.origin, bestFit.center);
+  const axisLocal = applyOriginRotationToVector(
+    geometry.origin,
+    new THREE.Vector3(bestFit.axis.x, bestFit.axis.y, bestFit.axis.z),
+  ).normalize();
+
+  return {
+    centerWorld: centerLocal.clone().applyMatrix4(linkMatrix),
+    axisWorld: transformDirectionToWorld(linkMatrix, axisLocal),
+    radius: Math.max(bestFit.radius, COAXIAL_MIN_RADIUS),
+    length: Math.max(bestFit.length, COAXIAL_MIN_RADIUS * 2),
+    sourceType: geometry.type,
+  };
+}
+
+function distanceToInterval(value: number, intervalStart: number, intervalEnd: number): number {
+  if (value < intervalStart) return intervalStart - value;
+  if (value > intervalEnd) return value - intervalEnd;
+  return 0;
+}
+
+function buildCoaxialMergeGeometry(
+  params: CoaxialMergeCandidateParams,
+): UrdfVisual | null {
+  const {
+    parentTarget,
+    jointAxisWorld,
+    jointOriginWorld,
+    parentDescriptor,
+    childDescriptor,
+    parentLinkMatrix,
+    strategy,
+  } = params;
+
+  const axis = jointAxisWorld.clone().normalize();
+  const parentCenterOffset = parentDescriptor.centerWorld.clone().sub(jointOriginWorld);
+  const childCenterOffset = childDescriptor.centerWorld.clone().sub(jointOriginWorld);
+  const parentT = parentCenterOffset.dot(axis);
+  const childT = childCenterOffset.dot(axis);
+  const parentHalfExtent = Math.max(parentDescriptor.length / 2, COAXIAL_MIN_RADIUS);
+  const childHalfExtent = Math.max(childDescriptor.length / 2, COAXIAL_MIN_RADIUS);
+  const parentStart = parentT - parentHalfExtent;
+  const parentEnd = parentT + parentHalfExtent;
+  const childStart = childT - childHalfExtent;
+  const childEnd = childT + childHalfExtent;
+  const jointProximityLimit = Math.max(
+    Math.max(parentDescriptor.radius, childDescriptor.radius) * 1.2,
+    COAXIAL_JOINT_PROXIMITY_FLOOR,
+  );
+
+  if (
+    distanceToInterval(0, parentStart, parentEnd) > jointProximityLimit
+    || distanceToInterval(0, childStart, childEnd) > jointProximityLimit
+  ) {
+    return null;
+  }
+
+  const mergedStart = Math.min(parentStart, childStart);
+  const mergedEnd = Math.max(parentEnd, childEnd);
+  const mergedLength = Math.max(mergedEnd - mergedStart, COAXIAL_MIN_RADIUS * 2);
+  const mergedCenterWorld = jointOriginWorld.clone().add(axis.clone().multiplyScalar((mergedStart + mergedEnd) / 2));
+  const mergedRadius = Math.max(parentDescriptor.radius, childDescriptor.radius, COAXIAL_MIN_RADIUS);
+  const centerLocal = mergedCenterWorld.clone().applyMatrix4(parentLinkMatrix.clone().invert());
+  const axisLocal = transformDirectionToLinkFrame(parentLinkMatrix, axis);
+  const alignedEuler = getDirectionAlignmentEuler(axisLocal);
+
+  return {
+    ...normalizeGeometry(parentTarget.geometry),
+    type: strategy === 'capsule' ? GeometryType.CAPSULE : GeometryType.CYLINDER,
+    meshPath: undefined,
+    dimensions: {
+      x: mergedRadius,
+      y: strategy === 'capsule' ? Math.max(mergedLength, mergedRadius * 2) : mergedLength,
+      z: mergedRadius,
+    },
+    origin: {
+      xyz: {
+        x: centerLocal.x,
+        y: centerLocal.y,
+        z: centerLocal.z,
+      },
+      rpy: {
+        r: alignedEuler.x,
+        p: alignedEuler.y,
+        y: alignedEuler.z,
+      },
+    },
+  };
 }
 
 function transformGeometryToTargetLinkFrame(
@@ -784,6 +1070,245 @@ function buildCandidate(
   return buildPrimitiveCandidate(target, settings, clearanceContext);
 }
 
+function shouldAnalyzeCoaxialMerge(
+  settings: CollisionOptimizationSettings,
+): settings is CollisionOptimizationSettings & { coaxialJointMergeStrategy: Exclude<CoaxialJointMergeStrategy, 'keep'> } {
+  return settings.coaxialJointMergeStrategy !== 'keep';
+}
+
+function shouldIncludeCoaxialPairForScope(
+  settings: CollisionOptimizationSettings,
+  parentTarget: CollisionTargetRef,
+  childTarget: CollisionTargetRef,
+): boolean {
+  switch (settings.scope) {
+    case 'selected':
+      return Boolean(
+        settings.selectedTargetId
+        && (parentTarget.id === settings.selectedTargetId || childTarget.id === settings.selectedTargetId),
+      );
+    case 'mesh':
+      return parentTarget.geometry.type === GeometryType.MESH || childTarget.geometry.type === GeometryType.MESH;
+    case 'primitive':
+      return parentTarget.geometry.type !== GeometryType.MESH && childTarget.geometry.type !== GeometryType.MESH;
+    case 'all':
+    default:
+      return true;
+  }
+}
+
+function buildCoaxialMergeCandidateForJoint(
+  joint: UrdfJoint,
+  parentTarget: CollisionTargetRef,
+  childTarget: CollisionTargetRef,
+  meshAnalysisByTargetId: Record<string, MeshAnalysis | null>,
+  linkWorldMatrices: Record<string, THREE.Matrix4>,
+  settings: CollisionOptimizationSettings & { coaxialJointMergeStrategy: Exclude<CoaxialJointMergeStrategy, 'keep'> },
+): CollisionOptimizationCandidate | null {
+  if (
+    joint.type !== 'fixed'
+    && joint.type !== 'revolute'
+    && joint.type !== 'continuous'
+  ) {
+    return null;
+  }
+
+  if (parentTarget.componentId !== childTarget.componentId) {
+    return null;
+  }
+
+  const parentLinkMatrix = linkWorldMatrices[joint.parentLinkId];
+  const childLinkMatrix = linkWorldMatrices[joint.childLinkId];
+  if (!parentLinkMatrix || !childLinkMatrix) {
+    return null;
+  }
+
+  const jointAxisLocal = new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z);
+  if (jointAxisLocal.lengthSq() <= 1e-12) {
+    return null;
+  }
+
+  const jointWorldMatrix = parentLinkMatrix.clone().multiply(createOriginMatrix(joint.origin));
+  const jointOriginWorld = new THREE.Vector3().setFromMatrixPosition(jointWorldMatrix);
+  const jointAxisWorld = transformDirectionToWorld(jointWorldMatrix, jointAxisLocal.normalize());
+
+  const parentDescriptor = buildPrimitiveAxisDescriptorForGeometry(
+    parentTarget.geometry,
+    meshAnalysisByTargetId[parentTarget.id],
+    settings.coaxialJointMergeStrategy,
+    parentLinkMatrix,
+    jointAxisWorld,
+  );
+  const childDescriptor = buildPrimitiveAxisDescriptorForGeometry(
+    childTarget.geometry,
+    meshAnalysisByTargetId[childTarget.id],
+    settings.coaxialJointMergeStrategy,
+    childLinkMatrix,
+    jointAxisWorld,
+  );
+
+  if (!parentDescriptor || !childDescriptor) {
+    return null;
+  }
+
+  const parentAxisAlignment = Math.abs(parentDescriptor.axisWorld.dot(jointAxisWorld));
+  const childAxisAlignment = Math.abs(childDescriptor.axisWorld.dot(jointAxisWorld));
+  const mutualAxisAlignment = Math.abs(parentDescriptor.axisWorld.dot(childDescriptor.axisWorld));
+
+  if (
+    parentAxisAlignment < COAXIAL_AXIS_ALIGNMENT_DOT
+    || childAxisAlignment < COAXIAL_AXIS_ALIGNMENT_DOT
+    || mutualAxisAlignment < COAXIAL_AXIS_ALIGNMENT_DOT
+  ) {
+    return null;
+  }
+
+  const centerDelta = childDescriptor.centerWorld.clone().sub(parentDescriptor.centerWorld);
+  const axialDelta = Math.abs(centerDelta.dot(jointAxisWorld));
+  const lineOffset = centerDelta.sub(jointAxisWorld.clone().multiplyScalar(centerDelta.dot(jointAxisWorld))).length();
+  const maxRadius = Math.max(parentDescriptor.radius, childDescriptor.radius, COAXIAL_MIN_RADIUS);
+  const radiusRatio = Math.max(parentDescriptor.radius, childDescriptor.radius)
+    / Math.max(Math.min(parentDescriptor.radius, childDescriptor.radius), COAXIAL_MIN_RADIUS);
+  const parentHalfExtent = Math.max(parentDescriptor.length / 2, COAXIAL_MIN_RADIUS);
+  const childHalfExtent = Math.max(childDescriptor.length / 2, COAXIAL_MIN_RADIUS);
+  const axialGap = Math.max(axialDelta - parentHalfExtent - childHalfExtent, 0);
+
+  if (lineOffset > maxRadius * COAXIAL_AXIS_OFFSET_RATIO) {
+    return null;
+  }
+
+  if (radiusRatio > COAXIAL_RADIUS_RATIO_LIMIT) {
+    return null;
+  }
+
+  if (axialGap > Math.max(maxRadius * 1.15, COAXIAL_GAP_FLOOR)) {
+    return null;
+  }
+
+  const mergedGeometry = buildCoaxialMergeGeometry({
+    parentTarget,
+    jointAxisWorld,
+    jointOriginWorld,
+    parentDescriptor,
+    childDescriptor,
+    parentLinkMatrix,
+    strategy: settings.coaxialJointMergeStrategy,
+  });
+  if (!mergedGeometry) {
+    return null;
+  }
+
+  return {
+    target: parentTarget,
+    secondaryTarget: childTarget,
+    eligible: true,
+    currentType: parentTarget.geometry.type,
+    suggestedType: settings.coaxialJointMergeStrategy === 'capsule' ? GeometryType.CAPSULE : GeometryType.CYLINDER,
+    status: 'ready',
+    reason: settings.coaxialJointMergeStrategy === 'capsule'
+      ? 'coaxial-merge-to-capsule'
+      : 'coaxial-merge-to-cylinder',
+    nextGeometry: mergedGeometry,
+    affectedTargetIds: [parentTarget.id, childTarget.id],
+    autoSelect: false,
+    mutations: [
+      {
+        componentId: parentTarget.componentId,
+        linkId: parentTarget.linkId,
+        objectIndex: parentTarget.objectIndex,
+        type: 'update',
+        nextGeometry: mergedGeometry,
+      },
+      {
+        componentId: childTarget.componentId,
+        linkId: childTarget.linkId,
+        objectIndex: childTarget.objectIndex,
+        type: 'remove',
+      },
+    ],
+  };
+}
+
+function buildCoaxialMergeCandidatesForRobot(
+  robot: RobotData,
+  settings: CollisionOptimizationSettings & { coaxialJointMergeStrategy: Exclude<CoaxialJointMergeStrategy, 'keep'> },
+  targets: CollisionTargetRef[],
+  meshAnalysisByTargetId: Record<string, MeshAnalysis | null>,
+  componentId?: string,
+): CollisionOptimizationCandidate[] {
+  const candidates: CollisionOptimizationCandidate[] = [];
+  const linkWorldMatrices = computeLinkWorldMatrices(robot);
+  const targetsByLink = new Map<string, CollisionTargetRef[]>();
+
+  targets
+    .filter((target) => target.componentId === componentId)
+    .forEach((target) => {
+      const key = target.linkId;
+      const bucket = targetsByLink.get(key) ?? [];
+      bucket.push(target);
+      targetsByLink.set(key, bucket);
+    });
+
+  Object.values(robot.joints).forEach((joint) => {
+    const parentTargets = targetsByLink.get(joint.parentLinkId) ?? [];
+    const childTargets = targetsByLink.get(joint.childLinkId) ?? [];
+
+    if (parentTargets.length !== 1 || childTargets.length !== 1) {
+      return;
+    }
+
+    const parentTarget = parentTargets[0];
+    const childTarget = childTargets[0];
+    if (!shouldIncludeCoaxialPairForScope(settings, parentTarget, childTarget)) {
+      return;
+    }
+
+    const candidate = buildCoaxialMergeCandidateForJoint(
+      joint,
+      parentTarget,
+      childTarget,
+      meshAnalysisByTargetId,
+      linkWorldMatrices,
+      settings,
+    );
+
+    if (candidate) {
+      candidates.push(candidate);
+    }
+  });
+
+  return candidates;
+}
+
+function buildCoaxialMergeCandidates(
+  baseAnalysis: CollisionOptimizationBaseAnalysis,
+  settings: CollisionOptimizationSettings,
+): CollisionOptimizationCandidate[] {
+  if (!shouldAnalyzeCoaxialMerge(settings)) {
+    return [];
+  }
+
+  if (baseAnalysis.source.kind === 'robot') {
+    return buildCoaxialMergeCandidatesForRobot(
+      baseAnalysis.source.robot,
+      settings,
+      baseAnalysis.targets,
+      baseAnalysis.meshAnalysisByTargetId,
+      undefined,
+    );
+  }
+
+  return Object.values(baseAnalysis.source.assembly.components).flatMap((component) =>
+    buildCoaxialMergeCandidatesForRobot(
+      component.robot,
+      settings,
+      baseAnalysis.targets,
+      baseAnalysis.meshAnalysisByTargetId,
+      component.id,
+    ),
+  );
+}
+
 export function buildCollisionOptimizationAnalysis(
   baseAnalysis: CollisionOptimizationBaseAnalysis,
   settings: CollisionOptimizationSettings,
@@ -798,6 +1323,7 @@ export function buildCollisionOptimizationAnalysis(
       baseAnalysis.clearanceWorld,
     ),
   );
+  candidates.push(...buildCoaxialMergeCandidates(baseAnalysis, settings));
 
   return {
     targets: baseAnalysis.targets,
@@ -817,6 +1343,7 @@ export async function prepareCollisionOptimizationBaseAnalysis(
   const meshAnalysisByTargetId: Record<string, MeshAnalysis | null> = {};
   const includeClearanceData = options.includeClearanceData ?? false;
   const includeMeshClearanceObstacles = options.includeMeshClearanceObstacles ?? includeClearanceData;
+  const includePrimitiveFits = options.includePrimitiveFits ?? false;
   const clearancePointCollectionLimit = Math.max(options.pointCollectionLimit ?? 1024, 1);
   const clearanceSurfacePointLimit = Math.max(options.surfacePointLimit ?? 512, 1);
   const workerResults = await analyzeMeshBatchWithWorker({
@@ -828,7 +1355,7 @@ export async function prepareCollisionOptimizationBaseAnalysis(
       dimensions: target.geometry.dimensions,
     })),
     options: {
-      includePrimitiveFits: false,
+      includePrimitiveFits,
       includeSurfacePoints: includeMeshClearanceObstacles,
       pointCollectionLimit: includeMeshClearanceObstacles ? clearancePointCollectionLimit : 1,
       surfacePointLimit: includeMeshClearanceObstacles ? clearanceSurfacePointLimit : 1,
@@ -851,6 +1378,7 @@ export async function prepareCollisionOptimizationBaseAnalysis(
     : null;
 
   return {
+    source,
     targets,
     meshAnalysisByTargetId,
     clearanceWorld,
@@ -924,6 +1452,8 @@ export async function buildCollisionOptimizationAnalysisAsync(
     await maybeYieldAfterBatch(index, yieldEvery, options.signal);
   }
 
+  candidates.push(...buildCoaxialMergeCandidates(baseAnalysis, settings));
+
   return {
     targets: baseAnalysis.targets,
     filteredTargets,
@@ -937,7 +1467,9 @@ export async function analyzeCollisionOptimization(
   assets: Record<string, string>,
   settings: CollisionOptimizationSettings,
 ): Promise<CollisionOptimizationAnalysis> {
-  const baseAnalysis = await prepareCollisionOptimizationBaseAnalysis(source, assets);
+  const baseAnalysis = await prepareCollisionOptimizationBaseAnalysis(source, assets, {
+    includePrimitiveFits: settings.coaxialJointMergeStrategy !== 'keep',
+  });
   return buildCollisionOptimizationAnalysisAsync(baseAnalysis, settings);
 }
 
@@ -1034,18 +1566,46 @@ export function buildCollisionOptimizationOperations(
   candidates: CollisionOptimizationCandidate[],
   checkedIds: Set<string>,
 ): CollisionOptimizationOperation[] {
+  const consumedTargetIds = new Set<string>();
+
   return candidates
     .filter((candidate) => candidate.eligible && candidate.nextGeometry && checkedIds.has(candidate.target.id) && candidate.reason)
-    .map((candidate) => ({
-      id: candidate.target.id,
-      componentId: candidate.target.componentId,
-      linkId: candidate.target.linkId,
-      objectIndex: candidate.target.objectIndex,
-      nextGeometry: cloneGeometry(candidate.nextGeometry!),
-      reason: candidate.reason!,
-      fromType: candidate.currentType,
-      toType: candidate.suggestedType!,
-    }));
+    .sort((left, right) =>
+      (right.affectedTargetIds?.length ?? 1) - (left.affectedTargetIds?.length ?? 1)
+    )
+    .flatMap((candidate) => {
+      const affectedTargetIds = candidate.affectedTargetIds ?? [candidate.target.id];
+      if (affectedTargetIds.some((targetId) => consumedTargetIds.has(targetId))) {
+        return [];
+      }
+
+      affectedTargetIds.forEach((targetId) => consumedTargetIds.add(targetId));
+      const mutations = candidate.mutations?.length
+        ? candidate.mutations.map((mutation) => ({
+            ...mutation,
+            nextGeometry: mutation.nextGeometry ? cloneGeometry(mutation.nextGeometry) : undefined,
+          }))
+        : [{
+            componentId: candidate.target.componentId,
+            linkId: candidate.target.linkId,
+            objectIndex: candidate.target.objectIndex,
+            type: 'update' as const,
+            nextGeometry: cloneGeometry(candidate.nextGeometry!),
+          }];
+
+      return [{
+        id: candidate.target.id,
+        componentId: candidate.target.componentId,
+        linkId: candidate.target.linkId,
+        objectIndex: candidate.target.objectIndex,
+        nextGeometry: cloneGeometry(candidate.nextGeometry!),
+        reason: candidate.reason!,
+        fromTypes: [candidate.currentType, ...(candidate.secondaryTarget ? [candidate.secondaryTarget.geometry.type] : [])],
+        toType: candidate.suggestedType!,
+        mutations,
+        affectedTargetIds,
+      }];
+    });
 }
 
 export function applyCollisionOptimizationOperationsToLinks(
@@ -1055,14 +1615,26 @@ export function applyCollisionOptimizationOperationsToLinks(
   const nextLinks: Record<string, UrdfLink> = { ...links };
 
   operations.forEach((operation) => {
-    const link = nextLinks[operation.linkId];
-    if (!link) return;
+    operation.mutations.forEach((mutation) => {
+      const link = nextLinks[mutation.linkId];
+      if (!link) return;
 
-    nextLinks[operation.linkId] = updateCollisionGeometryByObjectIndex(
-      link,
-      operation.objectIndex,
-      operation.nextGeometry,
-    );
+      if (mutation.type === 'remove') {
+        nextLinks[mutation.linkId] = removeCollisionGeometryByObjectIndex(
+          link,
+          mutation.objectIndex,
+        ).link;
+        return;
+      }
+
+      if (mutation.nextGeometry) {
+        nextLinks[mutation.linkId] = updateCollisionGeometryByObjectIndex(
+          link,
+          mutation.objectIndex,
+          mutation.nextGeometry,
+        );
+      }
+    });
   });
 
   return nextLinks;

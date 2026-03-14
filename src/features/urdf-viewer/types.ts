@@ -47,6 +47,7 @@ export interface URDFViewerProps {
 export interface RobotModelProps {
     urdfContent: string;
     assets: Record<string, string>;
+    sourceFilePath?: string;
     onRobotLoaded?: (robot: any) => void;
     showCollision?: boolean;
     showVisual?: boolean;

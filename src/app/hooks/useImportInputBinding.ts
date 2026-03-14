@@ -14,7 +14,12 @@ export function useImportInputBinding({
   useEffect(() => {
     const input = importInputRef.current;
     const folderInput = importFolderInputRef.current;
-    const handleChange = (event: Event) => onImport((event.target as HTMLInputElement).files);
+    const handleChange = (event: Event) => {
+      const target = event.target as HTMLInputElement;
+      void Promise.resolve(onImport(target.files)).finally(() => {
+        target.value = '';
+      });
+    };
 
     if (input) {
       input.addEventListener('change', handleChange as EventListener);

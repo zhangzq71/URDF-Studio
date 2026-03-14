@@ -1,0 +1,402 @@
+import type { RobotFile, RobotState, UrdfJoint, UrdfLink } from '@/types';
+
+type HighlightMode = 'link' | 'collision';
+
+export interface RegressionViewerFlags {
+  showCollision?: boolean;
+  showVisual?: boolean;
+  showCenterOfMass?: boolean;
+  showCoMOverlay?: boolean;
+  centerOfMassSize?: number;
+  showInertia?: boolean;
+  showInertiaOverlay?: boolean;
+  showOrigins?: boolean;
+  showOriginsOverlay?: boolean;
+  originSize?: number;
+  showJointAxes?: boolean;
+  showJointAxesOverlay?: boolean;
+  jointAxisSize?: number;
+  highlightMode?: HighlightMode;
+  modelOpacity?: number;
+}
+
+interface AppRegressionHandlers {
+  getAvailableFiles: () => RobotFile[];
+  getSelectedFile: () => RobotFile | null;
+  getRobotState: () => RobotState;
+  loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; selectedFile: string | null }>;
+}
+
+interface ViewerControllerSnapshot {
+  jointAngles: Record<string, number>;
+  activeJoint: string | null;
+  highlightMode: HighlightMode;
+  flags: Required<RegressionViewerFlags>;
+}
+
+interface ViewerRegressionHandlers {
+  getSnapshot: () => ViewerControllerSnapshot;
+  setFlags: (flags: RegressionViewerFlags) => void;
+}
+
+interface RuntimeJointSummary {
+  name: string;
+  type: string | null;
+  angle: number | null;
+  axis: [number, number, number] | null;
+  limit: {
+    lower: number | null;
+    upper: number | null;
+  } | null;
+}
+
+interface RuntimeLinkSummary {
+  name: string;
+  visualGroupCount: number;
+  collisionGroupCount: number;
+  visualMeshCount: number;
+  collisionMeshCount: number;
+}
+
+interface RegressionSnapshot {
+  timestamp: number;
+  availableFiles: Array<{ name: string; format: string }>;
+  selectedFile: { name: string; format: string } | null;
+  store: ReturnType<typeof summarizeRobotState> | null;
+  viewer: ViewerControllerSnapshot | null;
+  runtime: ReturnType<typeof summarizeRuntimeRobot> | null;
+}
+
+export interface RegressionDebugApi {
+  getAvailableFiles: () => Array<{ name: string; format: string }>;
+  getRegressionSnapshot: () => RegressionSnapshot;
+  loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
+  setViewerFlags: (flags: RegressionViewerFlags) => { ok: boolean };
+}
+
+declare global {
+  interface Window {
+    __URDF_STUDIO_DEBUG__?: RegressionDebugApi;
+  }
+}
+
+const DEFAULT_FLAGS: Required<RegressionViewerFlags> = {
+  showCollision: false,
+  showVisual: true,
+  showCenterOfMass: false,
+  showCoMOverlay: true,
+  centerOfMassSize: 0.01,
+  showInertia: false,
+  showInertiaOverlay: true,
+  showOrigins: false,
+  showOriginsOverlay: true,
+  originSize: 1,
+  showJointAxes: false,
+  showJointAxesOverlay: true,
+  jointAxisSize: 1,
+  highlightMode: 'link',
+  modelOpacity: 1,
+};
+
+let appHandlers: AppRegressionHandlers | null = null;
+let viewerHandlers: ViewerRegressionHandlers | null = null;
+let runtimeRobot: any | null = null;
+
+function toFixedArray(
+  value: { x?: number; y?: number; z?: number } | [number, number, number] | undefined | null,
+): [number, number, number] | null {
+  if (!value) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    return [
+      Number(value[0] ?? 0),
+      Number(value[1] ?? 0),
+      Number(value[2] ?? 0),
+    ];
+  }
+
+  return [
+    Number(value.x ?? 0),
+    Number(value.y ?? 0),
+    Number(value.z ?? 0),
+  ];
+}
+
+function summarizeGeometry(geometry: UrdfLink['visual'] | UrdfLink['collision']) {
+  return {
+    type: geometry.type,
+    meshPath: geometry.meshPath || null,
+    dimensions: geometry.dimensions
+      ? {
+          x: Number(geometry.dimensions.x ?? 0),
+          y: Number(geometry.dimensions.y ?? 0),
+          z: Number(geometry.dimensions.z ?? 0),
+        }
+      : null,
+    origin: geometry.origin
+      ? {
+          xyz: {
+            x: Number(geometry.origin.xyz.x ?? 0),
+            y: Number(geometry.origin.xyz.y ?? 0),
+            z: Number(geometry.origin.xyz.z ?? 0),
+          },
+          rpy: {
+            r: Number(geometry.origin.rpy.r ?? 0),
+            p: Number(geometry.origin.rpy.p ?? 0),
+            y: Number(geometry.origin.rpy.y ?? 0),
+          },
+        }
+      : null,
+    visible: geometry.visible ?? true,
+  };
+}
+
+function summarizeLink(link: UrdfLink) {
+  return {
+    id: link.id,
+    name: link.name,
+    mass: Number(link.inertial?.mass ?? 0),
+    centerOfMass: link.inertial?.origin
+      ? {
+          xyz: {
+            x: Number(link.inertial.origin.xyz.x ?? 0),
+            y: Number(link.inertial.origin.xyz.y ?? 0),
+            z: Number(link.inertial.origin.xyz.z ?? 0),
+          },
+          rpy: {
+            r: Number(link.inertial.origin.rpy.r ?? 0),
+            p: Number(link.inertial.origin.rpy.p ?? 0),
+            y: Number(link.inertial.origin.rpy.y ?? 0),
+          },
+        }
+      : null,
+    inertia: link.inertial?.inertia
+      ? {
+          ixx: Number(link.inertial.inertia.ixx ?? 0),
+          ixy: Number(link.inertial.inertia.ixy ?? 0),
+          ixz: Number(link.inertial.inertia.ixz ?? 0),
+          iyy: Number(link.inertial.inertia.iyy ?? 0),
+          iyz: Number(link.inertial.inertia.iyz ?? 0),
+          izz: Number(link.inertial.inertia.izz ?? 0),
+        }
+      : null,
+    visual: summarizeGeometry(link.visual),
+    collision: summarizeGeometry(link.collision),
+    collisionBodies: (link.collisionBodies || []).map((body, index) => ({
+      index,
+      geometry: summarizeGeometry(body),
+    })),
+  };
+}
+
+function summarizeJoint(joint: UrdfJoint) {
+  return {
+    id: joint.id,
+    name: joint.name,
+    type: joint.type,
+    parentLinkId: joint.parentLinkId,
+    childLinkId: joint.childLinkId,
+    axis: {
+      x: Number(joint.axis.x ?? 0),
+      y: Number(joint.axis.y ?? 0),
+      z: Number(joint.axis.z ?? 0),
+    },
+    origin: {
+      xyz: {
+        x: Number(joint.origin.xyz.x ?? 0),
+        y: Number(joint.origin.xyz.y ?? 0),
+        z: Number(joint.origin.xyz.z ?? 0),
+      },
+      rpy: {
+        r: Number(joint.origin.rpy.r ?? 0),
+        p: Number(joint.origin.rpy.p ?? 0),
+        y: Number(joint.origin.rpy.y ?? 0),
+      },
+    },
+    limit: joint.limit
+      ? {
+          lower: Number(joint.limit.lower ?? 0),
+          upper: Number(joint.limit.upper ?? 0),
+          effort: Number(joint.limit.effort ?? 0),
+          velocity: Number(joint.limit.velocity ?? 0),
+        }
+      : null,
+  };
+}
+
+function summarizeRobotState(robotState: RobotState) {
+  const links = Object.values(robotState.links || {});
+  const joints = Object.values(robotState.joints || {});
+  return {
+    name: robotState.name,
+    rootLinkId: robotState.rootLinkId,
+    linkCount: links.length,
+    jointCount: joints.length,
+    totalMass: links.reduce((sum, link) => sum + Number(link.inertial?.mass ?? 0), 0),
+    links: links.map(summarizeLink),
+    joints: joints.map(summarizeJoint),
+  };
+}
+
+function resolveRuntimeLinkName(object: any): string | null {
+  if (!object) {
+    return null;
+  }
+
+  if (typeof object.userData?.parentLinkName === 'string' && object.userData.parentLinkName) {
+    return object.userData.parentLinkName;
+  }
+
+  let current = object;
+  while (current) {
+    if (current.isURDFLink && typeof current.name === 'string' && current.name) {
+      return current.name;
+    }
+    current = current.parent;
+  }
+
+  return null;
+}
+
+function summarizeRuntimeRobot(robot: any) {
+  if (!robot) {
+    return null;
+  }
+
+  const linkMap = new Map<string, RuntimeLinkSummary>();
+  const helperCounts = {
+    centerOfMass: 0,
+    inertiaBox: 0,
+    originAxes: 0,
+    jointAxis: 0,
+  };
+  const runtimeJoints: RuntimeJointSummary[] = [];
+
+  const getOrCreateLinkSummary = (linkName: string): RuntimeLinkSummary => {
+    const existing = linkMap.get(linkName);
+    if (existing) {
+      return existing;
+    }
+
+    const created: RuntimeLinkSummary = {
+      name: linkName,
+      visualGroupCount: 0,
+      collisionGroupCount: 0,
+      visualMeshCount: 0,
+      collisionMeshCount: 0,
+    };
+    linkMap.set(linkName, created);
+    return created;
+  };
+
+  robot.traverse((child: any) => {
+    if (child.name === '__com_visual__') helperCounts.centerOfMass += 1;
+    if (child.name === '__inertia_box__') helperCounts.inertiaBox += 1;
+    if (child.name === '__origin_axes__') helperCounts.originAxes += 1;
+    if (child.name === '__joint_axis__' || child.name === '__joint_axis_helper__') helperCounts.jointAxis += 1;
+
+    const linkName = resolveRuntimeLinkName(child);
+    if (linkName) {
+      const entry = getOrCreateLinkSummary(linkName);
+      if (child.userData?.isVisualGroup) entry.visualGroupCount += 1;
+      if (child.userData?.isCollisionGroup || child.isURDFCollider) entry.collisionGroupCount += 1;
+      if (child.isMesh && child.userData?.isVisualMesh) entry.visualMeshCount += 1;
+      if (child.isMesh && child.userData?.isCollisionMesh) entry.collisionMeshCount += 1;
+    }
+  });
+
+  const joints = robot.joints ? Object.values(robot.joints as Record<string, any>) : [];
+  joints.forEach((joint: any) => {
+    runtimeJoints.push({
+      name: typeof joint?.name === 'string' ? joint.name : '',
+      type: typeof joint?.jointType === 'string' ? joint.jointType : (typeof joint?.type === 'string' ? joint.type : null),
+      angle: typeof joint?.angle === 'number'
+        ? joint.angle
+        : (typeof joint?.jointValue === 'number' ? joint.jointValue : null),
+      axis: toFixedArray(joint?.axis),
+      limit: joint?.limit
+        ? {
+            lower: typeof joint.limit.lower === 'number' ? joint.limit.lower : null,
+            upper: typeof joint.limit.upper === 'number' ? joint.limit.upper : null,
+          }
+        : null,
+    });
+  });
+
+  return {
+    name: typeof robot?.name === 'string' ? robot.name : null,
+    linkCount: Array.from(linkMap.values()).length,
+    jointCount: runtimeJoints.length,
+    visualGroupCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualGroupCount, 0),
+    collisionGroupCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionGroupCount, 0),
+    visualMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualMeshCount, 0),
+    collisionMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionMeshCount, 0),
+    helpers: helperCounts,
+    links: Array.from(linkMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    joints: runtimeJoints.sort((a, b) => a.name.localeCompare(b.name)),
+  };
+}
+
+function getAvailableFilesSummary() {
+  if (!appHandlers) {
+    return [];
+  }
+
+  return appHandlers.getAvailableFiles().map((file) => ({
+    name: file.name,
+    format: file.format,
+  }));
+}
+
+export function setRegressionAppHandlers(handlers: AppRegressionHandlers | null): void {
+  appHandlers = handlers;
+}
+
+export function setRegressionViewerHandlers(handlers: ViewerRegressionHandlers | null): void {
+  viewerHandlers = handlers;
+}
+
+export function setRegressionRuntimeRobot(robot: any | null): void {
+  runtimeRobot = robot;
+}
+
+export function getRegressionSnapshot(): RegressionSnapshot {
+  const selectedFile = appHandlers?.getSelectedFile() ?? null;
+  const robotState = appHandlers?.getRobotState();
+  return {
+    timestamp: Date.now(),
+    availableFiles: getAvailableFilesSummary(),
+    selectedFile: selectedFile ? { name: selectedFile.name, format: selectedFile.format } : null,
+    store: robotState ? summarizeRobotState(robotState) : null,
+    viewer: viewerHandlers?.getSnapshot() ?? null,
+    runtime: summarizeRuntimeRobot(runtimeRobot),
+  };
+}
+
+export function installRegressionDebugApi(targetWindow: Window): void {
+  targetWindow.__URDF_STUDIO_DEBUG__ = {
+    getAvailableFiles: () => getAvailableFilesSummary(),
+    getRegressionSnapshot: () => getRegressionSnapshot(),
+    loadRobotByName: async (fileName: string) => {
+      if (!appHandlers) {
+        throw new Error('Regression app handlers are not registered.');
+      }
+
+      const result = await appHandlers.loadRobotByName(fileName);
+      return {
+        loaded: result.loaded,
+        snapshot: getRegressionSnapshot(),
+      };
+    },
+    setViewerFlags: (flags: RegressionViewerFlags) => {
+      if (!viewerHandlers) {
+        return { ok: false };
+      }
+
+      viewerHandlers.setFlags(flags);
+      return { ok: true };
+    },
+  };
+}

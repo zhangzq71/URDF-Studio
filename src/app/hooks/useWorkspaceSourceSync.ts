@@ -179,6 +179,14 @@ export function useWorkspaceSourceSync({
     return generateURDF(currentRobotSourceState, false);
   }, [currentRobotSourceState, isWorkspaceAssembly, selectedFile?.format]);
 
+  const viewerUrdfContent = useMemo(() => {
+    if (isWorkspaceAssembly || selectedFile?.format === 'mjcf') {
+      return null;
+    }
+
+    return generateURDF(currentRobotSourceState, { preserveMeshPaths: true });
+  }, [currentRobotSourceState, isWorkspaceAssembly, selectedFile?.format]);
+
   const generatedMjcfContent = useMemo(() => {
     if (isWorkspaceAssembly || selectedFile?.format !== 'mjcf') {
       return null;
@@ -195,7 +203,7 @@ export function useWorkspaceSourceSync({
     return generateURDF({
       ...(mergedRobotData ?? emptyRobot),
       selection: { type: null, id: null },
-    }, false);
+    }, { preserveMeshPaths: true });
   }, [emptyRobot, isWorkspaceAssembly, mergedRobotData]);
 
   const syncedSourceContent = useMemo(() => {
@@ -276,15 +284,15 @@ export function useWorkspaceSourceSync({
       return resolveMJCFSource(selectedFile, availableFiles).content;
     }
 
-    return generatedUrdfContent ?? generateURDF(currentRobotSourceState, false);
+    return viewerUrdfContent ?? generateURDF(currentRobotSourceState, { preserveMeshPaths: true });
   }, [
     availableFiles,
     emptyRobot,
     generatedMjcfContent,
-    generatedUrdfContent,
     isWorkspaceAssembly,
     mergedRobotData,
     selectedFile,
+    viewerUrdfContent,
     workspaceViewerContent,
     currentRobotSourceState,
   ]);

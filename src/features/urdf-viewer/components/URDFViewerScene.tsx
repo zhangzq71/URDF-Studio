@@ -9,6 +9,7 @@ interface URDFViewerSceneProps {
   controller: URDFViewerController;
   urdfContent: string;
   assets: Record<string, string>;
+  sourceFilePath?: string;
   mode: 'detail' | 'hardware';
   selection?: URDFViewerProps['selection'];
   hoverSelectionEnabled?: boolean;
@@ -27,6 +28,7 @@ export const URDFViewerScene = ({
   controller,
   urdfContent,
   assets,
+  sourceFilePath,
   mode,
   selection,
   hoverSelectionEnabled = true,
@@ -54,6 +56,7 @@ export const URDFViewerScene = ({
         <RobotModel
           urdfContent={urdfContent}
           assets={assets}
+          sourceFilePath={sourceFilePath}
           onRobotLoaded={controller.handleRobotLoaded}
           showCollision={controller.showCollision}
           showVisual={controller.showVisual}

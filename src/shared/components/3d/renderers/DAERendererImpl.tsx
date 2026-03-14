@@ -14,11 +14,12 @@ interface DAERendererImplProps {
   url: string;
   material: THREE.Material;
   assets: Record<string, string>;
+  assetBaseDir?: string;
   scale?: ScaleProps;
 }
 
-export function DAERendererImpl({ url, material, assets, scale }: DAERendererImplProps) {
-  const manager = useLoadingManager(assets);
+export function DAERendererImpl({ url, material, assets, assetBaseDir, scale }: DAERendererImplProps) {
+  const manager = useLoadingManager(assets, assetBaseDir);
   const dae = useLoader(ColladaLoader, url, (loader) => {
     loader.manager = manager;
   });

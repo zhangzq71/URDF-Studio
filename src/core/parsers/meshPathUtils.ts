@@ -8,6 +8,8 @@
  * - windows\\path\\part.stl
  */
 
+import { GeometryType, type RobotData, type RobotState, type UrdfLink } from '@/types';
+
 const normalizeRelativePath = (path: string): string => {
   const segments = path.split('/');
   const stack: string[] = [];
@@ -35,6 +37,133 @@ const stripBlobPrefix = (path: string): string => {
   if (!path.startsWith('blob:')) return path;
   const slashIndex = path.indexOf('/', 5);
   return slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
+};
+
+const stripExternalPrefix = (path: string): string => {
+  if (/^https?:\/\//i.test(path)) return path;
+  if (path.startsWith('data:')) return path;
+  return stripPackagePrefix(stripBlobPrefix(path));
+};
+
+/**
+ * Directory of the source robot file, always with forward slashes and a trailing slash.
+ */
+export const getSourceFileDirectory = (sourceFilePath?: string | null): string => {
+  const normalized = (sourceFilePath ?? '').trim().replace(/\\/g, '/');
+  if (!normalized) return '';
+
+  const lastSlash = normalized.lastIndexOf('/');
+  if (lastSlash < 0) return '';
+
+  return normalized.slice(0, lastSlash + 1);
+};
+
+/**
+ * Resolve an imported asset path against the directory of its source robot file.
+ * This turns relative paths like "meshes/leg.dae" into stable library paths like
+ * "go1/meshes/leg.dae", which avoids collisions between different robot packages.
+ */
+export const resolveImportedAssetPath = (
+  assetPath: string,
+  sourceFilePath?: string | null,
+): string => {
+  const raw = (assetPath || '').trim();
+  if (!raw) return '';
+
+  if (/^(?:blob:|https?:\/\/|data:)/i.test(raw)) {
+    return raw;
+  }
+
+  let normalized = raw.replace(/\\/g, '/');
+  normalized = stripExternalPrefix(normalized);
+  normalized = normalized.replace(/^[A-Za-z]:\//, '');
+  normalized = normalized.replace(/^\/+/, '');
+  normalized = normalized.replace(/^(\.\/)+/, '');
+  normalized = normalizeRelativePath(normalized);
+
+  if (!normalized) return raw;
+
+  const sourceDir = getSourceFileDirectory(sourceFilePath);
+  if (!sourceDir) return normalized;
+  if (normalized.startsWith(sourceDir)) return normalized;
+
+  return normalizeRelativePath(`${sourceDir}${normalized}`);
+};
+
+type RobotWithLinks = RobotData | RobotState;
+
+function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
+  geometry: T,
+  sourceFilePath?: string | null,
+): T {
+  if (!geometry || geometry.type !== GeometryType.MESH || !geometry.meshPath) {
+    return geometry;
+  }
+
+  const resolvedPath = resolveImportedAssetPath(geometry.meshPath, sourceFilePath);
+  if (!resolvedPath || resolvedPath === geometry.meshPath) {
+    return geometry;
+  }
+
+  return {
+    ...geometry,
+    meshPath: resolvedPath,
+  };
+}
+
+/**
+ * Rewrite mesh paths in parsed robot data to stable library-relative paths.
+ */
+export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
+  robot: T,
+  sourceFilePath?: string | null,
+): T => {
+  if (!sourceFilePath) return robot;
+
+  let linksChanged = false;
+  const nextLinks: Record<string, UrdfLink> = {};
+
+  Object.entries(robot.links).forEach(([linkId, link]) => {
+    const nextVisual = rewriteMeshGeometryForSource(link.visual, sourceFilePath);
+    const nextCollision = rewriteMeshGeometryForSource(link.collision, sourceFilePath);
+    let nextCollisionBodies = link.collisionBodies;
+
+    if (link.collisionBodies?.length) {
+      const rewrittenBodies = link.collisionBodies.map((body) =>
+        rewriteMeshGeometryForSource(body, sourceFilePath),
+      );
+
+      const bodiesChanged = rewrittenBodies.some((body, index) => body !== link.collisionBodies?.[index]);
+      if (bodiesChanged) {
+        nextCollisionBodies = rewrittenBodies;
+      }
+    }
+
+    const linkChanged =
+      nextVisual !== link.visual ||
+      nextCollision !== link.collision ||
+      nextCollisionBodies !== link.collisionBodies;
+
+    if (linkChanged) {
+      linksChanged = true;
+      nextLinks[linkId] = {
+        ...link,
+        visual: nextVisual,
+        collision: nextCollision,
+        collisionBodies: nextCollisionBodies,
+      };
+      return;
+    }
+
+    nextLinks[linkId] = link;
+  });
+
+  if (!linksChanged) return robot;
+
+  return {
+    ...robot,
+    links: nextLinks,
+  };
 };
 
 /**

@@ -22,6 +22,7 @@ import {
 export const RobotModel: React.FC<RobotModelProps> = memo(({
     urdfContent,
     assets,
+    sourceFilePath,
     onRobotLoaded,
     showCollision = false,
     showVisual = true,
@@ -94,6 +95,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     } = useRobotLoader({
         urdfContent,
         assets,
+        sourceFilePath,
         showCollision,
         showVisual,
         isMeshPreview,

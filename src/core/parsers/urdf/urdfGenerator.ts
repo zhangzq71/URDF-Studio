@@ -47,6 +47,7 @@ const generateCollisionElement = (
   formatShape: (n: number) => string,
   exportRobotName: string,
   useRelativePaths: boolean = false,
+  preserveMeshPaths: boolean = false,
 ): string => {
   if (!collision || collision.type === GeometryType.NONE) return '';
 
@@ -64,10 +65,16 @@ const generateCollisionElement = (
   } else if (collision.type === GeometryType.CAPSULE) {
     xml += `        <capsule radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
   } else if (collision.type === GeometryType.MESH) {
-    const meshPath = collision.meshPath ? normalizeMeshPathForExport(collision.meshPath) : 'part_collision.stl';
-    const filename = useRelativePaths
-      ? `meshes/${meshPath || 'part_collision.stl'}`
-      : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
+    const meshPath = collision.meshPath
+      ? (preserveMeshPaths
+        ? collision.meshPath.replace(/\\/g, '/')
+        : normalizeMeshPathForExport(collision.meshPath))
+      : 'part_collision.stl';
+    const filename = preserveMeshPaths
+      ? (meshPath || 'part_collision.stl')
+      : useRelativePaths
+        ? `meshes/${meshPath || 'part_collision.stl'}`
+        : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
     xml += `        <mesh filename="${filename}" />\n`;
   }
   xml += `      </geometry>\n`;
@@ -79,6 +86,7 @@ const generateCollisionElement = (
 export interface UrdfGeneratorOptions {
   extended?: boolean;
   useRelativePaths?: boolean;
+  preserveMeshPaths?: boolean;
 }
 
 export const generateAssemblyURDF = (assembly: AssemblyState, options: UrdfGeneratorOptions = {}): string => {
@@ -91,6 +99,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
   const opts: UrdfGeneratorOptions = typeof options === 'boolean' ? { extended: options } : options;
   const extended = opts.extended ?? false;
   const useRelativePaths = opts.useRelativePaths ?? false;
+  const preserveMeshPaths = opts.preserveMeshPaths ?? false;
   const { name, links, joints } = robot;
   const exportRobotName = name?.trim() ? name : 'robot';
 
@@ -123,10 +132,16 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
         } else if (link.visual.type === GeometryType.CAPSULE) {
           xml += `        <capsule radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
-           const meshPath = link.visual.meshPath ? normalizeMeshPathForExport(link.visual.meshPath) : 'part.stl';
-           const filename = useRelativePaths
-             ? `meshes/${meshPath || 'part.stl'}`
-             : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
+           const meshPath = link.visual.meshPath
+             ? (preserveMeshPaths
+               ? link.visual.meshPath.replace(/\\/g, '/')
+               : normalizeMeshPathForExport(link.visual.meshPath))
+             : 'part.stl';
+           const filename = preserveMeshPaths
+             ? (meshPath || 'part.stl')
+             : useRelativePaths
+               ? `meshes/${meshPath || 'part.stl'}`
+               : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
            xml += `        <mesh filename="${filename}" />\n`;
         }
         xml += `      </geometry>\n`;
@@ -137,9 +152,25 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
     }
 
     // Collision (primary + additional bodies on the same link)
-    xml += generateCollisionElement(link.collision, vecStr, rotStr, formatShape, exportRobotName, useRelativePaths);
+    xml += generateCollisionElement(
+      link.collision,
+      vecStr,
+      rotStr,
+      formatShape,
+      exportRobotName,
+      useRelativePaths,
+      preserveMeshPaths,
+    );
     (link.collisionBodies || []).forEach((collisionBody: UrdfLink['collision']) => {
-      xml += generateCollisionElement(collisionBody, vecStr, rotStr, formatShape, exportRobotName, useRelativePaths);
+      xml += generateCollisionElement(
+        collisionBody,
+        vecStr,
+        rotStr,
+        formatShape,
+        exportRobotName,
+        useRelativePaths,
+        preserveMeshPaths,
+      );
     });
 
     // Inertial

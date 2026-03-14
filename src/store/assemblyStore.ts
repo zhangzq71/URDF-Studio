@@ -15,6 +15,7 @@ import type {
 } from '@/types';
 import { DEFAULT_JOINT, JointType, GeometryType } from '@/types';
 import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
@@ -280,6 +281,8 @@ export const useAssemblyStore = create<
         }
 
         if (!robotData) return null;
+
+        robotData = rewriteRobotMeshPathsForSource(robotData, file.name);
 
         const baseId = sanitizeComponentId(file.name);
         const state = get().assemblyState;

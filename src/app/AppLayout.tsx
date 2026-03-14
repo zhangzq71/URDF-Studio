@@ -12,6 +12,7 @@ import { PropertyEditor } from '@/features/property-editor/components/PropertyEd
 import { useActiveHistory, useViewerOrchestration, useWorkspaceSourceSync } from './hooks';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { parseMJCF, parseURDF } from '@/core/parsers';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io';
 import { GeometryType, type AssemblyState, type RobotData, type UrdfLink, type UrdfJoint, type RobotFile } from '@/types';
 import {
@@ -914,7 +915,7 @@ export function AppLayout({
       });
     }
 
-    const meshConvertedCount = operations.filter((operation) => operation.fromType === GeometryType.MESH).length;
+    const meshConvertedCount = operations.filter((operation) => operation.fromTypes.includes(GeometryType.MESH)).length;
     const primitiveConvertedCount = operations.length - meshConvertedCount;
 
     const message = t.collisionOptimizationApplied
@@ -1094,11 +1095,21 @@ export function AppLayout({
     const mjcfBasePath = selectedFile?.name
       ? selectedFile.name.split('/').slice(0, -1).join('/')
       : '';
-    const newState = selectedFile?.format === 'mjcf'
+    const parsedState = selectedFile?.format === 'mjcf'
       ? parseMJCF(processMJCFIncludes(newCode, availableFiles, mjcfBasePath))
       : parseURDF(newCode);
+    const newState = parsedState
+      ? rewriteRobotMeshPathsForSource(parsedState, selectedFile?.name)
+      : null;
+
     if (newState) {
-      const { selection: _, ...newData } = newState;
+      const newData = {
+        name: newState.name,
+        links: newState.links,
+        joints: newState.joints,
+        rootLinkId: newState.rootLinkId,
+        materials: newState.materials,
+      };
       setRobot(newData);
     }
   }, [availableFiles, selectedFile?.format, selectedFile?.name, setRobot]);
@@ -1299,6 +1310,7 @@ export function AppLayout({
             showJointPanel={viewConfig.showJointPanel}
             setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
             urdfContent={urdfContentForViewer}
+            sourceFilePath={selectedFile?.name}
             jointAngleState={jointAngleState}
             onJointChange={handleJointChange}
             selection={robot.selection}
