@@ -12,6 +12,7 @@ export type { RosHardwareInterface } from './urdf/urdfGenerator';
 export { parseMJCF, isMJCF } from './mjcf/mjcfParser';
 export { loadMJCFToThreeJS, isMJCFContent } from './mjcf/mjcfLoader';
 export { generateMujocoXML } from './mjcf/mjcfGenerator';
+export { generateSkeletonXML } from './mjcf/skeletonGenerator';
 
 // USD Parser (Universal Scene Description)
 export { parseUSDA, isUSDA, isUSDCBinary } from './usd/usdParser';

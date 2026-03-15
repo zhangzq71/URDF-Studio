@@ -1,701 +1,109 @@
-import { Suspense, useState, useRef, useEffect, useCallback } from 'react';
-import { Canvas, RootState } from '@react-three/fiber';
-import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
-import * as THREE from 'three';
-import {
-    SnapshotManager,
-    NeutralStudioEnvironment,
-    SceneLighting,
-    ReferenceGrid,
-    CanvasResizeSync,
-    UsageGuide,
-    WORKSPACE_CANVAS_BACKGROUND,
-    WorldOriginAxes,
-} from '@/shared/components/3d';
-import { useEffectiveTheme } from '@/shared/hooks';
+import { memo } from 'react';
 import { translations } from '@/shared/i18n';
-import { useUIStore } from '@/store';
-import { getLowestMeshZ } from '@/shared/utils';
-import { isSingleDofJoint } from '../utils/jointTypes';
+import type { URDFViewerProps } from '../types';
+import { useURDFViewerController } from '../hooks/useURDFViewerController';
+import { URDFViewerCanvas } from './URDFViewerCanvas';
+import { URDFViewerPanels } from './URDFViewerPanels';
+import { URDFViewerScene } from './URDFViewerScene';
 
-import type { URDFViewerProps, ToolMode, MeasureState } from '../types';
-import { RobotModel } from './RobotModel';
-import { JointInteraction } from './JointInteraction';
-import { MeasureTool } from './MeasureTool';
-import { ViewerToolbar } from './ViewerToolbar';
-import { ViewerOptionsPanel } from './ViewerOptionsPanel';
-import { MeasurePanel } from './MeasurePanel';
-import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
-
-import { useViewerSettings } from '../hooks/useViewerSettings';
-import { usePanelDrag } from '../hooks/usePanelDrag';
-import { useResponsivePanelLayout } from '../hooks/useResponsivePanelLayout';
-
-const createEmptyMeasureState = (): MeasureState => ({
-    measurements: [],
-    currentPoints: [],
-    tempPoint: null
-});
-
-export function URDFViewer({
-    urdfContent,
-    assets,
+export const URDFViewer = memo(function URDFViewer({
+  urdfContent,
+  assets,
+  onJointChange,
+  jointAngleState,
+  lang,
+  theme: _theme,
+  mode = 'detail',
+  onSelect,
+  onMeshSelect,
+  onHover,
+  selection,
+  hoveredSelection,
+  robotLinks,
+  robotJoints,
+  focusTarget,
+  showVisual,
+  setShowVisual,
+  snapshotAction,
+  isMeshPreview = false,
+  onCollisionTransformPreview,
+  onCollisionTransform,
+  showToolbar = true,
+  setShowToolbar,
+  showOptionsPanel = true,
+  setShowOptionsPanel,
+  showJointPanel = true,
+  setShowJointPanel,
+  onTransformPendingChange,
+}: URDFViewerProps) {
+  const t = translations[lang];
+  const controller = useURDFViewerController({
     onJointChange,
     jointAngleState,
-    lang,
-    mode = 'detail',
     onSelect,
     onMeshSelect,
     onHover,
     selection,
-    hoveredSelection,
-    robotLinks,
-    robotJoints,
-    focusTarget,
-    showVisual: propShowVisual,
-    setShowVisual: propSetShowVisual,
-    snapshotAction,
-    isMeshPreview = false,
-    onCollisionTransformPreview,
-    onCollisionTransform,
-    showToolbar = true,
-    setShowToolbar,
-    showOptionsPanel = true,
-    setShowOptionsPanel,
-    showJointPanel = true,
-    setShowJointPanel,
-    onTransformPendingChange
-}: URDFViewerProps) {
-    const t = translations[lang];
-
-    const isOrbitDragging = useRef(false);
-    const [robot, setRobot] = useState<any>(null);
-
-    const {
-        showCollision, setShowCollision,
-        localShowVisual, setLocalShowVisual,
-        showJointControls, setShowJointControls,
-        showCenterOfMass, setShowCenterOfMass,
-        showCoMOverlay, setShowCoMOverlay,
-        centerOfMassSize, setCenterOfMassSize,
-        showInertia, setShowInertia,
-        showInertiaOverlay, setShowInertiaOverlay,
-        showOrigins, setShowOrigins,
-        showOriginsOverlay, setShowOriginsOverlay,
-        originSize, setOriginSize,
-        showJointAxes, setShowJointAxes,
-        showJointAxesOverlay, setShowJointAxesOverlay,
-        jointAxisSize, setJointAxisSize,
-        modelOpacity, setModelOpacity,
-        highlightMode, setHighlightMode,
-        isOptionsCollapsed, toggleOptionsCollapsed,
-        isJointsCollapsed, toggleJointsCollapsed
-    } = useViewerSettings();
-
-    const showVisual = propShowVisual !== undefined ? propShowVisual : localShowVisual;
-    const setShowVisual = propSetShowVisual || setLocalShowVisual;
-
-    const [toolMode, setToolMode] = useState<ToolMode>('select');
-    const hoverSelectionEnabled = hoveredSelection !== undefined;
-
-    // WebGL context lost state
-    const [contextLost, setContextLost] = useState(false);
-    const glRef = useRef<THREE.WebGLRenderer | null>(null);
-    const sceneRef = useRef<THREE.Scene | null>(null);
-
-    const [measureState, setMeasureState] = useState<MeasureState>(createEmptyMeasureState);
-    
-    const containerRef = useRef<HTMLDivElement>(null);
-    const optionsPanelRef = useRef<HTMLDivElement>(null);
-    const jointPanelRef = useRef<HTMLDivElement>(null);
-    const measurePanelRef = useRef<HTMLDivElement>(null);
-
-    const {
-        optionsPanelPos,
-        jointPanelPos,
-        measurePanelPos,
-        handleMouseDown,
-        handleMouseMove,
-        handleMouseUp
-    } = usePanelDrag(containerRef, optionsPanelRef, jointPanelRef, measurePanelRef);
-
-    const transformMode = (['translate', 'rotate', 'universal'].includes(toolMode) ? toolMode : 'select') as 'select' | 'translate' | 'rotate' | 'universal';
-    const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
-        containerRef,
-        optionsPanelRef,
-        jointPanelRef,
-        showOptionsPanel,
-        showJointPanel,
-        showJointControls,
-        showToolbar,
-    });
-
-    useEffect(() => {
-        if (selection?.subType === 'collision') {
-            setHighlightMode('collision');
-            setShowCollision(true);
-        } else if (selection?.subType === 'visual') {
-            setHighlightMode('link');
-        }
-    }, [selection?.subType, setHighlightMode, setShowCollision]);
-
-
-    const [jointAngles, setJointAngles] = useState<Record<string, number>>({});
-    const jointAnglesRef = useRef<Record<string, number>>({});
-    const [initialJointAngles, setInitialJointAngles] = useState<Record<string, number>>({});
-    const [angleUnit, setAngleUnit] = useState<'rad' | 'deg'>('rad');
-    const [activeJoint, setActiveJoint] = useState<string | null>(null);
-    const [isDragging, setIsDragging] = useState(false);
-
-    const justSelectedRef = useRef(false);
-    const transformPendingRef = useRef(false);
-
-    // Prevent OrbitControls from remaining disabled when pointer-up is missed (e.g. release outside canvas/window).
-    useEffect(() => {
-        const releaseDragLock = () => setIsDragging(false);
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'hidden') {
-                setIsDragging(false);
-            }
-        };
-
-        window.addEventListener('mouseup', releaseDragLock);
-        window.addEventListener('pointerup', releaseDragLock);
-        window.addEventListener('blur', releaseDragLock);
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-
-        return () => {
-            window.removeEventListener('mouseup', releaseDragLock);
-            window.removeEventListener('pointerup', releaseDragLock);
-            window.removeEventListener('blur', releaseDragLock);
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-        };
-    }, []);
-
-    // Get effective theme (light/dark) handling 'system' preference
-    const effectiveTheme = useEffectiveTheme();
-
-    // Sync jointAnglesRef with jointAngles state
-    useEffect(() => {
-        jointAnglesRef.current = jointAngles;
-    }, [jointAngles]);
-
-    const handleRobotLoaded = useCallback((loadedRobot: any) => {
-        setRobot(loadedRobot);
-
-        if (loadedRobot.joints) {
-            const currentAngles: Record<string, number> = {};
-            const defaultAngles: Record<string, number> = {};
-            const previousAngles = jointAnglesRef.current;
-
-            Object.keys(loadedRobot.joints).forEach(name => {
-                const loadedJoint = loadedRobot.joints[name];
-                if (!isSingleDofJoint(loadedJoint)) return;
-
-                const defaultAngle = loadedJoint.angle || 0;
-                defaultAngles[name] = defaultAngle;
-
-                // Preserve previous angle if it exists, otherwise use default
-                if (previousAngles && previousAngles[name] !== undefined) {
-                    currentAngles[name] = previousAngles[name];
-                    // Apply to the new robot instance immediately to prevent visual jump
-                    if (loadedJoint.setJointValue) {
-                        loadedJoint.setJointValue(previousAngles[name]);
-                    }
-                } else {
-                    currentAngles[name] = defaultAngle;
-                }
-            });
-            
-            setJointAngles(currentAngles);
-            setInitialJointAngles(defaultAngles);
-        }
-
-    }, []);
-
-    const handleTransformPending = useCallback((pending: boolean) => {
-        transformPendingRef.current = pending;
-        onTransformPendingChange?.(pending);
-    }, [onTransformPendingChange]);
-
-    useEffect(() => {
-        return () => {
-            transformPendingRef.current = false;
-            onTransformPendingChange?.(false);
-        };
-    }, [onTransformPendingChange]);
-
-    useEffect(() => {
-        if (!robot || !jointAngleState) return;
-
-        setJointAngles(prev => {
-            const next = { ...prev, ...jointAngleState };
-            return next;
-        });
-
-        Object.entries(jointAngleState).forEach(([name, angle]) => {
-            const joint = robot.joints?.[name];
-            if (isSingleDofJoint(joint) && joint?.setJointValue) {
-                joint.setJointValue(angle);
-            }
-        });
-    }, [robot, jointAngleState]);
-
-    useEffect(() => {
-        if (robot && robot.joints) {
-            setJointAngles(prev => {
-                const next = { ...prev };
-                let changed = false;
-                Object.keys(robot.joints).forEach(name => {
-                    const joint = robot.joints[name];
-                    if (!isSingleDofJoint(joint)) return;
-
-                    const newAngle = joint.angle;
-                    if (newAngle !== undefined && newAngle !== prev[name]) {
-                        next[name] = newAngle;
-                        changed = true;
-                        if (joint.setJointValue) {
-                            joint.setJointValue(newAngle);
-                        }
-                    }
-                });
-                return changed ? next : prev;
-            });
-        }
-    }, [robot]);
-
-    const handleJointAngleChange = useCallback((jointName: string, angle: number) => {
-        if (!robot?.joints?.[jointName]) return;
-
-        const joint = robot.joints[jointName];
-        if (!isSingleDofJoint(joint)) return;
-
-        if (joint.setJointValue) {
-            joint.setJointValue(angle);
-        }
-
-        setJointAngles(prev => ({ ...prev, [jointName]: angle }));
-    }, [robot]);
-
-    const handleJointChangeCommit = useCallback((jointName: string, angle: number) => {
-        if (onJointChange) {
-            onJointChange(jointName, angle);
-        }
-    }, [onJointChange]);
-
-    const handleResetJoints = useCallback(() => {
-        if (!robot || !robot.joints) return;
-
-        Object.keys(jointAngles).forEach(name => {
-            const initialAngle = initialJointAngles[name] || 0;
-            const joint = robot.joints[name];
-
-            // Temporarily disable limit checking to allow resetting to 0 even if 0 is outside the limit range
-            if (joint) {
-                const originalIgnoreLimits = joint.ignoreLimits;
-                joint.ignoreLimits = true;
-                handleJointAngleChange(name, initialAngle);
-                joint.ignoreLimits = originalIgnoreLimits;
-            } else {
-                handleJointAngleChange(name, initialAngle);
-            }
-
-            // Commit the change to external state to prevent other joints from reverting when any joint is adjusted
-            handleJointChangeCommit(name, initialAngle);
-        });
-    }, [robot, jointAngles, initialJointAngles, handleJointAngleChange, handleJointChangeCommit]);
-
-    const handleSelectWrapper = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
-        if (transformPendingRef.current) return; // Prevent selection change if transform is pending
-
-        if (onSelect) onSelect(type, id, subType);
-
-        if (type === 'link' && robot) {
-            const jointName = Object.keys(robot.joints).find(name => {
-                const joint = robot.joints[name];
-                return joint?.child?.name === id && isSingleDofJoint(joint);
-            });
-            if (jointName) {
-                setActiveJoint(jointName);
-            } else {
-                setActiveJoint(null);
-            }
-        } else if (type === 'joint') {
-            const joint = robot?.joints?.[id];
-            setActiveJoint(isSingleDofJoint(joint) ? id : null);
-        } else {
-            setActiveJoint(null);
-        }
-    }, [onSelect, robot]);
-
-    const handleHoverWrapper = useCallback((
-        type: 'link' | 'joint' | null,
-        id: string | null,
-        subType?: 'visual' | 'collision',
-        objectIndex?: number
-    ) => {
-        onHover?.(type, id, subType, objectIndex);
-    }, [onHover]);
-
-    const handleAutoFitGround = useCallback(() => {
-        if (!robot) return;
-
-        let minZ = getLowestMeshZ(robot, {
-            includeInvisible: false,
-            includeVisual: true,
-            includeCollision: false,
-        });
-
-        if (minZ === null) {
-            minZ = getLowestMeshZ(robot, {
-                includeInvisible: true,
-                includeVisual: true,
-                includeCollision: false,
-            });
-        }
-
-        if (minZ !== null) {
-            useUIStore.getState().setGroundPlaneOffset(minZ);
-        }
-    }, [robot]);
-
-    const handleToolModeChange = useCallback((nextMode: ToolMode) => {
-        setToolMode(nextMode);
-
-        if (nextMode !== 'measure') {
-            setMeasureState(prev => (
-                prev.currentPoints.length === 0 && prev.tempPoint === null
-                    ? prev
-                    : { ...prev, currentPoints: [], tempPoint: null }
-            ));
-        }
-    }, []);
-
-    const handleCloseMeasureTool = useCallback(() => {
-        setMeasureState(createEmptyMeasureState());
-        setToolMode('select');
-        onHover?.(null, null);
-    }, [onHover]);
-
-    // Handle WebGL context creation and context lost/restored events
-    const handleCanvasCreated = useCallback((state: RootState) => {
-        const gl = state.gl;
-        const scene = state.scene;
-        glRef.current = gl;
-        sceneRef.current = scene;
-        const canvas = gl.domElement;
-
-        // Expose scene to window for debugging (development only)
-        if (typeof window !== 'undefined' && import.meta.env.DEV) {
-            (window as any).scene = scene;
-            (window as any).THREE = THREE;
-        }
-
-        const handleContextLost = (event: Event) => {
-            event.preventDefault();
-            console.warn('WebGL context lost. Attempting to restore...');
-            setContextLost(true);
-        };
-
-        const handleContextRestored = () => {
-            setContextLost(false);
-            state.invalidate();
-        };
-
-        canvas.addEventListener('webglcontextlost', handleContextLost, false);
-        canvas.addEventListener('webglcontextrestored', handleContextRestored, false);
-
-        // Store cleanup function
-        (canvas as any).__contextCleanup = () => {
-            canvas.removeEventListener('webglcontextlost', handleContextLost);
-            canvas.removeEventListener('webglcontextrestored', handleContextRestored);
-        };
-    }, []);
-
-    // Cleanup WebGL context event listeners on unmount
-    useEffect(() => {
-        return () => {
-            if (glRef.current?.domElement) {
-                const cleanup = (glRef.current.domElement as any).__contextCleanup;
-                if (cleanup) cleanup();
-            }
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!robot) return;
-
-        if (selection?.type === 'joint' && selection.id) {
-            const joint = robot.joints[selection.id];
-            setActiveJoint(isSingleDofJoint(joint) ? selection.id : null);
-        } else if (selection?.type === 'link' && selection.id) {
-            const jointName = Object.keys(robot.joints).find(name => {
-                const joint = robot.joints[name];
-                return joint?.child?.name === selection.id && isSingleDofJoint(joint);
-            });
-            if (jointName) {
-                setActiveJoint(jointName);
-            } else {
-                setActiveJoint(null);
-            }
-        } else {
-            setActiveJoint(null);
-        }
-    }, [selection, robot]);
-
-    return (
-        <div
-            ref={containerRef}
-            className="flex-1 relative bg-google-light-bg dark:bg-google-dark-bg h-full min-w-0"
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-        >
-            {/* Info overlay */}
-            <div className="absolute top-4 left-4 z-20 pointer-events-none select-none">
-                <div className="rounded border border-border-black bg-panel-bg px-2 py-1 text-xs text-text-secondary shadow-sm">
-                    {mode === 'hardware' ? t.hardware : t.detail} {t.modeLabel}
-                </div>
-            </div>
-
-            {/* Usage Guide */}
-            <UsageGuide lang={lang} />
-
-            {/* Settings panel */}
-            <ViewerOptionsPanel
-                showOptionsPanel={showOptionsPanel}
-                optionsPanelRef={optionsPanelRef}
-                optionsPanelPos={optionsPanelPos}
-                defaultPosition={optionsDefaultPosition}
-                onMouseDown={(e) => handleMouseDown('options', e)}
-                mode={mode}
-                t={t}
-                isOptionsCollapsed={isOptionsCollapsed}
-                toggleOptionsCollapsed={toggleOptionsCollapsed}
-                setShowOptionsPanel={setShowOptionsPanel}
-                lang={lang}
-                highlightMode={highlightMode}
-                setHighlightMode={setHighlightMode}
-                showJointControls={showJointControls}
-                setShowJointControls={setShowJointControls}
-                showVisual={showVisual}
-                setShowVisual={setShowVisual}
-                showCollision={showCollision}
-                setShowCollision={setShowCollision}
-                modelOpacity={modelOpacity}
-                setModelOpacity={setModelOpacity}
-                showOrigins={showOrigins}
-                setShowOrigins={setShowOrigins}
-                showOriginsOverlay={showOriginsOverlay}
-                setShowOriginsOverlay={setShowOriginsOverlay}
-                originSize={originSize}
-                setOriginSize={setOriginSize}
-                showJointAxes={showJointAxes}
-                setShowJointAxes={setShowJointAxes}
-                showJointAxesOverlay={showJointAxesOverlay}
-                setShowJointAxesOverlay={setShowJointAxesOverlay}
-                jointAxisSize={jointAxisSize}
-                setJointAxisSize={setJointAxisSize}
-                showCenterOfMass={showCenterOfMass}
-                setShowCenterOfMass={setShowCenterOfMass}
-                showCoMOverlay={showCoMOverlay}
-                setShowCoMOverlay={setShowCoMOverlay}
-                centerOfMassSize={centerOfMassSize}
-                setCenterOfMassSize={setCenterOfMassSize}
-                showInertia={showInertia}
-                setShowInertia={setShowInertia}
-                showInertiaOverlay={showInertiaOverlay}
-                setShowInertiaOverlay={setShowInertiaOverlay}
-                onAutoFitGround={handleAutoFitGround}
-            />
-
-            {/* Joint controls panel */}
-            <JointsPanel
-                showJointControls={showJointControls}
-                showJointPanel={showJointPanel}
-                robot={robot}
-                jointPanelRef={jointPanelRef}
-                jointPanelPos={jointPanelPos}
-                defaultPosition={jointsDefaultPosition}
-                maxHeight={jointsPanelMaxHeight}
-                onMouseDown={(e) => handleMouseDown('joints', e)}
-                t={t}
-                handleResetJoints={handleResetJoints}
-                angleUnit={angleUnit}
-                setAngleUnit={setAngleUnit}
-                isJointsCollapsed={isJointsCollapsed}
-                toggleJointsCollapsed={toggleJointsCollapsed}
-                setShowJointPanel={setShowJointPanel}
-                jointAngles={jointAngles}
-                activeJoint={activeJoint}
-                setActiveJoint={setActiveJoint}
-                handleJointAngleChange={handleJointAngleChange}
-                handleJointChangeCommit={handleJointChangeCommit}
-                onSelect={handleSelectWrapper}
-                onHover={handleHoverWrapper}
-            />
-
-            {/* Toolbar */}
-            {showToolbar && (
-                <ViewerToolbar
-                    activeMode={toolMode}
-                    setMode={handleToolModeChange}
-                    onClose={setShowToolbar ? () => setShowToolbar(false) : undefined}
-                    lang={lang}
-                />
-            )}
-
-            {/* Measure panel */}
-            <MeasurePanel
-                toolMode={toolMode}
-                measurePanelRef={measurePanelRef}
-                measurePanelPos={measurePanelPos}
-                onMouseDown={(e) => handleMouseDown('measure', e)}
-                onClose={handleCloseMeasureTool}
-                measureState={measureState}
-                setMeasureState={setMeasureState}
-                lang={lang}
-            />
-
-            {/* Show overlay when WebGL context is lost */}
-            {contextLost && (
-                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <div className="rounded-lg border border-border-black bg-panel-bg p-6 text-center shadow-xl">
-                        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-system-blue border-t-transparent" />
-                        <p className="text-text-secondary">{t.webglContextRestoring}</p>
-                    </div>
-                </div>
-            )}
-
-            <Canvas
-                camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
-                shadows
-                frameloop="demand"
-                gl={{
-                    antialias: true,
-                    toneMapping: THREE.ACESFilmicToneMapping,
-                    toneMappingExposure: 1.1,
-                    powerPreference: 'high-performance',
-                    failIfMajorPerformanceCaveat: false,
-                }}
-                onCreated={handleCanvasCreated}
-                onPointerMissed={() => {
-                    if (contextLost) return; // Don't handle events when context is lost
-                    if (justSelectedRef.current) return;
-                    if (transformPendingRef.current) return; // Don't clear selection if transform confirmation is pending
-                    if (onSelect) {
-                        onSelect('link', '');
-                    }
-                    setActiveJoint(null);
-                }}
-            >
-                <CanvasResizeSync />
-                <color attach="background" args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]} />
-                <NeutralStudioEnvironment intensity={0.36} />
-                <SceneLighting theme={effectiveTheme} cameraFollowPrimary />
-                <SnapshotManager actionRef={snapshotAction} robotName={robot?.name || 'robot'} />
-
-                <MeasureTool
-                    active={toolMode === 'measure'}
-                    robot={robot}
-                    measureState={measureState}
-                    setMeasureState={setMeasureState}
-                    deleteTooltip={t.deleteMeasurement}
-                />
-
-                <Suspense fallback={null}>
-                    <RobotModel
-                        urdfContent={urdfContent}
-                        assets={assets}
-                        onRobotLoaded={handleRobotLoaded}
-                        showCollision={showCollision}
-                        showVisual={showVisual}
-                        onSelect={handleSelectWrapper}
-                        onHover={handleHoverWrapper}
-                        onMeshSelect={onMeshSelect}
-                        onJointChange={handleJointAngleChange}
-                        onJointChangeCommit={handleJointChangeCommit}
-                        jointAngles={jointAngles}
-                        setIsDragging={setIsDragging}
-                        setActiveJoint={setActiveJoint}
-                        justSelectedRef={justSelectedRef}
-                        t={t}
-                        mode={mode}
-                        selection={selection}
-                        hoverSelectionEnabled={hoverSelectionEnabled}
-                        highlightMode={highlightMode}
-                        showInertia={showInertia}
-                        showInertiaOverlay={showInertiaOverlay}
-                        showCenterOfMass={showCenterOfMass}
-                        showCoMOverlay={showCoMOverlay}
-                        centerOfMassSize={centerOfMassSize}
-                        showOrigins={showOrigins}
-                        showOriginsOverlay={showOriginsOverlay}
-                        originSize={originSize}
-                        showJointAxes={showJointAxes}
-                        showJointAxesOverlay={showJointAxesOverlay}
-                        jointAxisSize={jointAxisSize}
-                        modelOpacity={modelOpacity}
-                        robotLinks={robotLinks}
-                        robotJoints={robotJoints}
-                        focusTarget={focusTarget}
-                        transformMode={transformMode}
-                        toolMode={toolMode}
-                        onCollisionTransformPreview={onCollisionTransformPreview}
-                        onCollisionTransformEnd={onCollisionTransform}
-                        isOrbitDragging={isOrbitDragging}
-                        onTransformPending={handleTransformPending}
-                        isSelectionLockedRef={transformPendingRef}
-                        isMeshPreview={isMeshPreview}
-                    />
-                </Suspense>
-
-                {activeJoint && robot?.joints?.[activeJoint] && (
-                    <JointInteraction
-                        joint={robot.joints[activeJoint]}
-                        value={jointAngles[activeJoint] || 0}
-                        onChange={(val) => handleJointAngleChange(activeJoint, val)}
-                        onCommit={(val) => handleJointChangeCommit(activeJoint, val)}
-                        onInteractionLockChange={handleTransformPending}
-                    />
-                )}
-
-                {/* Contact shadows disabled - removed for cleaner appearance */}
-                {/* <ContactShadows
-                    opacity={0.6}
-                    scale={10}
-                    blur={2.5}
-                    far={1}
-                    resolution={512}
-                    color="#000000"
-                    position={[0, 0, 0]}
-                    rotation={[Math.PI / 2, 0, 0]}
-                /> */}
-
-                <ReferenceGrid theme={effectiveTheme} />
-                <WorldOriginAxes />
-
-                <OrbitControls
-                    makeDefault
-                    enableDamping={false}
-                    minDistance={0.5}
-                    maxDistance={20}
-                    enabled={!isDragging}
-                    onStart={() => { isOrbitDragging.current = true; }}
-                    onEnd={() => { isOrbitDragging.current = false; }}
-                />
-
-                <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
-                    <GizmoViewport
-                        labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
-                        axisHeadScale={0.9}
-                        scale={34}
-                    />
-                </GizmoHelper>
-
-            </Canvas>
-        </div>
-    );
-}
-
-export { URDFViewer as default };
+    showVisual,
+    setShowVisual,
+    onTransformPendingChange,
+  });
+  const hoverSelectionEnabled = hoveredSelection !== undefined;
+
+  return (
+    <div
+      ref={controller.containerRef}
+      className="flex-1 relative h-full min-w-0 bg-google-light-bg dark:bg-google-dark-bg"
+      onMouseMove={controller.handleMouseMove}
+      onMouseUp={controller.handleMouseUp}
+      onMouseLeave={controller.handleMouseUp}
+    >
+      <URDFViewerPanels
+        lang={lang}
+        mode={mode}
+        controller={controller}
+        showToolbar={showToolbar}
+        setShowToolbar={setShowToolbar}
+        showOptionsPanel={showOptionsPanel}
+        setShowOptionsPanel={setShowOptionsPanel}
+        showJointPanel={showJointPanel}
+        setShowJointPanel={setShowJointPanel}
+      />
+
+      <URDFViewerCanvas
+        lang={lang}
+        snapshotAction={snapshotAction}
+        robotName={controller.robot?.name || 'robot'}
+        orbitEnabled={!controller.isDragging}
+        onOrbitStart={() => {
+          controller.isOrbitDragging.current = true;
+        }}
+        onOrbitEnd={() => {
+          controller.isOrbitDragging.current = false;
+        }}
+        onPointerMissed={controller.handlePointerMissed}
+        contextLostMessage={t.webglContextRestoring}
+      >
+        <URDFViewerScene
+          controller={controller}
+          urdfContent={urdfContent}
+          assets={assets}
+          mode={mode}
+          selection={selection}
+          hoverSelectionEnabled={hoverSelectionEnabled}
+          onHover={onHover}
+          onMeshSelect={onMeshSelect}
+          robotLinks={robotLinks}
+          robotJoints={robotJoints}
+          focusTarget={focusTarget}
+          onCollisionTransformPreview={onCollisionTransformPreview}
+          onCollisionTransform={onCollisionTransform}
+          isMeshPreview={isMeshPreview}
+          t={t}
+        />
+      </URDFViewerCanvas>
+    </div>
+  );
+});
+
+export default URDFViewer;

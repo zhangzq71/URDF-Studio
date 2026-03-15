@@ -55,6 +55,16 @@ export interface MJCFDefaultsRegistry {
     qnamesByClassName: Map<string, string[]>;
 }
 
+const MJCF_ROOT_PATTERN = /^\s*(?:<\?xml[\s\S]*?\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[\s\S]*?>\s*)*<mujoco\b/i;
+
+export function looksLikeMJCFDocument(content: string): boolean {
+    if (!content) {
+        return false;
+    }
+
+    return MJCF_ROOT_PATTERN.test(content.slice(0, 2048));
+}
+
 export function parseNumbers(str: string | null): number[] {
     if (!str) return [];
 
@@ -66,7 +76,8 @@ export function parseNumbers(str: string | null): number[] {
 
 export function parseCompilerSettings(doc: Document): MJCFCompilerSettings {
     const compiler = doc.querySelector('compiler');
-    const angleAttr = compiler?.getAttribute('angle')?.toLowerCase() || 'radian';
+    // MuJoCo defaults compiler angle units to degrees when the attribute is omitted.
+    const angleAttr = compiler?.getAttribute('angle')?.toLowerCase() || 'degree';
     const meshdir = compiler?.getAttribute('meshdir') || '';
 
     return {

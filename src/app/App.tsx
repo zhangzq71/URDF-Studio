@@ -41,6 +41,7 @@ function AppContent() {
   // Refs for file inputs
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
+  const loadRobotByNameRef = useRef<((file: RobotFile, options?: { forceReload?: boolean }) => void) | null>(null);
   const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
 
   // UI Store
@@ -129,10 +130,12 @@ function AppContent() {
     mergedWorkspaceRobot,
   ]);
 
-  // Load robot file handler
-  const handleLoadRobot = useCallback((file: RobotFile) => {
+  // Keep one internal loader so debug automation can force a reload of the
+  // currently selected file without changing normal click behavior.
+  const loadRobotFile = useCallback((file: RobotFile, options?: { forceReload?: boolean }) => {
     if (
-      selectedFile
+      !options?.forceReload
+      && selectedFile
       && selectedFile.name === file.name
       && selectedFile.format === file.format
       && selectedFile.content === file.content
@@ -235,6 +238,12 @@ function AppContent() {
     t,
   ]);
 
+  const handleLoadRobot = useCallback((file: RobotFile) => {
+    loadRobotFile(file);
+  }, [loadRobotFile]);
+
+  loadRobotByNameRef.current = loadRobotFile;
+
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') {
       return;
@@ -261,7 +270,7 @@ function AppContent() {
           };
         }
 
-        handleLoadRobot(file);
+        loadRobotByNameRef.current?.(file, { forceReload: true });
         return {
           loaded: true,
           selectedFile: file.name,
@@ -273,7 +282,7 @@ function AppContent() {
       setRegressionAppHandlers(null);
       delete window.__URDF_STUDIO_DEBUG__;
     };
-  }, [handleLoadRobot]);
+  }, []);
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });

@@ -257,6 +257,7 @@ export const NumberInput = ({
   value,
   onChange,
   label,
+  suffix,
   step = 0.1,
   compact = false,
   precision = MAX_PROPERTY_DECIMALS,
@@ -265,6 +266,7 @@ export const NumberInput = ({
   value: number,
   onChange: (val: number) => void,
   label?: string,
+  suffix?: string,
   step?: number,
   compact?: boolean,
   precision?: number,
@@ -365,6 +367,11 @@ export const NumberInput = ({
           onPointerCancel={clearPointerFocusIntent}
           className="min-w-0 flex-1 bg-transparent px-2.5 text-[12px] leading-4 text-text-primary outline-none"
         />
+        {suffix ? (
+          <span className="shrink-0 border-l border-border-black/60 px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+            {suffix}
+          </span>
+        ) : null}
         <div className={PROPERTY_EDITOR_STEPPER_RAIL_CLASS}>
           <button
             {...stepperButtonProps(1, label ? `Increase ${label}` : 'Increase value')}

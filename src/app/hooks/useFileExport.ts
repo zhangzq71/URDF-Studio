@@ -6,7 +6,7 @@ import { useCallback } from 'react';
 import JSZip from 'jszip';
 import type { RobotState, UrdfLink } from '@/types';
 import { DEFAULT_LINK, GeometryType } from '@/types';
-import { generateURDF, generateMujocoXML, injectGazeboTags } from '@/core/parsers';
+import { generateURDF, generateMujocoXML, generateSkeletonXML, injectGazeboTags } from '@/core/parsers';
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { compressSTLBlob } from '@/core/stl-compressor';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
@@ -104,6 +104,22 @@ export function useFileExport() {
 
   const createArchiveRoot = useCallback((zip: JSZip, exportName: string): JSZip => {
     return zip.folder(exportName) ?? zip;
+  }, []);
+
+  const addSkeletonToZip = useCallback((
+    robot: RobotState,
+    zip: JSZip,
+    exportName: string,
+    includeMeshes: boolean,
+  ) => {
+    zip.file(
+      `${exportName}_skeleton.xml`,
+      generateSkeletonXML(robot, {
+        meshdir: 'meshes/',
+        includeMeshes,
+        includeActuators: true,
+      }),
+    );
   }, []);
 
   const addMeshesToZip = useCallback(async (
@@ -248,6 +264,16 @@ export function useFileExport() {
     const exportName = getRobotExportName(robot);
     const zip = new JSZip();
     const archiveRoot = createArchiveRoot(zip, exportName);
+    const skeletonUsesMeshes =
+      config.format === 'mjcf'
+        ? config.mjcf.includeMeshes
+        : config.format === 'urdf'
+          ? config.urdf.includeMeshes
+          : config.xacro.includeMeshes;
+
+    if (config.includeSkeleton) {
+      addSkeletonToZip(robot, archiveRoot, exportName, skeletonUsesMeshes);
+    }
 
     if (config.format === 'mjcf') {
       const { meshdir, addFloatBase, includeActuators, actuatorType, includeMeshes, compressSTL, stlQuality } = config.mjcf;
@@ -276,7 +302,7 @@ export function useFileExport() {
       const content = await zip.generateAsync({ type: 'blob' });
       downloadBlob(content, `${exportName}_xacro.zip`);
     }
-  }, [buildRobotForExport, getRobotExportName, createArchiveRoot, addMeshesToZip, downloadBlob, generateBOM]);
+  }, [addMeshesToZip, addSkeletonToZip, buildRobotForExport, createArchiveRoot, downloadBlob, generateBOM, getRobotExportName]);
 
   // Export project as .usp
   const handleExportProject = useCallback(async () => {

@@ -1,6 +1,18 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useRobotStore } from '@/store/robotStore';
 import { Slider } from '@/shared/components/ui';
+import { JointType } from '@/types';
+import { getJointType } from '@/shared/utils/jointTypes';
+import {
+    fromJointDisplayValue,
+    getDefaultJointLimit,
+    getJointSliderStep,
+    getJointValueUnitLabel,
+    isAngularJointType,
+    normalizeJointTypeValue,
+    supportsFiniteJointLimits,
+    toJointDisplayValue,
+} from '@/shared/utils/jointUnits';
 
 export interface JointControlItemProps {
     name: string;
@@ -29,8 +41,13 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     onHover,
     isAdvanced = false
 }) => {
-    const limit = joint.limit || { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 };
+    const jointType = getJointType(joint);
+    const limit = joint.limit || { ...getDefaultJointLimit(jointType), effort: 0, velocity: 0 };
+    const usesAngularUnits = isAngularJointType(jointType);
+    const supportsAdjustableLimits = supportsFiniteJointLimits(jointType);
+    const isContinuousJoint = normalizeJointTypeValue(jointType) === JointType.CONTINUOUS;
     const itemRef = useRef<HTMLDivElement>(null);
+    const continuousPreviewValueRef = useRef(value);
     
     const updateJoint = useRobotStore(state => state.updateJoint);
 
@@ -49,6 +66,14 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
             velocity: limit.velocity || 0
         });
     }, [joint.id, limit.lower, limit.upper, limit.effort, limit.velocity]);
+
+    const hasFiniteLimits = supportsAdjustableLimits
+        && Number.isFinite(localLimits.lower)
+        && Number.isFinite(localLimits.upper);
+
+    const formatLimitInputValue = (limitValue: number | undefined) => (
+        Number.isFinite(limitValue) ? Number(limitValue).toFixed(2) : ''
+    );
 
     const updateLimit = (key: 'lower' | 'upper' | 'effort' | 'velocity', val: number) => {
         const newLimits = { ...localLimits, [key]: val };
@@ -91,10 +116,32 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
         }
     }, [isActive, name]);
 
-    const displayValue = angleUnit === 'deg' ? value * 180 / Math.PI : value;
-    const displayMin = angleUnit === 'deg' ? localLimits.lower * 180 / Math.PI : localLimits.lower;
-    const displayMax = angleUnit === 'deg' ? localLimits.upper * 180 / Math.PI : localLimits.upper;
-    const step = angleUnit === 'deg' ? 1 : 0.01;
+    const [continuousSliderAnchor, setContinuousSliderAnchor] = useState(value);
+    const [isContinuousSliderDragging, setIsContinuousSliderDragging] = useState(false);
+
+    const displayValue = toJointDisplayValue(value, jointType, angleUnit);
+    const displayMin = hasFiniteLimits
+        ? toJointDisplayValue(localLimits.lower, jointType, angleUnit)
+        : Number.NEGATIVE_INFINITY;
+    const displayMax = hasFiniteLimits
+        ? toJointDisplayValue(localLimits.upper, jointType, angleUnit)
+        : Number.POSITIVE_INFINITY;
+    const displayUnit = getJointValueUnitLabel(jointType, angleUnit);
+    const step = getJointSliderStep(jointType, angleUnit);
+    const continuousSliderWindow = angleUnit === 'deg' ? 180 : Math.PI;
+    const sliderValue = isContinuousJoint
+        ? toJointDisplayValue(value - continuousSliderAnchor, jointType, angleUnit)
+        : displayValue;
+    const sliderMin = isContinuousJoint
+        ? -continuousSliderWindow
+        : hasFiniteLimits
+            ? displayMin
+            : displayValue - (angleUnit === 'deg' && usesAngularUnits ? 180 : Math.PI);
+    const sliderMax = isContinuousJoint
+        ? continuousSliderWindow
+        : hasFiniteLimits
+            ? displayMax
+            : displayValue + (angleUnit === 'deg' && usesAngularUnits ? 180 : Math.PI);
 
     const [inputValue, setInputValue] = useState(displayValue.toFixed(2));
     const [isEditingValue, setIsEditingValue] = useState(false);
@@ -104,19 +151,19 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const [isEditingEffort, setIsEditingEffort] = useState(false);
     const [isEditingVelocity, setIsEditingVelocity] = useState(false);
 
-    const [lowerInput, setLowerInput] = useState(displayMin.toFixed(2));
-    const [upperInput, setUpperInput] = useState(displayMax.toFixed(2));
+    const [lowerInput, setLowerInput] = useState(formatLimitInputValue(localLimits.lower));
+    const [upperInput, setUpperInput] = useState(formatLimitInputValue(localLimits.upper));
 
     const [effortInput, setEffortInput] = useState(localLimits.effort.toFixed(2));
     const [velocityInput, setVelocityInput] = useState(localLimits.velocity.toFixed(2));
 
     useEffect(() => {
-        if (!isEditingLower) setLowerInput(displayMin.toFixed(2));
-    }, [displayMin, isEditingLower]);
+        if (!isEditingLower) setLowerInput(formatLimitInputValue(localLimits.lower));
+    }, [localLimits.lower, isEditingLower]);
 
     useEffect(() => {
-        if (!isEditingUpper) setUpperInput(displayMax.toFixed(2));
-    }, [displayMax, isEditingUpper]);
+        if (!isEditingUpper) setUpperInput(formatLimitInputValue(localLimits.upper));
+    }, [localLimits.upper, isEditingUpper]);
     
     useEffect(() => {
         if (!isEditingEffort) setEffortInput(localLimits.effort.toFixed(2));
@@ -125,6 +172,13 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     useEffect(() => {
         if (!isEditingVelocity) setVelocityInput(localLimits.velocity.toFixed(2));
     }, [localLimits.velocity, isEditingVelocity]);
+
+    useEffect(() => {
+        if (!isContinuousJoint || !isContinuousSliderDragging) {
+            setContinuousSliderAnchor(value);
+            continuousPreviewValueRef.current = value;
+        }
+    }, [value, isContinuousJoint, isContinuousSliderDragging]);
 
     useEffect(() => {
         const currentParsed = parseFloat(inputValue);
@@ -138,17 +192,21 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const commitChange = (valStr: string) => {
         const val = parseFloat(valStr);
         if (!isNaN(val)) {
-            const radVal = angleUnit === 'deg' ? val * Math.PI / 180 : val;
-            handleJointChangeCommit(name, radVal);
+            handleJointChangeCommit(name, fromJointDisplayValue(val, jointType, angleUnit));
         }
         setIsEditingValue(false);
     };
 
     const handleLimitCommit = (type: 'lower' | 'upper', valStr: string) => {
+        if (!hasFiniteLimits) {
+            if (type === 'lower') setIsEditingLower(false);
+            if (type === 'upper') setIsEditingUpper(false);
+            return;
+        }
+
         const val = parseFloat(valStr);
         if (!isNaN(val)) {
-            const radVal = angleUnit === 'deg' ? val * Math.PI / 180 : val;
-            updateLimit(type, radVal);
+            updateLimit(type, fromJointDisplayValue(val, jointType, angleUnit));
         }
         if (type === 'lower') setIsEditingLower(false);
         if (type === 'upper') setIsEditingUpper(false);
@@ -191,7 +249,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                     </div>
                 )}
             </div>
-            <span className="w-4 text-right text-[9px] leading-none text-text-tertiary">{angleUnit === 'deg' ? 'deg' : 'rad'}</span>
+            <span className="w-4 text-right text-[9px] leading-none text-text-tertiary">{displayUnit}</span>
         </div>
     );
 
@@ -283,9 +341,13 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
             <div className="flex items-center gap-2">
                 <div 
                     className="w-10 shrink-0" 
-                    onClick={(e) => { e.stopPropagation(); setIsEditingLower(true); }}
+                    onClick={(e) => {
+                        if (!hasFiniteLimits) return;
+                        e.stopPropagation();
+                        setIsEditingLower(true);
+                    }}
                 >
-                    {isEditingLower ? (
+                    {hasFiniteLimits && isEditingLower ? (
                         <input
                             autoFocus
                             type="text"
@@ -299,21 +361,33 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                         />
                     ) : (
                         <div className="cursor-text truncate text-right font-mono text-[9px] text-text-tertiary hover:text-system-blue">
-                            {displayMin.toFixed(2)}
+                            {hasFiniteLimits ? displayMin.toFixed(2) : '−∞'}
                         </div>
                     )}
                 </div>
 
                 <div className="flex-1 min-w-0 px-1">
                     <Slider
-                        value={displayValue}
-                        min={displayMin}
-                        max={displayMax}
+                        value={sliderValue}
+                        min={sliderMin}
+                        max={sliderMax}
                         step={step}
                         onChange={(val) => {
-                            const radVal = angleUnit === 'deg' ? val * Math.PI / 180 : val;
-                            handleJointAngleChange(name, radVal);
+                            const nextValue = isContinuousJoint
+                                ? continuousSliderAnchor + fromJointDisplayValue(val, jointType, angleUnit)
+                                : fromJointDisplayValue(val, jointType, angleUnit);
+                            continuousPreviewValueRef.current = nextValue;
+                            handleJointAngleChange(name, nextValue);
                         }}
+                        onChangeStart={isContinuousJoint ? () => {
+                            setContinuousSliderAnchor(value);
+                            continuousPreviewValueRef.current = value;
+                            setIsContinuousSliderDragging(true);
+                        } : undefined}
+                        onChangeEnd={isContinuousJoint ? () => {
+                            setContinuousSliderAnchor(continuousPreviewValueRef.current);
+                            setIsContinuousSliderDragging(false);
+                        } : undefined}
                         showValue={false}
                         className="w-full"
                     />
@@ -321,9 +395,13 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
 
                 <div 
                     className="w-10 shrink-0"
-                    onClick={(e) => { e.stopPropagation(); setIsEditingUpper(true); }}
+                    onClick={(e) => {
+                        if (!hasFiniteLimits) return;
+                        e.stopPropagation();
+                        setIsEditingUpper(true);
+                    }}
                 >
-                    {isEditingUpper ? (
+                    {hasFiniteLimits && isEditingUpper ? (
                         <input
                             autoFocus
                             type="text"
@@ -337,7 +415,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                         />
                     ) : (
                         <div className="cursor-text truncate font-mono text-[9px] text-text-tertiary hover:text-system-blue">
-                            {displayMax.toFixed(2)}
+                            {hasFiniteLimits ? displayMax.toFixed(2) : '∞'}
                         </div>
                     )}
                 </div>

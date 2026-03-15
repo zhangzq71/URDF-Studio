@@ -388,12 +388,12 @@ export function useMouseInteraction({
                 );
             }
 
-            const resolvedDelta = hasScreenDelta
-                ? Math.sign(screenDelta) * Math.abs(worldDelta)
-                : worldDelta;
-
             return THREE.MathUtils.clamp(
-                resolvedDelta,
+                // Trust the world-space signed angle whenever it is available.
+                // For imported MJCF joints with negative axes, the screen-space
+                // tangent can legitimately point opposite to the true axis-aligned
+                // rotation direction and should only be used as a degenerate fallback.
+                worldDelta,
                 -MAX_REVOLUTE_DELTA_PER_EVENT,
                 MAX_REVOLUTE_DELTA_PER_EVENT
             );
@@ -465,8 +465,11 @@ export function useMouseInteraction({
                 const currentAngle = dragJoint.current.angle ?? dragJoint.current.jointValue ?? 0;
                 let newAngle = currentAngle + delta;
 
-                const limit = dragJoint.current.limit || { lower: -Math.PI, upper: Math.PI };
-                if (jt === 'revolute') {
+                const limit = dragJoint.current.limit;
+                const hasFiniteLimit = limit
+                    && Number.isFinite(limit.lower)
+                    && Number.isFinite(limit.upper);
+                if ((jt === 'revolute' || jt === 'prismatic') && hasFiniteLimit) {
                     newAngle = Math.max(limit.lower, Math.min(limit.upper, newAngle));
                 }
 

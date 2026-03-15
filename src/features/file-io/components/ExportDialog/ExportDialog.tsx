@@ -40,6 +40,7 @@ export interface XacroExportConfig {
 
 export interface ExportDialogConfig {
   format: ExportFormat;
+  includeSkeleton: boolean;
   mjcf: MjcfExportConfig;
   urdf: UrdfExportConfig;
   xacro: XacroExportConfig;
@@ -51,6 +52,7 @@ const XACRO_SUPPORTS = ['Gazebo', 'ROS1', 'ROS2'];
 
 const DEFAULT_CONFIG: ExportDialogConfig = {
   format: 'mjcf',
+  includeSkeleton: false,
   mjcf: {
     meshdir: 'meshes/',
     addFloatBase: false,
@@ -275,6 +277,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setConfig((prev) => ({ ...prev, xacro: { ...prev.xacro, [key]: value } }));
   }, []);
 
+  const updateIncludeSkeleton = useCallback((value: boolean) => {
+    setConfig((prev) => ({ ...prev, includeSkeleton: value }));
+  }, []);
+
   const actuatorTypeOptions = [
     { value: 'position', label: t.exportActuatorPosition },
     { value: 'velocity', label: t.exportActuatorVelocity },
@@ -388,6 +394,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                  <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
+                </Row>
                 <Row label={t.exportIncludeMeshes}>
                   <Toggle value={config.mjcf.includeMeshes} onChange={(v) => updateMjcf('includeMeshes', v)} />
                 </Row>
@@ -421,6 +430,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                  <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
+                </Row>
                 <Row label={t.exportIncludeMeshes}>
                   <Toggle value={config.urdf.includeMeshes} onChange={(v) => updateUrdf('includeMeshes', v)} />
                 </Row>
@@ -479,6 +491,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                  <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
+                </Row>
                 <Row label={t.exportIncludeMeshes}>
                   <Toggle value={config.xacro.includeMeshes} onChange={(v) => updateXacro('includeMeshes', v)} />
                 </Row>

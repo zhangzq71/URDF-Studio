@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 test/
+scripts/
 
 output/
 
@@ -14,8 +15,6 @@ output/
 AGENTS.md
 
 .vscode/
-
-test/
 .tmp/
 .uv-cache/
 __pycache__/

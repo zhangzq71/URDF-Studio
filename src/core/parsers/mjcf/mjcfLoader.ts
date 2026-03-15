@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { type MJCFMeshCache } from './mjcfGeometry';
 import { buildMJCFHierarchy } from './mjcfHierarchyBuilder';
 import { parseMJCFModel } from './mjcfModel';
+import { looksLikeMJCFDocument } from './mjcfUtils';
 
 interface MJCFBody {
     name: string;
@@ -90,12 +91,5 @@ export async function loadMJCFToThreeJS(
 
 /** Check whether XML root element is MJCF `<mujoco>`. */
 export function isMJCFContent(content: string): boolean {
-    try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(content, 'text/xml');
-        const rootElement = doc.documentElement;
-        return rootElement && rootElement.tagName.toLowerCase() === 'mujoco';
-    } catch {
-        return false;
-    }
+    return looksLikeMJCFDocument(content);
 }

@@ -212,10 +212,12 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       </mesh>
     );
   } else if (type === GeometryType.SPHERE) {
-    // Unit sphere (radius=1) uniformly scaled
-    const r = dimensions.x;
+    // Unit sphere (radius=1) scaled per axis so MJCF ellipsoids render correctly.
+    const sx = dimensions.x;
+    const sy = dimensions.y || sx;
+    const sz = dimensions.z || sx;
     geometryNode = (
-      <mesh scale={[r, r, r]}>
+      <mesh scale={[sx, sy, sz]}>
         <sphereGeometry args={[1, radialSegments, radialSegments]} />
         <primitive object={material} attach="material" />
       </mesh>

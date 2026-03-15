@@ -6,6 +6,8 @@ interface SliderProps {
   max: number;
   step?: number;
   onChange: (value: number) => void;
+  onChangeStart?: () => void;
+  onChangeEnd?: () => void;
   label?: string;
   labelClassName?: string;
   showValue?: boolean;
@@ -21,6 +23,8 @@ export const Slider: React.FC<SliderProps> = ({
   max,
   step = 1,
   onChange,
+  onChangeStart,
+  onChangeEnd,
   label,
   labelClassName = '',
   showValue = true,
@@ -51,7 +55,8 @@ export const Slider: React.FC<SliderProps> = ({
 
   const stopDragging = React.useCallback(() => {
     setIsDragging(false);
-  }, []);
+    onChangeEnd?.();
+  }, [onChangeEnd]);
 
   React.useEffect(() => {
     if (!isDragging) return;
@@ -156,6 +161,7 @@ export const Slider: React.FC<SliderProps> = ({
           onPointerDown={(e) => {
             e.stopPropagation();
             setIsDragging(true);
+            onChangeStart?.();
           }}
           onPointerUp={stopDragging}
           onPointerCancel={stopDragging}

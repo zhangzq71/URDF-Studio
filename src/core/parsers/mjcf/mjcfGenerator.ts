@@ -37,6 +37,13 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(v.r, v.p, v.y, 'ZYX'));
     return `${formatScalar(quaternion.w)} ${formatScalar(quaternion.x)} ${formatScalar(quaternion.y)} ${formatScalar(quaternion.z)}`;
   };
+  const hasFiniteJointRange = (joint: RobotState['joints'][string] | undefined): boolean => (
+    Boolean(
+      joint?.limit
+      && Number.isFinite(joint.limit.lower)
+      && Number.isFinite(joint.limit.upper),
+    )
+  );
 
   // Helper to convert hex color to rgba string
   const hexToRgba = (hex: string) => {
@@ -178,8 +185,8 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
        // continuous is also hinge but without limits (MuJoCo handles limits via 'limited' attr)
 
        let limitStr = "";
-       if (parentJoint.type !== JointType.CONTINUOUS) {
-           limitStr = `range="${formatScalar(parentJoint.limit.lower)} ${formatScalar(parentJoint.limit.upper)}"`;
+       if (parentJoint.type !== JointType.CONTINUOUS && hasFiniteJointRange(parentJoint)) {
+           limitStr = `range="${formatScalar(parentJoint.limit!.lower)} ${formatScalar(parentJoint.limit!.upper)}"`;
        }
 
        bodyXml += `${indent}  <joint name="${parentJoint.name}" type="${jType}" axis="${vecStr(parentJoint.axis)}" ${limitStr} damping="${formatScalar(parentJoint.dynamics.damping)}" frictionloss="${formatScalar(parentJoint.dynamics.friction)}"/>\n`;

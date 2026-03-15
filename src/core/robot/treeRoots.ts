@@ -1,5 +1,7 @@
 import { GeometryType, type RobotState, type UrdfLink } from '@/types';
 
+const SYNTHETIC_JOINT_STAGE_MARKER = '__joint_stage_';
+
 function hasRenderableGeometry(link: UrdfLink | undefined): boolean {
   if (!link) {
     return false;
@@ -14,6 +16,23 @@ function hasRenderableGeometry(link: UrdfLink | undefined): boolean {
   }
 
   return (link.collisionBodies || []).some((body) => body.type !== GeometryType.NONE);
+}
+
+export function isSyntheticJointStageLink(link: UrdfLink | undefined): boolean {
+  if (!link) {
+    return false;
+  }
+
+  const linkName = (link.name || '').trim();
+  if (!linkName.includes(SYNTHETIC_JOINT_STAGE_MARKER)) {
+    return false;
+  }
+
+  if ((link.inertial?.mass || 0) > 0) {
+    return false;
+  }
+
+  return !hasRenderableGeometry(link);
 }
 
 export function isSyntheticWorldRoot(robot: RobotState, linkId: string): boolean {
@@ -41,6 +60,15 @@ export function isSyntheticWorldRoot(robot: RobotState, linkId: string): boolean
   return Object.values(robot.joints).some((joint) => joint.parentLinkId === linkId);
 }
 
+export function isTransparentDisplayLink(robot: RobotState, linkId: string): boolean {
+  const link = robot.links[linkId];
+  if (!link) {
+    return false;
+  }
+
+  return isSyntheticWorldRoot(robot, linkId) || isSyntheticJointStageLink(link);
+}
+
 export function getTreeDisplayRootLinkIds(robot: RobotState): string[] {
   if (!isSyntheticWorldRoot(robot, robot.rootLinkId)) {
     return robot.links[robot.rootLinkId] ? [robot.rootLinkId] : [];
@@ -56,4 +84,16 @@ export function getTreeDisplayRootLinkIds(robot: RobotState): string[] {
 
 export function getPrimaryTreeDisplayRootLinkId(robot: RobotState): string | null {
   return getTreeDisplayRootLinkIds(robot)[0] ?? null;
+}
+
+export function getTreeRenderRootLinkIds(robot: RobotState): string[] {
+  if (isSyntheticWorldRoot(robot, robot.rootLinkId)) {
+    return robot.links[robot.rootLinkId] ? [robot.rootLinkId] : [];
+  }
+
+  return getTreeDisplayRootLinkIds(robot);
+}
+
+export function getPrimaryTreeRenderRootLinkId(robot: RobotState): string | null {
+  return getTreeRenderRootLinkIds(robot)[0] ?? null;
 }

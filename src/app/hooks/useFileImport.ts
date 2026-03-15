@@ -56,11 +56,64 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
   const addComponent = useAssemblyStore((state) => state.addComponent);
 
-  const pickPreferredFile = useCallback((files: RobotFile[]) => {
+  const pickPreferredFile = useCallback((files: RobotFile[], filePool: RobotFile[] = files) => {
     const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
-    return robotDefinitionFiles.find((file) => file.format === 'urdf')
-      || robotDefinitionFiles.find((file) => file.format === 'mjcf')
-      || robotDefinitionFiles.find((file) => file.format === 'usd')
+    const preferredUrdf = robotDefinitionFiles.find((file) => file.format === 'urdf');
+    if (preferredUrdf) {
+      return preferredUrdf;
+    }
+
+    const mjcfFiles = robotDefinitionFiles.filter((file) => file.format === 'mjcf');
+    if (mjcfFiles.length > 0) {
+      const auxiliaryNamePattern = /(actuator|actuators|keyframe|position|velocity|motor|ctrl|filtered)/i;
+
+      const sortedMjcfCandidates = [...mjcfFiles].sort((left, right) => {
+        const leftBase = left.name.split('/').pop() ?? left.name;
+        const rightBase = right.name.split('/').pop() ?? right.name;
+        const leftDir = left.name.split('/').slice(-2, -1)[0] ?? '';
+        const rightDir = right.name.split('/').slice(-2, -1)[0] ?? '';
+        const leftIsScene = /scene/i.test(leftBase);
+        const rightIsScene = /scene/i.test(rightBase);
+        if (leftIsScene !== rightIsScene) {
+          return leftIsScene ? 1 : -1;
+        }
+
+        const leftIsAuxiliary = auxiliaryNamePattern.test(leftBase);
+        const rightIsAuxiliary = auxiliaryNamePattern.test(rightBase);
+        if (leftIsAuxiliary !== rightIsAuxiliary) {
+          return leftIsAuxiliary ? 1 : -1;
+        }
+
+        const leftMatchesDir = leftBase.toLowerCase() === `${leftDir.toLowerCase()}.xml`
+          || leftBase.toLowerCase() === `${leftDir.toLowerCase()}.mjcf`;
+        const rightMatchesDir = rightBase.toLowerCase() === `${rightDir.toLowerCase()}.xml`
+          || rightBase.toLowerCase() === `${rightDir.toLowerCase()}.mjcf`;
+        if (leftMatchesDir !== rightMatchesDir) {
+          return leftMatchesDir ? -1 : 1;
+        }
+
+        if (leftBase.length !== rightBase.length) {
+          return leftBase.length - rightBase.length;
+        }
+
+        return leftBase.localeCompare(rightBase);
+      });
+
+      for (const candidate of sortedMjcfCandidates) {
+        try {
+          const resolved = resolveMJCFSource(candidate, filePool);
+          if (parseMJCF(resolved.content) !== null) {
+            return candidate;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return sortedMjcfCandidates[0] ?? null;
+    }
+
+    return robotDefinitionFiles.find((file) => file.format === 'usd')
       || robotDefinitionFiles[0]
       || files[0]
       || null;
@@ -365,7 +418,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       // Filter to get only real robot definition files (exclude mesh)
       if (renamedRobotFiles.length > 0) {
-        const preferredFile = pickPreferredFile(renamedRobotFiles);
+        const preferredFile = pickPreferredFile(renamedRobotFiles, mergedFiles);
 
         if (!preferredFile) {
           // No loadable file after import; fall through to generic completion handling.

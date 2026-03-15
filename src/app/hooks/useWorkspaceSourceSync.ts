@@ -320,13 +320,8 @@ export function useWorkspaceSourceSync({
 
     if (selectedFile.format === 'urdf' && generatedUrdfContent) {
       syncTextFileContent(selectedFile.name, generatedUrdfContent, { syncOriginalContent: true });
-      return;
     }
-
-    if (selectedFile.format === 'mjcf' && generatedMjcfContent) {
-      syncTextFileContent(selectedFile.name, generatedMjcfContent, { syncOriginalContent: true });
-    }
-  }, [generatedMjcfContent, generatedUrdfContent, selectedFile, syncTextFileContent]);
+  }, [generatedUrdfContent, selectedFile, syncTextFileContent]);
 
   useEffect(() => {
     if (!isWorkspaceAssembly || !assemblyState) {
@@ -346,11 +341,6 @@ export function useWorkspaceSourceSync({
 
       if (sourceFile.format === 'urdf') {
         generatedComponentSources.set(sourceFile.name, generateURDF(sourceRobotState, false));
-      } else if (sourceFile.format === 'mjcf') {
-        generatedComponentSources.set(
-          sourceFile.name,
-          generateMujocoXML(sourceRobotState, { meshdir: 'meshes/' }),
-        );
       }
     });
 

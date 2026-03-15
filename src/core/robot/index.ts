@@ -35,8 +35,12 @@ export {
 export type { ValidationError, ValidationResult } from './validators';
 
 export {
+    getPrimaryTreeRenderRootLinkId,
     getPrimaryTreeDisplayRootLinkId,
+    getTreeRenderRootLinkIds,
     getTreeDisplayRootLinkIds,
+    isTransparentDisplayLink,
+    isSyntheticJointStageLink,
     isSyntheticWorldRoot,
 } from './treeRoots';
 

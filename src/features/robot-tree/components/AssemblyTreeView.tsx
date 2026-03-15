@@ -13,7 +13,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { getTreeDisplayRootLinkIds } from '@/core/robot';
+import { getTreeRenderRootLinkIds } from '@/core/robot';
 import type { TranslationKeys } from '@/shared/i18n';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import type { AppMode, AssemblyState, RobotState } from '@/types';
@@ -270,7 +270,7 @@ export const AssemblyTreeView = memo(({
 
                   {isExpanded && (
                     <div className="ml-2">
-                      {getTreeDisplayRootLinkIds(component.robot).map((treeRootLinkId) => (
+                      {getTreeRenderRootLinkIds(component.robot).map((treeRootLinkId) => (
                         <TreeNode
                           key={treeRootLinkId}
                           linkId={treeRootLinkId}

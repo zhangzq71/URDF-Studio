@@ -60,6 +60,7 @@ interface RuntimeLinkSummary {
 
 interface RegressionSnapshot {
   timestamp: number;
+  runtimeRevision: number;
   availableFiles: Array<{ name: string; format: string }>;
   selectedFile: { name: string; format: string } | null;
   store: ReturnType<typeof summarizeRobotState> | null;
@@ -101,6 +102,7 @@ const DEFAULT_FLAGS: Required<RegressionViewerFlags> = {
 let appHandlers: AppRegressionHandlers | null = null;
 let viewerHandlers: ViewerRegressionHandlers | null = null;
 let runtimeRobot: any | null = null;
+let runtimeRevision = 0;
 
 function toFixedArray(
   value: { x?: number; y?: number; z?: number } | [number, number, number] | undefined | null,
@@ -360,6 +362,7 @@ export function setRegressionViewerHandlers(handlers: ViewerRegressionHandlers |
 
 export function setRegressionRuntimeRobot(robot: any | null): void {
   runtimeRobot = robot;
+  runtimeRevision += 1;
 }
 
 export function getRegressionSnapshot(): RegressionSnapshot {
@@ -367,6 +370,7 @@ export function getRegressionSnapshot(): RegressionSnapshot {
   const robotState = appHandlers?.getRobotState();
   return {
     timestamp: Date.now(),
+    runtimeRevision,
     availableFiles: getAvailableFilesSummary(),
     selectedFile: selectedFile ? { name: selectedFile.name, format: selectedFile.format } : null,
     store: robotState ? summarizeRobotState(robotState) : null,
@@ -384,6 +388,7 @@ export function installRegressionDebugApi(targetWindow: Window): void {
         throw new Error('Regression app handlers are not registered.');
       }
 
+      setRegressionRuntimeRobot(null);
       const result = await appHandlers.loadRobotByName(fileName);
       return {
         loaded: result.loaded,

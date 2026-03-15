@@ -64,6 +64,30 @@ function convertAngle(value: number, settings: MJCFCompilerSettings): number {
     return value;
 }
 
+function convertJointLimitValue(value: number, jointType: string, settings: MJCFCompilerSettings): number {
+    return jointType === 'slide' ? value : convertAngle(value, settings);
+}
+
+function resolveRuntimeJointType(joint: MJCFHierarchyJoint): 'revolute' | 'continuous' | 'prismatic' | 'ball' | 'floating' {
+    if (joint.type === 'hinge') {
+        return joint.range ? 'revolute' : 'continuous';
+    }
+
+    if (joint.type === 'slide') {
+        return 'prismatic';
+    }
+
+    if (joint.type === 'ball') {
+        return 'ball';
+    }
+
+    if (joint.type === 'free') {
+        return 'floating';
+    }
+
+    return 'continuous';
+}
+
 function applyMaterialAssetToMesh(mesh: THREE.Object3D, materialDef: MJCFMaterial, materialName?: string): void {
     const rgba = materialDef.rgba || [0.8, 0.8, 0.8, 1];
     const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
@@ -326,10 +350,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         jointNode.name = joint.name || `joint_${childBody.name}`;
         (jointNode as any).isURDFJoint = true;
         (jointNode as any).type = 'URDFJoint';
-        (jointNode as any).jointType = joint.type === 'hinge' ? 'revolute' :
-            joint.type === 'slide' ? 'prismatic' :
-            joint.type === 'ball' ? 'ball' :
-            joint.type === 'free' ? 'floating' : 'continuous';
+        (jointNode as any).jointType = resolveRuntimeJointType(joint);
 
         // Position joint at joint.pos (relative to body origin)
         jointNode.position.set(jointPos[0], jointPos[1], jointPos[2]);
@@ -345,9 +366,9 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         (jointNode as any).axis = axisVec;
 
         // Joint limits (convert if in degrees)
-        if (joint.range) {
-            const lowerLimit = convertAngle(joint.range[0], compilerSettings);
-            const upperLimit = convertAngle(joint.range[1], compilerSettings);
+        if (joint.range && joint.type !== 'free') {
+            const lowerLimit = convertJointLimitValue(joint.range[0], joint.type, compilerSettings);
+            const upperLimit = convertJointLimitValue(joint.range[1], joint.type, compilerSettings);
             (jointNode as any).limit = { lower: lowerLimit, upper: upperLimit };
         }
 
