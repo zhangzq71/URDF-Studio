@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { MathUtils as SharedMathUtils } from '@/shared/utils';
 import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import { collisionBaseMaterial, emptyRaycast } from '../utils/materials';
+import { shouldSyncDirectLinkChildVisibility } from '../utils/runtimeVisibility';
 import {
     createJointAxisVisualization,
     createOriginAxes,
@@ -253,13 +254,7 @@ export function useVisualizationEffects({
                 return;
             }
 
-            if (
-                child.parent
-                && child.parent.isURDFLink
-                && !child.isURDFJoint
-                && !child.isURDFCollider
-                && child.userData?.isGizmo !== true
-            ) {
+            if (shouldSyncDirectLinkChildVisibility(child)) {
                 child.visible = isVisualGeometryVisible(linkData, showVisual);
             }
 
