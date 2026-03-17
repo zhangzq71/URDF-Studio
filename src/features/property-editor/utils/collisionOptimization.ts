@@ -115,6 +115,7 @@ export interface CollisionOptimizationAnalysis {
 }
 
 export type CollisionOptimizationSkeletonProjectionPlane = 'xz' | 'xy' | 'yz';
+export type CollisionOptimizationSkeletonProjectionViewMode = 'auto' | 'front';
 
 export interface CollisionOptimizationSkeletonProjectionNode {
   linkId: string;
@@ -141,6 +142,10 @@ export interface CollisionOptimizationSkeletonProjection {
   plane: CollisionOptimizationSkeletonProjectionPlane;
   nodes: Record<string, CollisionOptimizationSkeletonProjectionNode>;
   edges: CollisionOptimizationSkeletonProjectionEdge[];
+}
+
+interface CollisionOptimizationSkeletonProjectionOptions {
+  viewMode?: CollisionOptimizationSkeletonProjectionViewMode;
 }
 
 export interface CollisionOptimizationBaseAnalysis {
@@ -443,6 +448,27 @@ function chooseSkeletonProjectionPlane(
   return candidates[0]?.plane ?? 'xz';
 }
 
+function chooseFrontSkeletonProjectionPlane(
+  positions: THREE.Vector3[],
+): CollisionOptimizationSkeletonProjectionPlane {
+  if (positions.length === 0) {
+    return 'yz';
+  }
+
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  positions.forEach((position) => {
+    min.min(position);
+    max.max(position);
+  });
+
+  const spanX = Math.max(max.x - min.x, 1e-6);
+  const spanY = Math.max(max.y - min.y, 1e-6);
+  const hasReadableLateralSpread = spanY >= Math.max(spanX * 0.15, 1e-3);
+
+  return hasReadableLateralSpread ? 'yz' : 'xz';
+}
+
 function projectSkeletonPosition(
   plane: CollisionOptimizationSkeletonProjectionPlane,
   position: THREE.Vector3,
@@ -505,6 +531,7 @@ function buildSkeletonClusterIds(robot: RobotData): Record<string, string> {
 
 export function buildCollisionOptimizationSkeletonProjection(
   source: CollisionOptimizationSource,
+  options: CollisionOptimizationSkeletonProjectionOptions = {},
 ): CollisionOptimizationSkeletonProjection {
   const robot = source.kind === 'robot'
     ? source.robot
@@ -515,7 +542,10 @@ export function buildCollisionOptimizationSkeletonProjection(
     position.setFromMatrixPosition(matrix);
     return { linkId, position };
   });
-  const plane = chooseSkeletonProjectionPlane(linkPositions.map(({ position }) => position));
+  const positions = linkPositions.map(({ position }) => position);
+  const plane = options.viewMode === 'front'
+    ? chooseFrontSkeletonProjectionPlane(positions)
+    : chooseSkeletonProjectionPlane(positions);
   const clusterIds = buildSkeletonClusterIds(robot);
 
   return {

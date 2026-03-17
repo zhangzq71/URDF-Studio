@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { Language } from '@/shared/i18n';
 import {
   CanvasResizeSync,
+  GroundShadowPlane,
   NeutralStudioEnvironment,
   ReferenceGrid,
   SceneLighting,
@@ -14,10 +15,11 @@ import {
   WORKSPACE_CANVAS_BACKGROUND,
   WorldOriginAxes,
 } from '@/shared/components/3d';
-import { useEffectiveTheme } from '@/shared/hooks';
 
 interface URDFViewerCanvasProps {
   lang: Language;
+  resolvedTheme?: 'light' | 'dark';
+  groundOffset?: number;
   snapshotAction?: RefObject<(() => void) | null>;
   robotName?: string;
   orbitEnabled: boolean;
@@ -25,11 +27,14 @@ interface URDFViewerCanvasProps {
   onOrbitEnd?: () => void;
   onPointerMissed?: () => void;
   contextLostMessage: string;
+  showUsageGuide?: boolean;
   children: ReactNode;
 }
 
 export const URDFViewerCanvas = memo(function URDFViewerCanvas({
   lang,
+  resolvedTheme = 'light',
+  groundOffset = 0,
   snapshotAction,
   robotName = 'robot',
   orbitEnabled,
@@ -37,11 +42,12 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
   onOrbitEnd,
   onPointerMissed,
   contextLostMessage,
+  showUsageGuide = true,
   children,
 }: URDFViewerCanvasProps) {
-  const effectiveTheme = useEffectiveTheme();
   const [contextLost, setContextLost] = useState(false);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
+  const environmentIntensity = resolvedTheme === 'light' ? 0.16 : 0.22;
 
   const handleCreated = useCallback((state: RootState) => {
     const canvas = state.gl.domElement;
@@ -103,18 +109,20 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
         <CanvasResizeSync />
         <color
           attach="background"
-          args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]}
+          args={[resolvedTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]}
         />
         <Suspense fallback={null}>
-          <NeutralStudioEnvironment intensity={0.36} />
-          <SceneLighting theme={effectiveTheme} cameraFollowPrimary />
+          <NeutralStudioEnvironment intensity={environmentIntensity} />
+          <SceneLighting theme={resolvedTheme} cameraFollowPrimary />
           <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
           {children}
-          <ReferenceGrid theme={effectiveTheme} />
+          <GroundShadowPlane theme={resolvedTheme} groundOffset={groundOffset} />
+          <ReferenceGrid theme={resolvedTheme} groundOffset={groundOffset} />
           <WorldOriginAxes />
           <OrbitControls
             makeDefault
-            enableDamping={false}
+            enableDamping
+            dampingFactor={0.08}
             enabled={orbitEnabled}
             onStart={onOrbitStart}
             onEnd={onOrbitEnd}
@@ -122,7 +130,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
           <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
             <GizmoViewport
               axisColors={['#ef4444', '#22c55e', '#3b82f6']}
-              labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+              labelColor={resolvedTheme === 'light' ? '#0f172a' : 'white'}
               axisHeadScale={0.9}
               scale={34}
             />
@@ -130,7 +138,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
         </Suspense>
       </Canvas>
 
-      <UsageGuide lang={lang} />
+      {showUsageGuide ? <UsageGuide lang={lang} /> : null}
 
       {contextLost && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">

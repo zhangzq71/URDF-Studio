@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { getTreeRenderRootLinkIds } from '@/core/robot';
+import { ContextMenuFrame, ContextMenuItem } from '@/shared/components/ui';
 import type { TranslationKeys } from '@/shared/i18n';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import type { AppMode, AssemblyState, RobotState } from '@/types';
@@ -365,28 +366,16 @@ export const AssemblyTreeView = memo(({
         )}
       </div>
 
-      {componentContextMenu && (
-        <div
-          className="fixed z-[120] w-[170px] rounded-md border border-border-black bg-panel-bg shadow-xl p-1"
-          style={{ left: `${componentContextMenu.x}px`, top: `${componentContextMenu.y}px` }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <button
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-            onClick={handleComponentRenameFromMenu}
-          >
-            <Edit3 size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-            <span>{t.rename}</span>
-          </button>
-          <button
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-            onClick={handleComponentDeleteFromMenu}
-          >
-            <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-            <span>{t.deleteBranch}</span>
-          </button>
-        </div>
-      )}
+      <ContextMenuFrame
+        position={componentContextMenu ? { x: componentContextMenu.x, y: componentContextMenu.y } : null}
+      >
+        <ContextMenuItem onClick={handleComponentRenameFromMenu} icon={<Edit3 size={12} />}>
+          {t.rename}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handleComponentDeleteFromMenu} icon={<Trash2 size={12} />} tone="danger">
+          {t.deleteBranch}
+        </ContextMenuItem>
+      </ContextMenuFrame>
     </div>
   );
 });

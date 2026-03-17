@@ -360,7 +360,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             className="h-4 w-full rounded border border-border-strong bg-input-bg px-0.5 py-0 text-center text-[9px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                         />
                     ) : (
-                        <div className="cursor-text truncate text-right font-mono text-[9px] text-text-tertiary hover:text-system-blue">
+                        <div className="cursor-text truncate text-left font-mono text-[9px] text-text-tertiary hover:text-system-blue">
                             {hasFiniteLimits ? displayMin.toFixed(2) : '−∞'}
                         </div>
                     )}
@@ -414,7 +414,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             className="h-4 w-full rounded border border-border-strong bg-input-bg px-0.5 py-0 text-center text-[9px] leading-none font-mono text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20"
                         />
                     ) : (
-                        <div className="cursor-text truncate font-mono text-[9px] text-text-tertiary hover:text-system-blue">
+                        <div className="cursor-text truncate text-right font-mono text-[9px] text-text-tertiary hover:text-system-blue">
                             {hasFiniteLimits ? displayMax.toFixed(2) : '∞'}
                         </div>
                     )}

@@ -9,6 +9,7 @@ import { TreeNodeGeometrySection } from './tree-node/TreeNodeGeometrySection';
 import { TreeNodeJointBranchList } from './tree-node/TreeNodeJointBranchList';
 import { TreeNodeLinkRow } from './tree-node/TreeNodeLinkRow';
 import { getTreeConnectorRailClass, scrollElementIntoView } from './tree-node/presentation';
+import { shouldAutoExpandTreeGeometryDetails } from './tree-node/treeGeometryDisclosure';
 import type {
   TreeNodeContextMenuState,
   TreeNodeEditingTarget,
@@ -149,6 +150,11 @@ export const TreeNode = memo(({
   const hasSelectedExtraCollision = visibleCollisionBodies.some(
     ({ objectIndex }) => objectIndex === selectedObjectIndex,
   );
+  const shouldAutoExpandGeometryDetails = shouldAutoExpandTreeGeometryDetails({
+    showGeometryDetailsByDefault,
+    selectionSubType: isLinkSelected ? robot.selection.subType : undefined,
+    hasSelectedExtraCollision: isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision,
+  });
   const selectionInBranch = selectionBranchLinkIds?.has(linkId) ?? false;
   const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
   const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
@@ -181,20 +187,10 @@ export const TreeNode = memo(({
   }, [showGeometryDetailsByDefault]);
 
   useEffect(() => {
-    if (
-      isVisualSelected
-      || isPrimaryCollisionSelected
-      || (isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)
-    ) {
+    if (shouldAutoExpandGeometryDetails) {
       setIsGeometryExpanded(true);
     }
-  }, [
-    hasSelectedExtraCollision,
-    isLinkSelected,
-    isPrimaryCollisionSelected,
-    isVisualSelected,
-    robot.selection.subType,
-  ]);
+  }, [shouldAutoExpandGeometryDetails]);
 
   useEffect(() => {
     if (isLinkSelected && !robot.selection.subType) {

@@ -9,7 +9,7 @@ export function shouldSyncDirectLinkChildVisibility(child: THREE.Object3D): bool
     return false;
   }
 
-  if ((child as any).isURDFVisual || child.userData?.isVisualGroup || child.isMesh) {
+  if ((child as any).isURDFVisual || child.userData?.isVisualGroup || child instanceof THREE.Mesh) {
     return true;
   }
 

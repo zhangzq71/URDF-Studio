@@ -81,7 +81,7 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
         <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{label ?? t.rotation}</span>
         <span className="text-[10px] leading-4 text-text-tertiary">{t.urdfFrame}</span>
@@ -95,7 +95,7 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
         value={rotationDisplayMode}
         onChange={setRotationDisplayMode}
         size="xs"
-        className="w-full"
+        className="w-full [&>button]:min-h-[22px] [&>button]:!gap-0.5 [&>button]:!py-0 [&>button]:!text-[10px]"
       />
 
       {rotationDisplayMode === 'euler_deg' ? (

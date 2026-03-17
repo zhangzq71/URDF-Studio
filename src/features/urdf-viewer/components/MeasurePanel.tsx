@@ -2,6 +2,7 @@ import React from 'react';
 import { Ruler, X } from 'lucide-react';
 import { MeasureState, ToolMode } from '../types';
 import { Language, translations } from '@/shared/i18n';
+import { IconButton } from '@/shared/components/ui';
 
 interface MeasurePanelProps {
     toolMode: ToolMode;
@@ -46,19 +47,19 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                         <Ruler className="w-4 h-4" />
                         {t.measureTool}
                     </div>
-                    <button
-                        type="button"
+                    <IconButton
                         onMouseDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                             e.stopPropagation();
                             onClose();
                         }}
-                        className="p-1 text-slate-500 hover:bg-red-500 hover:text-white rounded transition-colors"
+                        size="sm"
+                        variant="close"
                         title={t.close}
                         aria-label={t.close}
                     >
                         <X className="w-4 h-4" />
-                    </button>
+                    </IconButton>
                 </div>
                 <div className="p-3">
                     <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-3 space-y-1">

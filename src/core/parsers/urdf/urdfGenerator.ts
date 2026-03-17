@@ -11,6 +11,7 @@ import {
   formatNumberWithMaxDecimals,
 } from '@/core/utils/numberPrecision';
 import { normalizeMeshPathForExport } from '../meshPathUtils';
+import { formatUrdfMeshScaleAttribute } from './meshScale';
 
 const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'planar']);
 const FULL_LIMIT_EXPORT_TYPES = new Set(['revolute', 'prismatic']);
@@ -75,7 +76,8 @@ const generateCollisionElement = (
       : useRelativePaths
         ? `meshes/${meshPath || 'part_collision.stl'}`
         : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
-    xml += `        <mesh filename="${filename}" />\n`;
+    const scaleAttribute = formatUrdfMeshScaleAttribute(collision.dimensions, formatShape);
+    xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
   }
   xml += `      </geometry>\n`;
   xml += `    </collision>\n`;
@@ -142,7 +144,8 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
              : useRelativePaths
                ? `meshes/${meshPath || 'part.stl'}`
                : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
-           xml += `        <mesh filename="${filename}" />\n`;
+           const scaleAttribute = formatUrdfMeshScaleAttribute(link.visual.dimensions, formatShape);
+           xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
         }
         xml += `      </geometry>\n`;
         xml += `      <material name="${link.id}_mat">\n`;

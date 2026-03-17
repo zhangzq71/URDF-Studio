@@ -6,6 +6,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { X, Copy, Check, FileCode, Download } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { IconButton } from '@/shared/components/ui';
 import type { Theme } from '@/types';
 import type { Language } from '@/store';
 
@@ -107,12 +108,9 @@ export const SourceCodeViewer: React.FC<SourceCodeViewerProps> = ({
 
             <div className="w-px h-4 bg-border-black mx-1" />
 
-            <button
-              onClick={onClose}
-              className="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded transition-colors"
-            >
+            <IconButton onClick={onClose} variant="close" aria-label="Close viewer" title="Close viewer">
               <X className="w-5 h-5" />
-            </button>
+            </IconButton>
           </div>
         </div>
 

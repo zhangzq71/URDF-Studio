@@ -18,6 +18,7 @@ export {
   SnapshotManager,
   NeutralStudioEnvironment,
   SceneLighting,
+  GroundShadowPlane,
   ReferenceGrid,
   LIGHTING_CONFIG,
   WORKSPACE_CANVAS_BACKGROUND
@@ -28,3 +29,4 @@ export { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from './Unifi
 export * from './helpers';
 
 export { UsageGuide } from './UsageGuide';
+export { TransformConfirmOverlay } from './TransformConfirmOverlay';

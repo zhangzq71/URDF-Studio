@@ -3,6 +3,7 @@ import { TransformControls as DreiTransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 
 type DreiTransformControlsProps = React.ComponentProps<typeof DreiTransformControls>;
+export type TransformControlObjectTarget = NonNullable<DreiTransformControlsProps['object']>;
 
 export type SharedControlRef = React.MutableRefObject<any | null> | React.RefObject<any | null>;
 
@@ -13,16 +14,18 @@ export type UnifiedTransformDisplayStyle = 'stock' | 'thick-primary';
 export const VISUALIZER_UNIFIED_GIZMO_SIZE = 0.96;
 export const DEFAULT_DISPLAY_THICKNESS_SCALE = 1;
 
-export interface UnifiedTransformControlsProps extends Omit<DreiTransformControlsProps, 'mode'> {
+export interface UnifiedTransformControlsProps extends Omit<DreiTransformControlsProps, 'mode' | 'object'> {
   mode: UnifiedTransformMode;
-  translateObject?: THREE.Object3D;
+  object?: DreiTransformControlsProps['object'];
+  translateObject?: TransformControlObjectTarget;
   translateSpace?: DreiTransformControlsProps['space'];
   rotateRef?: SharedControlRef;
-  rotateObject?: THREE.Object3D;
+  rotateObject?: TransformControlObjectTarget;
   rotateSize?: number;
   rotateSpace?: DreiTransformControlsProps['space'];
   rotateEnabled?: boolean;
   onRotateChange?: DreiTransformControlsProps['onChange'];
+  onDraggingChanged?: (event: { value: boolean }) => void;
   enableUniversalPriority?: boolean;
   hoverStyle?: UnifiedTransformHoverStyle;
   displayStyle?: UnifiedTransformDisplayStyle;
@@ -81,21 +84,36 @@ export const hasEnabledFlag = (controls: unknown): controls is ControlsWithEnabl
   'enabled' in controls &&
   typeof (controls as { enabled?: unknown }).enabled === 'boolean';
 
-export const isObjectAttachedToSceneGraph = (
+export const resolveTransformControlObject = (
+  target: TransformControlObjectTarget | null | undefined
+): THREE.Object3D | null => {
+  if (!target) return null;
+  if (target instanceof THREE.Object3D) {
+    return target;
+  }
+
+  const maybeRef = target as React.RefObject<THREE.Object3D | null>;
+  return maybeRef.current instanceof THREE.Object3D ? maybeRef.current : null;
+};
+
+export const resolveAttachedTransformControlObject = (
   scene: THREE.Object3D | null | undefined,
-  object: THREE.Object3D | null | undefined
+  target: TransformControlObjectTarget | null | undefined
 ) => {
-  if (!scene || !object) return false;
+  if (!scene) return null;
+
+  const object = resolveTransformControlObject(target);
+  if (!object) return null;
 
   let current: THREE.Object3D | null = object;
   while (current) {
     if (current === scene) {
-      return true;
+      return object;
     }
     current = current.parent;
   }
 
-  return false;
+  return null;
 };
 
 export const getGizmoRoot = (controls: any) => {

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Download, Plus, Trash2 } from 'lucide-react';
+import { ContextMenuFrame, ContextMenuItem } from '@/shared/components/ui';
 
 export interface FileTreeContextMenuProps {
   position: { x: number; y: number } | null;
@@ -36,47 +37,27 @@ export const FileTreeContextMenu: React.FC<FileTreeContextMenuProps> = ({
   if (!showAddAction && !showExportAsURDFAction && !showExportAsMJCFAction && !showDeleteAction) return null;
 
   return (
-    <div
-      className="fixed z-[120] w-44 rounded-md border border-border-black bg-panel-bg shadow-xl p-1"
-      style={{ left: `${position.x}px`, top: `${position.y}px` }}
-      onClick={(event) => event.stopPropagation()}
-    >
+    <ContextMenuFrame position={position} widthClassName="w-44">
       {showAddAction && addLabel && onAdd && (
-        <button
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-          onClick={onAdd}
-        >
-          <Plus size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-          <span>{addLabel}</span>
-        </button>
+        <ContextMenuItem onClick={onAdd} icon={<Plus size={12} />}>
+          {addLabel}
+        </ContextMenuItem>
       )}
       {showExportAsURDFAction && exportAsURDFLabel && onExportAsURDF && (
-        <button
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-          onClick={onExportAsURDF}
-        >
-          <Download size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-          <span>{exportAsURDFLabel}</span>
-        </button>
+        <ContextMenuItem onClick={onExportAsURDF} icon={<Download size={12} />}>
+          {exportAsURDFLabel}
+        </ContextMenuItem>
       )}
       {showExportAsMJCFAction && exportAsMJCFLabel && onExportAsMJCF && (
-        <button
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-          onClick={onExportAsMJCF}
-        >
-          <Download size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-          <span>{exportAsMJCFLabel}</span>
-        </button>
+        <ContextMenuItem onClick={onExportAsMJCF} icon={<Download size={12} />}>
+          {exportAsMJCFLabel}
+        </ContextMenuItem>
       )}
       {showDeleteAction && (
-        <button
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-          onClick={onDelete}
-        >
-          <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-          <span>{deleteLabel}</span>
-        </button>
+        <ContextMenuItem onClick={onDelete} icon={<Trash2 size={12} />} tone="danger">
+          {deleteLabel}
+        </ContextMenuItem>
       )}
-    </div>
+    </ContextMenuFrame>
   );
 };

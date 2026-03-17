@@ -4,7 +4,7 @@
  * origin/rotation, color, and auto-align.
  */
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { Upload, File, Wand, Check, Trash2 } from 'lucide-react';
+import { Upload, File, Wand, Check, Trash2, Eye, EyeOff } from 'lucide-react';
 import type { RobotState, UrdfLink, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
@@ -17,19 +17,20 @@ import {
 } from '@/core/robot';
 import {
   InputGroup,
+  InlineInputGroup,
   NumberInput,
-  Vec3InlineInput,
   PROPERTY_EDITOR_HELPER_TEXT_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
-  PROPERTY_EDITOR_SUBLABEL_CLASS,
+  PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
+  PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS,
   PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS,
+  ReadonlyValueField,
   PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
   PROPERTY_EDITOR_SECTION_TITLE_CLASS,
   PROPERTY_EDITOR_SELECT_CLASS,
 } from './FormControls';
 
 import { MeshPreview } from './MeshPreview';
-import { RotationValueInput } from './RotationValueInput';
 import {
   computeAutoAlign,
   convertGeometryType,
@@ -39,12 +40,8 @@ import { analyzeMeshBatchWithWorker } from '../utils/meshAnalysisWorkerBridge';
 import {
   GEOMETRY_DIMENSION_STEP,
   MAX_GEOMETRY_DIMENSION_DECIMALS,
-  MAX_TRANSFORM_DECIMALS,
 } from '@/core/utils/numberPrecision';
-import {
-  PROPERTY_EDITOR_POSITION_STEP,
-  PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS,
-} from '../constants';
+import { TransformFields } from './TransformFields';
 
 const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
   includePrimitiveFits: true,
@@ -77,6 +74,65 @@ interface GeometryEditorProps {
   lang: Language;
   isTabbed?: boolean;
 }
+
+interface DimensionInputField {
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}
+
+const DimensionInputGrid = ({
+  columns,
+  fields,
+}: {
+  columns: 2 | 3;
+  fields: DimensionInputField[];
+}) => (
+  <div className={columns === 2 ? 'grid grid-cols-2 gap-1' : 'grid grid-cols-3 gap-1'}>
+    {fields.map((field) => (
+      <NumberInput
+        key={field.label}
+        label={field.label}
+        value={field.value}
+        onChange={field.onChange}
+        compact
+        step={GEOMETRY_DIMENSION_STEP}
+        precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
+      />
+    ))}
+  </div>
+);
+
+const InlineDimensionInputRow = ({
+  fields,
+  columns = 3,
+  labelClassName = PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
+  labelWidthClassName = 'w-2 text-center',
+}: {
+  fields: DimensionInputField[];
+  columns?: 1 | 2 | 3;
+  labelClassName?: string;
+  labelWidthClassName?: string;
+}) => (
+  <div className={columns === 1 ? 'grid grid-cols-1 gap-1' : columns === 2 ? 'grid grid-cols-2 gap-1' : 'grid grid-cols-3 gap-1'}>
+    {fields.map((field) => (
+      <div key={field.label} className="flex min-w-0 items-center gap-1">
+        <span className={`${labelClassName} ${labelWidthClassName}`}>
+          {field.label}
+        </span>
+        <div className="min-w-0 flex-1">
+          <NumberInput
+            value={field.value}
+            onChange={field.onChange}
+            compact
+            step={GEOMETRY_DIMENSION_STEP}
+            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
+          />
+        </div>
+      </div>
+    ))}
+  </div>
+);
 
 export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   data,
@@ -111,6 +167,20 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const geomData = category === 'collision'
       ? (selectedCollisionGeometry?.geometry || data.collision)
       : data.visual;
+    const meshFiles = useMemo(
+      () => Object.keys(assets)
+        .filter((filePath) => /\.(stl|obj|dae|gltf|glb)$/i.test(filePath))
+        .sort((left, right) => left.localeCompare(right)),
+      [assets],
+    );
+    const isGeometryVisible = geomData.visible !== false;
+    const materialSourceLabel = geomData.materialSource === 'inline'
+      ? t.materialSourceInline
+      : geomData.materialSource === 'named'
+        ? t.materialSourceNamed
+        : geomData.materialSource === 'gazebo'
+          ? t.materialSourceGazebo
+          : null;
     const geometrySnapshotCacheRef = useRef<Record<string, Partial<Record<GeometryType, {
       dimensions?: { x: number; y: number; z: number };
       origin?: { xyz: { x: number; y: number; z: number }; rpy: { r: number; p: number; y: number } };
@@ -148,6 +218,17 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     });
 
     const normalizeColor = (value?: string) => value?.trim().toLowerCase();
+    const describeMeshPath = (filePath: string) => {
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      const pathSegments = normalizedPath.split('/');
+      const fileName = pathSegments[pathSegments.length - 1] || normalizedPath;
+      const parentPath = pathSegments.slice(0, -1).join('/');
+
+      return {
+        fileName,
+        parentPath,
+      };
+    };
     const displayedOrigin = useMemo(() => {
       if (category !== 'collision' || !pendingCollisionTransform) {
         return geomData.origin;
@@ -466,8 +547,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                 </div>
             )}
 
-            <InputGroup label={t.type}>
-                <div className="flex items-center gap-2">
+            <InlineInputGroup label={t.type} labelWidthClassName="w-11">
+                <div className="flex items-center gap-1">
                     <select
                         value={geomData.type || GeometryType.CYLINDER}
                         onChange={handleTypeChange}
@@ -480,10 +561,26 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         <option value={GeometryType.MESH}>{t.mesh}</option>
                         <option value={GeometryType.NONE}>{t.none}</option>
                     </select>
+                    {geomData.type !== GeometryType.NONE && (
+                        <button
+                            type="button"
+                            aria-pressed={isGeometryVisible}
+                            title={isGeometryVisible ? t.hide : t.show}
+                            onClick={() => update({ visible: !isGeometryVisible })}
+                            className={`inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border px-1.5 text-[10px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-system-blue/25 ${
+                                isGeometryVisible
+                                    ? 'border-system-blue/25 bg-system-blue/10 text-system-blue'
+                                    : 'border-border-strong bg-panel-bg text-text-tertiary hover:bg-element-hover hover:text-text-primary'
+                            }`}
+                        >
+                            {isGeometryVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+                            <span>{t.visible}</span>
+                        </button>
+                    )}
                     {geomData.type === GeometryType.CYLINDER && (
                         <button
                             onClick={handleAutoAlign}
-                            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} h-8 shrink-0 px-2`}
+                            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
                             title={t.autoAlign}
                         >
                             <Wand className="w-3.5 h-3.5" />
@@ -491,140 +588,200 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         </button>
                     )}
                 </div>
-            </InputGroup>
+            </InlineInputGroup>
+
+            {category === 'visual' && geomData.type !== GeometryType.NONE && materialSourceLabel && (
+                <InlineInputGroup label={t.materialSource} labelWidthClassName="w-16">
+                    <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                        {materialSourceLabel}
+                    </ReadonlyValueField>
+                </InlineInputGroup>
+            )}
 
             {/* Mesh Selection UI */}
             {geomData.type === GeometryType.MESH && (
-                <div className="mb-4 bg-element-bg p-2 rounded-lg border border-border-black">
-                    <InputGroup label={t.meshLibrary}>
-                        <div className="flex flex-col gap-2">
-                             <div className="flex items-center gap-2">
-                                <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    className="hidden"
-                                    accept=".stl,.STL,.obj,.OBJ,.dae,.DAE,.gltf,.GLTF,.glb,.GLB"
-                                    onChange={handleFileChange}
-                                />
-                                <button
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className={PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS}
-                                >
-                                    <Upload className="w-3 h-3" />
-                                    {t.upload}
-                                </button>
-                             </div>
-
-                             <div className="max-h-32 overflow-y-auto custom-scrollbar flex flex-col gap-1 mt-1">
-                                {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).length === 0 && (
-                                    <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} italic`}></div>
-                                )}
-                                {Object.keys(assets).filter(f => /\.(stl|obj|dae|gltf|glb)$/i.test(f)).map(filename => {
-                                    const isApplied = geomData.meshPath === filename && !previewMeshPath;
-                                    const isPreviewing = previewMeshPath === filename;
-                                    return (
-                                        <div
-                                            key={filename}
-                                            onClick={() => setPreviewMeshPath(filename)}
-                                            onDoubleClick={() => {
-                                                update({ meshPath: filename });
-                                                setPreviewMeshPath(null);
-                                            }}
-                                            className={`
-                                                flex items-center gap-2 rounded-md px-2 py-1.5 cursor-pointer text-[11px] transition-colors
-                                                ${isApplied
-                                                    ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue border border-system-blue/30 dark:border-system-blue/35'
-                                                    : isPreviewing
-                                                        ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
-                                                        : 'hover:bg-element-hover text-text-secondary dark:text-text-secondary'
-                                                }
-                                            `}
-                                        >
-                                            <File className="w-3 h-3 shrink-0" />
-                                            <span className="truncate">{filename}</span>
-                                            {isApplied && <Check className="w-3 h-3 shrink-0 ml-auto" />}
-                                        </div>
-                                    );
-                                })}
-                             </div>
-
-                             {/* Inline 3D Preview */}
-                             {previewMeshPath && (
-                                 <div className="mt-1 flex flex-col gap-1.5">
-                                     <MeshPreview meshPath={previewMeshPath} assets={assets} notFoundText={t.meshNotFound} />
-                                     <div className="flex items-center gap-2">
-                                         <button
-                                             onClick={handleApplyMesh}
-                                             className={`${PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS} flex-1`}
-                                         >
-                                             <Check className="w-3 h-3" />
-                                             {t.applyMesh}
-                                         </button>
-                                         <button
-                                             onClick={() => setPreviewMeshPath(null)}
-                                             className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} flex-1`}
-                                         >
-                                             {t.cancel}
-                                         </button>
-                                     </div>
-                                 </div>
-                             )}
-
-                             {geomData.meshPath && !previewMeshPath && (
-                                 <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} truncate mt-1`}>
-                                     {t.selected}: <span className="text-system-blue">{geomData.meshPath}</span>
-                                 </div>
-                             )}
-
-                             {/* Hint for double-click */}
-                             {!previewMeshPath && Object.keys(assets).length > 0 && (
-                                 <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} mt-0.5`}>
-                                     {t.meshHint}
-                                 </div>
-                             )}
+                <div className="mb-2 overflow-hidden rounded-lg border border-border-black bg-panel-bg/70">
+                    <div className="flex items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg/70 px-2 py-1.5">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                            <span className={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}>{t.meshLibrary}</span>
+                            <span className="inline-flex min-w-4 items-center justify-center rounded-full border border-border-black bg-panel-bg px-1 py-0.5 text-[8px] font-semibold leading-none text-text-tertiary">
+                                {meshFiles.length}
+                            </span>
                         </div>
-                    </InputGroup>
+                        <div className="flex items-center gap-1">
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                className="hidden"
+                                accept=".stl,.STL,.obj,.OBJ,.dae,.DAE,.gltf,.GLTF,.glb,.GLB"
+                                onChange={handleFileChange}
+                            />
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="inline-flex h-6 items-center justify-center gap-1 rounded-md bg-system-blue-solid px-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-system-blue-hover"
+                            >
+                                <Upload className="h-2.5 w-2.5" />
+                                {t.upload}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="space-y-1 px-1.5 py-1.5">
+                        <div className="flex max-h-32 flex-col gap-0.5 overflow-y-auto custom-scrollbar pr-0.5">
+                            {meshFiles.length === 0 && (
+                                <div className="rounded-md border border-dashed border-border-black/70 bg-element-bg/70 px-2 py-3 text-center">
+                                    <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} italic`}>{t.meshNotFound}</div>
+                                </div>
+                            )}
+                            {meshFiles.map((filePath) => {
+                                const isApplied = geomData.meshPath === filePath && !previewMeshPath;
+                                const isPreviewing = previewMeshPath === filePath;
+                                const { fileName, parentPath } = describeMeshPath(filePath);
+
+                                return (
+                                    <div
+                                        key={filePath}
+                                        title={filePath}
+                                        onClick={() => setPreviewMeshPath(filePath)}
+                                        onDoubleClick={() => {
+                                            update({ meshPath: filePath });
+                                            setPreviewMeshPath(null);
+                                        }}
+                                        className={`
+                                            grid cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 transition-colors
+                                            ${isApplied
+                                                ? 'border-system-blue/35 bg-system-blue/10 text-system-blue dark:bg-system-blue/20'
+                                                : isPreviewing
+                                                    ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                                    : 'border-transparent bg-transparent text-text-secondary hover:border-border-black/50 hover:bg-element-hover'
+                                            }
+                                        `}
+                                    >
+                                        <File className="h-3 w-3 shrink-0" />
+                                        <div className="min-w-0">
+                                            <div className={`truncate text-[10px] font-medium ${isApplied ? 'text-system-blue' : 'text-text-primary'}`}>
+                                                {fileName}
+                                            </div>
+                                            {parentPath && (
+                                                <div className="truncate text-[9px] leading-4 text-text-tertiary">
+                                                    {parentPath}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {isApplied ? (
+                                            <Check className="h-3 w-3 shrink-0" />
+                                        ) : isPreviewing ? (
+                                            <Eye className="h-3 w-3 shrink-0" />
+                                        ) : null}
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {previewMeshPath && (
+                            <div className="flex flex-col gap-1 rounded-md border border-border-black/60 bg-element-bg/70 p-1">
+                                <MeshPreview meshPath={previewMeshPath} assets={assets} notFoundText={t.meshNotFound} />
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        onClick={handleApplyMesh}
+                                        className={`${PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS} flex-1`}
+                                    >
+                                        <Check className="h-2.5 w-2.5" />
+                                        {t.applyMesh}
+                                    </button>
+                                    <button
+                                        onClick={() => setPreviewMeshPath(null)}
+                                        className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} flex-1`}
+                                    >
+                                        {t.cancel}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {geomData.meshPath && !previewMeshPath && (
+                            <div className="rounded-md border border-system-blue/20 bg-system-blue/5 px-1.5 py-0.5">
+                                <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} truncate`}>
+                                    {t.selected}: <span className="font-medium text-system-blue">{geomData.meshPath}</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {!previewMeshPath && meshFiles.length > 0 && (
+                            <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} px-0.5`}>
+                                {t.meshHint}
+                            </div>
+                        )}
+                    </div>
                 </div>
+            )}
+
+            {geomData.type === GeometryType.MESH && (
+                <InputGroup label={t.meshScale}>
+                    <InlineDimensionInputRow
+                        columns={3}
+                        fields={[
+                            {
+                                label: 'X',
+                                value: geomData.dimensions?.x ?? 1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v } }),
+                            },
+                            {
+                                label: 'Y',
+                                value: geomData.dimensions?.y ?? 1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
+                            {
+                                label: 'Z',
+                                value: geomData.dimensions?.z ?? 1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, z: v } }),
+                            },
+                        ]}
+                        labelWidthClassName="w-2 text-center"
+                    />
+                </InputGroup>
             )}
 
             {/* Box dimensions: Width (X), Depth (Y), Height (Z) */}
             {geomData.type === GeometryType.BOX && (
                 <InputGroup label={t.dimensions}>
-                    <div className="grid grid-cols-3 gap-2">
-                        <NumberInput
-                            label={t.width || 'Width (X)'}
-                            value={geomData.dimensions?.x || 0.1}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                        <NumberInput
-                            label={t.depth || 'Depth (Y)'}
-                            value={geomData.dimensions?.y || 0.1}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                        <NumberInput
-                            label={t.height || 'Height (Z)'}
-                            value={geomData.dimensions?.z || 0.1}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, z: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                    </div>
+                    <DimensionInputGrid
+                        columns={3}
+                        fields={[
+                            {
+                                label: t.width || 'Width (X)',
+                                value: geomData.dimensions?.x || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v } }),
+                            },
+                            {
+                                label: t.depth || 'Depth (Y)',
+                                value: geomData.dimensions?.y || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
+                            {
+                                label: t.height || 'Height (Z)',
+                                value: geomData.dimensions?.z || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, z: v } }),
+                            },
+                        ]}
+                    />
                 </InputGroup>
             )}
 
             {/* Sphere dimensions: Radius only */}
             {geomData.type === GeometryType.SPHERE && (
                 <InputGroup label={t.dimensions}>
-                    <NumberInput
-                        label={t.radius || 'Radius'}
-                        value={geomData.dimensions?.x || 0.1}
-                        onChange={(v: number) => update({ dimensions: { x: v, y: v, z: v } })}
-                        step={GEOMETRY_DIMENSION_STEP}
-                        precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
+                    <InlineDimensionInputRow
+                        columns={1}
+                        fields={[
+                            {
+                                label: t.radius || 'Radius',
+                                value: geomData.dimensions?.x || 0.1,
+                                onChange: (v) => update({ dimensions: { x: v, y: v, z: v } }),
+                            },
+                        ]}
+                        labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
+                        labelWidthClassName="whitespace-nowrap"
                     />
                 </InputGroup>
             )}
@@ -632,75 +789,62 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             {/* Cylinder dimensions: Radius and Height */}
             {geomData.type === GeometryType.CYLINDER && (
                 <InputGroup label={t.dimensions}>
-                    <div className="grid grid-cols-2 gap-2">
-                        <NumberInput
-                            label={t.radius || 'Radius'}
-                            value={geomData.dimensions?.x || 0.05}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                        <NumberInput
-                            label={t.height || 'Height'}
-                            value={geomData.dimensions?.y || 0.5}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                    </div>
+                    <InlineDimensionInputRow
+                        columns={2}
+                        fields={[
+                            {
+                                label: t.radius || 'Radius',
+                                value: geomData.dimensions?.x || 0.05,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } }),
+                            },
+                            {
+                                label: t.height || 'Height',
+                                value: geomData.dimensions?.y || 0.5,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
+                        ]}
+                        labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
+                        labelWidthClassName="whitespace-nowrap"
+                    />
                 </InputGroup>
             )}
 
             {/* Capsule dimensions: Radius and Total Length */}
             {geomData.type === GeometryType.CAPSULE && (
                 <InputGroup label={t.dimensions}>
-                    <div className="grid grid-cols-2 gap-2">
-                        <NumberInput
-                            label={t.radius || 'Radius'}
-                            value={geomData.dimensions?.x || 0.05}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                        <NumberInput
-                            label={t.totalLength || 'Total Length'}
-                            value={geomData.dimensions?.y || 0.5}
-                            onChange={(v: number) => update({ dimensions: { ...geomData.dimensions, y: v } })}
-                            step={GEOMETRY_DIMENSION_STEP}
-                            precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-                        />
-                    </div>
+                    <InlineDimensionInputRow
+                        columns={2}
+                        fields={[
+                            {
+                                label: t.radius || 'Radius',
+                                value: geomData.dimensions?.x || 0.05,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } }),
+                            },
+                            {
+                                label: t.totalLength || 'Total Length',
+                                value: geomData.dimensions?.y || 0.5,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
+                        ]}
+                        labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
+                        labelWidthClassName="whitespace-nowrap"
+                    />
                 </InputGroup>
             )}
 
             {geomData.type !== GeometryType.NONE && (
                 <InputGroup label={t.originRelativeLink}>
-                    <div className="space-y-2.5">
-                    <div className="space-y-1.5">
-                        <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
-                        <Vec3InlineInput
-                            value={displayedOrigin?.xyz || {x:0, y:0, z:0}}
-                            onChange={(v) => update({
-                                origin: { ...(displayedOrigin || { rpy: {r:0,p:0,y:0} }), xyz: v as { x: number; y: number; z: number } }
-                            })}
-                            labels={['X', 'Y', 'Z']}
-                            compact
-                            step={PROPERTY_EDITOR_POSITION_STEP}
-                            precision={MAX_TRANSFORM_DECIMALS}
-                            repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                        />
-                    </div>
-                    <RotationValueInput
-                        value={displayedOrigin?.rpy || {r:0, p:0, y:0}}
-                        onChange={(rpy) => update({
-                            origin: { ...(displayedOrigin || { xyz: {x:0,y:0,z:0} }), rpy }
-                        })}
+                    <TransformFields
                         lang={lang}
-                        label={t.rotation}
-                        compact
-                        holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+                        positionValue={displayedOrigin?.xyz || { x: 0, y: 0, z: 0 }}
+                        rotationValue={displayedOrigin?.rpy || { r: 0, p: 0, y: 0 }}
+                        onPositionChange={(v) => update({
+                            origin: { ...(displayedOrigin || { rpy: { r: 0, p: 0, y: 0 } }), xyz: v as { x: number; y: number; z: number } }
+                        })}
+                        onRotationChange={(rpy) => update({
+                            origin: { ...(displayedOrigin || { xyz: { x: 0, y: 0, z: 0 } }), rpy }
+                        })}
                     />
-                    </div>
                 </InputGroup>
             )}
 
@@ -711,7 +855,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                             type="color"
                             value={geomData.color || '#ffffff'}
                             onChange={(e) => update({ color: e.target.value })}
-                            className="h-8 w-8 rounded cursor-pointer border-none p-0 bg-transparent"
+                            className="h-6 w-6 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0"
                         />
                         <input
                             type="text"
@@ -728,7 +872,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                     <button
                         type="button"
                         onClick={handleDeleteCollision}
-                        className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 text-[11px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+                        className="inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
                     >
                         <Trash2 className="h-3.5 w-3.5" />
                         <span>{t.deleteCollisionGeometry}</span>

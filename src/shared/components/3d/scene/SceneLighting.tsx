@@ -33,15 +33,17 @@ export function SceneLighting({
   );
 
   const effectiveTheme = resolveEffectiveTheme(theme);
-  const shouldUseShadows = enableShadows && effectiveTheme !== 'light';
+  const shouldUseShadows = enableShadows && (cameraFollowPrimary || effectiveTheme !== 'light');
   const resolvedShadowMapSize = shadowMapSize ?? (cameraFollowPrimary ? 1024 : 768);
-  const staticDirectionalScale = cameraFollowPrimary ? 0.72 : 1;
-  const rimDirectionalScale = cameraFollowPrimary ? 0.18 : staticDirectionalScale;
+  const staticDirectionalScale = cameraFollowPrimary
+    ? (effectiveTheme === 'light' ? 0.34 : 0.42)
+    : 1;
+  const rimDirectionalScale = cameraFollowPrimary ? 0.08 : staticDirectionalScale;
   const ambientIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.3 : 0.34)
+    ? (effectiveTheme === 'light' ? 0.16 : 0.2)
     : (effectiveTheme === 'light' ? 0.6 : LIGHTING_CONFIG.ambientIntensity);
   const hemisphereIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.3 : 0.34)
+    ? (effectiveTheme === 'light' ? 0.18 : 0.22)
     : (effectiveTheme === 'light' ? 0.4 : LIGHTING_CONFIG.hemisphereIntensity);
   const cameraKeyIntensity = cameraFollowPrimary
     ? (
@@ -78,7 +80,7 @@ export function SceneLighting({
     scene.receiveShadow = true;
     gl.toneMapping = cameraFollowPrimary ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = cameraFollowPrimary
-      ? (effectiveTheme === 'light' ? 1.02 : 1.06)
+      ? (effectiveTheme === 'light' ? 0.98 : 1.02)
       : (effectiveTheme === 'light' ? 1.08 : 1.16);
     gl.outputColorSpace = THREE.SRGBColorSpace;
   }, [cameraFollowPrimary, effectiveTheme, gl, scene, shouldUseShadows]);
@@ -157,7 +159,7 @@ export function SceneLighting({
       <hemisphereLight
         args={[
           LIGHTING_CONFIG.hemisphereSky,
-          effectiveTheme === 'light' ? '#ffffff' : LIGHTING_CONFIG.hemisphereGround,
+          effectiveTheme === 'light' ? '#d7dee7' : LIGHTING_CONFIG.hemisphereGround,
           hemisphereIntensity,
         ]}
         position={[0, 1, 0]}

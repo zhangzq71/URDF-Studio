@@ -29,6 +29,7 @@ interface WorkspaceCanvasProps {
   children: React.ReactNode;
   overlays?: React.ReactNode;
   onPointerMissed?: () => void;
+  onPointerDownCapture?: React.PointerEventHandler<HTMLDivElement>;
   onCreated?: (state: RootState) => void;
   onMouseMove?: React.MouseEventHandler<HTMLDivElement>;
   onMouseUp?: React.MouseEventHandler<HTMLDivElement>;
@@ -55,6 +56,7 @@ export const WorkspaceCanvas = ({
   children,
   overlays,
   onPointerMissed,
+  onPointerDownCapture,
   onCreated,
   onMouseMove,
   onMouseUp,
@@ -128,6 +130,7 @@ export const WorkspaceCanvas = ({
     <div
       ref={containerRef}
       className={className}
+      onPointerDownCapture={onPointerDownCapture}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseLeave}

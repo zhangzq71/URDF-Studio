@@ -226,7 +226,10 @@ export function useVisualizationEffects({
                     if (!inner.isMesh) return;
 
                     inner.userData.isCollisionMesh = true;
-                    inner.raycast = (highlightMode === 'collision' && isVisible)
+                    // Keep collision meshes raycastable whenever they are visible.
+                    // The picker already filters by requested subtype, so disabling
+                    // raycast here breaks the "auto fallback to visible geometry" flow.
+                    inner.raycast = isVisible
                         ? THREE.Mesh.prototype.raycast
                         : emptyRaycast;
 

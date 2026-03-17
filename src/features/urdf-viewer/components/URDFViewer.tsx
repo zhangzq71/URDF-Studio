@@ -1,5 +1,8 @@
 import { memo } from 'react';
 import { translations } from '@/shared/i18n';
+import { useEffectiveTheme, useResolvedTheme } from '@/shared/hooks';
+import { useUIStore } from '@/store';
+import { useSelectionStore } from '@/store/selectionStore';
 import type { URDFViewerProps } from '../types';
 import { useURDFViewerController } from '../hooks/useURDFViewerController';
 import { URDFViewerCanvas } from './URDFViewerCanvas';
@@ -12,7 +15,7 @@ export const URDFViewer = memo(function URDFViewer({
   onJointChange,
   jointAngleState,
   lang,
-  theme: _theme,
+  theme,
   mode = 'detail',
   onSelect,
   onMeshSelect,
@@ -21,6 +24,7 @@ export const URDFViewer = memo(function URDFViewer({
   hoveredSelection,
   robotLinks,
   robotJoints,
+  sourceFilePath,
   focusTarget,
   showVisual,
   setShowVisual,
@@ -35,8 +39,16 @@ export const URDFViewer = memo(function URDFViewer({
   showJointPanel = true,
   setShowJointPanel,
   onTransformPendingChange,
+  groundPlaneOffset: propGroundPlaneOffset,
 }: URDFViewerProps) {
   const t = translations[lang];
+  const storeGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+  const storeHoveredSelection = useSelectionStore((state) => state.hoveredSelection);
+  const groundPlaneOffset = propGroundPlaneOffset ?? storeGroundPlaneOffset;
+  const resolvedHoveredSelection = hoveredSelection ?? storeHoveredSelection;
+  const inheritedTheme = useEffectiveTheme();
+  const explicitTheme = useResolvedTheme(theme ?? 'system');
+  const resolvedTheme = theme ? explicitTheme : inheritedTheme;
   const controller = useURDFViewerController({
     onJointChange,
     jointAngleState,
@@ -47,8 +59,9 @@ export const URDFViewer = memo(function URDFViewer({
     showVisual,
     setShowVisual,
     onTransformPendingChange,
+    groundPlaneOffset,
   });
-  const hoverSelectionEnabled = hoveredSelection !== undefined;
+  const hoverSelectionEnabled = resolvedHoveredSelection !== undefined;
 
   return (
     <div
@@ -72,6 +85,8 @@ export const URDFViewer = memo(function URDFViewer({
 
       <URDFViewerCanvas
         lang={lang}
+        resolvedTheme={resolvedTheme}
+        groundOffset={groundPlaneOffset}
         snapshotAction={snapshotAction}
         robotName={controller.robot?.name || 'robot'}
         orbitEnabled={!controller.isDragging}
@@ -88,8 +103,11 @@ export const URDFViewer = memo(function URDFViewer({
           controller={controller}
           urdfContent={urdfContent}
           assets={assets}
+          sourceFilePath={sourceFilePath}
+          groundPlaneOffset={groundPlaneOffset}
           mode={mode}
           selection={selection}
+          hoveredSelection={resolvedHoveredSelection}
           hoverSelectionEnabled={hoverSelectionEnabled}
           onHover={onHover}
           onMeshSelect={onMeshSelect}

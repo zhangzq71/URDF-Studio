@@ -7,6 +7,7 @@ import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
 import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
 import { useURDFViewerController, URDFViewerPanels, URDFViewerScene } from '@/features/urdf-viewer';
+import { useSelectionStore } from '@/store/selectionStore';
 
 interface FilePreviewState {
   urdfContent: string;
@@ -135,6 +136,21 @@ export const UnifiedViewer = React.memo(({
   const activePreview = mode === 'skeleton' ? undefined : filePreview;
   const isPreviewing = !!activePreview;
   const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
+  const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
+  const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
+  const skeletonOptionsVisibleRef = React.useRef(showSkeletonOptionsPanel);
+  const optionsVisibleAtPointerDownRef = React.useRef({
+    viewer: showOptionsPanel,
+    skeleton: showSkeletonOptionsPanel,
+  });
+
+  useEffect(() => {
+    viewerOptionsVisibleRef.current = showOptionsPanel;
+  }, [showOptionsPanel]);
+
+  useEffect(() => {
+    skeletonOptionsVisibleRef.current = showSkeletonOptionsPanel;
+  }, [showSkeletonOptionsPanel]);
 
   const visualizerController = useVisualizerController({
     robot,
@@ -159,10 +175,53 @@ export const UnifiedViewer = React.memo(({
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
   const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
   const effectiveSelection = activePreview ? emptySelection : selection;
+  const effectiveHoveredSelection = activePreview ? undefined : hoveredSelection;
   const hoverSelectionEnabled = !activePreview;
   const effectiveFocusTarget = activePreview ? undefined : focusTarget;
   const effectiveIsMeshPreview = activePreview ? false : isMeshPreview;
   const controlLayerKey = isViewerMode ? 'viewer' : 'visualizer';
+
+  const handleWorkspacePointerDownCapture = React.useCallback(() => {
+    optionsVisibleAtPointerDownRef.current = {
+      viewer: showOptionsPanel,
+      skeleton: showSkeletonOptionsPanel,
+    };
+  }, [showOptionsPanel, showSkeletonOptionsPanel]);
+
+  // Blank-canvas clicks should clear selection, not dismiss an already-open options panel.
+  const restoreViewerOptionsIfNeeded = React.useCallback(() => {
+    if (!optionsVisibleAtPointerDownRef.current.viewer || !setShowOptionsPanel) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      if (!viewerOptionsVisibleRef.current) {
+        setShowOptionsPanel(true);
+      }
+    });
+  }, [setShowOptionsPanel]);
+
+  const restoreSkeletonOptionsIfNeeded = React.useCallback(() => {
+    if (!optionsVisibleAtPointerDownRef.current.skeleton || !setShowSkeletonOptionsPanel) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      if (!skeletonOptionsVisibleRef.current) {
+        setShowSkeletonOptionsPanel(true);
+      }
+    });
+  }, [setShowSkeletonOptionsPanel]);
+
+  const handleViewerPointerMissed = React.useCallback(() => {
+    viewerController.handlePointerMissed();
+    restoreViewerOptionsIfNeeded();
+  }, [restoreViewerOptionsIfNeeded, viewerController]);
+
+  const handleVisualizerPointerMissed = React.useCallback(() => {
+    visualizerController.clearSelection();
+    restoreSkeletonOptionsIfNeeded();
+  }, [restoreSkeletonOptionsIfNeeded, visualizerController]);
 
   return (
     <WorkspaceCanvas
@@ -172,7 +231,8 @@ export const UnifiedViewer = React.memo(({
       containerRef={isViewerMode ? viewerController.containerRef : visualizerController.panel.containerRef}
       sceneRef={isViewerMode ? undefined : visualizerController.sceneRef}
       snapshotAction={snapshotAction}
-      onPointerMissed={isViewerMode ? viewerController.handlePointerMissed : visualizerController.clearSelection}
+      onPointerDownCapture={handleWorkspacePointerDownCapture}
+      onPointerMissed={isViewerMode ? handleViewerPointerMissed : handleVisualizerPointerMissed}
       onMouseMove={isViewerMode ? viewerController.handleMouseMove : visualizerController.panel.handleMouseMove}
       onMouseUp={isViewerMode ? viewerController.handleMouseUp : visualizerController.panel.handleMouseUp}
       onMouseLeave={
@@ -245,6 +305,7 @@ export const UnifiedViewer = React.memo(({
           sourceFilePath={effectiveSourceFilePath}
           mode={activePreview ? 'detail' : (mode as 'detail' | 'hardware')}
           selection={effectiveSelection}
+          hoveredSelection={effectiveHoveredSelection}
           hoverSelectionEnabled={hoverSelectionEnabled}
           onHover={activePreview ? undefined : onHover}
           onMeshSelect={activePreview ? undefined : onMeshSelect}

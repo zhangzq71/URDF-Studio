@@ -1,27 +1,23 @@
 import React, { memo, useRef, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { useUIStore } from '@/store';
 import { CollisionTransformControls } from './CollisionTransformControls';
-import { HoverSelectionSync } from './HoverSelectionSync';
 import type { RobotModelProps } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import { offsetRobotToGround } from '../utils/robotPositioning';
 
-// Import hooks
-import {
-    useRobotLoader,
-    useHighlightManager,
-    useCameraFocus,
-    useMouseInteraction,
-    useHoverDetection,
-    useVisualizationEffects
-} from '../hooks';
+import { useRobotLoader } from '../hooks/useRobotLoader';
+import { useHighlightManager } from '../hooks/useHighlightManager';
+import { useCameraFocus } from '../hooks/useCameraFocus';
+import { useMouseInteraction } from '../hooks/useMouseInteraction';
+import { useHoverDetection } from '../hooks/useHoverDetection';
+import { useVisualizationEffects } from '../hooks/useVisualizationEffects';
 
 // Wrap with memo and custom comparison to prevent unnecessary re-renders
 export const RobotModel: React.FC<RobotModelProps> = memo(({
     urdfContent,
     assets,
+    sourceFormat = 'auto',
     sourceFilePath,
     onRobotLoaded,
     showCollision = false,
@@ -61,10 +57,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     isOrbitDragging,
     onTransformPending,
     isSelectionLockedRef,
-    isMeshPreview = false
+    isMeshPreview = false,
+    hoveredSelection,
+    groundPlaneOffset = 0,
 }) => {
     const { invalidate } = useThree();
-    const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
     const needsInitialGroundFitRef = useRef(true);
     const initialGroundFitTimersRef = useRef<number[]>([]);
     const appliedJointAnglesRef = useRef<Record<string, number>>({});
@@ -95,6 +92,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     } = useRobotLoader({
         urdfContent,
         assets,
+        sourceFormat,
         sourceFilePath,
         showCollision,
         showVisual,
@@ -102,7 +100,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robotLinks,
         robotJoints,
         initialJointAngles: jointAngles,
-        onRobotLoaded
+        onRobotLoaded,
+        groundPlaneOffset,
     });
 
     // ============================================================
@@ -130,7 +129,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robot,
         focusTarget,
         selection,
-        mode
+        mode,
+        autoFrameOnRobotChange: !focusTarget,
     });
 
     // ============================================================
@@ -216,6 +216,18 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         highlightGeometry,
         highlightedMeshesRef
     });
+
+    useEffect(() => {
+        if (hoveredSelection === undefined) return;
+        syncHoverHighlight(hoveredSelection);
+    }, [
+        hoveredSelection?.type,
+        hoveredSelection?.id,
+        hoveredSelection?.subType,
+        hoveredSelection?.objectIndex,
+        syncHoverHighlight,
+        hoveredSelection,
+    ]);
 
     useEffect(() => {
         needsInitialGroundFitRef.current = true;
@@ -308,10 +320,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
     return (
         <>
-            <HoverSelectionSync
-                enabled={hoverSelectionEnabled}
-                onHoverSelectionChange={syncHoverHighlight}
-            />
             <primitive object={robot} />
             {(() => {
                 const shouldShow = mode === 'detail' && highlightMode === 'collision' && transformMode !== 'select' && selection?.subType === 'collision';

@@ -24,7 +24,7 @@ export const VisualizerPanels = ({
   }
 
   return (
-    <div className="absolute top-0 right-0 z-50">
+    <>
       {mode === 'skeleton' && (
         <SkeletonOptionsPanel
           key="skeleton"
@@ -98,6 +98,6 @@ export const VisualizerPanels = ({
           optionsPanelPos={panel.optionsPanelPos}
         />
       )}
-    </div>
+    </>
   );
 };

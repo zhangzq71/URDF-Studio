@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
 import {
   setRegressionRuntimeRobot,
@@ -29,6 +28,7 @@ interface UseURDFViewerControllerProps {
   showVisual?: URDFViewerProps['showVisual'];
   setShowVisual?: URDFViewerProps['setShowVisual'];
   onTransformPendingChange?: URDFViewerProps['onTransformPendingChange'];
+  groundPlaneOffset?: number;
   active?: boolean;
 }
 
@@ -41,9 +41,9 @@ export const useURDFViewerController = ({
   showVisual: propShowVisual,
   setShowVisual: propSetShowVisual,
   onTransformPendingChange,
+  groundPlaneOffset = 0,
   active = true,
 }: UseURDFViewerControllerProps) => {
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const isOrbitDragging = useRef(false);
   const [robot, setRobot] = useState<any>(null);
   const {

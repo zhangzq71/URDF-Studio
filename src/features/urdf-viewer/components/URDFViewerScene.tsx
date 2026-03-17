@@ -10,8 +10,10 @@ interface URDFViewerSceneProps {
   urdfContent: string;
   assets: Record<string, string>;
   sourceFilePath?: string;
+  groundPlaneOffset?: number;
   mode: 'detail' | 'hardware';
   selection?: URDFViewerProps['selection'];
+  hoveredSelection?: URDFViewerProps['hoveredSelection'];
   hoverSelectionEnabled?: boolean;
   onHover?: URDFViewerProps['onHover'];
   onMeshSelect?: URDFViewerProps['onMeshSelect'];
@@ -29,8 +31,10 @@ export const URDFViewerScene = ({
   urdfContent,
   assets,
   sourceFilePath,
+  groundPlaneOffset,
   mode,
   selection,
+  hoveredSelection,
   hoverSelectionEnabled = true,
   onHover,
   onMeshSelect,
@@ -72,7 +76,9 @@ export const URDFViewerScene = ({
           t={t}
           mode={mode}
           selection={selection}
+          hoveredSelection={hoveredSelection}
           hoverSelectionEnabled={hoverSelectionEnabled}
+          groundPlaneOffset={groundPlaneOffset}
           highlightMode={controller.highlightMode}
           showInertia={controller.showInertia}
           showInertiaOverlay={controller.showInertiaOverlay}

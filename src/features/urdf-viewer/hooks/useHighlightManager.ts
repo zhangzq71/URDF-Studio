@@ -8,6 +8,7 @@ import {
 } from '../utils/materials';
 import { _pooledRay, _pooledBox3 } from '../constants';
 import { collectPickTargets, type PickTargetMode } from '../utils/pickTargets';
+import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 
 export interface UseHighlightManagerOptions {
     robot: THREE.Object3D | null;
@@ -137,11 +138,13 @@ export function useHighlightManager({
     }, [getColliderIndex, getCollisionGeometryByIndex]);
 
     const getActiveBoundingMode = useCallback((): PickTargetMode | null => {
-        if (highlightMode === 'collision') {
-            return showCollisionRef.current ? 'collision' : null;
-        }
+        const { subType } = resolveEffectiveInteractionSubType(
+            highlightMode,
+            showVisualRef.current,
+            showCollisionRef.current
+        );
 
-        return showVisualRef.current ? 'visual' : null;
+        return subType;
     }, [highlightMode]);
 
     // Helper to get/update robot bounding box (cached)

@@ -92,11 +92,11 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       <div className="h-full w-full flex flex-col overflow-hidden">
         <div style={{ width: `${displayWidth}px` }} className="h-full flex flex-col bg-element-bg dark:bg-panel-bg transition-all duration-200 ease-out">
           {/* Header */}
-          <div className="w-full flex items-center justify-between px-3 py-2 border-b border-border-black bg-panel-bg shrink-0 relative z-30">
+          <div className="w-full flex items-center justify-between px-3 py-1.5 border-b border-border-black bg-panel-bg shrink-0 relative z-30">
             <span className={PROPERTY_EDITOR_PANEL_EYEBROW_CLASS}>{t.properties}</span>
             {data && (
               <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
-                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-[0.12em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
+                <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-[0.12em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
                   {selection.type}
                 </span>
                 <h2 className={`${PROPERTY_EDITOR_PANEL_TITLE_CLASS} truncate`}>{data.name}</h2>
@@ -107,10 +107,10 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
           {/* Content */}
           {!data ? (
             <div className="w-full flex-1 flex items-center justify-center p-8 text-text-tertiary text-center">
-              <p className="text-[12px] leading-5">{t.selectLinkOrJoint}</p>
+              <p className="text-[11px] leading-5">{t.selectLinkOrJoint}</p>
             </div>
           ) : (
-            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-2.5 space-y-3">
+            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-1.5 space-y-2.5">
               {isLink ? (
                 <LinkProperties
                   data={data as UrdfLink}

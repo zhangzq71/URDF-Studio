@@ -23,16 +23,11 @@ import {
   TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
 import {
-  PROPERTY_EDITOR_POSITION_STEP,
-  PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS,
-} from '../constants';
-import {
   InputGroup,
+  InlineInputGroup,
   CollapsibleSection,
   NumberInput,
   Vec3Input,
-  Vec3InlineInput,
-  PROPERTY_EDITOR_SUBLABEL_CLASS,
   PROPERTY_EDITOR_HELPER_TEXT_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
   PROPERTY_EDITOR_LINK_CLASS,
@@ -40,7 +35,7 @@ import {
   type Vec3Value,
 } from './FormControls';
 import { useMotorConfig } from '../hooks/useMotorConfig';
-import { RotationValueInput } from './RotationValueInput';
+import { TransformFields } from './TransformFields';
 
 const AXIS_BASED_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -193,8 +188,8 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
     onUpdate
   });
 
-  const renderJointTypeField = () => (
-    <InputGroup label={t.type}>
+const renderJointTypeField = () => (
+    <InlineInputGroup label={t.type} labelWidthClassName="w-11">
       <div className="space-y-1.5">
         <select
           value={jointType}
@@ -212,7 +207,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
           {getJointTypeDescription(jointType, t)}
         </p>
       </div>
-    </InputGroup>
+    </InlineInputGroup>
   );
 
   return (
@@ -220,14 +215,14 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
       {/* Detail Mode: Name Only */}
       {mode === 'detail' && (
         <>
-          <InputGroup label={t.name}>
+          <InlineInputGroup label={t.name} labelWidthClassName="w-11">
             <input
               type="text"
               value={data.name}
               onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
               className={PROPERTY_EDITOR_INPUT_CLASS}
             />
-          </InputGroup>
+          </InlineInputGroup>
           {renderJointTypeField()}
         </>
       )}
@@ -239,32 +234,17 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
 
           <CollapsibleSection title={t.kinematics} storageKey="kinematics">
             <InputGroup label={t.originRelativeParent}>
-              <div className="space-y-2.5">
-                <div className="space-y-1.5">
-                  <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
-                  <Vec3InlineInput
-                    value={origin.xyz}
-                    onChange={(v) => updateJoint({
-                      origin: { ...origin, xyz: toXYZ(v, origin.xyz) }
-                    })}
-                    labels={['X', 'Y', 'Z']}
-                    compact
-                    step={PROPERTY_EDITOR_POSITION_STEP}
-                    precision={MAX_TRANSFORM_DECIMALS}
-                    repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                  />
-                </div>
-                <RotationValueInput
-                  value={origin.rpy}
-                  onChange={(rpy) => updateJoint({
-                    origin: { ...origin, rpy: toRPY(rpy, origin.rpy) }
-                  })}
-                  lang={lang}
-                  label={t.rotation}
-                  compact
-                  holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                />
-              </div>
+              <TransformFields
+                lang={lang}
+                positionValue={origin.xyz}
+                rotationValue={origin.rpy}
+                onPositionChange={(v) => updateJoint({
+                  origin: { ...origin, xyz: toXYZ(v, origin.xyz) },
+                })}
+                onRotationChange={(rpy) => updateJoint({
+                  origin: { ...origin, rpy: toRPY(rpy, origin.rpy) },
+                })}
+              />
             </InputGroup>
 
             {supportsAxis && (
@@ -284,7 +264,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
 
       {/* Hardware Mode: Limits, Dynamics, Motor */}
       {mode === 'hardware' && (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {renderJointTypeField()}
 
           {/* 1. Hardware Section */}
@@ -303,7 +283,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
               </InputGroup>
 
               {motorSource === 'Library' && (
-                <div className="space-y-3 pl-2 border-l-2 border-border-black mb-3">
+                <div className="space-y-2.5 pl-2 border-l-2 border-border-black mb-2.5">
                   <InputGroup label={t.brand}>
                     <select
                       value={motorBrand}
