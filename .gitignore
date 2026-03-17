@@ -7,7 +7,7 @@ dist/
 build/
 test/
 scripts/
-.github/
+
 output/
 
 .claude/

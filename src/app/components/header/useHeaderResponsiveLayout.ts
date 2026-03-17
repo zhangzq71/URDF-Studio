@@ -37,13 +37,14 @@ export function useHeaderResponsiveLayout(headerRef: RefObject<HTMLElement | nul
     const showSourceText = width >= 1280;
     const showUndoRedoInline = width >= 1400;
     const showFullModeSwitcher = width >= 1280;
-    const showGalleryInline = width >= 720;
-    const showGalleryLabel = width >= 1360;
+    const showQuickActionInline = width >= 720;
+    const showQuickActionLabel = width >= 1360;
     const showSnapshotInline = width >= 1024;
     const showSettingsInline = width >= 960;
     const showLanguageInline = width >= 900;
     const showThemeInline = width >= 840;
     const showAboutInline = width >= 780;
+    const showUserInline = width >= 780;
 
     return {
       showMenuLabels,
@@ -51,24 +52,26 @@ export function useHeaderResponsiveLayout(headerRef: RefObject<HTMLElement | nul
       showSourceText,
       showUndoRedoInline,
       showFullModeSwitcher,
-      showGalleryInline,
-      showGalleryLabel,
+      showQuickActionInline,
+      showQuickActionLabel,
       showSnapshotInline,
       showSettingsInline,
       showLanguageInline,
       showThemeInline,
       showAboutInline,
+      showUserInline,
       showDesktopOverflow:
         width >= 640 &&
         (
-          !showGalleryInline ||
+          !showQuickActionInline ||
           !showSourceInline ||
           !showUndoRedoInline ||
           !showSnapshotInline ||
           !showSettingsInline ||
           !showLanguageInline ||
           !showThemeInline ||
-          !showAboutInline
+          !showAboutInline ||
+          !showUserInline
         ),
     };
   }, [headerWidth]);

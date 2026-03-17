@@ -2,8 +2,8 @@ export {
   DEFAULT_DISPLAY_THICKNESS_SCALE,
   VISUALIZER_UNIFIED_GIZMO_SIZE,
   hasEnabledFlag,
+  isObjectAttachedToSceneGraph,
   markGizmoObjects,
-  resolveAttachedTransformControlObject,
 } from './gizmoCore';
 
 export {

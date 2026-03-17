@@ -299,7 +299,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     jointPair: t.collisionOptimizerJointPair,
     viewList: t.collisionOptimizerViewList,
     viewGraph: t.collisionOptimizerViewGraph,
-    frontView: t.collisionOptimizerFrontView,
     graphHint: t.collisionOptimizerGraphHint,
     clearManualPairs: t.collisionOptimizerClearManualPairs,
     manualPair: t.collisionOptimizerManualPair,
@@ -307,9 +306,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     mergeTo: t.collisionOptimizerMergeTo,
     mergedInto: t.collisionOptimizerMergedInto,
     connectTargets: t.collisionOptimizerConnectTargets,
-    zoomIn: t.collisionOptimizerZoomIn,
-    zoomOut: t.collisionOptimizerZoomOut,
-    resetView: t.collisionOptimizerResetView,
   };
 
   const [scope, setScope] = useState<CollisionOptimizationScope>('all');
@@ -327,7 +323,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const [candidatesViewMode, setCandidatesViewMode] = useState<CollisionOptimizationCandidatesViewMode>('list');
   const [manualMergePairs, setManualMergePairs] = useState<CollisionOptimizationManualMergePair[]>([]);
   const [manualConnection, setManualConnection] = useState<CollisionOptimizationPlanarGraphConnectionState | null>(null);
-  const [hasRequestedPrimitiveFits, setHasRequestedPrimitiveFits] = useState(false);
   const hasCustomCheckedSelectionRef = useRef(false);
   const isAnalyzing = isPreparingBaseAnalysis || isComputingCandidates;
 
@@ -415,16 +410,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const effectiveSelectedTargetId = scope === 'selected' ? selectedTargetId : null;
 
   useEffect(() => {
-    if (hasRequestedPrimitiveFits) {
-      return;
-    }
-
-    if (candidatesViewMode === 'graph' || manualMergePairs.length > 0) {
-      setHasRequestedPrimitiveFits(true);
-    }
-  }, [candidatesViewMode, hasRequestedPrimitiveFits, manualMergePairs.length]);
-
-  useEffect(() => {
     const controller = new AbortController();
     setIsPreparingBaseAnalysis(true);
     setIsComputingCandidates(false);
@@ -439,7 +424,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       void prepareCollisionOptimizationBaseAnalysis(source, assets, {
         signal: controller.signal,
         includeClearanceData: avoidSiblingOverlap,
-        includePrimitiveFits: hasRequestedPrimitiveFits,
+        includePrimitiveFits: coaxialJointMergeStrategy !== 'keep' || manualMergePairs.length > 0,
       })
         .then((result) => {
           if (controller.signal.aborted) return;
@@ -461,7 +446,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       cancelScheduledStart();
       controller.abort();
     };
-  }, [assets, avoidSiblingOverlap, hasRequestedPrimitiveFits, source]);
+  }, [assets, avoidSiblingOverlap, coaxialJointMergeStrategy, manualMergePairs.length, source]);
 
   useEffect(() => {
     if (!baseAnalysis) {
@@ -796,28 +781,19 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     connectionHandle: copy.connectTargets,
     dragHint: copy.graphHint,
     empty: copy.noCandidates,
-    frontView: copy.frontView,
     manualPair: copy.manualPair,
     mergeTo: copy.mergeTo,
     mergedInto: copy.mergedInto,
     primary: copy.primary,
     selectCandidate: copy.selectAll,
-    resetView: copy.resetView,
     unselectCandidate: copy.clearAll,
-    zoomIn: copy.zoomIn,
-    zoomOut: copy.zoomOut,
   }), [copy]);
   const statsGridClass = isWideLayout ? 'grid-cols-4' : isCompactLayout ? 'grid-cols-1' : 'grid-cols-2';
-  const isGraphView = candidatesViewMode === 'graph';
   const mainPanelsGridClass = isStackedLayout
     ? 'grid-cols-1'
-    : isGraphView
-      ? isUltraWideLayout
-        ? 'grid-cols-[minmax(0,1.7fr)_minmax(300px,360px)]'
-        : 'grid-cols-[minmax(0,1.45fr)_minmax(280px,340px)]'
-      : isUltraWideLayout
-        ? 'grid-cols-[minmax(360px,0.85fr)_minmax(720px,1.4fr)]'
-        : 'grid-cols-[minmax(320px,0.95fr)_minmax(0,1.15fr)]';
+    : isUltraWideLayout
+      ? 'grid-cols-[minmax(360px,0.85fr)_minmax(720px,1.4fr)]'
+      : 'grid-cols-[minmax(320px,0.95fr)_minmax(0,1.15fr)]';
   const settingsLayoutClass = isWideLayout
     ? 'grid grid-cols-[minmax(0,1.35fr)_minmax(280px,0.95fr)] items-start gap-2.5'
     : 'space-y-2.5';

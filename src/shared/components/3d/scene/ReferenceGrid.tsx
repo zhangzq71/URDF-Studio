@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { Grid } from '@react-three/drei';
 import * as THREE from 'three';
+import { useUIStore } from '@/store';
 import type { Theme } from '@/types';
 import { resolveEffectiveTheme } from './themeUtils';
 
@@ -12,18 +13,19 @@ interface ReferenceGridProps {
 const REFERENCE_GRID_RENDER_ORDER = -100;
 const REFERENCE_GRID_STYLE = {
   light: {
-    cellColor: '#e7edf4',
-    sectionColor: '#d8e1eb',
+    cellColor: '#e5e7eb',
+    sectionColor: '#cbd5e1',
   },
   dark: {
-    cellColor: '#303741',
-    sectionColor: '#485362',
+    cellColor: '#3d3d3d',
+    sectionColor: '#5a5a5a',
   },
 } as const;
 
 export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
   const gridRef = useRef<THREE.Mesh>(null);
-  const groundPlaneOffset = groundOffset ?? 0;
+  const storedGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+  const groundPlaneOffset = groundOffset ?? storedGroundPlaneOffset;
   const effectiveTheme = resolveEffectiveTheme(theme);
   const gridStyle = REFERENCE_GRID_STYLE[effectiveTheme];
 
@@ -49,12 +51,12 @@ export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
       infiniteGrid
       followCamera
       fadeDistance={100}
-      fadeFrom={0.54}
-      fadeStrength={1.05}
+      fadeFrom={0.35}
+      fadeStrength={1.35}
       sectionSize={1}
       cellSize={0.1}
-      sectionThickness={0.82}
-      cellThickness={0.16}
+      sectionThickness={1.15}
+      cellThickness={0.3}
       cellColor={gridStyle.cellColor}
       sectionColor={gridStyle.sectionColor}
       rotation={[Math.PI / 2, 0, 0]}

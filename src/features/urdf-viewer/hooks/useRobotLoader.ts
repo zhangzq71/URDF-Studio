@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { RefObject } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useUIStore } from '@/store';
 import { URDFLoader } from '@/core/parsers/urdf/loader';
 import { disposeObject3D } from '../utils/dispose';
-import { collisionBaseMaterial, enhanceMaterials } from '../utils/materials';
+import { enhanceMaterials } from '../utils/materials';
 import { parseURDFMaterials, applyURDFMaterials } from '../utils/urdfMaterials';
 import { offsetRobotToGround } from '../utils/robotPositioning';
 import { SHARED_MATERIALS } from '../constants';
@@ -29,18 +30,9 @@ function preprocessURDFForLoader(content: string): string {
     return content.replace(/<transmission[\s\S]*?<\/transmission>/g, '');
 }
 
-function resolveRobotSourceFormat(content: string, sourceFormat: 'auto' | 'urdf' | 'mjcf' = 'auto'): 'urdf' | 'mjcf' {
-    if (sourceFormat === 'urdf' || sourceFormat === 'mjcf') {
-        return sourceFormat;
-    }
-
-    return isMJCFContent(content) ? 'mjcf' : 'urdf';
-}
-
 export interface UseRobotLoaderOptions {
     urdfContent: string;
     assets: Record<string, string>;
-    sourceFormat?: 'auto' | 'urdf' | 'mjcf';
     showCollision: boolean;
     showVisual: boolean;
     isMeshPreview?: boolean;
@@ -49,7 +41,6 @@ export interface UseRobotLoaderOptions {
     initialJointAngles?: Record<string, number>;
     sourceFilePath?: string;
     onRobotLoaded?: (robot: THREE.Object3D) => void;
-    groundPlaneOffset?: number;
 }
 
 export interface UseRobotLoaderResult {
@@ -63,7 +54,6 @@ export interface UseRobotLoaderResult {
 export function useRobotLoader({
     urdfContent,
     assets,
-    sourceFormat = 'auto',
     showCollision,
     showVisual,
     isMeshPreview = false,
@@ -71,8 +61,7 @@ export function useRobotLoader({
     robotJoints,
     initialJointAngles,
     sourceFilePath,
-    onRobotLoaded,
-    groundPlaneOffset = 0,
+    onRobotLoaded
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -107,7 +96,6 @@ export function useRobotLoader({
     // when robotLinks/robotJoints and urdfContent updates are not perfectly in sync.
     const skipReloadCountRef = useRef(0);
     const sourceFileDir = getSourceFileDirectory(sourceFilePath);
-    const resolvedSourceFormat = resolveRobotSourceFormat(urdfContent, sourceFormat);
 
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
@@ -170,7 +158,7 @@ export function useRobotLoader({
 
     const scheduleGroundAlignment = useCallback((loadedRobot: THREE.Object3D) => {
         if (typeof window === 'undefined') {
-            offsetRobotToGround(loadedRobot, groundPlaneOffset);
+            offsetRobotToGround(loadedRobot, useUIStore.getState().groundPlaneOffset);
             return;
         }
 
@@ -181,11 +169,11 @@ export function useRobotLoader({
                 if (!isMountedRef.current) return;
                 if (robotRef.current !== loadedRobot) return;
 
-                offsetRobotToGround(loadedRobot, groundPlaneOffset);
+                offsetRobotToGround(loadedRobot, useUIStore.getState().groundPlaneOffset);
                 invalidate();
             }, delay)
         );
-    }, [clearGroundAlignTimers, groundPlaneOffset, invalidate]);
+    }, [clearGroundAlignTimers, invalidate]);
 
     // Incremental path: update exactly one changed link geometry in-place and skip next full URDF reload.
     useEffect(() => {
@@ -197,7 +185,7 @@ export function useRobotLoader({
         prevRobotLinksRef.current = robotLinks;
 
         if (!previousLinks || !currentRobot) return;
-        if (resolvedSourceFormat === 'mjcf') return;
+        if (isMJCFContent(urdfContent)) return;
 
         const patch = detectSingleGeometryPatch(previousLinks, robotLinks);
         if (!patch) return;
@@ -219,7 +207,7 @@ export function useRobotLoader({
         skipReloadCountRef.current += 1;
         setRobotVersion((v) => v + 1);
         setError(null);
-    }, [robotLinks, resolvedSourceFormat, urdfContent, assets, invalidate, isMeshPreview, sourceFileDir]);
+    }, [robotLinks, urdfContent, assets, invalidate, isMeshPreview, sourceFileDir]);
 
     // Incremental path: update exactly one changed joint in-place and skip next full URDF reload.
     useEffect(() => {
@@ -231,7 +219,7 @@ export function useRobotLoader({
         prevRobotJointsRef.current = robotJoints;
 
         if (!previousJoints || !currentRobot) return;
-        if (resolvedSourceFormat === 'mjcf') return;
+        if (isMJCFContent(urdfContent)) return;
 
         const patch = detectSingleJointPatch(previousJoints, robotJoints);
         if (!patch) return;
@@ -242,7 +230,7 @@ export function useRobotLoader({
         skipReloadCountRef.current += 1;
         setRobotVersion((v) => v + 1);
         setError(null);
-    }, [robotJoints, resolvedSourceFormat, urdfContent, invalidate, isMeshPreview]);
+    }, [robotJoints, urdfContent, invalidate, isMeshPreview]);
 
     // Track component mount state for preventing state updates after unmount
     useEffect(() => {
@@ -294,7 +282,7 @@ export function useRobotLoader({
                 // We wait until the new robot is ready to avoid flickering/rendering disposed objects.
 
                 let robotModel: THREE.Object3D | null = null;
-                const isMJCFAsset = resolvedSourceFormat === 'mjcf';
+                const isMJCFAsset = isMJCFContent(urdfContent);
 
                 const finalizeLoadedRobot = (loadedRobot: THREE.Object3D) => {
                     if (abortController.aborted || !isMountedRef.current) {
@@ -400,6 +388,7 @@ export function useRobotLoader({
                         loadedRobot.updateMatrixWorld(true);
                     }
 
+                    const groundPlaneOffset = useUIStore.getState().groundPlaneOffset;
                     offsetRobotToGround(loadedRobot, groundPlaneOffset);
 
                     const previousRobot = robotRef.current;
@@ -504,7 +493,7 @@ export function useRobotLoader({
             // We allow the old robot to persist until the new one is ready, 
             // or until the component unmounts (handled by the separate useEffect).
         };
-    }, [assets, clearGroundAlignTimers, groundPlaneOffset, invalidate, onRobotLoaded, resolvedSourceFormat, scheduleGroundAlignment, sourceFileDir, urdfContent]);
+    }, [assets, clearGroundAlignTimers, invalidate, onRobotLoaded, scheduleGroundAlignment, sourceFileDir, urdfContent]);
 
     return {
         robot,

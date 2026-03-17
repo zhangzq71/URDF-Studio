@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { URDFViewerProps } from '../types';
@@ -8,48 +8,6 @@ export interface UseCameraFocusOptions {
     focusTarget: string | null | undefined;
     selection?: URDFViewerProps['selection'];
     mode?: 'detail' | 'hardware';
-    autoFrameOnRobotChange?: boolean;
-}
-
-function computeVisibleBounds(root: THREE.Object3D): THREE.Box3 | null {
-    const bounds = new THREE.Box3();
-    const meshBounds = new THREE.Box3();
-    let hasBounds = false;
-
-    root.updateWorldMatrix(true, true);
-
-    root.traverseVisible((child) => {
-        if (child.userData?.isHelper || child.userData?.isGizmo || child.name?.startsWith('__')) {
-            return;
-        }
-
-        const mesh = child as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.geometry) return;
-
-        if (!mesh.geometry.boundingBox) {
-            mesh.geometry.computeBoundingBox();
-        }
-
-        const geometryBounds = mesh.geometry.boundingBox;
-        if (!geometryBounds) return;
-
-        meshBounds.copy(geometryBounds).applyMatrix4(mesh.matrixWorld);
-        if (
-            !Number.isFinite(meshBounds.min.x) || !Number.isFinite(meshBounds.min.y) || !Number.isFinite(meshBounds.min.z)
-            || !Number.isFinite(meshBounds.max.x) || !Number.isFinite(meshBounds.max.y) || !Number.isFinite(meshBounds.max.z)
-        ) {
-            return;
-        }
-
-        if (!hasBounds) {
-            bounds.copy(meshBounds);
-            hasBounds = true;
-        } else {
-            bounds.union(meshBounds);
-        }
-    });
-
-    return hasBounds ? bounds : null;
 }
 
 function collectLinkBodies(
@@ -109,43 +67,13 @@ export function useCameraFocus({
     robot,
     focusTarget,
     selection,
-    mode,
-    autoFrameOnRobotChange = false,
+    mode
 }: UseCameraFocusOptions): void {
     const { camera, controls, invalidate } = useThree();
 
     const focusTargetRef = useRef<THREE.Vector3 | null>(null);
     const cameraTargetPosRef = useRef<THREE.Vector3 | null>(null);
     const isFocusingRef = useRef(false);
-    const autoFramedRobotIdRef = useRef<string | null>(null);
-
-    const frameObject = useCallback((targetObj: THREE.Object3D, bounds?: THREE.Box3 | null) => {
-        if (!controls) return false;
-
-        targetObj.updateWorldMatrix(true, true);
-        const box = bounds ?? computeVisibleBounds(targetObj);
-        if (!box || box.isEmpty()) return false;
-
-        const sphere = box.getBoundingSphere(new THREE.Sphere());
-        const radius = Number.isFinite(sphere.radius) && sphere.radius > 0 ? sphere.radius : 0.25;
-        const currentOrbitTarget = (controls as any).target as THREE.Vector3;
-        const direction = new THREE.Vector3().subVectors(camera.position, currentOrbitTarget);
-
-        if (direction.lengthSq() < 0.001) {
-            direction.set(1, 1, 1);
-        }
-        direction.normalize();
-
-        const verticalFov = THREE.MathUtils.degToRad(camera.fov);
-        const distance = Math.max(radius / Math.sin(Math.max(verticalFov * 0.5, 0.35)), 0.85);
-        const newPos = sphere.center.clone().add(direction.multiplyScalar(distance * 1.15));
-
-        focusTargetRef.current = sphere.center;
-        cameraTargetPosRef.current = newPos;
-        isFocusingRef.current = true;
-        invalidate();
-        return true;
-    }, [camera, controls, invalidate]);
 
     // Handle focus target change
     useEffect(() => {
@@ -154,23 +82,27 @@ export function useCameraFocus({
         const targetObj = resolveFocusObject(robot, focusTarget, selection);
         if (!targetObj) return;
 
-        frameObject(targetObj, new THREE.Box3().setFromObject(targetObj));
-    }, [focusTarget, frameObject, robot, selection?.id, selection?.subType, selection?.objectIndex]);
+        targetObj.updateWorldMatrix(true, true);
+        const box = new THREE.Box3().setFromObject(targetObj);
+        if (box.isEmpty()) return;
 
-    useEffect(() => {
-        if (!autoFrameOnRobotChange || !robot || focusTarget || mode === 'hardware') return;
-        if (autoFramedRobotIdRef.current === robot.uuid) return;
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
+        const radius = Number.isFinite(sphere.radius) && sphere.radius > 0 ? sphere.radius : 0.25;
+        const currentOrbitTarget = controls ? (controls as any).target : new THREE.Vector3(0, 0, 0);
+        const direction = new THREE.Vector3().subVectors(camera.position, currentOrbitTarget);
 
-        autoFramedRobotIdRef.current = robot.uuid;
-        const timers = [80, 260].map((delay) => window.setTimeout(() => {
-            if (focusTarget || mode === 'hardware') return;
-            frameObject(robot);
-        }, delay));
+        if (direction.lengthSq() < 0.001) {
+            direction.set(1, 1, 1);
+        }
+        direction.normalize();
 
-        return () => {
-            timers.forEach((timer) => window.clearTimeout(timer));
-        };
-    }, [autoFrameOnRobotChange, focusTarget, frameObject, mode, robot]);
+        const newPos = sphere.center.clone().add(direction.multiplyScalar(Math.max(radius * 3, 0.6)));
+
+        focusTargetRef.current = sphere.center;
+        cameraTargetPosRef.current = newPos;
+        isFocusingRef.current = true;
+        invalidate();
+    }, [focusTarget, selection?.id, selection?.subType, selection?.objectIndex, robot, camera, controls, invalidate]);
 
     // Animate camera focus
     useFrame((state, delta) => {

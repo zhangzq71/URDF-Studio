@@ -14,7 +14,6 @@ export interface MeasureState {
 export interface URDFViewerProps {
     urdfContent: string;
     assets: Record<string, string>;
-    sourceFilePath?: string;
     onJointChange?: (jointName: string, angle: number) => void;
     jointAngleState?: Record<string, number>;
     lang: Language;
@@ -43,14 +42,11 @@ export interface URDFViewerProps {
     isMeshPreview?: boolean;
     /** Notify parent when collision transform has a pending confirm/cancel state */
     onTransformPendingChange?: (pending: boolean) => void;
-    /** Visual ground alignment offset applied after load. */
-    groundPlaneOffset?: number;
 }
 
 export interface RobotModelProps {
     urdfContent: string;
     assets: Record<string, string>;
-    sourceFormat?: 'auto' | 'urdf' | 'mjcf';
     sourceFilePath?: string;
     onRobotLoaded?: (robot: any) => void;
     showCollision?: boolean;
@@ -91,9 +87,7 @@ export interface RobotModelProps {
     isSelectionLockedRef?: React.RefObject<boolean>;
     selection?: URDFViewerProps['selection'];
     hoverSelectionEnabled?: boolean;
-    hoveredSelection?: URDFViewerProps['hoveredSelection'];
     isMeshPreview?: boolean;
-    groundPlaneOffset?: number;
 }
 
 export interface CollisionTransformControlsProps {

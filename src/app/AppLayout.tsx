@@ -11,6 +11,7 @@ import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
 } from './utils/overlayLoaders';
+import type { HeaderQuickAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
 import {
@@ -43,7 +44,7 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFGallery: () => void;
+  headerQuickAction?: HeaderQuickAction;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -73,7 +74,7 @@ export function AppLayout({
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFGallery,
+  headerQuickAction,
   viewConfig,
   setViewConfig,
   onLoadRobot,
@@ -406,7 +407,7 @@ export function AppLayout({
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenURDFGallery={onOpenURDFGallery}
+        quickAction={headerQuickAction}
         onSnapshot={handleSnapshot}
         onOpenCollisionOptimizer={handleOpenCollisionOptimizer}
         viewConfig={viewConfig}

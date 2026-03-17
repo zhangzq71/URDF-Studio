@@ -7,12 +7,12 @@ import {
   forceReleaseTransformControl,
   hasEnabledFlag,
   hasHoveredHandle,
+  isObjectAttachedToSceneGraph,
   markGizmoObjects,
   patchDisplayBehavior,
   patchHoverBehavior,
   patchVisibleHoverHitFallback,
   patchVisiblePointerDownFallback,
-  resolveAttachedTransformControlObject,
   resolvePreferredVisibleOwner,
   resolveUniversalOwner,
   resolveVisibleRotateHit,
@@ -68,8 +68,12 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     const orbitPassthroughRef = useRef(false);
     const resolvedTranslateObject = translateObject ?? object;
     const resolvedRotateObject = rotateObject ?? object;
-    const attachedTranslateObject = resolveAttachedTransformControlObject(scene, resolvedTranslateObject) ?? undefined;
-    const attachedRotateObject = resolveAttachedTransformControlObject(scene, resolvedRotateObject) ?? undefined;
+    const attachedTranslateObject = isObjectAttachedToSceneGraph(scene, resolvedTranslateObject)
+      ? resolvedTranslateObject
+      : undefined;
+    const attachedRotateObject = isObjectAttachedToSceneGraph(scene, resolvedRotateObject)
+      ? resolvedRotateObject
+      : undefined;
     const primaryMode = mode === 'universal' ? 'translate' : mode;
     const primaryObject = primaryMode === 'rotate' ? attachedRotateObject : attachedTranslateObject;
     const primarySpace = primaryMode === 'rotate' ? (rotateSpace ?? space) : (translateSpace ?? space);

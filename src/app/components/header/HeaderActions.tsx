@@ -1,6 +1,6 @@
-import { Camera, Globe, Info, LayoutGrid, Moon, Monitor, Settings, Sun } from 'lucide-react';
+import { Camera, Globe, Info, Moon, Monitor, Settings, Sun, User } from 'lucide-react';
 import type { AppMode, Theme } from '@/types';
-import type { HeaderResponsiveLayout, HeaderTranslations, HeaderMenuKey } from './types';
+import type { HeaderQuickAction, HeaderResponsiveLayout, HeaderTranslations, HeaderMenuKey } from './types';
 import { HeaderOverflowMenu } from './HeaderOverflowMenu';
 
 interface HeaderActionsProps {
@@ -17,12 +17,13 @@ interface HeaderActionsProps {
   setTheme: (theme: Theme) => void;
   undo: () => void;
   redo: () => void;
-  onOpenURDFGallery: () => void;
+  quickAction?: HeaderQuickAction;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenUser?: () => void;
   t: HeaderTranslations;
 }
 
@@ -40,35 +41,38 @@ export function HeaderActions({
   setTheme,
   undo,
   redo,
-  onOpenURDFGallery,
+  quickAction,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onSnapshot,
   onOpenSettings,
   onOpenAbout,
+  onOpenUser,
   t,
 }: HeaderActionsProps) {
   const {
-    showGalleryInline,
-    showGalleryLabel,
+    showQuickActionInline,
+    showQuickActionLabel,
     showSnapshotInline,
     showSettingsInline,
     showLanguageInline,
     showThemeInline,
     showAboutInline,
+    showUserInline,
     showDesktopOverflow,
   } = responsive;
+  const QuickActionIcon = quickAction?.icon;
 
   return (
     <div className="flex items-center gap-0.5 shrink-0 justify-self-end">
-      {showGalleryInline && (
+      {showQuickActionInline && quickAction && QuickActionIcon && (
         <button
-          onClick={onOpenURDFGallery}
+          onClick={quickAction.onClick}
           className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
-          title={t.urdfGallery}
+          title={quickAction.title ?? quickAction.label}
         >
-          <LayoutGrid className="w-4 h-4" />
-          {showGalleryLabel && <span>{t.gallery}</span>}
+          <QuickActionIcon className="w-4 h-4" />
+          {showQuickActionLabel && <span>{quickAction.label}</span>}
         </button>
       )}
 
@@ -137,14 +141,15 @@ export function HeaderActions({
           setTheme={setTheme}
           undo={undo}
           redo={redo}
-          onOpenURDFGallery={onOpenURDFGallery}
+          quickAction={quickAction}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}
           onSnapshot={onSnapshot}
           onOpenSettings={onOpenSettings}
           onOpenAbout={onOpenAbout}
+          onOpenUser={onOpenUser}
           t={t}
-          showGallery={!showGalleryInline}
+          showQuickAction={Boolean(quickAction) && !showQuickActionInline}
           showModeSwitcher={false}
           showSourceCode={!responsive.showSourceInline}
           showUndoRedo={!responsive.showUndoRedoInline}
@@ -153,6 +158,7 @@ export function HeaderActions({
           showLanguage={!showLanguageInline}
           showTheme={!showThemeInline}
           showAbout={!showAboutInline}
+          showUser={!showUserInline}
         />
       )}
 
@@ -163,6 +169,17 @@ export function HeaderActions({
           title={t.about}
         >
           <Info className="w-4 h-4" />
+        </button>
+      )}
+
+      {showUserInline && (
+        <button
+          onClick={onOpenUser}
+          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
+          title={t.user}
+        >
+          <User className="w-4 h-4" />
+          <span className="hidden lg:inline">{t.user}</span>
         </button>
       )}
 
@@ -180,14 +197,15 @@ export function HeaderActions({
         setTheme={setTheme}
         undo={undo}
         redo={redo}
-        onOpenURDFGallery={onOpenURDFGallery}
+        quickAction={quickAction}
         onOpenCodeViewer={onOpenCodeViewer}
         onPrefetchCodeViewer={onPrefetchCodeViewer}
         onSnapshot={onSnapshot}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
+        onOpenUser={onOpenUser}
         t={t}
-        showGallery
+        showQuickAction={Boolean(quickAction)}
         showModeSwitcher
         showSourceCode
         showUndoRedo
@@ -196,6 +214,7 @@ export function HeaderActions({
         showLanguage
         showTheme
         showAbout
+        showUser
       />
     </div>
   );

@@ -152,13 +152,6 @@ export interface TranslationKeys {
   jointTypeFloating: string;
   jointTypeFloatingDescription: string;
   dimensions: string;
-  meshScale: string;
-  visible: string;
-  hidden: string;
-  materialSource: string;
-  materialSourceInline: string;
-  materialSourceNamed: string;
-  materialSourceGazebo: string;
   originReferenceFrame: string;
   originRelativeLink: string;
   originRelativeParent: string;
@@ -183,13 +176,9 @@ export interface TranslationKeys {
   applyMesh: string;
   meshHint: string;
   inertial: string;
-  derivedValues: string;
   mass: string;
-  density: string;
   centerOfMass: string;
   inertiaTensor: string;
-  diagonalInertia: string;
-  principalAxes: string;
   kinematics: string;
   axisRotation: string;
   hardwareConfig: string;
@@ -309,6 +298,7 @@ export interface TranslationKeys {
   universalMode: string;
   selectMode: string;
   viewMode: string;
+  user: string;
   faceMode: string;
   measureMode: string;
   closeToolbar: string;
@@ -616,7 +606,6 @@ export interface TranslationKeys {
   collisionOptimizerJointPair: string;
   collisionOptimizerViewList: string;
   collisionOptimizerViewGraph: string;
-  collisionOptimizerFrontView: string;
   collisionOptimizerGraphHint: string;
   collisionOptimizerClearManualPairs: string;
   collisionOptimizerManualPair: string;
@@ -624,9 +613,6 @@ export interface TranslationKeys {
   collisionOptimizerMergeTo: string;
   collisionOptimizerMergedInto: string;
   collisionOptimizerConnectTargets: string;
-  collisionOptimizerZoomIn: string;
-  collisionOptimizerZoomOut: string;
-  collisionOptimizerResetView: string;
   collisionOptimizerApplySummary: string;
 }
 

@@ -31,7 +31,6 @@ export function useAppShellState() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
-  const [isURDFGalleryOpen, setIsURDFGalleryOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [viewConfig, setViewConfig] = useState<AppViewConfig>(DEFAULT_VIEW_CONFIG);
@@ -72,8 +71,6 @@ export function useAppShellState() {
     setIsAIModalOpen,
     isCodeViewerOpen,
     setIsCodeViewerOpen,
-    isURDFGalleryOpen,
-    setIsURDFGalleryOpen,
     isExportDialogOpen,
     setIsExportDialogOpen,
     isExporting,

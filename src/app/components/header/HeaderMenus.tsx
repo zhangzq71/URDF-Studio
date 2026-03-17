@@ -2,7 +2,6 @@ import { Briefcase, ChevronDown, Code, Download, Eye, FileText, Folder, Pencil, 
 import { ToolboxMenu } from './ToolboxMenu';
 import { HeaderButton } from './HeaderButton';
 import { ViewMenuItem } from './ViewMenuItem';
-import { ensureViewPanelVisible } from './viewMenuState.js';
 import type { HeaderMenuKey, HeaderSetViewConfig, HeaderTranslations, HeaderViewConfig } from './types';
 
 interface HeaderMenusProps {
@@ -58,11 +57,6 @@ export function HeaderMenus({
 }: HeaderMenusProps) {
   const toggleMenu = (menu: Exclude<HeaderMenuKey, null>) => {
     setActiveMenu(activeMenu === menu ? null : menu);
-  };
-
-  const showViewPanel = (key: keyof HeaderViewConfig) => {
-    setViewConfig((prev) => ensureViewPanelVisible(prev, key));
-    setActiveMenu(null);
   };
 
   return (
@@ -187,22 +181,22 @@ export function HeaderMenus({
               <ViewMenuItem
                 checked={viewConfig.showToolbar}
                 label={t.toolbar}
-                onClick={() => showViewPanel('showToolbar')}
+                onClick={() => setViewConfig((prev) => ({ ...prev, showToolbar: !prev.showToolbar }))}
               />
               <ViewMenuItem
                 checked={viewConfig.showOptionsPanel}
                 label={t.detailOptions}
-                onClick={() => showViewPanel('showOptionsPanel')}
+                onClick={() => setViewConfig((prev) => ({ ...prev, showOptionsPanel: !prev.showOptionsPanel }))}
               />
               <ViewMenuItem
                 checked={viewConfig.showSkeletonOptionsPanel}
                 label={t.skeletonHardwareOptions}
-                onClick={() => showViewPanel('showSkeletonOptionsPanel')}
+                onClick={() => setViewConfig((prev) => ({ ...prev, showSkeletonOptionsPanel: !prev.showSkeletonOptionsPanel }))}
               />
               <ViewMenuItem
                 checked={viewConfig.showJointPanel}
                 label={t.jointControls}
-                onClick={() => showViewPanel('showJointPanel')}
+                onClick={() => setViewConfig((prev) => ({ ...prev, showJointPanel: !prev.showJointPanel }))}
               />
             </div>
           </>

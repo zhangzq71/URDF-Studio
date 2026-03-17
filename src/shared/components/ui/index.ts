@@ -9,5 +9,3 @@ export * from './Separator';
 export * from './Select';
 export * from './Checkbox';
 export * from './Dialog';
-export * from './IconButton';
-export * from './ContextMenu';

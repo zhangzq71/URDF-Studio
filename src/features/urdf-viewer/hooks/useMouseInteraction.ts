@@ -8,7 +8,6 @@ import { isSingleDofJoint } from '../utils/jointTypes';
 import { collectGizmoRaycastTargets, findFirstIntersection, isGizmoObject } from '../utils/raycast';
 import { collectPickTargets, findPickIntersections, type PickTargetMode } from '../utils/pickTargets';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
-import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 
 const JOINT_DRAG_EPSILON = 1e-5;
 const MAX_REVOLUTE_DELTA_PER_EVENT = Math.PI / 8;
@@ -530,15 +529,10 @@ export function useMouseInteraction({
             if (!isStandardSelectionMode) return;
 
             // CRITICAL: Only allow selection if the corresponding display option is enabled
-            const { subType: activeInteractionSubType } = resolveEffectiveInteractionSubType(
-                highlightMode,
-                showVisual,
-                showCollision
-            );
-            if (!activeInteractionSubType) {
+            const isCollisionMode = highlightMode === 'collision';
+            if ((isCollisionMode && !showCollision) || (!isCollisionMode && !showVisual)) {
                 return;
             }
-            const isCollisionInteraction = activeInteractionSubType === 'collision';
 
             updatePointerFromClient(e.clientX, e.clientY);
 
@@ -547,7 +541,7 @@ export function useMouseInteraction({
             // If we only raycast `robot`, clicking gizmo will "pass through" and select
             // underlying collision/visual meshes by mistake.
             const gizmoTargets = getGizmoTargets();
-            const pickTargets = getPickTargets(activeInteractionSubType);
+            const pickTargets = getPickTargets(isCollisionMode ? 'collision' : 'visual');
             const nearestSceneHit = gizmoTargets.length > 0
                 ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
                 : undefined;
@@ -559,7 +553,7 @@ export function useMouseInteraction({
                 robot,
                 raycasterRef.current,
                 pickTargets,
-                activeInteractionSubType
+                isCollisionMode ? 'collision' : 'visual'
             );
 
             const hit = findFirstIntersection(intersections, (rayHit) => {
@@ -569,7 +563,7 @@ export function useMouseInteraction({
                     if (p.userData?.isGizmo) return false;
                     p = p.parent;
                 }
-                if (isCollisionInteraction) {
+                if (isCollisionMode) {
                     let obj: THREE.Object3D | null = rayHit.object;
                     let isCollision = false;
                     while (obj) {
@@ -599,7 +593,7 @@ export function useMouseInteraction({
                 const linkObj = findParentLink(hit.object);
 
                 if (linkObj && (onSelect || onMeshSelect)) {
-                    const subType = activeInteractionSubType;
+                    const subType = isCollisionMode ? 'collision' : 'visual';
 
                     const { objectIndex, highlightTarget } = resolveSelectionTarget(hit.object, linkObj);
 
@@ -619,7 +613,7 @@ export function useMouseInteraction({
 
                     // Call onMeshSelect AFTER onSelect so its objectIndex wins in React batching
                     if (onMeshSelect) {
-                        const clickedJoint = isCollisionInteraction ? null : findParentJoint(linkObj);
+                        const clickedJoint = isCollisionMode ? null : findParentJoint(linkObj);
                         onMeshSelect(linkObj.name, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
                     }
 
@@ -638,7 +632,7 @@ export function useMouseInteraction({
 
                 // Find the parent joint of the clicked link
                 const clickedLink = findParentLink(hit.object);
-                const joint = isCollisionInteraction ? null : (clickedLink ? findParentJoint(clickedLink) : null);
+                const joint = isCollisionMode ? null : (clickedLink ? findParentJoint(clickedLink) : null);
 
                 if (joint) {
                     isDraggingJoint.current = true;
@@ -711,9 +705,9 @@ export function useMouseInteraction({
             mouseRef.current.set(-1000, -1000);
 
             if (hoveredLinkRef.current) {
-                const hoveredSubType = ((hoveredLinkRef as any).currentSubType as 'visual' | 'collision' | null) ?? undefined;
+                const isCollisionMode = highlightMode === 'collision';
                 if (!useExternalHover) {
-                    highlightGeometry(hoveredLinkRef.current, true, hoveredSubType, (hoveredLinkRef as any).currentMesh);
+                    highlightGeometry(hoveredLinkRef.current, true, isCollisionMode ? 'collision' : 'visual', (hoveredLinkRef as any).currentMesh);
                 }
                 hoveredLinkRef.current = null;
                 (hoveredLinkRef as any).currentMesh = null;

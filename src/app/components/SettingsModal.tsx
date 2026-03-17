@@ -10,7 +10,6 @@ import {
   SegmentedControl, 
   Switch, 
   Button, 
-  IconButton,
   Separator, 
   Label 
 } from '@/shared/components/ui';
@@ -77,14 +76,12 @@ export function SettingsModal() {
             {t.settings}
           </h2>
         </div>
-        <IconButton
+        <button
           onClick={closeSettings}
-          size="sm"
-          variant="close"
-          aria-label={t.close}
+          className="p-1 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
         >
           <X className="w-3.5 h-3.5" />
-        </IconButton>
+        </button>
       </div>
 
       {/* Content */}

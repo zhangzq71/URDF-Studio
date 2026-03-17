@@ -1,7 +1,6 @@
 import React, { memo } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { TransformConfirmOverlay } from '@/shared/components/3d';
 
 interface TransformConfirmUIProps {
   pendingEdit: {
@@ -58,23 +57,53 @@ export const TransformConfirmUI = memo(function TransformConfirmUI({
       zIndexRange={[100, 0]}
     >
       <div
+        className="flex flex-col items-center gap-1"
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <TransformConfirmOverlay
-          axisLabel={pendingEdit.axis}
-          axisColor={getAxisColor(pendingEdit.axis)}
-          value={getDisplayValue()}
-          step={pendingEdit.isRotate ? '1' : '0.001'}
-          unitLabel={pendingEdit.isRotate ? '°' : 'm'}
-          deltaDisplay={getDeltaDisplay()}
-          onValueChange={handleValueChange}
-          onKeyDown={handleKeyDown}
-          onConfirm={handleConfirm}
-          onCancel={handleCancel}
-          confirmTitle={confirmTitle}
-          cancelTitle={cancelTitle}
-        />
+        {/* Compact input with axis indicator */}
+        <div className="flex items-center gap-1">
+          <span
+            className="w-5 h-5 rounded text-white text-xs font-bold flex items-center justify-center shadow"
+            style={{ backgroundColor: getAxisColor(pendingEdit.axis) }}
+          >
+            {pendingEdit.axis}
+          </span>
+          <input
+            type="number"
+            step={pendingEdit.isRotate ? "1" : "0.001"}
+            value={getDisplayValue()}
+            onChange={handleValueChange}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            className="w-20 px-1.5 py-0.5 text-xs font-mono bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#48484A] rounded text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 shadow-lg"
+          />
+          <span className="text-[10px] text-slate-500 dark:text-slate-400">
+            {pendingEdit.isRotate ? '°' : 'm'} ({getDeltaDisplay()})
+          </span>
+        </div>
+
+        {/* Compact confirm/cancel buttons */}
+        <div className="flex gap-1">
+          <button
+            onClick={handleConfirm}
+            className="w-6 h-6 bg-green-500 hover:bg-green-600 text-white rounded shadow flex items-center justify-center transition-colors"
+            title={confirmTitle}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </button>
+          <button
+            onClick={handleCancel}
+            className="w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded shadow flex items-center justify-center transition-colors"
+            title={cancelTitle}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
     </Html>
   );

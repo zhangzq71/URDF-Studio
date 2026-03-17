@@ -86,13 +86,12 @@ const getTranslateHandleLocalSamples = (handle: THREE.Mesh, axis: 'X' | 'Y' | 'Z
   const axisKey = axis.toLowerCase() as 'x' | 'y' | 'z';
   const start = boundingBox.min[axisKey];
   const end = boundingBox.max[axisKey];
-  const sampleCount = Number(TRANSLATE_SCREEN_HOVER_SAMPLE_COUNT);
   const samples: THREE.Vector3[] = [];
 
-  for (let index = 0; index < sampleCount; index += 1) {
-    const alpha = sampleCount === 1
+  for (let index = 0; index < TRANSLATE_SCREEN_HOVER_SAMPLE_COUNT; index += 1) {
+    const alpha = TRANSLATE_SCREEN_HOVER_SAMPLE_COUNT === 1
       ? 0.5
-      : index / (sampleCount - 1);
+      : index / (TRANSLATE_SCREEN_HOVER_SAMPLE_COUNT - 1);
     const point = center.clone();
     point[axisKey] = THREE.MathUtils.lerp(start, end, alpha);
     samples.push(point);

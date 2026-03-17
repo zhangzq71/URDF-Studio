@@ -1,12 +1,18 @@
 import { useState, useEffect } from 'react';
-import type { Theme } from '@/types';
+import { useUIStore } from '@/store/uiStore';
 
-function getSystemTheme(): 'light' | 'dark' {
-  if (typeof window === 'undefined') return 'light';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
+/**
+ * Hook to get the effective theme (light or dark)
+ * Resolves 'system' theme to the actual current system preference
+ */
+export function useEffectiveTheme(): 'light' | 'dark' {
+  const theme = useUIStore((state) => state.theme);
+  
+  const getSystemTheme = (): 'light' | 'dark' => {
+    if (typeof window === 'undefined') return 'light';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  };
 
-export function useResolvedTheme(theme: Theme): 'light' | 'dark' {
   const [effectiveTheme, setEffectiveTheme] = useState<'light' | 'dark'>(() => {
     if (theme === 'system') return getSystemTheme();
     return theme;
@@ -19,11 +25,12 @@ export function useResolvedTheme(theme: Theme): 'light' | 'dark' {
     }
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
+    
+    // Update immediately to ensure sync
     setEffectiveTheme(mediaQuery.matches ? 'dark' : 'light');
 
-    const handleChange = (event: MediaQueryListEvent) => {
-      setEffectiveTheme(event.matches ? 'dark' : 'light');
+    const handleChange = (e: MediaQueryListEvent) => {
+      setEffectiveTheme(e.matches ? 'dark' : 'light');
     };
 
     mediaQuery.addEventListener('change', handleChange);

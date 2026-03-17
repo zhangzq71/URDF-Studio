@@ -4,12 +4,11 @@ import { Language, translations } from '@/shared/i18n';
 import { useUIStore } from '@/store';
 import {
   CheckboxOption,
-  GroundPlaneControls,
+  SliderOption,
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  CollapsibleSection,
-  ToggleSliderOption
+  CollapsibleSection
 } from './OptionsPanel';
 
 interface SkeletonOptionsPanelProps {
@@ -93,7 +92,12 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
             title={t.skeletonOptions}
             isCollapsed={isCollapsed}
             onToggleCollapse={() => {
-              onResetPosition();
+              if (isCollapsed) {
+                // expanding
+              } else {
+                // collapsing
+              }
+              onResetPosition(); 
               toggleCollapsed();
             }}
             onClose={onClose}
@@ -114,63 +118,72 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                 labelClassName={englishCheckboxLabelClassName}
               />
 
-              <ToggleSliderOption
-                checked={showSkeletonOrigin}
-                onChange={setShowSkeletonOrigin}
-                label={t.showOrigin}
-                className="mt-1"
-                labelClassName={englishCheckboxLabelClassName}
-                sliderConfig={{
-                  label: t.frameSize,
-                  value: frameSize,
-                  onChange: setFrameSize,
-                  min: 0.01,
-                  max: 0.5,
-                  step: 0.01,
-                  compact: true,
-                  indent: true,
-                  labelClassName: englishSliderLabelClassName,
-                }}
-              />
+              <div className="mt-1">
+                <CheckboxOption
+                  checked={showSkeletonOrigin}
+                  onChange={setShowSkeletonOrigin}
+                  label={t.showOrigin}
+                  labelClassName={englishCheckboxLabelClassName}
+                />
+                {showSkeletonOrigin && (
+                  <SliderOption
+                    label={t.frameSize}
+                    value={frameSize}
+                    onChange={setFrameSize}
+                    min={0.01}
+                    max={0.5}
+                    step={0.01}
+                    compact
+                    indent
+                    labelClassName={englishSliderLabelClassName}
+                  />
+                )}
+              </div>
 
-              <ToggleSliderOption
-                checked={showLabels}
-                onChange={setShowLabels}
-                label={t.showLabels}
-                className="mt-1"
-                labelClassName={englishCheckboxLabelClassName}
-                sliderConfig={{
-                  label: t.labelScale,
-                  value: labelScale,
-                  onChange: setLabelScale,
-                  min: 0.1,
-                  max: 2.0,
-                  step: 0.1,
-                  decimals: 1,
-                  compact: true,
-                  indent: true,
-                  labelClassName: englishSliderLabelClassName,
-                }}
-              />
+              <div className="mt-1">
+                <CheckboxOption
+                  checked={showLabels}
+                  onChange={setShowLabels}
+                  label={t.showLabels}
+                  labelClassName={englishCheckboxLabelClassName}
+                />
+                {showLabels && (
+                  <SliderOption
+                    label={t.labelScale}
+                    value={labelScale}
+                    onChange={setLabelScale}
+                    min={0.1}
+                    max={2.0}
+                    step={0.1}
+                    decimals={1}
+                    compact
+                    indent
+                    labelClassName={englishSliderLabelClassName}
+                  />
+                )}
+              </div>
 
-              <ToggleSliderOption
-                checked={showJointAxes}
-                onChange={setShowJointAxes}
-                label={t.showJointAxes}
-                className="mt-1"
-                labelClassName={englishCheckboxLabelClassName}
-                sliderConfig={{
-                  label: t.jointAxisSize,
-                  value: jointAxisSize,
-                  onChange: setJointAxisSize,
-                  min: 0.01,
-                  max: 2.0,
-                  step: 0.01,
-                  compact: true,
-                  indent: true,
-                  labelClassName: englishSliderLabelClassName,
-                }}
-              />
+              <div className="mt-1">
+                <CheckboxOption
+                  checked={showJointAxes}
+                  onChange={setShowJointAxes}
+                  label={t.showJointAxes}
+                  labelClassName={englishCheckboxLabelClassName}
+                />
+                {showJointAxes && (
+                  <SliderOption
+                    label={t.jointAxisSize}
+                    value={jointAxisSize}
+                    onChange={setJointAxisSize}
+                    min={0.01}
+                    max={2.0}
+                    step={0.01}
+                    compact
+                    indent
+                    labelClassName={englishSliderLabelClassName}
+                  />
+                )}
+              </div>
             </CollapsibleSection>
 
             {/* Ground Plane */}
@@ -179,18 +192,34 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
               isCollapsed={panelSections['skeleton_ground'] ?? true}
               onToggle={() => setPanelSection('skeleton_ground', !(panelSections['skeleton_ground'] ?? false))}
             >
-              <GroundPlaneControls
-                autoFitIcon={<Crosshair size={11} />}
-                autoFitLabel={t.autoFitGround}
-                offsetLabel={t.groundPlaneOffset}
-                offsetValue={groundPlaneOffset}
-                onAutoFit={onAutoFitGround}
-                onOffsetChange={setGroundPlaneOffset}
-                onReset={handleResetGround}
-                resetLabel={t.reset}
-                sliderIndent={true}
-                sliderLabelClassName={englishSliderLabelClassName}
+              <SliderOption
+                label={t.groundPlaneOffset}
+                value={groundPlaneOffset}
+                onChange={setGroundPlaneOffset}
+                min={-2}
+                max={2}
+                step={0.01}
+                compact
+                indent
+                labelClassName={englishSliderLabelClassName}
               />
+              <div className="flex gap-1.5 px-3 pb-2">
+                {onAutoFitGround && (
+                  <button
+                    onClick={onAutoFitGround}
+                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-system-blue/10 dark:bg-system-blue/20 text-system-blue rounded-md hover:bg-system-blue/15 dark:hover:bg-system-blue/25 transition-colors"
+                  >
+                    <Crosshair size={11} />
+                    {t.autoFitGround}
+                  </button>
+                )}
+                <button
+                  onClick={handleResetGround}
+                  className="flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-element-bg text-text-secondary dark:text-text-secondary rounded-md hover:bg-element-hover transition-colors"
+                >
+                  {t.reset}
+                </button>
+              </div>
             </CollapsibleSection>
 
           </OptionsPanelContent>

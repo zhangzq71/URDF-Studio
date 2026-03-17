@@ -9,7 +9,6 @@ export {
   SnapshotManager,
   NeutralStudioEnvironment,
   SceneLighting,
-  GroundShadowPlane,
   ReferenceGrid,
   LIGHTING_CONFIG,
   WORKSPACE_CANVAS_BACKGROUND,

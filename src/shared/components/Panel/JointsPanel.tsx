@@ -69,7 +69,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     }, []);
 
     const additionalControls = (
-        <div className="mr-1 flex shrink-0 items-center gap-1">
+        <div className="flex items-center gap-1 mr-1">
             <button
                 onClick={(e) => { e.stopPropagation(); handleResetJoints(); }}
                 className="flex items-center gap-1.5 p-1 px-2 rounded border border-border-black/60 bg-panel-bg text-text-secondary hover:bg-system-blue/10 hover:text-system-blue transition-colors"

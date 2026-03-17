@@ -18,7 +18,7 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
         const visualEl = linkEl.querySelector("visual");
         const visualOriginEl = visualEl?.querySelector("origin");
 
-        let visualGeo: Partial<UrdfLink['visual']>;
+        let visualGeo: UrdfLink['visual'];
         let visualColor: string | undefined = undefined;
         let materialSource: 'inline' | 'named' | 'gazebo' | undefined = undefined;
 

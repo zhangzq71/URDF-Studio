@@ -1,6 +1,5 @@
 import React from 'react';
 import { X } from 'lucide-react';
-import { IconButton } from './IconButton';
 
 interface DialogProps {
   isOpen: boolean;
@@ -46,9 +45,12 @@ export const Dialog: React.FC<DialogProps> = ({
           <h2 className="text-[13px] font-semibold text-text-primary truncate">
             {title}
           </h2>
-          <IconButton onClick={onClose} variant="close" aria-label="Close dialog" title="Close dialog">
+          <button
+            onClick={onClose}
+            className="p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
+          >
             <X className="w-4 h-4" />
-          </IconButton>
+          </button>
         </div>
 
         <div className="p-4 overflow-y-auto max-h-[70vh] bg-panel-bg">

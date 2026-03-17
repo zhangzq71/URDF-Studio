@@ -148,14 +148,14 @@ export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({
 
   if (!assetUrl) {
     return (
-      <div className="flex h-[112px] items-center justify-center rounded border border-border-black bg-element-bg">
+      <div className="h-[140px] flex items-center justify-center bg-element-bg rounded border border-border-black">
         <span className="text-[10px] text-text-tertiary">{notFoundText}</span>
       </div>
     );
   }
 
   return (
-    <div className="h-[112px] overflow-hidden rounded border border-border-black bg-gradient-to-b from-element-bg to-panel-bg">
+    <div className="h-[140px] rounded border border-border-black overflow-hidden bg-gradient-to-b from-element-bg to-panel-bg">
       <Canvas
         camera={{ fov: 45, near: 0.001, far: 100, position: [0.5, 0.3, 0.5] }}
         gl={{ antialias: true, alpha: true }}
