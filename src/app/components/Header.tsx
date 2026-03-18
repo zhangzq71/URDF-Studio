@@ -24,7 +24,7 @@ interface HeaderProps {
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: () => void;
+  onOpenUser?: React.MouseEventHandler;
   quickAction?: HeaderQuickAction;
   // Snapshot
   onSnapshot: () => void;

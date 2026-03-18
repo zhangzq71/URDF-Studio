@@ -388,6 +388,7 @@ export interface TranslationKeys {
   language: string;
   theme: string;
   about: string;
+  user: string;
   more: string;
   importUspZipFile: string;
   skeletonHardwareOptions: string;

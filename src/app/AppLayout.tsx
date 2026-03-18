@@ -44,6 +44,7 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenUser?: React.MouseEventHandler;
   headerQuickAction?: HeaderQuickAction;
   // View config
   viewConfig: {
@@ -74,6 +75,7 @@ export function AppLayout({
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
+  onOpenUser,
   headerQuickAction,
   viewConfig,
   setViewConfig,
@@ -407,6 +409,7 @@ export function AppLayout({
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
+        onOpenUser={onOpenUser}
         quickAction={headerQuickAction}
         onSnapshot={handleSnapshot}
         onOpenCollisionOptimizer={handleOpenCollisionOptimizer}

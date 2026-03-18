@@ -23,7 +23,7 @@ interface HeaderActionsProps {
   onSnapshot: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: () => void;
+  onOpenUser?: React.MouseEventHandler;
   t: HeaderTranslations;
 }
 
