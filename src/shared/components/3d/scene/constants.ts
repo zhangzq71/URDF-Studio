@@ -13,17 +13,17 @@ export const LIGHTING_CONFIG = {
   rightFillPosition: [5, 3, -3] as [number, number, number],
   rimLightIntensity: 0.3,
   rimLightPosition: [0, 5, -5] as [number, number, number],
-  cameraKeyIntensityLight: 0.45,
+  cameraKeyIntensityLight: 0.52,
   cameraKeyIntensityDark: 0.35,
-  cameraKeyPriorityIntensityLight: 0.52,
+  cameraKeyPriorityIntensityLight: 0.66,
   cameraKeyPriorityIntensityDark: 0.48,
-  cameraFillIntensityLight: 0.06,
+  cameraFillIntensityLight: 0.12,
   cameraFillIntensityDark: 0.08,
-  cameraSoftFrontIntensityLight: 0.14,
+  cameraSoftFrontIntensityLight: 0.22,
   cameraSoftFrontIntensityDark: 0.18,
 } as const;
 
 export const WORKSPACE_CANVAS_BACKGROUND = {
-  light: '#ffffff',
+  light: '#e7ecf1',
   dark: '#171b20',
 } as const;

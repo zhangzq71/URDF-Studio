@@ -47,7 +47,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
 }: URDFViewerCanvasProps) {
   const [contextLost, setContextLost] = useState(false);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
-  const environmentIntensity = resolvedTheme === 'light' ? 0.16 : 0.22;
+  const environmentIntensity = resolvedTheme === 'light' ? 0.24 : 0.22;
 
   const handleCreated = useCallback((state: RootState) => {
     const canvas = state.gl.domElement;

@@ -3,8 +3,8 @@ import * as THREE from 'three';
 export const MATERIAL_CONFIG = {
     roughness: 0.68,
     metalness: 0.02,
-    envMapIntensity: 0.28,
-    whiteColorMultiplier: 0.94,
+    envMapIntensity: 0.3,
+    whiteColorMultiplier: 0.95,
 } as const;
 
 export interface CreateMaterialOptions {

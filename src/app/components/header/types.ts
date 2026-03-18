@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
 
@@ -14,19 +15,27 @@ export interface HeaderViewConfig {
 
 export type HeaderSetViewConfig = Dispatch<SetStateAction<HeaderViewConfig>>;
 
+export interface HeaderQuickAction {
+  label: string;
+  title?: string;
+  icon: LucideIcon;
+  onClick: () => void;
+}
+
 export interface HeaderResponsiveLayout {
   showMenuLabels: boolean;
   showSourceInline: boolean;
   showSourceText: boolean;
   showUndoRedoInline: boolean;
   showFullModeSwitcher: boolean;
-  showGalleryInline: boolean;
-  showGalleryLabel: boolean;
+  showQuickActionInline: boolean;
+  showQuickActionLabel: boolean;
   showSnapshotInline: boolean;
   showSettingsInline: boolean;
   showLanguageInline: boolean;
   showThemeInline: boolean;
   showAboutInline: boolean;
+  showUserInline: boolean;
   showDesktopOverflow: boolean;
 }
 
@@ -44,14 +53,15 @@ export interface HeaderOverflowMenuProps {
   setTheme: (theme: Theme) => void;
   undo: () => void;
   redo: () => void;
-  onOpenURDFGallery: () => void;
+  quickAction?: HeaderQuickAction;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
+  onOpenUser?: () => void;
   t: HeaderTranslations;
-  showGallery: boolean;
+  showQuickAction: boolean;
   showModeSwitcher: boolean;
   showSourceCode: boolean;
   showUndoRedo: boolean;
@@ -60,4 +70,5 @@ export interface HeaderOverflowMenuProps {
   showLanguage: boolean;
   showTheme: boolean;
   showAbout: boolean;
+  showUser?: boolean;
 }

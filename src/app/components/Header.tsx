@@ -10,7 +10,7 @@ import { HeaderActions } from './header/HeaderActions';
 import { HeaderMenus } from './header/HeaderMenus';
 import { ModeSwitcher } from './header/ModeSwitcher';
 import { useHeaderResponsiveLayout } from './header/useHeaderResponsiveLayout';
-import type { HeaderMenuKey, HeaderViewConfig } from './header/types';
+import type { HeaderMenuKey, HeaderQuickAction, HeaderViewConfig } from './header/types';
 
 interface HeaderProps {
   // Import actions
@@ -24,7 +24,8 @@ interface HeaderProps {
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFGallery: () => void;
+  onOpenUser?: () => void;
+  quickAction?: HeaderQuickAction;
   // Snapshot
   onSnapshot: () => void;
   onOpenCollisionOptimizer: () => void;
@@ -48,7 +49,8 @@ export function Header({
   onPrefetchCodeViewer,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFGallery,
+  onOpenUser,
+  quickAction,
   onSnapshot,
   onOpenCollisionOptimizer,
   viewConfig,
@@ -122,12 +124,13 @@ export function Header({
         setTheme={setTheme}
         undo={undo}
         redo={redo}
-        onOpenURDFGallery={onOpenURDFGallery}
+        quickAction={quickAction}
         onOpenCodeViewer={onOpenCodeViewer}
         onPrefetchCodeViewer={onPrefetchCodeViewer}
         onSnapshot={onSnapshot}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
+        onOpenUser={onOpenUser}
         t={t}
       />
     </header>

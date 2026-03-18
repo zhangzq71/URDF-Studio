@@ -22,15 +22,10 @@ import {
 } from '@/shared/debug/regressionBridge';
 
 const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
-const loadURDFGalleryModule = () => import('@/features/urdf-gallery/components/URDFGallery');
 const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
 
 const AIModal = lazy(() =>
   loadAIModalModule().then((module) => ({ default: module.AIModal }))
-);
-
-const URDFGallery = lazy(() =>
-  loadURDFGalleryModule().then((module) => ({ default: module.URDFGallery }))
 );
 
 const ExportDialog = lazy(() =>
@@ -86,8 +81,6 @@ function AppContent() {
     setIsAIModalOpen,
     isCodeViewerOpen,
     setIsCodeViewerOpen,
-    isURDFGalleryOpen,
-    setIsURDFGalleryOpen,
     isExportDialogOpen,
     setIsExportDialogOpen,
     isExporting,
@@ -309,7 +302,6 @@ function AppContent() {
     const warmup = () => {
       void loadAIModalModule();
       void loadExportDialogModule();
-      void loadURDFGalleryModule();
     };
 
     const idleWindow = window as Window & {
@@ -337,11 +329,6 @@ function AppContent() {
     setIsExportDialogOpen(true);
   }, [setIsExportDialogOpen]);
 
-  const handleOpenURDFGallery = useCallback(() => {
-    void loadURDFGalleryModule();
-    setIsURDFGalleryOpen(true);
-  }, [setIsURDFGalleryOpen]);
-
   const loadingLabel = t.loadingPanel;
 
   return (
@@ -358,7 +345,6 @@ function AppContent() {
         setIsCodeViewerOpen={setIsCodeViewerOpen}
         onOpenSettings={() => openSettings()}
         onOpenAbout={() => setIsAboutOpen(true)}
-        onOpenURDFGallery={handleOpenURDFGallery}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
@@ -400,17 +386,6 @@ function AppContent() {
             }}
             lang={lang}
             isExporting={isExporting}
-          />
-        </Suspense>
-      )}
-
-      {/* URDF Gallery */}
-      {isURDFGalleryOpen && (
-        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
-          <URDFGallery
-            onClose={() => setIsURDFGalleryOpen(false)}
-            lang={lang}
-            onImport={(e) => handleImport(e.target.files)}
           />
         </Suspense>
       )}

@@ -12,8 +12,8 @@ interface ReferenceGridProps {
 const REFERENCE_GRID_RENDER_ORDER = -100;
 const REFERENCE_GRID_STYLE = {
   light: {
-    cellColor: '#e7edf4',
-    sectionColor: '#d8e1eb',
+    cellColor: '#cfd8e2',
+    sectionColor: '#bcc7d3',
   },
   dark: {
     cellColor: '#303741',
@@ -49,12 +49,12 @@ export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
       infiniteGrid
       followCamera
       fadeDistance={100}
-      fadeFrom={0.54}
-      fadeStrength={1.05}
+      fadeFrom={0.58}
+      fadeStrength={0.98}
       sectionSize={1}
       cellSize={0.1}
-      sectionThickness={0.82}
-      cellThickness={0.16}
+      sectionThickness={0.78}
+      cellThickness={0.14}
       cellColor={gridStyle.cellColor}
       sectionColor={gridStyle.sectionColor}
       rotation={[Math.PI / 2, 0, 0]}
