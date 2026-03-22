@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { CircleHelp, X } from 'lucide-react';
 import { translations, Language } from '@/shared/i18n';
 
 interface UsageGuideProps {
@@ -9,6 +10,7 @@ type DetectedOS = 'mac' | 'windows' | 'linux' | 'other';
 
 export const UsageGuide: React.FC<UsageGuideProps> = ({ lang }) => {
   const [detectedOS, setDetectedOS] = useState<DetectedOS>('other');
+  const [isVisible, setIsVisible] = useState(true);
   const t = translations[lang];
 
   useEffect(() => {
@@ -44,10 +46,35 @@ export const UsageGuide: React.FC<UsageGuideProps> = ({ lang }) => {
     }
   })();
 
+  if (!isVisible) {
+    return (
+      <div className="absolute bottom-4 left-4 z-20 pointer-events-none select-none">
+        <button
+          type="button"
+          className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-full border border-border-black bg-panel-bg text-text-secondary shadow-sm transition-colors hover:bg-element-hover hover:text-text-primary"
+          onClick={() => setIsVisible(true)}
+          title={t.showUsageGuide}
+          aria-label={t.showUsageGuide}
+        >
+          <CircleHelp className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none select-none">
-      <div className="rounded-full border border-border-black bg-panel-bg px-3 py-1.5 text-xs text-text-secondary shadow-sm">
-        {instructionText}
+    <div className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 pointer-events-none select-none">
+      <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border-black bg-panel-bg px-2.5 py-1 text-[10px] font-medium leading-none text-text-secondary shadow-sm sm:text-[11px]">
+        <span className="max-w-[70vw] truncate sm:max-w-none">{instructionText}</span>
+        <button
+          type="button"
+          className="inline-flex h-4 w-4 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
+          onClick={() => setIsVisible(false)}
+          title={t.hideUsageGuide}
+          aria-label={t.hideUsageGuide}
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
     </div>
   );

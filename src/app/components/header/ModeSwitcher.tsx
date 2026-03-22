@@ -22,6 +22,9 @@ interface ModeButtonProps {
 
 function ModeButton({ mode, current, setMode, icon, label, title }: ModeButtonProps) {
   const isActive = current === mode;
+  const labelButtonClassName = label
+    ? 'gap-1.5 px-2.5 py-1.5 whitespace-nowrap text-[11px] leading-none'
+    : 'justify-center p-1.5 text-xs';
 
   return (
     <button
@@ -29,7 +32,7 @@ function ModeButton({ mode, current, setMode, icon, label, title }: ModeButtonPr
         useSelectionStore.getState().setFocusTarget(null);
         setMode(mode);
       }}
-      className={`flex items-center ${label ? 'gap-1.5 px-3' : 'justify-center'} p-1.5 rounded-md text-xs font-medium transition-all ${
+      className={`flex items-center rounded-md font-medium transition-all ${labelButtonClassName} ${
         isActive
           ? 'bg-white dark:bg-segmented-active text-text-primary dark:text-white shadow-sm dark:shadow-md'
           : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white'
@@ -37,7 +40,7 @@ function ModeButton({ mode, current, setMode, icon, label, title }: ModeButtonPr
       title={title}
     >
       {icon}
-      {label && <span>{label}</span>}
+      {label && <span className="leading-none">{label}</span>}
     </button>
   );
 }

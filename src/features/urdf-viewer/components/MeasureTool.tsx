@@ -1,66 +1,228 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
-import { useThree } from '@react-three/fiber';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import type { MeasureToolProps } from '../types';
-import { throttle } from '@/shared/utils';
+import type { MeasureToolProps, URDFViewerProps } from '../types';
+import {
+    applyMeasurePick,
+    clearActiveMeasureGroup,
+    getMeasureStateMeasurements,
+    setMeasureHoverTarget,
+    undoMeasureState,
+    type MeasureMeasurement,
+} from '../utils/measurements';
+import { resolveRobotMeasureTargetFromSelection } from '../utils/measureTargetResolvers';
+import { useSelectionStore } from '@/store/selectionStore';
 
-// ============================================================
-// PERFORMANCE: Module-level object pool to eliminate GC pressure
-// ============================================================
-const _pooledRay = new THREE.Ray();
-// Minimum pixel movement threshold before triggering raycast
-const MOUSE_MOVE_THRESHOLD = 2;
-// Throttle interval in ms (~30fps)
-const THROTTLE_INTERVAL = 33;
-const BOUNDING_BOX_CACHE_MS = 33;
+const MEASURE_LINE_COLOR = '#ef4444';
+const MEASURE_AXIS_COLORS = {
+    x: '#f97316',
+    y: '#22c55e',
+    z: '#3b82f6',
+} as const;
+const MEASURE_AXIS_EPSILON = 1e-6;
+const MEASURE_RENDER_ORDER = 2400;
+const MEASURE_LABEL_Z_INDEX_RANGE: [number, number] = [4, 0];
+const MEASURE_TOTAL_LABEL_DISTANCE_FACTOR = 12;
+const MEASURE_AXIS_LABEL_DISTANCE_FACTOR = 14;
+const SCENE_LABEL_DECIMALS = 3;
+const LABEL_OFFSET_PATTERN = [
+    new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(1, 0.45, 0),
+    new THREE.Vector3(-1, 0.75, 0),
+    new THREE.Vector3(0.85, -0.1, 0),
+    new THREE.Vector3(-0.85, 0.15, 0),
+    new THREE.Vector3(0, -0.55, 0),
+];
 
-// Memoized measurement item to avoid creating new Vector3 on each render
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
+}
+
+function getSelectionSignature(selection?: URDFViewerProps['selection']): string {
+    if (!selection?.type || !selection?.id) {
+        return 'none';
+    }
+
+    return [
+        selection.type,
+        selection.id,
+        selection.subType ?? 'none',
+        selection.objectIndex ?? -1,
+    ].join(':');
+}
+
+function buildDecompositionSegments(
+    measurement: MeasureMeasurement,
+): Array<{ axis: 'x' | 'y' | 'z'; points: [THREE.Vector3, THREE.Vector3] }> {
+    const start = measurement.first.point;
+    const end = measurement.second.point;
+    const afterX = new THREE.Vector3(end.x, start.y, start.z);
+    const afterY = new THREE.Vector3(end.x, end.y, start.z);
+
+    const segments: Array<{ axis: 'x' | 'y' | 'z'; points: [THREE.Vector3, THREE.Vector3] }> = [];
+
+    if (Math.abs(measurement.delta.x) > MEASURE_AXIS_EPSILON) {
+        segments.push({ axis: 'x', points: [start, afterX] });
+    }
+
+    if (Math.abs(measurement.delta.y) > MEASURE_AXIS_EPSILON) {
+        segments.push({ axis: 'y', points: [afterX, afterY] });
+    }
+
+    if (Math.abs(measurement.delta.z) > MEASURE_AXIS_EPSILON) {
+        segments.push({ axis: 'z', points: [afterY, end] });
+    }
+
+    return segments;
+}
+
+function formatSegmentLength(value: number): string {
+    return `${Math.abs(value).toFixed(SCENE_LABEL_DECIMALS)}m`;
+}
+
+function formatMeasurementDistance(value: number): string {
+    return `${value.toFixed(SCENE_LABEL_DECIMALS)}m`;
+}
+
 const MeasurementItem = memo(({
-    pair,
+    measurement,
+    measurementIndex,
+    showDecomposition,
     isHovered,
     onHover,
     onLeave,
     onDelete,
-    deleteTooltip
+    deleteTooltip,
 }: {
-    pair: [THREE.Vector3, THREE.Vector3];
+    measurement: MeasureMeasurement;
+    measurementIndex: number;
+    showDecomposition: boolean;
     isHovered: boolean;
     onHover: () => void;
     onLeave: () => void;
     onDelete: () => void;
     deleteTooltip: string;
 }) => {
-    // Cache midpoint calculation - only recalculate when pair changes
-    const midpoint = useMemo(() =>
-        new THREE.Vector3().addVectors(pair[0], pair[1]).multiplyScalar(0.5),
-        [pair]
+    const midpoint = useMemo(
+        () => new THREE.Vector3().addVectors(measurement.first.point, measurement.second.point).multiplyScalar(0.5),
+        [measurement.first.point, measurement.second.point],
     );
-
-    const distance = useMemo(() => pair[0].distanceTo(pair[1]).toFixed(4), [pair]);
-    const color = isHovered ? "#ef4444" : "#22c55e";
+    const distance = useMemo(() => formatMeasurementDistance(measurement.distance), [measurement.distance]);
+    const decompositionSegments = useMemo(
+        () => buildDecompositionSegments(measurement),
+        [measurement],
+    );
+    const endpointRadius = useMemo(
+        () => clamp(measurement.distance * 0.01, 0.0028, 0.008),
+        [measurement.distance],
+    );
+    const labelLift = useMemo(
+        () => clamp(measurement.distance * 0.028, 0.008, 0.026),
+        [measurement.distance],
+    );
+    const labelOffset = useMemo(() => (
+        LABEL_OFFSET_PATTERN[measurementIndex % LABEL_OFFSET_PATTERN.length]
+            .clone()
+            .multiplyScalar(labelLift * 1.1)
+    ), [labelLift, measurementIndex]);
+    const totalLabelPosition = useMemo(
+        () => midpoint.clone().add(labelOffset).add(new THREE.Vector3(0, labelLift * 1.15, 0)),
+        [labelLift, labelOffset, midpoint],
+    );
+    const decompositionLabels = useMemo(() => (
+        decompositionSegments.map((segment, index) => ({
+            axis: segment.axis,
+            text: `${segment.axis.toUpperCase()} ${formatSegmentLength(measurement.delta[segment.axis])}`,
+            position: new THREE.Vector3()
+                .addVectors(segment.points[0], segment.points[1])
+                .multiplyScalar(0.5)
+                .add(labelOffset.clone().multiplyScalar(0.28))
+                .add(new THREE.Vector3(0, labelLift * (0.55 + index * 0.42), 0)),
+        }))
+    ), [decompositionSegments, labelLift, labelOffset, measurement.delta]);
 
     return (
         <group>
-            <mesh position={pair[0]}>
-                <sphereGeometry args={[0.0025, 16, 16]} />
-                <meshBasicMaterial color={color} depthTest={false} transparent opacity={0.8} />
+            <mesh position={measurement.first.point} renderOrder={MEASURE_RENDER_ORDER + 2}>
+                <sphereGeometry args={[endpointRadius, 18, 18]} />
+                <meshBasicMaterial color={MEASURE_LINE_COLOR} depthTest={false} depthWrite={false} transparent opacity={0.98} />
             </mesh>
-            <mesh position={pair[1]}>
-                <sphereGeometry args={[0.0025, 16, 16]} />
-                <meshBasicMaterial color={color} depthTest={false} transparent opacity={0.8} />
+            <mesh position={measurement.second.point} renderOrder={MEASURE_RENDER_ORDER + 2}>
+                <sphereGeometry args={[endpointRadius, 18, 18]} />
+                <meshBasicMaterial color={MEASURE_LINE_COLOR} depthTest={false} depthWrite={false} transparent opacity={0.98} />
             </mesh>
-            <Line points={[pair[0], pair[1]]} color={color} lineWidth={2} depthTest={false} />
-            <Html position={midpoint} style={{ pointerEvents: 'none' }}>
+            <Line
+                points={[measurement.first.point, measurement.second.point]}
+                color={MEASURE_LINE_COLOR}
+                lineWidth={2.2}
+                depthTest={false}
+                depthWrite={false}
+                transparent
+                opacity={0.98}
+                renderOrder={MEASURE_RENDER_ORDER}
+            />
+            {showDecomposition && decompositionSegments.map((segment) => (
+                <Line
+                    key={`${measurement.id}:${segment.axis}`}
+                    points={segment.points}
+                    color={MEASURE_AXIS_COLORS[segment.axis]}
+                    lineWidth={1.5}
+                    depthTest={false}
+                    depthWrite={false}
+                    transparent
+                    opacity={0.95}
+                    renderOrder={MEASURE_RENDER_ORDER + 1}
+                />
+            ))}
+            {showDecomposition && decompositionLabels.map((segmentLabel) => (
+                <Html
+                    key={`${measurement.id}:label:${segmentLabel.axis}`}
+                    center
+                    position={segmentLabel.position}
+                    transform
+                    sprite
+                    occlude
+                    distanceFactor={MEASURE_AXIS_LABEL_DISTANCE_FACTOR}
+                    style={{ pointerEvents: 'none' }}
+                    zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
+                >
+                    <div
+                        className="rounded border border-white/15 px-1 py-px font-mono text-[8px] whitespace-nowrap text-white/95 shadow-lg"
+                        style={{ backgroundColor: `${MEASURE_AXIS_COLORS[segmentLabel.axis]}E6` }}
+                    >
+                        {segmentLabel.text}
+                    </div>
+                </Html>
+            ))}
+            <Html
+                center
+                position={totalLabelPosition}
+                transform
+                sprite
+                occlude
+                distanceFactor={MEASURE_TOTAL_LABEL_DISTANCE_FACTOR}
+                style={{ pointerEvents: 'none' }}
+                zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
+            >
                 <div
-                    className={`bg-slate-700/80 dark:bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap font-mono transition-colors group flex items-center gap-1 cursor-pointer pointer-events-auto ${isHovered ? 'bg-red-600/90' : 'hover:bg-slate-700 dark:hover:bg-black'}`}
+                    className={`group flex cursor-pointer items-center gap-1 rounded border border-white/10 bg-red-500/92 px-1 py-px font-mono text-[8px] whitespace-nowrap text-white shadow-lg transition-colors pointer-events-auto ${
+                        isHovered ? 'bg-red-600/95' : 'hover:bg-red-600/95'
+                    }`}
                     onMouseEnter={onHover}
                     onMouseLeave={onLeave}
-                    onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onDelete();
+                    }}
                     title={deleteTooltip}
                 >
-                    {distance}m
-                    <svg className={`w-3 h-3 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    G{measurement.groupIndex} {distance}
+                    <svg
+                        className={`h-2 w-2 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </div>
@@ -69,264 +231,166 @@ const MeasurementItem = memo(({
     );
 });
 
-// Current measurement preview (in progress)
-const CurrentMeasurementPreview = memo(({ points }: { points: THREE.Vector3[] }) => {
-    const midpoint = useMemo(() => {
-        if (points.length !== 2) return null;
-        return new THREE.Vector3().addVectors(points[0], points[1]).multiplyScalar(0.5);
-    }, [points]);
-
-    const distance = useMemo(() => {
-        if (points.length !== 2) return null;
-        return points[0].distanceTo(points[1]).toFixed(4);
-    }, [points]);
-
-    return (
-        <>
-            {points.map((p, i) => (
-                <mesh key={`current-${i}`} position={p}>
-                    <sphereGeometry args={[0.0025, 16, 16]} />
-                    <meshBasicMaterial color="#ef4444" depthTest={false} transparent opacity={0.8} />
-                </mesh>
-            ))}
-            {points.length === 2 && midpoint && (
-                <>
-                    <Line points={[points[0], points[1]]} color="#ef4444" lineWidth={2} depthTest={false} />
-                    <Html position={midpoint} style={{ pointerEvents: 'none' }}>
-                        <div className="bg-slate-700/80 dark:bg-black/70 text-white px-2 py-1 rounded text-xs whitespace-nowrap pointer-events-none font-mono">
-                            {distance}m
-                        </div>
-                    </Html>
-                </>
-            )}
-        </>
-    );
-});
-
 export const MeasureTool: React.FC<MeasureToolProps> = ({
     active,
     robot,
+    robotLinks,
     measureState,
     setMeasureState,
-    deleteTooltip = 'Click to delete this measurement'
+    measureAnchorMode,
+    showDecomposition,
+    deleteTooltip = 'Click to delete this measurement',
+    measureTargetResolverRef,
 }) => {
-    const { camera, gl } = useThree();
-    const [hoveredMeasurementIdx, setHoveredMeasurementIdx] = useState<number | null>(null);
-    const raycaster = useMemo(() => new THREE.Raycaster(), []);
-    const mouse = useRef(new THREE.Vector2());
+    const selection = useSelectionStore((state) => state.selection);
+    const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
+    const [hoveredMeasurementId, setHoveredMeasurementId] = useState<string | null>(null);
+    const lastSelectionSignatureRef = useRef('none');
+    const lastHoverSignatureRef = useRef('none');
+    const resolveMeasureTarget = useCallback((
+        nextSelection = selection,
+        fallbackSelection = hoveredSelection,
+    ) => (
+        measureTargetResolverRef?.current?.(nextSelection, fallbackSelection, measureAnchorMode)
+        ?? resolveRobotMeasureTargetFromSelection(robot, robotLinks, nextSelection, fallbackSelection, measureAnchorMode)
+    ), [hoveredSelection, measureAnchorMode, measureTargetResolverRef, robot, robotLinks, selection]);
 
-    // PERFORMANCE: Track last mouse position for state locking
-    const lastMousePosRef = useRef({ x: 0, y: 0 });
-    // PERFORMANCE: Cached robot bounding box for two-phase detection
-    const robotBoundingBoxRef = useRef<THREE.Box3 | null>(null);
-    const robotBoundingBoxUpdatedAtRef = useRef(0);
-
-    const { measurements, currentPoints, tempPoint } = measureState;
-
-    // PERFORMANCE: Get/update robot bounding box (cached)
-    useEffect(() => {
-        robotBoundingBoxRef.current = null;
-        robotBoundingBoxUpdatedAtRef.current = 0;
-    }, [robot]);
-
-    const getRobotBoundingBox = useCallback((forceRefresh = false) => {
-        if (!robot) return null;
-
-        if (!robotBoundingBoxRef.current) {
-            robotBoundingBoxRef.current = new THREE.Box3();
-        }
-
-        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const needsRefresh =
-            forceRefresh ||
-            robotBoundingBoxUpdatedAtRef.current === 0 ||
-            now - robotBoundingBoxUpdatedAtRef.current >= BOUNDING_BOX_CACHE_MS;
-
-        if (needsRefresh) {
-            robotBoundingBoxRef.current.setFromObject(robot);
-            robotBoundingBoxRef.current.expandByScalar(0.05);
-            robotBoundingBoxUpdatedAtRef.current = now;
-        }
-
-        return robotBoundingBoxRef.current;
-    }, [robot]);
-
-    // PERFORMANCE: Two-phase detection - check bounding box first
-    const rayIntersectsBoundingBox = useCallback((raycasterInstance: THREE.Raycaster, forceRefresh = false): boolean => {
-        const bbox = getRobotBoundingBox(forceRefresh);
-        if (!bbox) return false;
-        _pooledRay.copy(raycasterInstance.ray);
-        return _pooledRay.intersectsBox(bbox);
-    }, [getRobotBoundingBox]);
-
-    // Only clear temp state when deactivating, keep measurements
     useEffect(() => {
         if (!active) {
-            setHoveredMeasurementIdx(null);
-            setMeasureState(prev => ({ ...prev, currentPoints: [], tempPoint: null }));
-        }
-    }, [active, setMeasureState]);
+            setHoveredMeasurementId(null);
+            lastSelectionSignatureRef.current = getSelectionSignature(selection);
+            lastHoverSignatureRef.current = getSelectionSignature(hoveredSelection);
+            setMeasureState((prev) => {
+                if (!prev.hoverTarget) {
+                    return prev;
+                }
 
-    // Keyboard shortcuts
+                return {
+                    ...prev,
+                    hoverTarget: null,
+                };
+            });
+        }
+    }, [active, hoveredSelection, selection, setMeasureState]);
+
+    useEffect(() => {
+        if (!active) {
+            return;
+        }
+
+        const currentSelectionSignature = getSelectionSignature(selection);
+        if (currentSelectionSignature === lastSelectionSignatureRef.current) {
+            return;
+        }
+
+        lastSelectionSignatureRef.current = currentSelectionSignature;
+
+        const target = resolveMeasureTarget(selection, hoveredSelection);
+        if (!target) {
+            return;
+        }
+
+        setMeasureState((prev) => applyMeasurePick(prev, target));
+    }, [
+        active,
+        robot,
+        selection,
+        selection?.id,
+        selection?.objectIndex,
+        selection?.subType,
+        selection?.type,
+        hoveredSelection,
+        hoveredSelection?.id,
+        hoveredSelection?.objectIndex,
+        hoveredSelection?.subType,
+        hoveredSelection?.type,
+        resolveMeasureTarget,
+        setMeasureState,
+    ]);
+
+    useEffect(() => {
+        if (!active) {
+            return;
+        }
+
+        const currentHoverSignature = getSelectionSignature(hoveredSelection);
+        if (currentHoverSignature === lastHoverSignatureRef.current) {
+            return;
+        }
+
+        lastHoverSignatureRef.current = currentHoverSignature;
+        const target = resolveMeasureTarget(hoveredSelection, hoveredSelection);
+
+        setMeasureState((prev) => {
+            if (!target && !prev.hoverTarget) {
+                return prev;
+            }
+
+            return setMeasureHoverTarget(prev, target);
+        });
+    }, [
+        active,
+        hoveredSelection,
+        hoveredSelection?.id,
+        hoveredSelection?.objectIndex,
+        hoveredSelection?.subType,
+        hoveredSelection?.type,
+        resolveMeasureTarget,
+        setMeasureState,
+    ]);
+
     useEffect(() => {
         if (!active) return;
 
         const handleKeyDown = (event: KeyboardEvent) => {
-            // Escape: cancel current measurement in progress
             if (event.key === 'Escape') {
-                if (currentPoints.length > 0) {
-                    setMeasureState(prev => ({ ...prev, currentPoints: [], tempPoint: null }));
-                }
+                setMeasureState((prev) => clearActiveMeasureGroup(prev));
+                return;
             }
-            // Backspace or Delete: remove last measurement
+
             if (event.key === 'Backspace' || event.key === 'Delete') {
-                if (currentPoints.length > 0) {
-                    setMeasureState(prev => ({ ...prev, currentPoints: [], tempPoint: null }));
-                } else if (measurements.length > 0) {
-                    setMeasureState(prev => ({ ...prev, measurements: prev.measurements.slice(0, -1) }));
-                }
+                setMeasureState((prev) => undoMeasureState(prev));
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [active, currentPoints, measurements, setMeasureState]);
+    }, [active, setMeasureState]);
 
-    // Ref to track current points for throttled handler (avoids stale closure)
-    const currentPointsRef = useRef(currentPoints);
-    useEffect(() => { currentPointsRef.current = currentPoints; }, [currentPoints]);
-
-    // Throttled mouse move ref for proper cleanup
-    const throttledMouseMoveRef = useRef<ReturnType<typeof throttle> | null>(null);
-
-    useEffect(() => {
-        if (!active || !robot) {
-            // Cleanup throttled handler when deactivating
-            if (throttledMouseMoveRef.current) {
-                throttledMouseMoveRef.current.cancel();
-                throttledMouseMoveRef.current = null;
-            }
-            return;
-        }
-
-        // Create throttled mouse move handler
-        const handleMouseMoveCore = (event: MouseEvent) => {
-            // PERFORMANCE: State locking - skip if mouse moved less than threshold
-            const dx = event.clientX - lastMousePosRef.current.x;
-            const dy = event.clientY - lastMousePosRef.current.y;
-            const distSq = dx * dx + dy * dy;
-
-            if (distSq < MOUSE_MOVE_THRESHOLD * MOUSE_MOVE_THRESHOLD) {
-                return; // Skip - mouse hasn't moved enough
+    const handleDeleteMeasurement = useCallback((measurementId: string) => {
+        setMeasureState((prev) => {
+            const targetGroup = prev.groups.find((group) => group.id === measurementId);
+            if (!targetGroup) {
+                return prev;
             }
 
-            // Update last position
-            lastMousePosRef.current.x = event.clientX;
-            lastMousePosRef.current.y = event.clientY;
+            return clearActiveMeasureGroup({
+                ...prev,
+                activeGroupId: targetGroup.id,
+            });
+        });
+    }, [setMeasureState]);
 
-            const rect = gl.domElement.getBoundingClientRect();
-            mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-            if (currentPointsRef.current.length === 1) {
-                 raycaster.setFromCamera(mouse.current, camera);
-
-                 // PERFORMANCE: Two-phase detection - check bounding box first
-                 if (!rayIntersectsBoundingBox(raycaster)) {
-                     setMeasureState(prev => ({ ...prev, tempPoint: null }));
-                     return;
-                 }
-
-                 const intersects = raycaster.intersectObject(robot, true);
-                 if (intersects.length > 0) {
-                     setMeasureState(prev => ({ ...prev, tempPoint: intersects[0].point.clone() }));
-                 } else {
-                     setMeasureState(prev => ({ ...prev, tempPoint: null }));
-                 }
-            }
-        };
-
-        const throttledMouseMove = throttle(handleMouseMoveCore, THROTTLE_INTERVAL);
-        throttledMouseMoveRef.current = throttledMouseMove;
-
-        const handleClick = (event: MouseEvent) => {
-             // Ignore clicks on UI elements or context menu
-             if ((event.target as HTMLElement).closest('.urdf-toolbar') ||
-                 (event.target as HTMLElement).closest('.urdf-options-panel') ||
-                 (event.target as HTMLElement).closest('.urdf-joint-panel') ||
-                 (event.target as HTMLElement).closest('.measure-context-menu') ||
-                 (event.target as HTMLElement).closest('.measure-panel')) return;
-
-             const rect = gl.domElement.getBoundingClientRect();
-             mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-             mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-             lastMousePosRef.current.x = event.clientX;
-             lastMousePosRef.current.y = event.clientY;
-             raycaster.setFromCamera(mouse.current, camera);
-
-             // PERFORMANCE: Two-phase detection - check bounding box first
-             if (!rayIntersectsBoundingBox(raycaster, true)) {
-                 return; // Click missed robot entirely
-             }
-
-             const intersects = raycaster.intersectObject(robot, true);
-
-             if (intersects.length > 0) {
-                 const point = intersects[0].point.clone();
-
-                 if (currentPointsRef.current.length === 0) {
-                     // First point of new measurement
-                     setMeasureState(prev => ({ ...prev, currentPoints: [point] }));
-                 } else if (currentPointsRef.current.length === 1) {
-                     // Second point - complete measurement
-                     setMeasureState(prev => ({
-                         ...prev,
-                         measurements: [...prev.measurements, [prev.currentPoints[0], point]],
-                         currentPoints: [],
-                         tempPoint: null
-                     }));
-                 }
-             }
-        };
-
-        gl.domElement.addEventListener('mousemove', throttledMouseMove);
-        gl.domElement.addEventListener('click', handleClick);
-
-        return () => {
-            throttledMouseMove.cancel();
-            gl.domElement.removeEventListener('mousemove', throttledMouseMove);
-            gl.domElement.removeEventListener('click', handleClick);
-            throttledMouseMoveRef.current = null;
-        };
-    }, [active, robot, camera, gl, raycaster, setMeasureState, rayIntersectsBoundingBox]);
-
-    const handleDeleteMeasurement = (idx: number) => {
-        setMeasureState(prev => ({ ...prev, measurements: prev.measurements.filter((_, i) => i !== idx) }));
-    };
-
-    // Render current measurement in progress
-    const renderCurrentPoints = [...currentPoints];
-    if (currentPoints.length === 1 && tempPoint) {
-        renderCurrentPoints.push(tempPoint);
-    }
+    const measurements = useMemo(
+        () => getMeasureStateMeasurements(measureState),
+        [measureState],
+    );
 
     return (
         <group>
-            {/* Render all completed measurements using memoized component */}
-            {active && measurements.map((pair, idx) => (
+            {active && measurements.map((measurement, index) => (
                 <MeasurementItem
-                    key={`measurement-${idx}`}
-                    pair={pair}
-                    isHovered={hoveredMeasurementIdx === idx}
-                    onHover={() => setHoveredMeasurementIdx(idx)}
-                    onLeave={() => setHoveredMeasurementIdx(null)}
-                    onDelete={() => handleDeleteMeasurement(idx)}
+                    key={measurement.id}
+                    measurement={measurement}
+                    measurementIndex={index}
+                    showDecomposition={showDecomposition}
+                    isHovered={hoveredMeasurementId === measurement.id}
+                    onHover={() => setHoveredMeasurementId(measurement.id)}
+                    onLeave={() => setHoveredMeasurementId(null)}
+                    onDelete={() => handleDeleteMeasurement(measurement.id)}
                     deleteTooltip={deleteTooltip}
                 />
             ))}
-
-            {/* Render current measurement in progress using memoized component */}
-            {active && <CurrentMeasurementPreview points={renderCurrentPoints} />}
         </group>
     );
 };

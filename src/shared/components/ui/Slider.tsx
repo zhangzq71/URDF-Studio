@@ -128,7 +128,7 @@ export const Slider: React.FC<SliderProps> = ({
             )}
           </div>
           {showValue && (
-            <span className="text-xs font-mono text-text-tertiary tabular-nums bg-element-bg px-1.5 py-0.5 rounded-md">
+            <span className="text-[10px] font-mono text-text-tertiary tabular-nums bg-element-bg px-1.5 py-0.5 rounded-md">
               {displayValue}
             </span>
           )}

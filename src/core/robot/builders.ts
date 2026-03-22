@@ -162,11 +162,11 @@ export const cloneLink = (link: UrdfLink, newId?: string): UrdfLink => {
         visual: { ...link.visual },
         collision: { ...link.collision },
         collisionBodies: link.collisionBodies?.map((body) => ({ ...body })) || [],
-        inertial: {
+        inertial: link.inertial ? {
             ...link.inertial,
             origin: link.inertial.origin ? { ...link.inertial.origin } : undefined,
             inertia: { ...link.inertial.inertia }
-        }
+        } : undefined
     };
 };
 
@@ -187,8 +187,8 @@ export const cloneJoint = (
         parentLinkId: newParentLinkId,
         childLinkId: newChildLinkId,
         origin: { ...joint.origin, xyz: { ...joint.origin.xyz }, rpy: { ...joint.origin.rpy } },
-        axis: { ...joint.axis },
-        limit: { ...joint.limit },
+        axis: joint.axis ? { ...joint.axis } : undefined,
+        limit: joint.limit ? { ...joint.limit } : undefined,
         dynamics: { ...joint.dynamics },
         hardware: { ...joint.hardware }
     };

@@ -2,6 +2,8 @@ import React, { memo, useState, useEffect } from 'react';
 import * as THREE from 'three';
 import { Html, Line } from '@react-three/drei';
 import { RobotState, UrdfJoint } from '@/types';
+import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
+import { getJointMotionPose } from '@/core/robot';
 import { ThickerAxes, JointAxesVisual } from '@/shared/components/3d';
 import { Language } from '@/shared/i18n';
 import { RobotNode } from './RobotNode';
@@ -32,7 +34,9 @@ interface CommonVisualizerProps {
   transformMode: 'translate' | 'rotate';
   assets: Record<string, string>;
   lang: Language;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
 
@@ -41,6 +45,7 @@ interface JointNodeProps extends CommonVisualizerProps {
   depth: number;
   key?: React.Key;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
 }
 
 /**
@@ -78,7 +83,9 @@ export const JointNode = memo(function JointNode({
   depth,
   assets,
   lang,
+  colladaRootNormalizationHints,
   onRegisterJointPivot,
+  onRegisterJointMotion,
   onRegisterCollisionRef
 }: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void }) {
 
@@ -90,6 +97,7 @@ export const JointNode = memo(function JointNode({
   const { r, p, y: yaw } = joint.origin.rpy;
   // URDF stores roll/pitch/yaw values that should be composed in ZYX order.
   const jointRotation = new THREE.Euler(r, p, yaw, 'ZYX');
+  const jointMotionPose = getJointMotionPose(joint);
 
   const showAxes = (mode === 'skeleton' && showSkeletonOrigin) || (mode === 'detail' && showDetailOrigin) || (mode === 'hardware' && showHardwareOrigin);
   const showJointLabel = (mode === 'skeleton' && showLabels) || (mode === 'hardware' && showHardwareLabels);
@@ -97,13 +105,14 @@ export const JointNode = memo(function JointNode({
   // Joint pivot: represents joint origin in parent-local space
   // TransformControls attaches to this, modifying its position in parent-local frame
   const [jointPivot, setJointPivot] = useState<THREE.Group | null>(null);
+  const [jointMotionGroup, setJointMotionGroup] = useState<THREE.Group | null>(null);
   // Joint group: contains visualization, positioned at [0,0,0] relative to pivot
   const [, setJointGroup] = useState<THREE.Group | null>(null);
   const [isHovered, setIsHovered] = useState(false);
 
   // Register pivot with parent Visualizer component
   useEffect(() => {
-    if (onRegisterJointPivot && isSelected) {
+    if (onRegisterJointPivot) {
       onRegisterJointPivot(joint.id, jointPivot);
     }
     return () => {
@@ -111,7 +120,18 @@ export const JointNode = memo(function JointNode({
         onRegisterJointPivot(joint.id, null);
       }
     };
-  }, [jointPivot, joint.id, isSelected, onRegisterJointPivot]);
+  }, [jointPivot, joint.id, onRegisterJointPivot]);
+
+  useEffect(() => {
+    if (onRegisterJointMotion) {
+      onRegisterJointMotion(joint.id, jointMotionGroup);
+    }
+    return () => {
+      if (onRegisterJointMotion) {
+        onRegisterJointMotion(joint.id, null);
+      }
+    };
+  }, [joint.id, jointMotionGroup, onRegisterJointMotion]);
 
   return (
     <group>
@@ -145,7 +165,12 @@ export const JointNode = memo(function JointNode({
             position={[x, y, z]}
             rotation={jointRotation}
         >
-            {/* Joint group: at origin relative to pivot, contains visualization and child link */}
+            <group
+                ref={setJointMotionGroup}
+                position={jointMotionPose.position}
+                quaternion={jointMotionPose.quaternion}
+            >
+            {/* Joint group: at origin relative to joint motion, contains visualization and child link */}
             <group
                 ref={setJointGroup}
                 position={[0, 0, 0]}
@@ -234,9 +259,12 @@ export const JointNode = memo(function JointNode({
             depth={depth + 1}
             assets={assets}
             lang={lang}
+            colladaRootNormalizationHints={colladaRootNormalizationHints}
             onRegisterJointPivot={onRegisterJointPivot}
+            onRegisterJointMotion={onRegisterJointMotion}
             onRegisterCollisionRef={onRegisterCollisionRef}
           />
+        </group>
         </group>
       </group>
     </group>

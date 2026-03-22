@@ -4,8 +4,10 @@
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { UrdfLink, UrdfJoint } from '@/types';
+import type { RobotClosedLoopConstraint, UrdfLink, UrdfJoint } from '@/types';
 import { DEFAULT_LINK, DEFAULT_JOINT } from '@/types';
+import { resolveClosedLoopJointMotionCompensation } from '@/core/robot';
+import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 
 const INITIAL_LINK_ID = 'base_link';
 
@@ -16,6 +18,7 @@ export interface RobotData {
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
   materials?: Record<string, { color?: string; texture?: string }>;
+  closedLoopConstraints?: RobotClosedLoopConstraint[];
 }
 
 // History state for undo/redo
@@ -33,6 +36,7 @@ interface ChangeLogEntry {
 interface UpdateOptions {
   skipHistory?: boolean;
   label?: string;
+  resetHistory?: boolean;
 }
 
 interface RobotActions {
@@ -40,7 +44,7 @@ interface RobotActions {
   setName: (name: string) => void;
 
   // Full robot data operations
-  setRobot: (data: RobotData) => void;
+  setRobot: (data: RobotData, options?: UpdateOptions) => void;
   resetRobot: (data?: RobotData) => void;
 
   // Link operations
@@ -118,8 +122,8 @@ export const useRobotStore = create<RobotData & RobotActions & {
 
     // Helper to save current state to history
     const saveToHistory = (label: string) => {
-      const { name, links, joints, rootLinkId, materials } = get();
-      appendHistorySnapshot({ name, links, joints, rootLinkId, materials }, label);
+      const { name, links, joints, rootLinkId, materials, closedLoopConstraints } = get();
+      appendHistorySnapshot({ name, links, joints, rootLinkId, materials, closedLoopConstraints }, label);
     };
 
     return {
@@ -137,14 +141,25 @@ export const useRobotStore = create<RobotData & RobotActions & {
       },
 
       // Full robot data
-      setRobot: (data) => {
-        saveToHistory('Load robot state');
+      setRobot: (data, options) => {
+        const shouldResetHistory = options?.resetHistory === true;
+        const historyLabel = options?.label ?? 'Load robot state';
+
+        if (!options?.skipHistory && !shouldResetHistory) {
+          saveToHistory(historyLabel);
+        }
+
         set((state) => {
           state.name = data.name;
           state.links = data.links;
           state.joints = data.joints;
           state.rootLinkId = data.rootLinkId;
           state.materials = data.materials;
+          state.closedLoopConstraints = data.closedLoopConstraints;
+          if (shouldResetHistory) {
+            state._history = { past: [], future: [] };
+            state._activity = [...state._activity, createChangeLogEntry(historyLabel)].slice(-MAX_ACTIVITY_LOG);
+          }
         });
       },
 
@@ -156,6 +171,7 @@ export const useRobotStore = create<RobotData & RobotActions & {
           state.joints = newData.joints;
           state.rootLinkId = newData.rootLinkId;
           state.materials = newData.materials;
+          state.closedLoopConstraints = newData.closedLoopConstraints;
           state._history = { past: [], future: [] };
         });
       },
@@ -173,8 +189,20 @@ export const useRobotStore = create<RobotData & RobotActions & {
           saveToHistory(options?.label ?? 'Update link');
         }
         set((state) => {
-          if (state.links[id]) {
-            Object.assign(state.links[id], updates);
+          const currentLink = state.links[id];
+          if (currentLink) {
+            const nextLink = { ...currentLink, ...updates };
+            state.links[id] = nextLink;
+
+            const nextMaterials = syncRobotMaterialsForLinkUpdate(
+              state.materials,
+              nextLink,
+              currentLink,
+            );
+
+            if (nextMaterials !== state.materials) {
+              state.materials = nextMaterials;
+            }
           }
         });
       },
@@ -239,19 +267,28 @@ export const useRobotStore = create<RobotData & RobotActions & {
       },
 
       setJointAngle: (jointName, angle) => {
-        // Find joint by name
         const state = get();
-        const jointEntry = Object.entries(state.joints).find(
-          ([, j]) => j.name === jointName
-        );
-        if (!jointEntry) return;
+        const jointId = state.joints[jointName]
+          ? jointName
+          : Object.entries(state.joints).find(([, j]) => j.name === jointName)?.[0];
+        if (!jointId) return;
 
-        const [jointId] = jointEntry;
+        const compensation = resolveClosedLoopJointMotionCompensation(state, jointId, angle);
         // Don't save to history for joint angle changes (too frequent)
         set((state) => {
           if (state.joints[jointId]) {
             state.joints[jointId].angle = angle;
           }
+          Object.entries(compensation.angles).forEach(([compensatedJointId, compensatedAngle]) => {
+            if (state.joints[compensatedJointId]) {
+              state.joints[compensatedJointId].angle = compensatedAngle;
+            }
+          });
+          Object.entries(compensation.quaternions).forEach(([compensatedJointId, compensatedQuaternion]) => {
+            if (state.joints[compensatedJointId]) {
+              state.joints[compensatedJointId].quaternion = compensatedQuaternion;
+            }
+          });
         });
       },
 
@@ -330,11 +367,11 @@ export const useRobotStore = create<RobotData & RobotActions & {
 
       // History operations
       undo: () => {
-        const { _history, name, links, joints, rootLinkId, materials } = get();
+        const { _history, name, links, joints, rootLinkId, materials, closedLoopConstraints } = get();
         if (_history.past.length === 0) return;
 
         const previous = cloneRobotData(_history.past[_history.past.length - 1]);
-        const currentData = cloneRobotData({ name, links, joints, rootLinkId, materials });
+        const currentData = cloneRobotData({ name, links, joints, rootLinkId, materials, closedLoopConstraints });
 
         set((state) => {
           state.name = previous.name;
@@ -342,17 +379,18 @@ export const useRobotStore = create<RobotData & RobotActions & {
           state.joints = previous.joints;
           state.rootLinkId = previous.rootLinkId;
           state.materials = previous.materials;
+          state.closedLoopConstraints = previous.closedLoopConstraints;
           state._history.past = state._history.past.slice(-(MAX_HISTORY + 1), -1);
           state._history.future = [currentData, ...state._history.future].slice(0, MAX_HISTORY);
         });
       },
 
       redo: () => {
-        const { _history, name, links, joints, rootLinkId, materials } = get();
+        const { _history, name, links, joints, rootLinkId, materials, closedLoopConstraints } = get();
         if (_history.future.length === 0) return;
 
         const next = cloneRobotData(_history.future[0]);
-        const currentData = cloneRobotData({ name, links, joints, rootLinkId, materials });
+        const currentData = cloneRobotData({ name, links, joints, rootLinkId, materials, closedLoopConstraints });
 
         set((state) => {
           state.name = next.name;
@@ -360,6 +398,7 @@ export const useRobotStore = create<RobotData & RobotActions & {
           state.joints = next.joints;
           state.rootLinkId = next.rootLinkId;
           state.materials = next.materials;
+          state.closedLoopConstraints = next.closedLoopConstraints;
           state._history.past = [...state._history.past, currentData].slice(-MAX_HISTORY);
           state._history.future = state._history.future.slice(1, MAX_HISTORY + 1);
         });

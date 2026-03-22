@@ -54,7 +54,7 @@ export function TreeEditorFileBrowserContent({
       style={shouldFillSpace ? undefined : { height: isOpen ? `${height}px` : 'auto' }}
     >
       <div
-        className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
+        className="flex items-center justify-between px-3 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
         onClick={onToggleOpen}
       >
         <div className="flex items-center gap-2">
@@ -63,12 +63,12 @@ export function TreeEditorFileBrowserContent({
           ) : (
             <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
           )}
-          <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">
+          <span className="text-[11px] leading-none font-semibold text-text-secondary uppercase tracking-[0.14em]">
             {t.fileBrowser}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-text-tertiary">{availableFiles.length}</span>
+          <span className="text-[9px] leading-none text-text-tertiary">{availableFiles.length}</span>
           {canDeleteAllLibraryFiles && (
             <button
               type="button"
@@ -76,7 +76,7 @@ export function TreeEditorFileBrowserContent({
                 event.stopPropagation();
                 onDeleteAll();
               }}
-              className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
+              className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[9px] leading-none font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
               title={t.deleteAllLibraryFiles}
             >
               <Trash2 size={10} strokeWidth={2.25} />
@@ -88,7 +88,7 @@ export function TreeEditorFileBrowserContent({
 
       {isOpen && isProMode && availableFiles.length > 0 && (
         <div className="px-3 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
-          <span className="text-[10px] text-system-blue">{t.clickToAddComponent}</span>
+          <span className="text-[9px] leading-none text-system-blue">{t.clickToAddComponent}</span>
         </div>
       )}
 

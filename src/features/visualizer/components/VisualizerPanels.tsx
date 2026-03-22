@@ -1,5 +1,7 @@
+import { ViewModeBadge } from '@/shared/components/3d';
 import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
 import type { Language } from '@/shared/i18n';
+import { translations } from '@/shared/i18n';
 import type { VisualizerController } from '../hooks/useVisualizerController';
 
 interface VisualizerPanelsProps {
@@ -18,14 +20,15 @@ export const VisualizerPanels = ({
   controller,
 }: VisualizerPanelsProps) => {
   const { panel, state, handleAutoFitGround } = controller;
-
-  if (!showOptionsPanel) {
-    return null;
-  }
+  const t = translations[lang];
 
   return (
     <>
-      {mode === 'skeleton' && (
+      <ViewModeBadge
+        label={`${mode === 'skeleton' ? t.skeleton : mode === 'hardware' ? t.hardware : t.detail} ${t.modeLabel}`}
+      />
+
+      {showOptionsPanel && mode === 'skeleton' && (
         <SkeletonOptionsPanel
           key="skeleton"
           ref={panel.optionsPanelRef}
@@ -53,7 +56,7 @@ export const VisualizerPanels = ({
           onAutoFitGround={handleAutoFitGround}
         />
       )}
-      {mode === 'detail' && (
+      {showOptionsPanel && mode === 'detail' && (
         <DetailOptionsPanel
           key="detail"
           ref={panel.optionsPanelRef}
@@ -79,7 +82,7 @@ export const VisualizerPanels = ({
           optionsPanelPos={panel.optionsPanelPos}
         />
       )}
-      {mode === 'hardware' && (
+      {showOptionsPanel && mode === 'hardware' && (
         <HardwareOptionsPanel
           key="hardware"
           ref={panel.optionsPanelRef}

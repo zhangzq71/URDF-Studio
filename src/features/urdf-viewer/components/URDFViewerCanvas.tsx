@@ -1,7 +1,7 @@
 import { memo, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { Canvas, type RootState } from '@react-three/fiber';
-import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
+import { GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Language } from '@/shared/i18n';
 import {
@@ -12,9 +12,14 @@ import {
   SceneLighting,
   SnapshotManager,
   UsageGuide,
+  WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
+  WORKSPACE_DEFAULT_CAMERA_FOV,
+  WORKSPACE_DEFAULT_CAMERA_POSITION,
+  WORKSPACE_DEFAULT_CAMERA_UP,
   WorldOriginAxes,
 } from '@/shared/components/3d';
+import { attachContextMenuBlocker } from '@/shared/utils';
 
 interface URDFViewerCanvasProps {
   lang: Language;
@@ -47,11 +52,14 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
 }: URDFViewerCanvasProps) {
   const [contextLost, setContextLost] = useState(false);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasContextMenuCleanupRef = useRef<(() => void) | null>(null);
   const environmentIntensity = resolvedTheme === 'light' ? 0.24 : 0.22;
 
   const handleCreated = useCallback((state: RootState) => {
     const canvas = state.gl.domElement;
     canvasElementRef.current = canvas;
+    canvasContextMenuCleanupRef.current?.();
+    canvasContextMenuCleanupRef.current = attachContextMenuBlocker(canvas);
 
     if (typeof window !== 'undefined' && import.meta.env.DEV) {
       (window as Window & { scene?: THREE.Scene; THREE?: typeof THREE }).scene = state.scene;
@@ -74,7 +82,13 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
     (canvas as HTMLCanvasElement & { __urdfViewerCanvasCleanup?: () => void }).__urdfViewerCanvasCleanup = () => {
       canvas.removeEventListener('webglcontextlost', handleContextLost);
       canvas.removeEventListener('webglcontextrestored', handleContextRestored);
+      canvasContextMenuCleanupRef.current?.();
+      canvasContextMenuCleanupRef.current = null;
     };
+  }, []);
+
+  const handleContextMenuCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
   }, []);
 
   useEffect(() => {
@@ -83,15 +97,21 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
         | (HTMLCanvasElement & { __urdfViewerCanvasCleanup?: () => void })
         | null;
       canvas?.__urdfViewerCanvasCleanup?.();
+      canvasContextMenuCleanupRef.current?.();
+      canvasContextMenuCleanupRef.current = null;
     };
   }, []);
 
   return (
-    <>
+    <div className="relative h-full w-full" style={{ touchAction: 'none', userSelect: 'none' }} onContextMenuCapture={handleContextMenuCapture}>
       <Canvas
         shadows
         frameloop="demand"
-        camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
+        camera={{
+          position: WORKSPACE_DEFAULT_CAMERA_POSITION,
+          up: WORKSPACE_DEFAULT_CAMERA_UP,
+          fov: WORKSPACE_DEFAULT_CAMERA_FOV,
+        }}
         gl={{
           antialias: true,
           toneMapping: THREE.ACESFilmicToneMapping,
@@ -105,6 +125,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
             onPointerMissed?.();
           }
         }}
+        translate="no"
       >
         <CanvasResizeSync />
         <color
@@ -119,14 +140,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
           <GroundShadowPlane theme={resolvedTheme} groundOffset={groundOffset} />
           <ReferenceGrid theme={resolvedTheme} groundOffset={groundOffset} />
           <WorldOriginAxes />
-          <OrbitControls
-            makeDefault
-            enableDamping
-            dampingFactor={0.08}
-            enabled={orbitEnabled}
-            onStart={onOrbitStart}
-            onEnd={onOrbitEnd}
-          />
+          <WorkspaceOrbitControls enabled={orbitEnabled} onStart={onOrbitStart} onEnd={onOrbitEnd} />
           <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
             <GizmoViewport
               axisColors={['#ef4444', '#22c55e', '#3b82f6']}
@@ -148,6 +162,6 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 });

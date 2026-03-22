@@ -1,11 +1,10 @@
 import { useCallback } from 'react';
-import { exportLibraryRobotFile } from '@/features/file-io';
+import type { TranslationKeys } from '@/shared/i18n';
 import type { AssemblyState, RobotData, RobotFile } from '@/types';
 
 type EmptyRobotState = Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>;
 
 interface UseLibraryFileActionsParams {
-  assets: Record<string, string>;
   availableFiles: RobotFile[];
   selectedFile: RobotFile | null;
   assemblyState: AssemblyState | null;
@@ -17,12 +16,12 @@ interface UseLibraryFileActionsParams {
   resetRobot: (data: { name: string } & EmptyRobotState) => void;
   clearSelection: () => void;
   uploadAsset: (file: File) => void;
+  openLibraryExportDialog: (file: RobotFile) => void;
   showToast: (message: string, type?: 'info' | 'success') => void;
-  t: Record<string, string>;
+  t: TranslationKeys;
 }
 
 export function useLibraryFileActions({
-  assets,
   availableFiles,
   selectedFile,
   assemblyState,
@@ -34,6 +33,7 @@ export function useLibraryFileActions({
   resetRobot,
   clearSelection,
   uploadAsset,
+  openLibraryExportDialog,
   showToast,
   t,
 }: UseLibraryFileActionsParams) {
@@ -155,36 +155,14 @@ export function useLibraryFileActions({
     t,
   ]);
 
-  const handleExportLibraryFile = useCallback(async (file: RobotFile, format: 'urdf' | 'mjcf') => {
-    const result = await exportLibraryRobotFile({
-      file,
-      targetFormat: format,
-      assets,
-    });
-
-    if (!result.success) {
-      if (result.reason === 'unsupported-file-format') {
-        showToast(t.onlyUrdfMjcfExport, 'info');
-        return;
-      }
-
-      showToast(t.exportFailedParse, 'info');
+  const handleExportLibraryFile = useCallback((file: RobotFile) => {
+    if (file.format !== 'urdf' && file.format !== 'mjcf') {
+      showToast(t.onlyUrdfMjcfExport, 'info');
       return;
     }
 
-    if (result.missingMeshPaths.length > 0) {
-      showToast(
-        t.exportedWithMissingMeshes.replace('{count}', String(result.missingMeshPaths.length)),
-        'info',
-      );
-      return;
-    }
-
-    showToast(
-      t.exportedSuccess.replace('{name}', result.zipFileName ?? ''),
-      'success',
-    );
-  }, [assets, showToast, t]);
+    openLibraryExportDialog(file);
+  }, [openLibraryExportDialog, showToast, t]);
 
   return {
     handleUploadAsset,

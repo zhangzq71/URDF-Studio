@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { RobotState, UrdfJoint } from '@/types';
 import { getCollisionGeometryEntries, isTransparentDisplayLink } from '@/core/robot';
+import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
 import { Language, translations } from '@/shared/i18n';
@@ -35,7 +36,9 @@ interface CommonVisualizerProps {
   transformMode: 'translate' | 'rotate';
   assets: Record<string, string>;
   lang: Language;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
 
@@ -43,6 +46,7 @@ interface RobotNodeProps extends CommonVisualizerProps {
   linkId: string;
   depth: number;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
 
@@ -85,7 +89,9 @@ export const RobotNode = memo(function RobotNode({
   depth,
   assets,
   lang,
+  colladaRootNormalizationHints,
   onRegisterJointPivot,
+  onRegisterJointMotion,
   onRegisterCollisionRef
 }: RobotNodeProps) {
   const t = translations[lang];
@@ -203,7 +209,9 @@ export const RobotNode = memo(function RobotNode({
             depth={depth + 1}
             assets={assets}
             lang={lang}
+            colladaRootNormalizationHints={colladaRootNormalizationHints}
             onRegisterJointPivot={onRegisterJointPivot}
+            onRegisterJointMotion={onRegisterJointMotion}
             onRegisterCollisionRef={onRegisterCollisionRef}
           />
         ))}
@@ -261,6 +269,7 @@ export const RobotNode = memo(function RobotNode({
             onLinkClick={handleLinkClick}
             setVisualRef={setVisualRef}
             objectIndex={0}
+            colladaRootNormalizationHints={colladaRootNormalizationHints}
           />
 
           {collisionEntries.map((entry) => (
@@ -278,8 +287,9 @@ export const RobotNode = memo(function RobotNode({
               setCollisionRef={getCollisionRefHandler(entry.objectIndex)}
               geometryData={entry.bodyIndex === null ? undefined : entry.geometry}
               geometryId={entry.bodyIndex === null ? '0' : `extra-${entry.bodyIndex + 1}`}
-              objectIndex={entry.objectIndex}
-            />
+                objectIndex={entry.objectIndex}
+                colladaRootNormalizationHints={colladaRootNormalizationHints}
+              />
           ))}
         </>
       )}
@@ -358,12 +368,14 @@ export const RobotNode = memo(function RobotNode({
           showCenterOfMass={showCenterOfMass}
           transformMode={transformMode}
           depth={depth + 1}
-          assets={assets}
-          lang={lang}
-          onRegisterJointPivot={onRegisterJointPivot}
-          onRegisterCollisionRef={onRegisterCollisionRef}
-        />
-      ))}
+            assets={assets}
+            lang={lang}
+            colladaRootNormalizationHints={colladaRootNormalizationHints}
+            onRegisterJointPivot={onRegisterJointPivot}
+            onRegisterJointMotion={onRegisterJointMotion}
+            onRegisterCollisionRef={onRegisterCollisionRef}
+            />
+          ))}
     </group>
   );
 });

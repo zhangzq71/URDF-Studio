@@ -24,7 +24,7 @@ export const JointAxesVisual = React.memo(({
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axisVec);
   }, [axis.x, axis.y, axis.z]);
 
-  if (type === JointType.FIXED) return null;
+  if (type === JointType.FIXED || type === JointType.BALL) return null;
 
   const color = "#d946ef";
 

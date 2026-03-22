@@ -8,7 +8,6 @@ import {
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  CollapsibleSection,
   ToggleSliderOption
 } from './OptionsPanel';
 
@@ -69,8 +68,6 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
     const isEnglish = lang === 'en';
     const englishCheckboxLabelClassName = isEnglish ? 'text-[10px]' : '';
     const englishSliderLabelClassName = isEnglish ? 'text-[9px]' : '';
-    const panelSections = useUIStore((state) => state.panelSections);
-    const setPanelSection = useUIStore((state) => state.setPanelSection);
     const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
     const setGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
 
@@ -88,7 +85,12 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
             : { top: '16px', right: '16px' }
         }
       >
-        <OptionsPanelContainer isCollapsed={isCollapsed} resizeTitle={t.resize}>
+        <OptionsPanelContainer
+          width="11rem"
+          minWidth={168}
+          isCollapsed={isCollapsed}
+          resizeTitle={t.resize}
+        >
           <OptionsPanelHeader
             title={t.skeletonOptions}
             isCollapsed={isCollapsed}
@@ -101,12 +103,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
           />
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
-            {/* Visuals Group */}
-            <CollapsibleSection
-              title={t.visuals}
-              isCollapsed={panelSections['skeleton_visuals'] ?? false}
-              onToggle={() => setPanelSection('skeleton_visuals', !(panelSections['skeleton_visuals'] ?? false))}
-            >
+            <div className="px-2 py-2 space-y-2">
               <CheckboxOption
                 checked={showGeometry}
                 onChange={setShowGeometry}
@@ -171,14 +168,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                   labelClassName: englishSliderLabelClassName,
                 }}
               />
-            </CollapsibleSection>
 
-            {/* Ground Plane */}
-            <CollapsibleSection
-              title={t.groundPlane}
-              isCollapsed={panelSections['skeleton_ground'] ?? true}
-              onToggle={() => setPanelSection('skeleton_ground', !(panelSections['skeleton_ground'] ?? false))}
-            >
               <GroundPlaneControls
                 autoFitIcon={<Crosshair size={11} />}
                 autoFitLabel={t.autoFitGround}
@@ -191,7 +181,7 @@ export const SkeletonOptionsPanel = forwardRef<HTMLDivElement, SkeletonOptionsPa
                 sliderIndent={true}
                 sliderLabelClassName={englishSliderLabelClassName}
               />
-            </CollapsibleSection>
+            </div>
 
           </OptionsPanelContent>
         </OptionsPanelContainer>

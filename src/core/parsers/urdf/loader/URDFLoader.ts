@@ -18,6 +18,35 @@ function applyRotation(obj: THREE.Object3D, rpy: number[], additive = false) {
     obj.quaternion.copy(tempQuaternion);
 }
 
+function applyMaterialToLoadedObject(obj: THREE.Object3D, material: THREE.Material) {
+    if ((obj as THREE.Mesh).isMesh) {
+        (obj as THREE.Mesh).material = material;
+        return;
+    }
+
+    obj.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+            (child as THREE.Mesh).material = material;
+        }
+    });
+}
+
+function loadedObjectHasNamedMaterials(obj: THREE.Object3D): boolean {
+    let hasNamedMaterials = false;
+
+    obj.traverse((child) => {
+        if (hasNamedMaterials || !(child as THREE.Mesh).isMesh) {
+            return;
+        }
+
+        const material = (child as THREE.Mesh).material;
+        const materials = Array.isArray(material) ? material : [material];
+        hasNamedMaterials = materials.some((entry) => Boolean(entry?.name?.trim()));
+    });
+
+    return hasNamedMaterials;
+}
+
 export interface MeshLoadDoneFunc {
     (mesh: THREE.Object3D, err?: Error): void;
 }
@@ -201,12 +230,14 @@ export class URDFLoader {
                                 if (err) {
                                     console.error('URDFLoader: Error loading mesh.', err);
                                 } else if (obj) {
-                                    if (obj instanceof THREE.Mesh) {
+                                    if (materialNode) {
+                                        if (!loadedObjectHasNamedMaterials(obj)) {
+                                            applyMaterialToLoadedObject(obj, material);
+                                        }
+                                    } else if (obj instanceof THREE.Mesh) {
                                         obj.material = material;
                                     }
 
-                                    obj.position.set(0, 0, 0);
-                                    obj.quaternion.identity();
                                     group.add(obj);
                                 }
                             });

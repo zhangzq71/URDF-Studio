@@ -5,13 +5,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export function useResizablePanel(collapsed?: boolean) {
-  const [width, setWidth] = useState(320);
+  const [width, setWidth] = useState(272);
   const [isDragging, setIsDragging] = useState(false);
   const isResizing = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
 
-  const displayWidth = collapsed ? 0 : Math.max(width, 280);
+  const displayWidth = collapsed ? 0 : Math.max(width, 256);
 
   const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
     isResizing.current = true;
@@ -26,7 +26,7 @@ export function useResizablePanel(collapsed?: boolean) {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
       const delta = startX.current - e.clientX;
-      const newWidth = Math.max(250, Math.min(800, startWidth.current + delta));
+      const newWidth = Math.max(256, Math.min(800, startWidth.current + delta));
       setWidth(newWidth);
     };
 

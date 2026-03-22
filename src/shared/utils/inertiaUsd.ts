@@ -1,0 +1,128 @@
+import * as THREE from 'three';
+
+import { MathUtils } from './math.ts';
+
+interface Vector3Like {
+  x?: number;
+  y?: number;
+  z?: number;
+}
+
+interface EulerLike {
+  r?: number;
+  p?: number;
+  y?: number;
+}
+
+interface InertiaLike {
+  ixx?: number;
+  ixy?: number;
+  ixz?: number;
+  iyy?: number;
+  iyz?: number;
+  izz?: number;
+}
+
+interface InertialLike {
+  origin?: {
+    xyz?: Vector3Like;
+    rpy?: EulerLike;
+  };
+  inertia?: InertiaLike;
+}
+
+export interface UsdInertiaProperties {
+  diagonalInertia: [number, number, number];
+  principalAxesLocal: THREE.Quaternion;
+}
+
+function sanitizeMoment(value: number): number {
+  return Math.abs(value) < 1e-12 ? 0 : value;
+}
+
+function createOriginQuaternion(inertial: InertialLike | undefined): THREE.Quaternion {
+  return new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    inertial?.origin?.rpy?.r ?? 0,
+    inertial?.origin?.rpy?.p ?? 0,
+    inertial?.origin?.rpy?.y ?? 0,
+    'XYZ',
+  ));
+}
+
+function sortPrincipalAxes(
+  eigenvalues: number[],
+  eigenvectors: number[][],
+): { diagonalInertia: [number, number, number]; principalAxes: THREE.Quaternion } {
+  const pairs = eigenvalues.map((value, index) => ({
+    value: sanitizeMoment(value),
+    vector: new THREE.Vector3(
+      eigenvectors[0]?.[index] ?? 0,
+      eigenvectors[1]?.[index] ?? 0,
+      eigenvectors[2]?.[index] ?? 0,
+    ).normalize(),
+  })).sort((left, right) => right.value - left.value);
+
+  const xAxis = pairs[0]?.vector.lengthSq() ? pairs[0].vector.clone() : new THREE.Vector3(1, 0, 0);
+  const yAxis = pairs[1]?.vector.lengthSq() ? pairs[1].vector.clone() : new THREE.Vector3(0, 1, 0);
+  let zAxis = pairs[2]?.vector.lengthSq() ? pairs[2].vector.clone() : new THREE.Vector3(0, 0, 1);
+
+  const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+  if (basis.determinant() < 0) {
+    zAxis = zAxis.multiplyScalar(-1);
+  }
+
+  const principalAxes = new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis),
+  ).normalize();
+
+  return {
+    diagonalInertia: [
+      pairs[0]?.value ?? 0,
+      pairs[1]?.value ?? 0,
+      pairs[2]?.value ?? 0,
+    ],
+    principalAxes,
+  };
+}
+
+export function computeUsdInertiaProperties(inertial: InertialLike | undefined): UsdInertiaProperties | null {
+  const inertia = inertial?.inertia;
+  if (!inertia) {
+    return null;
+  }
+
+  const originQuaternion = createOriginQuaternion(inertial);
+  const hasOffDiagonalTerms = Math.abs(inertia.ixy ?? 0) > 1e-12
+    || Math.abs(inertia.ixz ?? 0) > 1e-12
+    || Math.abs(inertia.iyz ?? 0) > 1e-12;
+
+  if (!hasOffDiagonalTerms) {
+    return {
+      diagonalInertia: [
+        sanitizeMoment(inertia.ixx ?? 0),
+        sanitizeMoment(inertia.iyy ?? 0),
+        sanitizeMoment(inertia.izz ?? 0),
+      ],
+      principalAxesLocal: originQuaternion,
+    };
+  }
+
+  const matrix = new THREE.Matrix3().set(
+    inertia.ixx ?? 0,
+    inertia.ixy ?? 0,
+    inertia.ixz ?? 0,
+    inertia.ixy ?? 0,
+    inertia.iyy ?? 0,
+    inertia.iyz ?? 0,
+    inertia.ixz ?? 0,
+    inertia.iyz ?? 0,
+    inertia.izz ?? 0,
+  );
+  const decomposition = MathUtils.computeEigenDecomposition3x3(matrix);
+  const principal = sortPrincipalAxes(decomposition.eigenvalues, decomposition.eigenvectors);
+
+  return {
+    diagonalInertia: principal.diagonalInertia,
+    principalAxesLocal: originQuaternion.multiply(principal.principalAxes).normalize(),
+  };
+}

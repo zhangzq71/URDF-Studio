@@ -1,8 +1,21 @@
-import React from 'react';
-import { Ruler, X } from 'lucide-react';
-import { MeasureState, ToolMode } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Plus, X } from 'lucide-react';
+import { MeasureAnchorMode, MeasureState, ToolMode } from '../types';
+import {
+    addMeasureGroup,
+    clearMeasureState,
+    clearMeasureSlot,
+    getActiveMeasureGroup,
+    getActiveMeasureMeasurement,
+    getMeasureStateMeasurements,
+    removeMeasureGroup,
+    setActiveMeasureGroup,
+    setActiveMeasureSlot,
+} from '../utils/measurements';
 import { Language, translations } from '@/shared/i18n';
-import { IconButton } from '@/shared/components/ui';
+import { OptionsPanel, SegmentedControl } from '@/shared/components/Panel/OptionsPanel';
+import { Switch } from '@/shared/components/ui';
+import { useSelectionStore } from '@/store/selectionStore';
 
 interface MeasurePanelProps {
     toolMode: ToolMode;
@@ -12,7 +25,105 @@ interface MeasurePanelProps {
     onClose: () => void;
     measureState: MeasureState;
     setMeasureState: React.Dispatch<React.SetStateAction<MeasureState>>;
+    measureAnchorMode: MeasureAnchorMode;
+    setMeasureAnchorMode: React.Dispatch<React.SetStateAction<MeasureAnchorMode>>;
+    showMeasureDecomposition: boolean;
+    setShowMeasureDecomposition: React.Dispatch<React.SetStateAction<boolean>>;
     lang: Language;
+}
+
+function formatMeasureTarget(
+    target: ReturnType<typeof getActiveMeasureGroup>['first'],
+    t: typeof translations['en'],
+): string {
+    if (!target) {
+        return t.measureSlotEmpty;
+    }
+
+    return target.linkName;
+}
+
+function formatMeasureDistance(value: number, signed = false): string {
+    const prefix = signed && value > 0 ? '+' : '';
+    return `${prefix}${value.toFixed(4)}m`;
+}
+
+function MeasureSlotChip({
+    indexLabel,
+    title,
+    target,
+    isActive,
+    onActivate,
+    onClear,
+    clearLabel,
+}: {
+    indexLabel: '1' | '2';
+    title: string;
+    target: ReturnType<typeof getActiveMeasureGroup>['first'];
+    isActive: boolean;
+    onActivate: () => void;
+    onClear: () => void;
+    clearLabel: string;
+}) {
+    return (
+        <div
+            role="button"
+            tabIndex={0}
+            onClick={onActivate}
+            onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onActivate();
+                }
+            }}
+            className={`flex w-full items-center gap-1.5 rounded-md border px-1.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                isActive
+                    ? 'border-system-blue bg-system-blue/10'
+                    : target
+                        ? 'border-system-blue/35 bg-system-blue/5 hover:bg-system-blue/10'
+                        : 'border-border-black/60 bg-panel-bg hover:bg-element-hover'
+            }`}
+        >
+            <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold ${
+                isActive
+                    ? 'border-system-blue bg-system-blue-solid text-white'
+                    : 'border-border-black/60 bg-element-bg text-text-secondary'
+            }`}>
+                {indexLabel}
+            </span>
+
+            <span className={`min-w-0 flex-1 truncate text-[10px] ${
+                target
+                    ? 'font-medium text-text-primary'
+                    : isActive
+                        ? 'text-system-blue'
+                        : 'text-text-secondary'
+            }`}>
+                {target ? target.linkName : title}
+            </span>
+
+            {target && (
+                <button
+                    type="button"
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
+                    aria-label={clearLabel}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onClear();
+                    }}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onClear();
+                        }
+                    }}
+                >
+                    <X className="h-3 w-3" />
+                </button>
+            )}
+        </div>
+    );
 }
 
 export const MeasurePanel: React.FC<MeasurePanelProps> = ({
@@ -23,83 +134,248 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
     onClose,
     measureState,
     setMeasureState,
+    measureAnchorMode,
+    setMeasureAnchorMode,
+    showMeasureDecomposition,
+    setShowMeasureDecomposition,
     lang,
 }) => {
     const t = translations[lang];
+    const [isCollapsed, setIsCollapsed] = useState(false);
+    const setSelection = useSelectionStore((state) => state.setSelection);
+    const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
+
+    const activeGroup = useMemo(
+        () => getActiveMeasureGroup(measureState),
+        [measureState],
+    );
+    const activeMeasurement = useMemo(
+        () => getActiveMeasureMeasurement(measureState),
+        [measureState],
+    );
+    const completedMeasurements = useMemo(
+        () => getMeasureStateMeasurements(measureState),
+        [measureState],
+    );
+    const canClearAll = useMemo(
+        () => measureState.groups.length > 1 || measureState.groups.some((group) => group.first || group.second),
+        [measureState],
+    );
+    const measureAnchorOptions = useMemo(() => ([
+        { label: t.measureAnchorFrame, value: 'frame' },
+        { label: t.measureAnchorCenterOfMass, value: 'centerOfMass' },
+        { label: t.measureAnchorGeometry, value: 'geometry' },
+    ] as const), [
+        t.measureAnchorCenterOfMass,
+        t.measureAnchorFrame,
+        t.measureAnchorGeometry,
+    ]);
+
+    const resetViewportSelection = () => {
+        setSelection({ type: null, id: null });
+        setHoveredSelection({ type: null, id: null });
+    };
+
     if (toolMode !== 'measure') return null;
 
     return (
-        <div
-            ref={measurePanelRef}
-            className="measure-panel absolute z-30 pointer-events-auto"
-            style={measurePanelPos
-                ? { left: measurePanelPos.x, top: measurePanelPos.y }
-                : { left: '16px', top: '100px' }
-            }
+        <OptionsPanel
+            title={t.measureTool}
+            show={true}
+            panelRef={measurePanelRef}
+            position={measurePanelPos}
+            defaultPosition={{ right: '16px', bottom: '16px' }}
+            isCollapsed={isCollapsed}
+            onToggleCollapse={() => setIsCollapsed((prev) => !prev)}
+            onClose={onClose}
+            onMouseDown={onMouseDown}
+            width="12rem"
+            maxHeight={420}
+            zIndex={50}
+            panelClassName="measure-panel"
         >
-            <div className="bg-white dark:bg-panel-bg rounded-lg shadow-xl dark:shadow-black border border-slate-200 dark:border-border-black min-w-[200px] overflow-hidden">
-                <div
-                    className="cursor-move px-3 py-2 border-b border-slate-200 dark:border-border-black flex items-center justify-between bg-slate-100 dark:bg-element-active"
-                    onMouseDown={onMouseDown}
-                >
-                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                        <svg className="w-3 h-3 text-slate-400" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" /></svg>
-                        <Ruler className="w-4 h-4" />
-                        {t.measureTool}
+            <div className="space-y-1.5 p-1.5">
+                <div className="rounded-md border border-border-black/60 bg-panel-bg p-1">
+                    <div className="mb-1 flex items-center justify-between">
+                        <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">{t.measureGroups}</span>
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                className="rounded-md border border-border-black/60 bg-element-bg px-1.5 py-0.5 text-[9px] font-medium text-text-secondary transition-colors hover:border-danger-border hover:bg-danger-soft hover:text-danger-hover disabled:border-transparent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => {
+                                    setMeasureState(clearMeasureState);
+                                    resetViewportSelection();
+                                }}
+                                disabled={!canClearAll}
+                            >
+                                {t.clearAll}
+                            </button>
+                            <button
+                                type="button"
+                                className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border-black/60 bg-element-bg text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary"
+                                title={t.measureAddGroup}
+                                aria-label={t.measureAddGroup}
+                                onClick={() => setMeasureState((prev) => addMeasureGroup(prev))}
+                            >
+                                <Plus className="h-3 w-3" />
+                            </button>
+                        </div>
                     </div>
-                    <IconButton
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onClose();
-                        }}
-                        size="sm"
-                        variant="close"
-                        title={t.close}
-                        aria-label={t.close}
-                    >
-                        <X className="w-4 h-4" />
-                    </IconButton>
+
+                    <div className="flex flex-wrap gap-1">
+                        {measureState.groups.map((group, index) => {
+                            const isActive = group.id === measureState.activeGroupId;
+                            const isComplete = Boolean(group.first && group.second);
+
+                            return (
+                                <div
+                                    key={group.id}
+                                    className={`group inline-flex items-stretch overflow-hidden rounded-md border transition-colors ${
+                                        isActive
+                                            ? 'border-system-blue bg-system-blue/10'
+                                            : isComplete
+                                                ? 'border-danger-border bg-danger-soft/70'
+                                                : 'border-border-black/60 bg-element-bg'
+                                    }`}
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() => setMeasureState((prev) => setActiveMeasureGroup(prev, group.id))}
+                                        className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                                            isActive
+                                                ? 'text-system-blue'
+                                                : isComplete
+                                                    ? 'text-text-primary hover:bg-danger-soft'
+                                                    : 'text-text-secondary hover:bg-element-hover hover:text-text-primary'
+                                        }`}
+                                    >
+                                        {t.measureGroupLabel.replace('{index}', String(index + 1))}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`inline-flex h-[22px] w-[22px] items-center justify-center border-l text-text-tertiary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                                            isActive
+                                                ? 'border-system-blue/20 hover:bg-danger-soft hover:text-danger-hover'
+                                                : isComplete
+                                                    ? 'border-danger-border hover:bg-danger-soft hover:text-danger-hover'
+                                                    : 'border-border-black/60 hover:bg-danger-soft hover:text-danger-hover'
+                                        }`}
+                                        title={t.measureRemoveGroup}
+                                        aria-label={t.measureRemoveGroup}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            setMeasureState((prev) => removeMeasureGroup(prev, group.id));
+                                            resetViewportSelection();
+                                        }}
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
-                <div className="p-3">
-                    <div className="text-[10px] text-slate-500 dark:text-slate-400 mb-3 space-y-1">
-                        <div>• {t.measureInstruction1}</div>
-                        <div>• <kbd className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-[9px]">Esc</kbd> {t.measureInstruction2}</div>
-                        <div>• <kbd className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-[9px]">Delete</kbd> {t.measureInstruction3}</div>
+
+                <div className="space-y-1">
+                    <MeasureSlotChip
+                        indexLabel="1"
+                        title={formatMeasureTarget(activeGroup.first, t)}
+                        target={activeGroup.first}
+                        isActive={activeGroup.activeSlot === 'first'}
+                        onActivate={() => setMeasureState((prev) => setActiveMeasureSlot(prev, 'first'))}
+                        onClear={() => {
+                            setMeasureState((prev) => clearMeasureSlot(prev, 'first'));
+                            resetViewportSelection();
+                        }}
+                        clearLabel={t.measureClearSelection}
+                    />
+                    <MeasureSlotChip
+                        indexLabel="2"
+                        title={formatMeasureTarget(activeGroup.second, t)}
+                        target={activeGroup.second}
+                        isActive={activeGroup.activeSlot === 'second'}
+                        onActivate={() => setMeasureState((prev) => setActiveMeasureSlot(prev, 'second'))}
+                        onClear={() => {
+                            setMeasureState((prev) => clearMeasureSlot(prev, 'second'));
+                            resetViewportSelection();
+                        }}
+                        clearLabel={t.measureClearSelection}
+                    />
+                </div>
+
+                <div className="flex items-center justify-between rounded-md bg-element-bg px-2 py-1 text-[9px] text-text-secondary">
+                    <span>{t.measuredCount.replace('{count}', String(completedMeasurements.length))}</span>
+                    <span className="font-mono text-text-tertiary">Esc / Del</span>
+                </div>
+
+                <div className="rounded-md border border-border-black/60 bg-element-bg px-2 py-1 text-[9px] leading-4 text-text-secondary">
+                    <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
+                        {t.measureAnchorMode}
                     </div>
-                    <div className="text-xs text-slate-600 dark:text-slate-300 mb-2">
-                        {t.measuredCount.replace('{count}', String(measureState.measurements.length))}
-                    </div>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => {
-                                if (measureState.currentPoints.length > 0) {
-                                    setMeasureState(prev => ({ ...prev, currentPoints: [], tempPoint: null }));
-                                } else if (measureState.measurements.length > 0) {
-                                    setMeasureState(prev => ({ ...prev, measurements: prev.measurements.slice(0, -1) }));
-                                }
-                            }}
-                            disabled={measureState.measurements.length === 0 && measureState.currentPoints.length === 0}
-                            className="flex-1 px-2 py-1.5 text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
-                        >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                            </svg>
-                            {t.undo}
-                        </button>
-                        <button
-                            onClick={() => setMeasureState({ measurements: [], currentPoints: [], tempPoint: null })}
-                            disabled={measureState.measurements.length === 0 && measureState.currentPoints.length === 0}
-                            className="flex-1 px-2 py-1.5 text-xs bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
-                        >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                            {t.clearAll}
-                        </button>
+                    <SegmentedControl
+                        options={measureAnchorOptions}
+                        value={measureAnchorMode}
+                        onChange={(value) => setMeasureAnchorMode(value)}
+                    />
+                    {t.measureInstruction1}
+                </div>
+
+                <div className="rounded-md border border-border-black/60 bg-panel-bg p-1">
+                    <Switch
+                        checked={showMeasureDecomposition}
+                        onChange={setShowMeasureDecomposition}
+                        label={t.measureShowDecomposition}
+                        size="sm"
+                    />
+
+                    <div className="mt-1 rounded-md bg-element-bg px-1.5 py-1">
+                        <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
+                            {t.measureResult}
+                        </div>
+
+                        {activeMeasurement ? (
+                            <div className="space-y-1 text-[10px]">
+                                <div className="mb-1 text-[9px] text-text-tertiary">
+                                    {t.measureGroupLabel.replace('{index}', String(activeMeasurement.groupIndex))}
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-text-secondary">{t.measureTotalDistance}</span>
+                                    <span className="font-mono text-text-primary">
+                                        {formatMeasureDistance(activeMeasurement.distance)}
+                                    </span>
+                                </div>
+
+                                {showMeasureDecomposition && (
+                                    <>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-orange-400">{t.measureDeltaX}</span>
+                                            <span className="font-mono text-orange-300">
+                                                {formatMeasureDistance(activeMeasurement.delta.x, true)}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-green-400">{t.measureDeltaY}</span>
+                                            <span className="font-mono text-green-300">
+                                                {formatMeasureDistance(activeMeasurement.delta.y, true)}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-blue-400">{t.measureDeltaZ}</span>
+                                            <span className="font-mono text-blue-300">
+                                                {formatMeasureDistance(activeMeasurement.delta.z, true)}
+                                            </span>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="text-[10px] text-text-secondary">
+                                {t.measureNoMeasurement}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
-        </div>
+        </OptionsPanel>
     );
 };

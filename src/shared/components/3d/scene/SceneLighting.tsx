@@ -159,7 +159,7 @@ export function SceneLighting({
       <hemisphereLight
         args={[
           LIGHTING_CONFIG.hemisphereSky,
-          effectiveTheme === 'light' ? '#cfd8e2' : LIGHTING_CONFIG.hemisphereGround,
+          LIGHTING_CONFIG.hemisphereGround,
           hemisphereIntensity,
         ]}
         position={[0, 1, 0]}
@@ -227,7 +227,7 @@ export function SceneLighting({
         name="CameraSoftFrontLight"
         position={[0, 0, 0]}
         intensity={cameraSoftFrontIntensity}
-        color="#f7f9ff"
+        color="#ffffff"
         castShadow={false}
       />
       <directionalLight
@@ -235,7 +235,7 @@ export function SceneLighting({
         name="CameraFillLightRight"
         position={[0, 0, 0]}
         intensity={cameraFillIntensity}
-        color="#f5f7ff"
+        color="#ffffff"
         castShadow={false}
       />
       <directionalLight
@@ -243,7 +243,7 @@ export function SceneLighting({
         name="CameraFillLightLeft"
         position={[0, 0, 0]}
         intensity={cameraFillIntensity}
-        color="#f5f7ff"
+        color="#ffffff"
         castShadow={false}
       />
     </>

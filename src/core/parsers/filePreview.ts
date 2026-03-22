@@ -2,9 +2,7 @@ import {
   generateURDF,
   processXacro,
   parseURDF,
-  parseUSDA,
 } from '@/core/parsers';
-import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import { GeometryType, type RobotFile, type RobotState } from '@/types';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
@@ -75,9 +73,7 @@ export function computePreviewUrdf(
     }
 
     if (file.format === 'usd') {
-      const parsed = parseUSDA(file.content);
-      const normalized = parsed ? rewriteRobotMeshPathsForSource(parsed, file.name) : null;
-      return normalized ? generateURDF(normalized, { preserveMeshPaths: true }) : '';
+      return '';
     }
 
     if (file.format === 'mesh') {

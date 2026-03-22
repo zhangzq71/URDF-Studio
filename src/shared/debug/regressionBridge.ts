@@ -1,3 +1,4 @@
+import { Quaternion, Vector3 } from 'three';
 import type { RobotFile, RobotState, UrdfJoint, UrdfLink } from '@/types';
 
 type HighlightMode = 'link' | 'collision';
@@ -37,6 +38,7 @@ interface ViewerControllerSnapshot {
 interface ViewerRegressionHandlers {
   getSnapshot: () => ViewerControllerSnapshot;
   setFlags: (flags: RegressionViewerFlags) => void;
+  setJointAngles: (jointAngles: Record<string, number>) => { changed: boolean };
 }
 
 interface RuntimeJointSummary {
@@ -71,8 +73,10 @@ interface RegressionSnapshot {
 export interface RegressionDebugApi {
   getAvailableFiles: () => Array<{ name: string; format: string }>;
   getRegressionSnapshot: () => RegressionSnapshot;
+  getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
   setViewerFlags: (flags: RegressionViewerFlags) => { ok: boolean };
+  setViewerJointAngles: (jointAngles: Record<string, number>) => { ok: boolean; changed: boolean };
 }
 
 declare global {
@@ -200,11 +204,13 @@ function summarizeJoint(joint: UrdfJoint) {
     type: joint.type,
     parentLinkId: joint.parentLinkId,
     childLinkId: joint.childLinkId,
-    axis: {
-      x: Number(joint.axis.x ?? 0),
-      y: Number(joint.axis.y ?? 0),
-      z: Number(joint.axis.z ?? 0),
-    },
+    axis: joint.axis
+      ? {
+          x: Number(joint.axis.x ?? 0),
+          y: Number(joint.axis.y ?? 0),
+          z: Number(joint.axis.z ?? 0),
+        }
+      : null,
     origin: {
       xyz: {
         x: Number(joint.origin.xyz.x ?? 0),
@@ -341,6 +347,81 @@ function summarizeRuntimeRobot(robot: any) {
   };
 }
 
+function summarizeRuntimeSceneTransforms(robot: any) {
+  if (!robot) {
+    return null;
+  }
+
+  robot.updateMatrixWorld?.(true);
+
+  const links: Array<{
+    name: string;
+    position: [number, number, number] | null;
+    quaternion: [number, number, number, number] | null;
+  }> = [];
+  const joints: Array<{
+    name: string;
+    type: string | null;
+    position: [number, number, number] | null;
+    quaternion: [number, number, number, number] | null;
+    axis: [number, number, number] | null;
+  }> = [];
+  const visualMeshes: Array<{
+    link: string;
+    name: string;
+    position: [number, number, number] | null;
+    quaternion: [number, number, number, number] | null;
+  }> = [];
+
+  robot.traverse((child: any) => {
+    if (child?.isURDFLink) {
+      links.push({
+        name: typeof child.name === 'string' ? child.name : '',
+        position: toFixedArray(child.getWorldPosition?.(new Vector3())),
+        quaternion: child.getWorldQuaternion
+          ? child.getWorldQuaternion(new Quaternion()).toArray().map((value: number) => Number(value.toFixed(6))) as [number, number, number, number]
+          : null,
+      });
+      return;
+    }
+
+    if (child?.isURDFJoint) {
+      joints.push({
+        name: typeof child.name === 'string' ? child.name : '',
+        type: typeof child?.jointType === 'string' ? child.jointType : null,
+        position: toFixedArray(child.getWorldPosition?.(new Vector3())),
+        quaternion: child.getWorldQuaternion
+          ? child.getWorldQuaternion(new Quaternion()).toArray().map((value: number) => Number(value.toFixed(6))) as [number, number, number, number]
+          : null,
+        axis: toFixedArray(child.axis),
+      });
+      return;
+    }
+
+    if (child?.isMesh && child?.userData?.isVisualMesh) {
+      const linkName = resolveRuntimeLinkName(child);
+      if (!linkName) {
+        return;
+      }
+
+      visualMeshes.push({
+        link: linkName,
+        name: typeof child.name === 'string' ? child.name : '',
+        position: toFixedArray(child.getWorldPosition?.(new Vector3())),
+        quaternion: child.getWorldQuaternion
+          ? child.getWorldQuaternion(new Quaternion()).toArray().map((value: number) => Number(value.toFixed(6))) as [number, number, number, number]
+          : null,
+      });
+    }
+  });
+
+  return {
+    links: links.sort((a, b) => a.name.localeCompare(b.name)),
+    joints: joints.sort((a, b) => a.name.localeCompare(b.name)),
+    visualMeshes: visualMeshes.sort((a, b) => `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`)),
+  };
+}
+
 function getAvailableFilesSummary() {
   if (!appHandlers) {
     return [];
@@ -380,9 +461,25 @@ export function getRegressionSnapshot(): RegressionSnapshot {
 }
 
 export function installRegressionDebugApi(targetWindow: Window): void {
+  const waitForRuntimeSnapshot = async (fileName: string, timeoutMs = 3000): Promise<RegressionSnapshot> => {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const snapshot = getRegressionSnapshot();
+      if (snapshot.selectedFile?.name === fileName && snapshot.runtime) {
+        return snapshot;
+      }
+
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
+    }
+
+    return getRegressionSnapshot();
+  };
+
   targetWindow.__URDF_STUDIO_DEBUG__ = {
     getAvailableFiles: () => getAvailableFilesSummary(),
     getRegressionSnapshot: () => getRegressionSnapshot(),
+    getRuntimeSceneTransforms: () => summarizeRuntimeSceneTransforms(runtimeRobot),
     loadRobotByName: async (fileName: string) => {
       if (!appHandlers) {
         throw new Error('Regression app handlers are not registered.');
@@ -390,9 +487,12 @@ export function installRegressionDebugApi(targetWindow: Window): void {
 
       setRegressionRuntimeRobot(null);
       const result = await appHandlers.loadRobotByName(fileName);
+      const snapshot = result.loaded
+        ? await waitForRuntimeSnapshot(fileName)
+        : getRegressionSnapshot();
       return {
         loaded: result.loaded,
-        snapshot: getRegressionSnapshot(),
+        snapshot,
       };
     },
     setViewerFlags: (flags: RegressionViewerFlags) => {
@@ -402,6 +502,16 @@ export function installRegressionDebugApi(targetWindow: Window): void {
 
       viewerHandlers.setFlags(flags);
       return { ok: true };
+    },
+    setViewerJointAngles: (jointAngles: Record<string, number>) => {
+      if (!viewerHandlers) {
+        return { ok: false, changed: false };
+      }
+
+      const result = viewerHandlers.setJointAngles(jointAngles);
+      runtimeRobot?.updateMatrixWorld?.(true);
+      runtimeRevision += 1;
+      return { ok: true, changed: result.changed };
     },
   };
 }

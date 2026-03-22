@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   Box,
   RefreshCw,
+  Ruler,
   ScanSearch,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
@@ -12,6 +13,7 @@ interface ToolboxMenuProps {
   t: TranslationKeys;
   onClose: () => void;
   onOpenAI: () => void;
+  onOpenMeasureTool: () => void;
   onOpenCollisionOptimizer: () => void;
 }
 
@@ -90,6 +92,7 @@ export function ToolboxMenu({
   t,
   onClose,
   onOpenAI,
+  onOpenMeasureTool,
   onOpenCollisionOptimizer,
 }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
@@ -109,6 +112,11 @@ export function ToolboxMenu({
     onOpenCollisionOptimizer();
   }, [onClose, onOpenCollisionOptimizer]);
 
+  const openMeasureTool = React.useCallback(() => {
+    onClose();
+    onOpenMeasureTool();
+  }, [onClose, onOpenMeasureTool]);
+
   const items: ToolboxItem[] = [
     {
       key: 'ai',
@@ -116,6 +124,14 @@ export function ToolboxMenu({
       description: t.aiAssistantDesc,
       icon: <ScanSearch className="h-[18px] w-[18px]" />,
       onClick: openAI,
+      tone: 'primary',
+    },
+    {
+      key: 'measure',
+      title: t.measureMode,
+      description: t.measureToolboxDesc,
+      icon: <Ruler className="h-[18px] w-[18px]" />,
+      onClick: openMeasureTool,
       tone: 'primary',
     },
     {

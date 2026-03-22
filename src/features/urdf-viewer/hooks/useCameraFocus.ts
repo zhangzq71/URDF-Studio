@@ -1,7 +1,17 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { URDFViewerProps } from '../types';
+import {
+    resolveCameraAutoFrameScopeKey,
+    shouldAutoFrameRobotChange,
+} from '../utils/cameraAutoFrame';
+import {
+    computeCameraFrame,
+    computeVisibleBounds,
+    createCameraFrameStabilityKey,
+} from '../utils/cameraFrame';
+import { scheduleStabilizedAutoFrame } from '../utils/stabilizedAutoFrame';
 
 export interface UseCameraFocusOptions {
     robot: THREE.Object3D | null;
@@ -9,47 +19,7 @@ export interface UseCameraFocusOptions {
     selection?: URDFViewerProps['selection'];
     mode?: 'detail' | 'hardware';
     autoFrameOnRobotChange?: boolean;
-}
-
-function computeVisibleBounds(root: THREE.Object3D): THREE.Box3 | null {
-    const bounds = new THREE.Box3();
-    const meshBounds = new THREE.Box3();
-    let hasBounds = false;
-
-    root.updateWorldMatrix(true, true);
-
-    root.traverseVisible((child) => {
-        if (child.userData?.isHelper || child.userData?.isGizmo || child.name?.startsWith('__')) {
-            return;
-        }
-
-        const mesh = child as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.geometry) return;
-
-        if (!mesh.geometry.boundingBox) {
-            mesh.geometry.computeBoundingBox();
-        }
-
-        const geometryBounds = mesh.geometry.boundingBox;
-        if (!geometryBounds) return;
-
-        meshBounds.copy(geometryBounds).applyMatrix4(mesh.matrixWorld);
-        if (
-            !Number.isFinite(meshBounds.min.x) || !Number.isFinite(meshBounds.min.y) || !Number.isFinite(meshBounds.min.z)
-            || !Number.isFinite(meshBounds.max.x) || !Number.isFinite(meshBounds.max.y) || !Number.isFinite(meshBounds.max.z)
-        ) {
-            return;
-        }
-
-        if (!hasBounds) {
-            bounds.copy(meshBounds);
-            hasBounds = true;
-        } else {
-            bounds.union(meshBounds);
-        }
-    });
-
-    return hasBounds ? bounds : null;
+    autoFrameScopeKey?: string | null;
 }
 
 function collectLinkBodies(
@@ -111,66 +81,104 @@ export function useCameraFocus({
     selection,
     mode,
     autoFrameOnRobotChange = false,
+    autoFrameScopeKey,
 }: UseCameraFocusOptions): void {
     const { camera, controls, invalidate } = useThree();
+    const controlsWithTarget = controls as unknown as ({
+        target: THREE.Vector3;
+        update: () => void;
+        addEventListener?: (type: 'start', listener: () => void) => void;
+        removeEventListener?: (type: 'start', listener: () => void) => void;
+    } | null);
 
     const focusTargetRef = useRef<THREE.Vector3 | null>(null);
     const cameraTargetPosRef = useRef<THREE.Vector3 | null>(null);
     const isFocusingRef = useRef(false);
-    const autoFramedRobotIdRef = useRef<string | null>(null);
+    const autoFramedScopeKeyRef = useRef<string | null>(null);
+    const userInterruptedAutoFrameRef = useRef(false);
+    const currentAutoFrameScopeKey = robot
+        ? resolveCameraAutoFrameScopeKey(autoFrameScopeKey, robot.uuid)
+        : null;
+    const resolvedFocusObject = useMemo(() => {
+        if (!robot || !focusTarget) return null;
+        return resolveFocusObject(robot, focusTarget, selection);
+    }, [focusTarget, robot, selection]);
+
+    const cancelFocusAnimation = useCallback(() => {
+        isFocusingRef.current = false;
+        focusTargetRef.current = null;
+        cameraTargetPosRef.current = null;
+    }, []);
 
     const frameObject = useCallback((targetObj: THREE.Object3D, bounds?: THREE.Box3 | null) => {
-        if (!controls) return false;
+        if (!controlsWithTarget) return false;
 
-        targetObj.updateWorldMatrix(true, true);
-        const box = bounds ?? computeVisibleBounds(targetObj);
-        if (!box || box.isEmpty()) return false;
+        const frame = computeCameraFrame(targetObj, camera, controlsWithTarget.target, bounds);
+        if (!frame) return false;
 
-        const sphere = box.getBoundingSphere(new THREE.Sphere());
-        const radius = Number.isFinite(sphere.radius) && sphere.radius > 0 ? sphere.radius : 0.25;
-        const currentOrbitTarget = (controls as any).target as THREE.Vector3;
-        const direction = new THREE.Vector3().subVectors(camera.position, currentOrbitTarget);
-
-        if (direction.lengthSq() < 0.001) {
-            direction.set(1, 1, 1);
-        }
-        direction.normalize();
-
-        const verticalFov = THREE.MathUtils.degToRad(camera.fov);
-        const distance = Math.max(radius / Math.sin(Math.max(verticalFov * 0.5, 0.35)), 0.85);
-        const newPos = sphere.center.clone().add(direction.multiplyScalar(distance * 1.15));
-
-        focusTargetRef.current = sphere.center;
-        cameraTargetPosRef.current = newPos;
+        focusTargetRef.current = frame.focusTarget;
+        cameraTargetPosRef.current = frame.cameraPosition;
         isFocusingRef.current = true;
         invalidate();
         return true;
-    }, [camera, controls, invalidate]);
+    }, [camera, controlsWithTarget, invalidate]);
+
+    useEffect(() => {
+        if (!controlsWithTarget) return;
+
+        // When the user starts orbiting, camera animation must yield immediately.
+        const handleControlStart = () => {
+            userInterruptedAutoFrameRef.current = true;
+            cancelFocusAnimation();
+        };
+
+        controlsWithTarget.addEventListener?.('start', handleControlStart);
+
+        return () => {
+            controlsWithTarget.removeEventListener?.('start', handleControlStart);
+        };
+    }, [cancelFocusAnimation, controlsWithTarget]);
 
     // Handle focus target change
     useEffect(() => {
-        if (!focusTarget || !robot) return;
-
-        const targetObj = resolveFocusObject(robot, focusTarget, selection);
-        if (!targetObj) return;
-
-        frameObject(targetObj, new THREE.Box3().setFromObject(targetObj));
-    }, [focusTarget, frameObject, robot, selection?.id, selection?.subType, selection?.objectIndex]);
+        if (!focusTarget || !robot || !resolvedFocusObject) return;
+        frameObject(resolvedFocusObject, new THREE.Box3().setFromObject(resolvedFocusObject));
+    }, [focusTarget, frameObject, resolvedFocusObject, robot]);
 
     useEffect(() => {
-        if (!autoFrameOnRobotChange || !robot || focusTarget || mode === 'hardware') return;
-        if (autoFramedRobotIdRef.current === robot.uuid) return;
+        if (!robot) return;
+        if (!shouldAutoFrameRobotChange({
+            autoFrameOnRobotChange,
+            currentScopeKey: currentAutoFrameScopeKey,
+            lastAutoFramedScopeKey: autoFramedScopeKeyRef.current,
+            focusTarget: resolvedFocusObject ? focusTarget : null,
+            mode,
+        })) {
+            return;
+        }
 
-        autoFramedRobotIdRef.current = robot.uuid;
-        const timers = [80, 260].map((delay) => window.setTimeout(() => {
-            if (focusTarget || mode === 'hardware') return;
-            frameObject(robot);
-        }, delay));
+        autoFramedScopeKeyRef.current = currentAutoFrameScopeKey;
+        userInterruptedAutoFrameRef.current = false;
 
-        return () => {
-            timers.forEach((timer) => window.clearTimeout(timer));
-        };
-    }, [autoFrameOnRobotChange, focusTarget, frameObject, mode, robot]);
+        return scheduleStabilizedAutoFrame({
+            sample: () => {
+                const bounds = computeVisibleBounds(robot);
+                return {
+                    stabilityKey: createCameraFrameStabilityKey(bounds),
+                    state: bounds,
+                };
+            },
+            applyFrame: ({ state }) => {
+                if (resolvedFocusObject || mode === 'hardware' || userInterruptedAutoFrameRef.current) {
+                    return false;
+                }
+
+                return frameObject(robot, state);
+            },
+            isActive: () => !resolvedFocusObject && mode !== 'hardware' && !userInterruptedAutoFrameRef.current,
+            delays: [0, 96, 224],
+        });
+    }, [autoFrameOnRobotChange, currentAutoFrameScopeKey, focusTarget, frameObject, mode, resolvedFocusObject, robot]);
 
     // Animate camera focus
     useFrame((state, delta) => {
@@ -178,8 +186,8 @@ export function useCameraFocus({
         // Skip in hardware mode to improve performance
         if (mode === 'hardware') return;
 
-        if (isFocusingRef.current && focusTargetRef.current && cameraTargetPosRef.current && controls) {
-            const orbitControls = controls as any;
+        if (isFocusingRef.current && focusTargetRef.current && cameraTargetPosRef.current && controlsWithTarget) {
+            const orbitControls = controlsWithTarget;
             const step = Math.min(1, 5 * delta);
 
             orbitControls.target.lerp(focusTargetRef.current, step);

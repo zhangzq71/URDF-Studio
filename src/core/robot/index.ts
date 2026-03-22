@@ -59,6 +59,20 @@ export {
     resolveLinkKey,
 } from './identity';
 
+export {
+    computeLinkWorldMatrices,
+    getJointMotionPose,
+    getChildJointsByParentLink,
+    getParentJointByChildLink,
+} from './kinematics';
+
+export {
+    createRobotClosedLoopConstraint,
+    resolveClosedLoopJointMotionCompensation,
+    resolveClosedLoopJointAngleCompensation,
+    resolveClosedLoopJointOriginCompensation,
+} from './closedLoops';
+
 // Assembly Merger - Merge AssemblyState to RobotData
 export { mergeAssembly } from './assemblyMerger';
 

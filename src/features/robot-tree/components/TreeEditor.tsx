@@ -41,13 +41,14 @@ export interface TreeEditorProps {
   onDeleteLibraryFile?: (file: RobotFile) => void;
   onDeleteLibraryFolder?: (folderPath: string) => void;
   onDeleteAllLibraryFiles?: () => void;
-  onExportLibraryFile?: (file: RobotFile, format: 'urdf' | 'mjcf') => void | Promise<void>;
+  onExportLibraryFile?: (file: RobotFile) => void | Promise<void>;
   onCreateBridge?: () => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
   onPreviewFile?: (file: RobotFile) => void;
   previewFileName?: string;
+  isReadOnly?: boolean;
 }
 
 export const TreeEditor: React.FC<TreeEditorProps> = ({
@@ -82,6 +83,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onRenameComponent,
   onPreviewFile,
   previewFileName,
+  isReadOnly = false,
 }) => {
   const t = translations[lang];
   const sidebarTab = useUIStore((state) => state.sidebarTab);
@@ -104,7 +106,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   } = useTreeEditorLayout();
 
   const isProMode = sidebarTab === 'workspace';
-  const isAssemblyView = sidebarTab === 'workspace' && Boolean(assemblyState);
+  const isAssemblyView = !isReadOnly && sidebarTab === 'workspace' && Boolean(assemblyState);
 
   const handleSwitchToProMode = useCallback(() => {
     if (!assemblyState) {
@@ -127,7 +129,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
   const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
   const namePlaceholder = sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName;
-  const showStructureFilePath = Boolean(currentFileName && sidebarTab === 'structure');
+  const showStructureFilePath = Boolean(currentFileName && (sidebarTab === 'structure' || isReadOnly));
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
   const topLevelLibraryFoldersKey = useMemo(() => {
@@ -305,7 +307,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     event.stopPropagation();
 
     const supportsExport = file.format === 'urdf' || file.format === 'mjcf';
-    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 2 : 0);
+    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 1 : 0);
     if (actionCount === 0) return;
 
     const menuWidth = 180;
@@ -342,9 +344,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     setFileContextMenu(null);
   }, [fileContextMenu, onAddComponent]);
 
-  const handleExportLibraryFile = useCallback((format: 'urdf' | 'mjcf') => {
+  const handleExportLibraryFile = useCallback(() => {
     if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onExportLibraryFile) return;
-    void onExportLibraryFile(fileContextMenu.target.file, format);
+    void onExportLibraryFile(fileContextMenu.target.file);
     setFileContextMenu(null);
   }, [fileContextMenu, onExportLibraryFile]);
 
@@ -480,6 +482,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             onRenameComponent={onRenameComponent}
             onCreateBridge={onCreateBridge}
             onToggleComponentVisibility={toggleComponentVisibility}
+            isReadOnly={isReadOnly}
           />
 
           <div
@@ -492,18 +495,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       <FileTreeContextMenu
         position={fileContextMenu ? { x: fileContextMenu.x, y: fileContextMenu.y } : null}
         addLabel={t.addComponent}
-        exportAsURDFLabel={`${t.export} URDF`}
-        exportAsMJCFLabel={`${t.export} MJCF`}
+        exportLabel={t.export}
         deleteLabel={t.removeFromLibrary}
         onAdd={handleAddFileToAssembly}
-        onExportAsURDF={() => handleExportLibraryFile('urdf')}
-        onExportAsMJCF={() => handleExportLibraryFile('mjcf')}
+        onExport={handleExportLibraryFile}
         showAddAction={isProMode && fileContextMenu?.target.type === 'file'}
-        showExportAsURDFAction={
-          fileContextMenu?.target.type === 'file'
-          && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
-        }
-        showExportAsMJCFAction={
+        showExportAction={
           fileContextMenu?.target.type === 'file'
           && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
         }

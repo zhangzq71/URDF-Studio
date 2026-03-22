@@ -38,9 +38,13 @@ export function OBJRendererImpl({
       if (!(child as THREE.Mesh).isMesh) return;
 
       const mesh = child as THREE.Mesh;
-      const existingMaterial = mesh.material as THREE.MeshStandardMaterial | undefined;
+      const existingMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const hasTextureMap = existingMaterials.some((entry) => (
+        Boolean(entry && 'map' in entry && (entry as THREE.MeshStandardMaterial).map)
+      ));
+      const hasVertexColors = Boolean(mesh.geometry?.getAttribute?.('color'));
 
-      if (!existingMaterial || !existingMaterial.map) {
+      if (!hasTextureMap && !hasVertexColors) {
         meshes.push(mesh);
       }
     });

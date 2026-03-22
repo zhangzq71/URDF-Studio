@@ -1,6 +1,27 @@
 import { UrdfJoint, JointType } from '@/types';
 import { parseVec3, parseRPY, parseFloatSafe } from './utils';
 
+const AXIS_IMPORT_TYPES = new Set<JointType>([
+    JointType.REVOLUTE,
+    JointType.CONTINUOUS,
+    JointType.PRISMATIC,
+    JointType.PLANAR,
+]);
+
+const LIMIT_IMPORT_TYPES = new Set<JointType>([
+    JointType.REVOLUTE,
+    JointType.CONTINUOUS,
+    JointType.PRISMATIC,
+]);
+
+const parseLimitAttribute = (limitEl: Element | null, attribute: string): number => {
+    const rawValue = limitEl?.getAttribute(attribute);
+    if (rawValue === null || rawValue === undefined) {
+        return Number.NaN;
+    }
+    return parseFloatSafe(rawValue, Number.NaN);
+};
+
 export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
     const joints: Record<string, UrdfJoint> = {};
 
@@ -42,6 +63,7 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
         const limitEl = jointEl.querySelector("limit");
         const dynamicsEl = jointEl.querySelector("dynamics");
         const hardwareEl = jointEl.querySelector("hardware");
+        const mimicEl = jointEl.querySelector("mimic");
 
         let hardware = {
             armature: 0,
@@ -59,28 +81,47 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
             };
         }
 
+        const jointType = (jointEl.getAttribute("type") as JointType) || JointType.REVOLUTE;
+        const axis = AXIS_IMPORT_TYPES.has(jointType)
+            ? parseVec3(axisEl?.getAttribute("xyz") || "0 0 1")
+            : undefined;
+        const limit = LIMIT_IMPORT_TYPES.has(jointType) && limitEl
+            ? {
+                lower: parseLimitAttribute(limitEl, "lower"),
+                upper: parseLimitAttribute(limitEl, "upper"),
+                effort: parseLimitAttribute(limitEl, "effort"),
+                velocity: parseLimitAttribute(limitEl, "velocity"),
+            }
+            : undefined;
+
         joints[id] = {
             id,
             name: jointName,
-            type: (jointEl.getAttribute("type") as JointType) || JointType.REVOLUTE,
+            type: jointType,
             parentLinkId: parentEl?.getAttribute("link") || "",
             childLinkId: childEl?.getAttribute("link") || "",
             origin: {
                 xyz: parseVec3(originEl?.getAttribute("xyz")),
                 rpy: parseRPY(originEl?.getAttribute("rpy"))
             },
-            axis: parseVec3(axisEl?.getAttribute("xyz") || "0 0 1"),
-            limit: {
-                lower: parseFloatSafe(limitEl?.getAttribute("lower"), -1.57),
-                upper: parseFloatSafe(limitEl?.getAttribute("upper"), 1.57),
-                effort: parseFloatSafe(limitEl?.getAttribute("effort"), 100),
-                velocity: parseFloatSafe(limitEl?.getAttribute("velocity"), 10)
-            },
+            axis,
+            limit,
             dynamics: {
                 damping: parseFloatSafe(dynamicsEl?.getAttribute("damping"), 0),
                 friction: parseFloatSafe(dynamicsEl?.getAttribute("friction"), 0)
             },
-            hardware: hardware
+            hardware: hardware,
+            mimic: mimicEl?.getAttribute("joint")
+                ? {
+                    joint: mimicEl.getAttribute("joint") || '',
+                    ...(mimicEl.hasAttribute("multiplier")
+                        ? { multiplier: parseFloatSafe(mimicEl.getAttribute("multiplier"), 1) }
+                        : {}),
+                    ...(mimicEl.hasAttribute("offset")
+                        ? { offset: parseFloatSafe(mimicEl.getAttribute("offset"), 0) }
+                        : {}),
+                }
+                : undefined
         };
     });
 

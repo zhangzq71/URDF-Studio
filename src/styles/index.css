@@ -90,7 +90,7 @@ code, pre, kbd, samp {
 
 html:lang(en),
 html[data-lang='en'] {
-  --font-language-scale: 0.93;
+  --font-language-scale: 1;
 }
 
 html:lang(zh),

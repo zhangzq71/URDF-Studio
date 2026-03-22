@@ -30,7 +30,12 @@ export const parseURDF = (xmlString: string): RobotState | null => {
   const { globalMaterials, linkGazeboMaterials } = parseMaterials(robotEl);
 
   // Parse Links
-  const { links, extraJoints } = parseLinks(robotEl, globalMaterials, linkGazeboMaterials);
+  const { links, extraJoints, linkMaterials } = parseLinks(robotEl, globalMaterials, linkGazeboMaterials);
+
+  if (Object.keys(links).length === 0) {
+      console.error("Invalid URDF: No <link> tags found.");
+      return null;
+  }
 
   // Parse Joints
   const joints = parseJoints(robotEl);
@@ -50,12 +55,18 @@ export const parseURDF = (xmlString: string): RobotState | null => {
   }
 
   const finalRootId = rootId || Object.keys(links)[0] || '';
+  const materials = Object.fromEntries(
+      Object.entries(linkMaterials)
+          .filter(([, material]) => Boolean(material.color || material.texture))
+          .map(([linkId, material]) => [linkId, material]),
+  );
 
   return {
       name,
       links,
       joints,
       rootLinkId: finalRootId,
+      ...(Object.keys(materials).length > 0 ? { materials } : {}),
       selection: { type: 'link', id: finalRootId }
   };
 };

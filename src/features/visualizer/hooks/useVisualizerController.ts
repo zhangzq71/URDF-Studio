@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
+import { isSyntheticWorldRoot, resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
 import type { RobotState } from '@/types';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { useCollisionRefs } from './useCollisionRefs';
+import { useClosedLoopDragSync } from './useClosedLoopDragSync';
 import { useDraggablePanel } from './useDraggablePanel';
 import { useJointPivots } from './useJointPivots';
 import { useTransformControls } from './useTransformControls';
@@ -36,7 +37,14 @@ export const useVisualizerController = ({
 
   const state = useVisualizerState({ propShowVisual, propSetShowVisual });
   const panel = useDraggablePanel();
-  const { handleRegisterJointPivot, selectedJointPivot } = useJointPivots(
+  const {
+    jointPivots,
+    jointMotions,
+    handleRegisterJointPivot,
+    handleRegisterJointMotion,
+    selectedJointPivot,
+    selectedJointMotion,
+  } = useJointPivots(
     robot.selection.type,
     robot.selection.id ?? undefined
   );
@@ -47,12 +55,24 @@ export const useVisualizerController = ({
     robot.selection.objectIndex ?? 0,
   );
 
+  const closedLoopDragSync = useClosedLoopDragSync({
+    robot,
+    jointPivots,
+    jointMotions,
+  });
+
   const transformControlsState = useTransformControls(
     selectedJointPivot,
     mode === 'skeleton' ? 'universal' : state.transformMode,
     robot,
     onUpdate,
-    mode
+    mode,
+    {
+      onPreviewObjectChange: closedLoopDragSync.previewConstraintCompensation,
+      onPreviewRotateChange: closedLoopDragSync.previewConstraintMotionCompensation,
+      onResetPreview: closedLoopDragSync.resetConstraintPreview,
+      selectedRotateObject: selectedJointMotion,
+    }
   );
 
   const handleAutoFitGround = useCallback(() => {
@@ -100,6 +120,7 @@ export const useVisualizerController = ({
 
   useEffect(() => {
     if (mode !== 'skeleton') return;
+    if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
 
     const timers = [0, 80, 220].map((delay) =>
       window.setTimeout(handleAutoFitGround, delay)
@@ -128,8 +149,10 @@ export const useVisualizerController = ({
     state,
     panel,
     selectedJointPivot,
+    selectedJointMotion,
     selectedCollisionRef,
     handleRegisterJointPivot,
+    handleRegisterJointMotion,
     handleRegisterCollisionRef,
     transformControlsState,
     handleAutoFitGround,

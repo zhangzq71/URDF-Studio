@@ -1,4 +1,5 @@
 import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
+import { ViewModeBadge } from '@/shared/components/3d';
 import { MeasurePanel } from './MeasurePanel';
 import { ViewerOptionsPanel } from './ViewerOptionsPanel';
 import { ViewerToolbar } from './ViewerToolbar';
@@ -10,6 +11,7 @@ interface URDFViewerPanelsProps {
   lang: Language;
   mode: 'detail' | 'hardware';
   controller: URDFViewerController;
+  onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
   showToolbar?: boolean;
   setShowToolbar?: (show: boolean) => void;
   showOptionsPanel?: boolean;
@@ -22,6 +24,7 @@ export const URDFViewerPanels = ({
   lang,
   mode,
   controller,
+  onUpdate,
   showToolbar = true,
   setShowToolbar,
   showOptionsPanel = true,
@@ -42,11 +45,7 @@ export const URDFViewerPanels = ({
 
   return (
     <>
-      <div className="pointer-events-none absolute left-4 top-4 z-20 select-none">
-        <div className="rounded border border-border-black bg-panel-bg px-2 py-1 text-xs text-text-secondary shadow-sm">
-          {mode === 'hardware' ? t.hardware : t.detail} {t.modeLabel}
-        </div>
-      </div>
+      <ViewModeBadge label={`${mode === 'hardware' ? t.hardware : t.detail} ${t.modeLabel}`} />
 
       <ViewerOptionsPanel
         showOptionsPanel={showOptionsPanel}
@@ -98,7 +97,7 @@ export const URDFViewerPanels = ({
       <JointsPanel
         showJointControls={controller.showJointControls}
         showJointPanel={showJointPanel}
-        robot={controller.robot}
+        robot={controller.jointPanelRobot ?? controller.robot}
         jointPanelRef={controller.jointPanelRef}
         jointPanelPos={controller.jointPanelPos}
         defaultPosition={jointsDefaultPosition}
@@ -118,6 +117,7 @@ export const URDFViewerPanels = ({
         handleJointChangeCommit={controller.handleJointChangeCommit}
         onSelect={controller.handleSelectWrapper}
         onHover={controller.handleHoverWrapper}
+        onUpdate={onUpdate}
       />
 
       {showToolbar && (
@@ -137,6 +137,10 @@ export const URDFViewerPanels = ({
         onClose={controller.handleCloseMeasureTool}
         measureState={controller.measureState}
         setMeasureState={controller.setMeasureState}
+        measureAnchorMode={controller.measureAnchorMode}
+        setMeasureAnchorMode={controller.setMeasureAnchorMode}
+        showMeasureDecomposition={controller.showMeasureDecomposition}
+        setShowMeasureDecomposition={controller.setShowMeasureDecomposition}
         lang={lang}
       />
     </>

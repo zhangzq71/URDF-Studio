@@ -7,6 +7,11 @@ import { SHARED_MATERIALS } from '../constants';
 import { DEFAULT_RPY, DEFAULT_VEC3 } from './robotLoaderDiff';
 import type { UrdfJoint, UrdfVisual as LinkGeometry } from '@/types';
 
+function normalizeVisualColorOverride(color: string | undefined): string | undefined {
+  const trimmed = color?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export function applyOriginToGroup(group: THREE.Object3D, origin: LinkGeometry['origin'] | undefined): void {
   const xyz = origin?.xyz || DEFAULT_VEC3;
   const rpy = origin?.rpy || DEFAULT_RPY;
@@ -73,12 +78,17 @@ export function updateVisualMaterial(
   color: string | undefined,
   disposedMaterials: Set<THREE.Material>,
 ): void {
+  const colorOverride = normalizeVisualColorOverride(color);
+  if (!colorOverride) {
+    return;
+  }
+
   const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
 
   const update = (mat: THREE.Material): THREE.Material => {
     const map = (mat as any).map || null;
     const next = createMatteMaterial({
-      color: color || ((mat as any).color?.getHexString ? `#${(mat as any).color.getHexString()}` : '#808080'),
+      color: colorOverride,
       opacity: mat.opacity ?? 1,
       transparent: mat.transparent || (mat.opacity ?? 1) < 1,
       side: mat.side,
@@ -86,7 +96,7 @@ export function updateVisualMaterial(
       name: mat.name,
     });
     next.userData.urdfColorApplied = true;
-    next.userData.urdfColor = new THREE.Color(color || '#808080');
+    next.userData.urdfColor = new THREE.Color(colorOverride);
     return next;
   };
 
@@ -105,6 +115,7 @@ export function markVisualObject(
   color: string | undefined,
   showVisual: boolean,
 ): void {
+  const colorOverride = normalizeVisualColorOverride(color);
   const disposedMaterials = new Set<THREE.Material>();
 
   obj.traverse((child: any) => {
@@ -112,7 +123,9 @@ export function markVisualObject(
     child.userData.parentLinkName = linkName;
     child.userData.isVisualMesh = true;
     child.visible = showVisual;
-    updateVisualMaterial(child, color, disposedMaterials);
+    if (colorOverride) {
+      updateVisualMaterial(child, colorOverride, disposedMaterials);
+    }
   });
 }
 

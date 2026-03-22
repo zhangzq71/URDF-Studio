@@ -41,6 +41,10 @@ import {
   GEOMETRY_DIMENSION_STEP,
   MAX_GEOMETRY_DIMENSION_DECIMALS,
 } from '@/core/utils/numberPrecision';
+import {
+  buildColladaRootNormalizationHints,
+  shouldNormalizeColladaGeometry,
+} from '@/core/loaders/colladaRootNormalization';
 import { TransformFields } from './TransformFields';
 
 const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
@@ -49,6 +53,7 @@ const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
   pointCollectionLimit: 2048,
 } satisfies MeshAnalysisOptions;
 
+const GEOMETRY_EDITOR_COMPACT_ACTIONS_WIDTH = 300;
 const GEOMETRY_EDITOR_RELAXED_OVERLAP_ALLOWANCE_RATIO = 0.12;
 const GEOMETRY_EDITOR_RELAXED_FIT_VOLUME_WINDOW_RATIO = 1.75;
 
@@ -77,31 +82,14 @@ interface GeometryEditorProps {
 
 interface DimensionInputField {
   label: string;
+  max?: number;
+  min?: number;
   onChange: (value: number) => void;
   value: number;
 }
 
-const DimensionInputGrid = ({
-  columns,
-  fields,
-}: {
-  columns: 2 | 3;
-  fields: DimensionInputField[];
-}) => (
-  <div className={columns === 2 ? 'grid grid-cols-2 gap-1' : 'grid grid-cols-3 gap-1'}>
-    {fields.map((field) => (
-      <NumberInput
-        key={field.label}
-        label={field.label}
-        value={field.value}
-        onChange={field.onChange}
-        compact
-        step={GEOMETRY_DIMENSION_STEP}
-        precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
-      />
-    ))}
-  </div>
-);
+const POSITIVE_GEOMETRY_VALUE_MIN = GEOMETRY_DIMENSION_STEP;
+const stripAxisSuffix = (label: string) => label.replace(/\s*\([^)]*\)\s*$/, '');
 
 const InlineDimensionInputRow = ({
   fields,
@@ -114,9 +102,9 @@ const InlineDimensionInputRow = ({
   labelClassName?: string;
   labelWidthClassName?: string;
 }) => (
-  <div className={columns === 1 ? 'grid grid-cols-1 gap-1' : columns === 2 ? 'grid grid-cols-2 gap-1' : 'grid grid-cols-3 gap-1'}>
+  <div className={columns === 1 ? 'grid grid-cols-1 gap-1.5' : columns === 2 ? 'grid grid-cols-2 gap-1.5' : 'grid grid-cols-3 gap-1.5'}>
     {fields.map((field) => (
-      <div key={field.label} className="flex min-w-0 items-center gap-1">
+      <div key={field.label} className="flex min-w-0 items-center gap-1.5">
         <span className={`${labelClassName} ${labelWidthClassName}`}>
           {field.label}
         </span>
@@ -124,6 +112,8 @@ const InlineDimensionInputRow = ({
           <NumberInput
             value={field.value}
             onChange={field.onChange}
+            min={field.min}
+            max={field.max}
             compact
             step={GEOMETRY_DIMENSION_STEP}
             precision={MAX_GEOMETRY_DIMENSION_DECIMALS}
@@ -147,11 +137,13 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
+    const geometryActionRowRef = useRef<HTMLDivElement>(null);
     const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
     const meshAnalysisKeyRef = useRef<string | null>(null);
     const meshAnalysisCacheRef = useRef<Record<string, MeshAnalysis | null>>({});
     const meshAnalysisPromiseCacheRef = useRef<Record<string, Promise<MeshAnalysis | null>>>({});
     const typeChangeRequestRef = useRef(0);
+    const [geometryActionRowWidth, setGeometryActionRowWidth] = useState<number | null>(null);
     const setSelection = useSelectionStore((state) => state.setSelection);
     const pendingCollisionTransform = useCollisionTransformStore((state) => state.pendingCollisionTransform);
 
@@ -167,6 +159,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     const geomData = category === 'collision'
       ? (selectedCollisionGeometry?.geometry || data.collision)
       : data.visual;
+    const colladaRootNormalizationHints = useMemo(
+      () => buildColladaRootNormalizationHints(robot.links),
+      [robot.links],
+    );
     const meshFiles = useMemo(
       () => Object.keys(assets)
         .filter((filePath) => /\.(stl|obj|dae|gltf|glb)$/i.test(filePath))
@@ -174,6 +170,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       [assets],
     );
     const isGeometryVisible = geomData.visible !== false;
+    const isCompactGeometryActions = geometryActionRowWidth !== null && geometryActionRowWidth < GEOMETRY_EDITOR_COMPACT_ACTIONS_WIDTH;
     const materialSourceLabel = geomData.materialSource === 'inline'
       ? t.materialSourceInline
       : geomData.materialSource === 'named'
@@ -301,6 +298,33 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
         });
     };
 
+
+    useEffect(() => {
+      const node = geometryActionRowRef.current;
+
+      if (!node || typeof ResizeObserver === 'undefined') {
+        return;
+      }
+
+      const updateWidth = () => {
+        const nextWidth = Math.round(node.getBoundingClientRect().width);
+        setGeometryActionRowWidth((previousWidth) => (
+          previousWidth === nextWidth ? previousWidth : nextWidth
+        ));
+      };
+
+      updateWidth();
+
+      const observer = new ResizeObserver(() => {
+        updateWidth();
+      });
+
+      observer.observe(node);
+
+      return () => {
+        observer.disconnect();
+      };
+    }, []);
 
     useEffect(() => {
       const currentType = geomData.type || GeometryType.CYLINDER;
@@ -548,7 +572,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             )}
 
             <InlineInputGroup label={t.type} labelWidthClassName="w-11">
-                <div className="flex items-center gap-1">
+                <div ref={geometryActionRowRef} className="flex items-center gap-1">
                     <select
                         value={geomData.type || GeometryType.CYLINDER}
                         onChange={handleTypeChange}
@@ -565,19 +589,22 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         <button
                             type="button"
                             aria-pressed={isGeometryVisible}
+                            aria-label={isGeometryVisible ? t.hide : t.show}
                             title={isGeometryVisible ? t.hide : t.show}
                             onClick={() => update({ visible: !isGeometryVisible })}
-                            className={`inline-flex h-6 shrink-0 items-center justify-center gap-1 rounded-md border px-1.5 text-[10px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-system-blue/25 ${
+                            className={`inline-flex h-6 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-system-blue/25 ${
+                                isCompactGeometryActions ? 'w-6 px-0' : 'gap-1 px-1.5'
+                            } ${
                                 isGeometryVisible
                                     ? 'border-system-blue/25 bg-system-blue/10 text-system-blue'
                                     : 'border-border-strong bg-panel-bg text-text-tertiary hover:bg-element-hover hover:text-text-primary'
                             }`}
                         >
                             {isGeometryVisible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-                            <span>{t.visible}</span>
+                            <span className={isCompactGeometryActions ? 'sr-only' : ''}>{t.visible}</span>
                         </button>
                     )}
-                    {geomData.type === GeometryType.CYLINDER && (
+                    {geomData.type === GeometryType.CYLINDER && !isCompactGeometryActions && (
                         <button
                             onClick={handleAutoAlign}
                             className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
@@ -680,7 +707,16 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
                         {previewMeshPath && (
                             <div className="flex flex-col gap-1 rounded-md border border-border-black/60 bg-element-bg/70 p-1">
-                                <MeshPreview meshPath={previewMeshPath} assets={assets} notFoundText={t.meshNotFound} />
+                                <MeshPreview
+                                    meshPath={previewMeshPath}
+                                    assets={assets}
+                                    normalizeColladaRoot={shouldNormalizeColladaGeometry(
+                                      previewMeshPath,
+                                      geomData.origin,
+                                      colladaRootNormalizationHints,
+                                    )}
+                                    notFoundText={t.meshNotFound}
+                                />
                                 <div className="flex items-center gap-1">
                                     <button
                                         onClick={handleApplyMesh}
@@ -737,7 +773,6 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, z: v } }),
                             },
                         ]}
-                        labelWidthClassName="w-2 text-center"
                     />
                 </InputGroup>
             )}
@@ -745,25 +780,30 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             {/* Box dimensions: Width (X), Depth (Y), Height (Z) */}
             {geomData.type === GeometryType.BOX && (
                 <InputGroup label={t.dimensions}>
-                    <DimensionInputGrid
+                    <InlineDimensionInputRow
                         columns={3}
                         fields={[
                             {
-                                label: t.width || 'Width (X)',
+                                label: stripAxisSuffix(t.width || 'Width'),
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.x || 0.1,
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v } }),
                             },
                             {
-                                label: t.depth || 'Depth (Y)',
-                                value: geomData.dimensions?.y || 0.1,
-                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
-                            },
-                            {
-                                label: t.height || 'Height (Z)',
+                                label: stripAxisSuffix(t.height || 'Height'),
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.z || 0.1,
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, z: v } }),
                             },
+                            {
+                                label: stripAxisSuffix(t.depth || 'Depth'),
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
+                                value: geomData.dimensions?.y || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
                         ]}
+                        labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
+                        labelWidthClassName="whitespace-nowrap"
                     />
                 </InputGroup>
             )}
@@ -776,6 +816,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         fields={[
                             {
                                 label: t.radius || 'Radius',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.x || 0.1,
                                 onChange: (v) => update({ dimensions: { x: v, y: v, z: v } }),
                             },
@@ -794,11 +835,13 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         fields={[
                             {
                                 label: t.radius || 'Radius',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.x || 0.05,
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } }),
                             },
                             {
                                 label: t.height || 'Height',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.y || 0.5,
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
                             },
@@ -817,11 +860,13 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         fields={[
                             {
                                 label: t.radius || 'Radius',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.x || 0.05,
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v, z: v } }),
                             },
                             {
                                 label: t.totalLength || 'Total Length',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.y || 0.5,
                                 onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
                             },
@@ -838,6 +883,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         lang={lang}
                         positionValue={displayedOrigin?.xyz || { x: 0, y: 0, z: 0 }}
                         rotationValue={displayedOrigin?.rpy || { r: 0, p: 0, y: 0 }}
+                        compact={false}
                         onPositionChange={(v) => update({
                             origin: { ...(displayedOrigin || { rpy: { r: 0, p: 0, y: 0 } }), xyz: v as { x: number; y: number; z: number } }
                         })}
@@ -849,22 +895,27 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             )}
 
             {category === 'visual' && geomData.type !== GeometryType.NONE && (
-                <InputGroup label={t.color}>
-                    <div className="flex gap-2">
-                        <input
-                            type="color"
-                            value={geomData.color || '#ffffff'}
-                            onChange={(e) => update({ color: e.target.value })}
-                            className="h-6 w-6 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0"
-                        />
+                <InlineInputGroup label={t.color} labelWidthClassName="w-11">
+                    <div className="flex items-center gap-2">
                         <input
                             type="text"
                             value={geomData.color || '#ffffff'}
                             onChange={(e) => update({ color: e.target.value })}
-                            className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1`}
+                            className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1 font-mono uppercase tracking-[0.04em]`}
+                            spellCheck={false}
+                        />
+                        <span className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-auto whitespace-nowrap`}>
+                            HEX
+                        </span>
+                        <input
+                            type="color"
+                            value={geomData.color || '#ffffff'}
+                            onChange={(e) => update({ color: e.target.value })}
+                            aria-label={t.color}
+                            className="h-7 w-8 shrink-0 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_28%,transparent)]"
                         />
                     </div>
-                </InputGroup>
+                </InlineInputGroup>
             )}
 
             {category === 'collision' && geomData.type !== GeometryType.NONE && (

@@ -41,6 +41,7 @@ export const ContextMenuItem: React.FC<ContextMenuItemProps> = ({
   type = 'button',
   ...props
 }) => {
+  type IconElementProps = { className?: string };
   const itemClasses =
     tone === 'danger'
       ? 'text-danger hover:bg-danger-soft dark:hover:bg-danger-soft hover:text-danger-hover dark:hover:text-danger'
@@ -51,9 +52,9 @@ export const ContextMenuItem: React.FC<ContextMenuItemProps> = ({
       ? 'transition-colors group/menu-item:text-danger-hover dark:group/menu-item:text-danger'
       : 'text-system-blue transition-colors group/menu-item:text-system-blue-hover');
 
-  const renderedIcon = isValidElement(icon)
+  const renderedIcon = isValidElement<IconElementProps>(icon)
     ? cloneElement(icon, {
-        className: `${mergedIconClassName} ${(icon.props as { className?: string }).className ?? ''}`.trim(),
+        className: `${mergedIconClassName} ${icon.props.className ?? ''}`.trim(),
       })
     : icon;
 

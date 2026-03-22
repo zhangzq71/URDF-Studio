@@ -20,11 +20,12 @@ interface HeaderProps {
   onExportProject: () => void;
   // Modal actions
   onOpenAI: () => void;
+  onOpenMeasureTool: () => void;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: React.MouseEventHandler;
+  onOpenUser?: () => void;
   quickAction?: HeaderQuickAction;
   // Snapshot
   onSnapshot: () => void;
@@ -45,6 +46,7 @@ export function Header({
   onOpenExport,
   onExportProject,
   onOpenAI,
+  onOpenMeasureTool,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onOpenSettings,
@@ -95,6 +97,7 @@ export function Header({
           onOpenExport={onOpenExport}
           onExportProject={onExportProject}
           onOpenAI={onOpenAI}
+          onOpenMeasureTool={onOpenMeasureTool}
           onOpenCollisionOptimizer={onOpenCollisionOptimizer}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}

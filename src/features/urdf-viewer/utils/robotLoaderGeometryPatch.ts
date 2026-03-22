@@ -1,7 +1,11 @@
 import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { URDFCollider, URDFVisual } from '@/core/parsers/urdf/loader';
-import { createLoadingManager, createMeshLoader } from '@/core/loaders';
+import {
+  createLoadingManager,
+  createMeshLoader,
+  type ColladaRootNormalizationHints,
+} from '@/core/loaders';
 import { getCollisionGeometryEntries } from '@/core/robot';
 import { GeometryType } from '@/types';
 import type { UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
@@ -34,6 +38,7 @@ interface PatchCategoryOptions {
   geometry: LinkGeometry;
   assets: Record<string, string>;
   sourceFileDir?: string;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   showVisual: boolean;
   showCollision: boolean;
   linkMeshMapRef: RefObject<Map<string, THREE.Mesh[]>>;
@@ -50,6 +55,7 @@ function patchGeometryCategory({
   geometry,
   assets,
   sourceFileDir,
+  colladaRootNormalizationHints,
   showVisual,
   showCollision,
   linkMeshMapRef,
@@ -141,7 +147,9 @@ function patchGeometryCategory({
 
     const urdfDir = sourceFileDir ?? '';
     const manager = createLoadingManager(assets, urdfDir);
-    const meshLoader = createMeshLoader(assets, manager, urdfDir);
+    const meshLoader = createMeshLoader(assets, manager, urdfDir, {
+      colladaRootNormalizationHints,
+    });
 
     meshLoader(geometry.meshPath, manager, (obj, err) => {
       if (!obj) return;
@@ -154,9 +162,6 @@ function patchGeometryCategory({
       if (err) {
         console.error('[URDFViewer] Failed to patch mesh geometry:', err);
       }
-
-      obj.position.set(0, 0, 0);
-      obj.quaternion.identity();
 
       if (isCollision) {
         markCollisionObject(obj, linkName);
@@ -190,6 +195,7 @@ function patchCollisionEntriesInPlace({
   nextLinkData,
   assets,
   sourceFileDir,
+  colladaRootNormalizationHints,
   showVisual,
   showCollision,
   linkMeshMapRef,
@@ -203,6 +209,7 @@ function patchCollisionEntriesInPlace({
   nextLinkData: UrdfLink;
   assets: Record<string, string>;
   sourceFileDir?: string;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   showVisual: boolean;
   showCollision: boolean;
   linkMeshMapRef: RefObject<Map<string, THREE.Mesh[]>>;
@@ -258,6 +265,7 @@ function patchCollisionEntriesInPlace({
       geometry: nextEntry.geometry,
       assets,
       sourceFileDir,
+      colladaRootNormalizationHints,
       showVisual,
       showCollision,
       linkMeshMapRef,
@@ -287,6 +295,7 @@ function patchCollisionEntriesInPlace({
         geometry: entry.geometry,
         assets,
         sourceFileDir,
+        colladaRootNormalizationHints,
         showVisual,
         showCollision,
         linkMeshMapRef,
@@ -457,6 +466,7 @@ interface ApplyGeometryPatchOptions {
   patch: GeometryPatchCandidate;
   assets: Record<string, string>;
   sourceFileDir?: string;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   showVisual: boolean;
   showCollision: boolean;
   linkMeshMapRef: RefObject<Map<string, THREE.Mesh[]>>;
@@ -469,6 +479,7 @@ export function applyGeometryPatchInPlace({
   patch,
   assets,
   sourceFileDir,
+  colladaRootNormalizationHints,
   showVisual,
   showCollision,
   linkMeshMapRef,
@@ -498,6 +509,7 @@ export function applyGeometryPatchInPlace({
         geometry: patch.linkData.visual,
         assets,
         sourceFileDir,
+        colladaRootNormalizationHints,
         showVisual,
         showCollision,
         linkMeshMapRef,
@@ -516,6 +528,7 @@ export function applyGeometryPatchInPlace({
       nextLinkData: patch.linkData,
       assets,
       sourceFileDir,
+      colladaRootNormalizationHints,
       showVisual,
       showCollision,
       linkMeshMapRef,
@@ -543,6 +556,7 @@ export function applyGeometryPatchInPlace({
           geometry: patch.linkData.collision,
           assets,
           sourceFileDir,
+          colladaRootNormalizationHints,
           showVisual,
           showCollision,
           linkMeshMapRef,

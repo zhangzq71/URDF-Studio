@@ -3,6 +3,8 @@ import { useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { useLoadingManager } from '../meshLoadingManager';
+import { cloneColladaScenePreservingRootTransform } from './colladaScene';
+import { normalizeColladaUpAxis } from '@/core/loaders/colladaUpAxis';
 
 interface ScaleProps {
   x: number;
@@ -15,41 +17,29 @@ interface DAERendererImplProps {
   material: THREE.Material;
   assets: Record<string, string>;
   assetBaseDir?: string;
+  normalizeRoot?: boolean;
   scale?: ScaleProps;
 }
 
-export function DAERendererImpl({ url, material, assets, assetBaseDir, scale }: DAERendererImplProps) {
+export function DAERendererImpl({
+  url,
+  material,
+  assets,
+  assetBaseDir,
+  normalizeRoot = false,
+  scale,
+}: DAERendererImplProps) {
   const manager = useLoadingManager(assets, assetBaseDir);
-  const dae = useLoader(ColladaLoader, url, (loader) => {
+  const colladaText = useLoader(THREE.FileLoader, url, (loader) => {
     loader.manager = manager;
+    loader.setResponseType('text');
   });
   const { clone, overrideMeshes } = useMemo(() => {
-    const nextClone = dae.scene.clone();
-    const meshes: THREE.Mesh[] = [];
-
-    nextClone.rotation.set(0, 0, 0);
-    nextClone.updateMatrix();
-
-    nextClone.traverse((child: THREE.Object3D) => {
-      if (!(child as THREE.Mesh).isMesh) return;
-
-      const mesh = child as THREE.Mesh;
-      const originalMaterial = mesh.material;
-
-      const hasTexture = Array.isArray(originalMaterial)
-        ? originalMaterial.some((mat) => Boolean((mat as THREE.MeshStandardMaterial).map || (mat as THREE.MeshStandardMaterial).emissiveMap))
-        : Boolean(
-            (originalMaterial as THREE.MeshStandardMaterial | undefined)?.map ||
-            (originalMaterial as THREE.MeshStandardMaterial | undefined)?.emissiveMap
-          );
-
-      if (!hasTexture) {
-        meshes.push(mesh);
-      }
-    });
-
-    return { clone: nextClone, overrideMeshes: meshes };
-  }, [dae]);
+    const loader = new ColladaLoader(manager);
+    const colladaContent = normalizeRoot ? normalizeColladaUpAxis(colladaText).content : colladaText;
+    const dae = loader.parse(colladaContent, THREE.LoaderUtils.extractUrlBase(url));
+    return cloneColladaScenePreservingRootTransform(dae.scene, normalizeRoot);
+  }, [colladaText, manager, normalizeRoot, url]);
 
   useLayoutEffect(() => {
     overrideMeshes.forEach((mesh) => {

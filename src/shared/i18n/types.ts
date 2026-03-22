@@ -5,61 +5,6 @@
 export type Language = 'en' | 'zh';
 
 export interface TranslationKeys {
-  // URDF Gallery
-  urdfGallery: string;
-  gallery: string;
-  searchModels: string;
-  featuredModels: string;
-  findNextProject: string;
-  importNow: string;
-  noModelsFound: string;
-  changeSearchKeywords: string;
-  categories: string;
-  allModels: string;
-  quadruped: string;
-  manipulators: string;
-  humanoids: string;
-  mobileBases: string;
-  unitreeTech: string;
-  fullRobots: string;
-  endEffectors: string;
-  sensors: string;
-  articulatedObjects: string;
-  dataAssets: string;
-  tags: string;
-  galleryDetails: string;
-  galleryBackToList: string;
-  galleryOverview: string;
-  gallerySpecs: string;
-  galleryResources: string;
-  galleryHighlights: string;
-  galleryBestFor: string;
-  galleryRecommendedModes: string;
-  galleryImportToWorkspace: string;
-  galleryBrowseMore: string;
-  galleryModelInfo: string;
-  galleryModelCategory: string;
-  galleryPublisher: string;
-  galleryUpdatedAt: string;
-  gallerySource: string;
-  galleryLocalLibrary: string;
-  galleryRemoteRepository: string;
-  galleryPackagePath: string;
-  galleryPreferredEntry: string;
-  galleryEntryAutoDetect: string;
-  galleryAssetBundle: string;
-  galleryModelResources: string;
-  galleryRelatedModels: string;
-  fetchingResources: string;
-  minimize: string;
-  maximize: string;
-  restore: string;
-  downloadComplete: string;
-  loadFromLocal: string;
-  clickImport: string;
-  loadFailed: string;
-  manifestNotFound: string;
-
   // Header
   appName: string;
   skeleton: string;
@@ -135,6 +80,7 @@ export interface TranslationKeys {
   // Property Editor
   properties: string;
   selectLinkOrJoint: string;
+  previewReadOnlyHint: string;
   name: string;
   visualGeometry: string;
   collisionGeometry: string;
@@ -246,6 +192,8 @@ export interface TranslationKeys {
   instructionMac: string;
   instructionLinux: string;
   instructionOther: string;
+  hideUsageGuide: string;
+  showUsageGuide: string;
   clickToSelect: string;
   enableLabels: string;
   clickLabels: string;
@@ -280,6 +228,9 @@ export interface TranslationKeys {
   checking: string;
   inspectionCompleted: string;
   generatingReport: string;
+  minimize: string;
+  maximize: string;
+  restore: string;
 
   // Additional UI
   collapseSidebar: string;
@@ -292,6 +243,7 @@ export interface TranslationKeys {
   joints: string;
   viewOptions: string;
   loadingRobot: string;
+  loadingRobotPreparing: string;
   enterRobotName: string;
   enterMotorType: string;
   modeLabel: string;
@@ -315,6 +267,7 @@ export interface TranslationKeys {
 
   // Toolbox Descriptions
   aiAssistantDesc: string;
+  measureToolboxDesc: string;
   motionTrackingDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
@@ -350,6 +303,8 @@ export interface TranslationKeys {
   copied: string;
   fileBrowser: string;
   dropOrImport: string;
+  dropFilesToImport: string;
+  dropFilesToImportHint: string;
   simpleMode: string;
   proMode: string;
   structureTree: string;
@@ -425,6 +380,9 @@ export interface TranslationKeys {
   deletedAllLibraryFiles: string;
   onlyUrdfMjcfExport: string;
   exportFailedParse: string;
+  usdExportRequiresLoadedStage: string;
+  usdExportUnavailable: string;
+  usdLoadInProgress: string;
   exportedWithMissingMeshes: string;
   exportedSuccess: string;
   generatingSnapshot: string;
@@ -450,7 +408,29 @@ export interface TranslationKeys {
   measureInstruction2: string;
   measureInstruction3: string;
   measuredCount: string;
+  measureSlotFirst: string;
+  measureSlotSecond: string;
+  measureSlotEmpty: string;
+  measureSlotSelecting: string;
+  measureSlotSelected: string;
+  measureClearSelection: string;
+  measureAnchorMode: string;
+  measureAnchorFrame: string;
+  measureAnchorCenterOfMass: string;
+  measureAnchorGeometry: string;
+  measureGroups: string;
+  measureGroupLabel: string;
+  measureAddGroup: string;
+  measureRemoveGroup: string;
+  measureShowDecomposition: string;
+  measureResult: string;
+  measureTotalDistance: string;
+  measureDeltaX: string;
+  measureDeltaY: string;
+  measureDeltaZ: string;
+  measureNoMeasurement: string;
   undo: string;
+  redo: string;
   clearAll: string;
 
   // Performance
@@ -465,6 +445,8 @@ export interface TranslationKeys {
   exportFormatURDF: string;
   exportFormatUSD: string;
   exportComingSoon: string;
+  exportCompressMeshes: string;
+  exportCompressMeshesDesc: string;
   simulatorPreset: string;
   presetCustom: string;
   exportMeshdir: string;
@@ -488,15 +470,36 @@ export interface TranslationKeys {
   exportOutputSection: string;
   exportOptionsSection: string;
   exportDoExport: string;
+  exportProgressTitle: string;
+  exportProgressKeepWindowOpen: string;
+  exportProgressStepCounter: string;
+  exportProgressPreparing: string;
+  exportProgressPreparingDetail: string;
+  exportProgressGeneratingFiles: string;
+  exportProgressGeneratingUrdfDetail: string;
+  exportProgressGeneratingMjcfDetail: string;
+  exportProgressGeneratingXacroDetail: string;
+  exportProgressPreparingSimulationMeshes: string;
+  exportProgressPreparingSimulationMeshesDetail: string;
+  exportProgressCollectingAssets: string;
+  exportProgressCollectingAssetsPreparingDetail: string;
+  exportProgressCollectingAssetsDetail: string;
+  exportProgressBuildingUsdScene: string;
+  exportProgressUsdScenePreparingDetail: string;
+  exportProgressUsdSceneDetail: string;
+  exportProgressConvertingUsdLayers: string;
+  exportProgressConvertingUsdLayersPreparingDetail: string;
+  exportProgressConvertingUsdLayersDetail: string;
+  exportProgressPackaging: string;
+  exportProgressPackagingDetail: string;
+  exportProgressPackagingDetailFile: string;
+  exportProgressArchiveFallbackFile: string;
   
   // Feature Convergence
   modelOpacity: string;
   coordinateAxes: string;
   alwaysOnTop: string;
   baseLabelSuffix: string;
-  galleryFileSystemAccessUnsupported: string;
-  galleryGithubApiRequestFailed: string;
-  galleryDownloadFailed: string;
   aiNoValidResponse: string;
   aiNoServiceResponseRetry: string;
   aiGenerationFailed: string;
@@ -561,10 +564,19 @@ export interface TranslationKeys {
   projectImportMissingProjectJson: string;
   stlMeshQuality: string;
   stlMeshQualityDesc: string;
+  usdMeshQuality: string;
+  usdMeshQualityDesc: string;
   stlQualityOriginal: string;
   stlQualityLight: string;
   stlQualityMedium: string;
   stlQualityHigh: string;
+  compressionLevelAggressive: string;
+  compressionLevelCompact: string;
+  compressionLevelBalanced: string;
+  compressionLevelDetailed: string;
+  compressionLevelPreserve: string;
+  compressionSmallerFile: string;
+  compressionMoreDetail: string;
   rosVersion: string;
   hardwareInterface: string;
   hardwareInterfaceEffort: string;

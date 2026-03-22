@@ -4,3 +4,5 @@ export * from './urdfMaterials';
 export * from './visualizationFactories';
 export * from './robotPositioning';
 export * from './jointTypes';
+export * from './viewerRobotData';
+export * from './usdStageExport';

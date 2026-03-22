@@ -10,18 +10,18 @@ import type {
 import { buildCollisionOptimizationSkeletonProjection } from '../utils/collisionOptimization';
 import { GeometryType } from '@/types';
 
-const GRAPH_PADDING = 32;
-const COMPONENT_GAP = 168;
-const CARD_WIDTH = 168;
-const CARD_HEADER_HEIGHT = 26;
-const CARD_PADDING = 6;
-const ROW_HEIGHT = 30;
-const EMPTY_CARD_HEIGHT = 34;
+const GRAPH_PADDING = 20;
+const COMPONENT_GAP = 120;
+const CARD_WIDTH = 132;
+const CARD_HEADER_HEIGHT = 22;
+const CARD_PADDING = 4;
+const ROW_HEIGHT = 22;
+const EMPTY_CARD_HEIGHT = 24;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 6;
-const CALLOUT_COLUMN_GAP = 84;
-const CALLOUT_STACK_GAP = 12;
-const CALLOUT_DRAG_ALLOWANCE = 64;
+const CALLOUT_COLUMN_GAP = 40;
+const CALLOUT_STACK_GAP = 8;
+const CALLOUT_DRAG_ALLOWANCE = 40;
 
 type CalloutSide = 'left' | 'right';
 
@@ -233,15 +233,6 @@ function compareTargets(left: CollisionTargetRef, right: CollisionTargetRef): nu
     || (left.componentName ?? '').localeCompare(right.componentName ?? '');
 }
 
-function getDisplayTypeLabel(
-  target: CollisionTargetRef,
-  _labels: Pick<CollisionOptimizationPlanarGraphLabels, 'primary' | 'collisionIndex'>,
-): string {
-  return target.isPrimary
-    ? 'P'
-    : `#${target.sequenceIndex + 1}`;
-}
-
 function buildCurvePath(from: GraphPoint, to: GraphPoint): string {
   const horizontalOffset = Math.max(48, Math.abs(to.x - from.x) * 0.35);
   return `M ${from.x} ${from.y} C ${from.x + horizontalOffset} ${from.y}, ${to.x - horizontalOffset} ${to.y}, ${to.x} ${to.y}`;
@@ -281,8 +272,8 @@ function collectSourceLinkMetas(source: CollisionOptimizationSource): SourceLink
 
 function getFallbackAnchor(index: number): GraphPoint {
   return {
-    x: GRAPH_PADDING + index * 160,
-    y: GRAPH_PADDING + (index % 5) * 96,
+    x: GRAPH_PADDING + index * 132,
+    y: GRAPH_PADDING + (index % 5) * 72,
   };
 }
 
@@ -331,29 +322,33 @@ function expandBounds(bounds: GraphBounds, marginX: number, marginY: number): Gr
   };
 }
 
-function getFocusBounds(model: Pick<GraphModel, 'skeletonBounds'>): GraphBounds {
-  const skeletonWidth = Math.max(model.skeletonBounds.maxX - model.skeletonBounds.minX, 120);
-  const skeletonHeight = Math.max(model.skeletonBounds.maxY - model.skeletonBounds.minY, 140);
+function getFocusBounds(model: Pick<GraphModel, 'cards' | 'skeletonBounds'>): GraphBounds {
+  const focusPoints: GraphPoint[] = [
+    { x: model.skeletonBounds.minX, y: model.skeletonBounds.minY },
+    { x: model.skeletonBounds.maxX, y: model.skeletonBounds.maxY },
+  ];
 
-  return expandBounds(
-    model.skeletonBounds,
-    Math.max(CARD_WIDTH * 0.72, skeletonWidth * 0.22),
-    Math.max(88, skeletonHeight * 0.28),
-  );
+  model.cards.forEach((card) => {
+    focusPoints.push(card.anchor);
+    focusPoints.push({ x: card.x, y: card.y });
+    focusPoints.push({ x: card.x + card.width, y: card.y + card.height });
+  });
+
+  return expandBounds(computeBounds(focusPoints), 20, 20);
 }
 
 function createViewportForBounds(
   container: HTMLDivElement,
   bounds: GraphBounds,
 ): ViewportState {
-  const availableWidth = Math.max(container.clientWidth - 56, 320);
-  const availableHeight = Math.max(container.clientHeight - 56, 240);
+  const availableWidth = Math.max(container.clientWidth - 40, 320);
+  const availableHeight = Math.max(container.clientHeight - 40, 240);
   const boundsWidth = Math.max(bounds.maxX - bounds.minX, 160);
   const boundsHeight = Math.max(bounds.maxY - bounds.minY, 160);
   const scale = clamp(
     Math.min(availableWidth / boundsWidth, availableHeight / boundsHeight),
-    0.5,
-    1.85,
+    0.45,
+    1.35,
   );
 
   return {
@@ -424,7 +419,7 @@ function buildGraphModel(
     return distance > 1e-6 ? [distance] : [];
   });
   const typicalEdgeDistance = Math.max(median(edgeDistances), 1e-3);
-  const pixelsPerUnit = clamp(96 / typicalEdgeDistance, 180, 4800);
+  const pixelsPerUnit = clamp(80 / typicalEdgeDistance, 72, 2400);
 
   projectedNodes.forEach((node) => {
     scaledProjectedPoints.set(node.linkId, {
@@ -747,51 +742,24 @@ function resolveGraphModel(
   };
 }
 
-function getPairSummary(
-  target: CollisionTargetRef,
-  pairByPrimaryTargetId: Map<string, GraphPairEdge>,
-  pairBySecondaryTargetId: Map<string, GraphPairEdge>,
-  candidateByTargetId: Map<string, CollisionOptimizationCandidate>,
-  labels: Pick<CollisionOptimizationPlanarGraphLabels, 'autoPair' | 'manualPair' | 'mergeTo' | 'mergedInto'>,
+function getCompactGeometryLabel(
+  type: GeometryType | null | undefined,
   formatGeometryType: (type: GeometryType | null | undefined) => string,
-): { tone: 'manual' | 'auto' | 'single'; label: string } | null {
-  const outgoingPair = pairByPrimaryTargetId.get(target.id);
-  if (outgoingPair) {
-    return {
-      tone: outgoingPair.manual ? 'manual' : 'auto',
-      label: `${outgoingPair.manual ? labels.manualPair : labels.autoPair} -> ${formatGeometryType(outgoingPair.candidate.suggestedType)}`,
-    };
-  }
-
-  const incomingPair = pairBySecondaryTargetId.get(target.id);
-  if (incomingPair) {
-    return {
-      tone: incomingPair.manual ? 'manual' : 'auto',
-      label: `${incomingPair.manual ? labels.manualPair : labels.autoPair} · ${labels.mergedInto} ${incomingPair.candidate.target.linkName}`,
-    };
-  }
-
-  const candidate = candidateByTargetId.get(target.id);
-  if (!candidate) {
-    return null;
-  }
-
-  return {
-    tone: 'single',
-    label: candidate.suggestedType ? `-> ${formatGeometryType(candidate.suggestedType)}` : '—',
-  };
+): string {
+  return formatGeometryType(type).replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
 
-function getSummaryClass(tone: 'manual' | 'auto' | 'single'): string {
-  switch (tone) {
-    case 'manual':
-      return 'border-system-blue/25 bg-system-blue/10 text-system-blue';
-    case 'auto':
-      return 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-    case 'single':
-    default:
-      return 'border-border-black bg-panel-bg text-text-secondary';
+function getCompactTargetLabel(
+  target: CollisionTargetRef,
+  candidate: CollisionOptimizationCandidate | undefined,
+  formatGeometryType: (type: GeometryType | null | undefined) => string,
+): string {
+  const currentLabel = getCompactGeometryLabel(target.geometry.type, formatGeometryType);
+  if (!candidate?.suggestedType || candidate.target.id !== target.id || candidate.suggestedType === target.geometry.type) {
+    return currentLabel;
   }
+
+  return `${currentLabel} → ${getCompactGeometryLabel(candidate.suggestedType, formatGeometryType)}`;
 }
 
 function getCardTetherPoint(card: GraphLinkCard): GraphPoint {
@@ -876,25 +844,6 @@ export function CollisionOptimizationPlanarGraph({
     });
     return map;
   }, [candidates]);
-
-  const pairByPrimaryTargetId = useMemo(() => {
-    const map = new Map<string, GraphPairEdge>();
-    renderedModel.pairEdges.forEach((edge) => {
-      map.set(edge.candidate.target.id, edge);
-    });
-    return map;
-  }, [renderedModel.pairEdges]);
-
-  const pairBySecondaryTargetId = useMemo(() => {
-    const map = new Map<string, GraphPairEdge>();
-    renderedModel.pairEdges.forEach((edge) => {
-      const secondaryTargetId = edge.candidate.secondaryTarget?.id;
-      if (secondaryTargetId) {
-        map.set(secondaryTargetId, edge);
-      }
-    });
-    return map;
-  }, [renderedModel.pairEdges]);
 
   const toWorldPoint = useCallback((clientX: number, clientY: number): GraphPoint | null => {
     const container = containerRef.current;
@@ -1171,15 +1120,6 @@ export function CollisionOptimizationPlanarGraph({
         </div>
       ) : (
         <>
-          <div className="pointer-events-none absolute left-2.5 top-2 z-20 flex max-w-[30rem] flex-wrap items-center gap-1.5">
-            <span className="rounded-full border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue shadow-sm">
-              {labels.frontView}
-            </span>
-            <span className="rounded-full border border-border-black bg-element-bg/95 px-2 py-1 text-[10px] text-text-secondary shadow-sm">
-              {labels.dragHint}
-            </span>
-          </div>
-
           <div className="absolute right-2.5 top-2 z-20 flex items-center gap-1 rounded-full border border-border-black bg-element-bg/95 p-1 shadow-sm">
             <button
               type="button"
@@ -1259,26 +1199,16 @@ export function CollisionOptimizationPlanarGraph({
                 <defs>
                   <marker
                     id="collision-optimizer-callout-arrow"
-                    markerWidth="8"
-                    markerHeight="8"
-                    refX="7"
-                    refY="4"
+                    markerWidth="6"
+                    markerHeight="6"
+                    refX="5"
+                    refY="3"
                     orient="auto"
                     markerUnits="strokeWidth"
                   >
-                    <path d="M 0 0 L 8 4 L 0 8 z" fill="var(--color-border-black)" opacity="0.5" />
+                    <path d="M 0 0 L 6 3 L 0 6 z" fill="var(--color-border-black)" opacity="0.42" />
                   </marker>
                 </defs>
-
-                <rect
-                  x={renderedModel.skeletonBounds.minX - 24}
-                  y={renderedModel.skeletonBounds.minY - 24}
-                  width={Math.max(48, renderedModel.skeletonBounds.maxX - renderedModel.skeletonBounds.minX + 48)}
-                  height={Math.max(48, renderedModel.skeletonBounds.maxY - renderedModel.skeletonBounds.minY + 48)}
-                  rx={26}
-                  className="fill-system-blue/5 stroke-border-black/15 dark:stroke-border-strong/20"
-                  strokeDasharray="6 6"
-                />
 
                 {renderedModel.pairEdges.map((edge) => {
                   const isChecked = checkedTargetIds.has(edge.candidate.target.id);
@@ -1300,7 +1230,7 @@ export function CollisionOptimizationPlanarGraph({
                           ? 'stroke-system-blue/65'
                           : 'stroke-amber-600/50 dark:stroke-amber-300/45'
                       }
-                      strokeWidth={isChecked || sourceSelected || targetSelected ? 2.75 : 1.75}
+                      strokeWidth={isChecked || sourceSelected || targetSelected ? 2.3 : 1.4}
                       strokeDasharray={edge.manual ? '4 4' : '6 5'}
                       strokeLinecap="round"
                     />
@@ -1315,7 +1245,7 @@ export function CollisionOptimizationPlanarGraph({
                     x2={edge.to.x}
                     y2={edge.to.y}
                     className="stroke-border-black/55 dark:stroke-border-strong/60"
-                    strokeWidth={2.5}
+                    strokeWidth={2}
                     strokeLinecap="round"
                   />
                 ))}
@@ -1335,7 +1265,7 @@ export function CollisionOptimizationPlanarGraph({
                       x2={tetherPoint.x}
                       y2={tetherPoint.y}
                       className="stroke-border-black/40 text-border-black/40 dark:stroke-border-strong/45 dark:text-border-strong/45"
-                      strokeWidth={1.5}
+                      strokeWidth={1.15}
                       strokeLinecap="round"
                       markerEnd="url(#collision-optimizer-callout-arrow)"
                     />
@@ -1350,7 +1280,7 @@ export function CollisionOptimizationPlanarGraph({
                       key={`${card.id}::node`}
                       cx={card.anchor.x}
                       cy={card.anchor.y}
-                      r={isGhostLink ? 4 : 5.5}
+                      r={isGhostLink ? 3.2 : 4.4}
                       className={isGhostLink ? 'fill-border-black/75 dark:fill-border-strong/80' : 'fill-system-blue'}
                     />
                   );
@@ -1376,8 +1306,8 @@ export function CollisionOptimizationPlanarGraph({
                     data-graph-card-id={card.id}
                     className={`absolute border shadow-sm ${
                       isGhostLink
-                        ? 'rounded-full border-dashed border-border-black/70 bg-element-bg/90'
-                        : 'rounded-xl border-border-black bg-element-bg/95'
+                        ? 'rounded-full border-dashed border-border-black/60 bg-element-bg/90'
+                        : 'rounded-lg border-border-black bg-element-bg/95'
                     }`}
                     style={{
                       left: card.x,
@@ -1390,38 +1320,26 @@ export function CollisionOptimizationPlanarGraph({
                       type="button"
                       data-graph-no-pan="true"
                       onPointerDown={(event) => handleCardDragStart(event, card)}
+                      title={card.componentName ? `${card.componentName} / ${card.linkName}` : card.linkName}
                       className={`flex w-full items-center gap-1.5 px-2 text-left ${
                         isGhostLink
                           ? 'h-full rounded-full cursor-move bg-panel-bg/70'
-                          : 'h-[26px] rounded-t-xl border-b border-border-black cursor-move bg-panel-bg'
+                          : 'h-[22px] rounded-t-lg border-b border-border-black cursor-move bg-panel-bg'
                       }`}
                     >
                       <span className={`inline-block rounded-full ${
-                        isGhostLink ? 'h-2 w-2 bg-border-black/70' : 'h-2.5 w-2.5 bg-system-blue/70'
+                        isGhostLink ? 'h-1.5 w-1.5 bg-border-black/70' : 'h-2 w-2 bg-system-blue/70'
                       }`}
                       />
-                      <span className="min-w-0 flex-1 truncate text-[10px] font-semibold text-text-primary">
+                      <span className="min-w-0 flex-1 truncate text-[9px] font-semibold text-text-primary">
                         {card.linkName}
                       </span>
-                      {card.componentName ? (
-                        <span className="shrink-0 rounded-full border border-border-black bg-element-bg px-1 py-0.5 text-[8px] text-text-tertiary">
-                          {card.componentName}
-                        </span>
-                      ) : null}
                     </button>
 
                     {!isGhostLink ? (
                       <div className="relative" style={{ height: card.height - CARD_HEADER_HEIGHT }}>
                         {card.rows.map((row) => {
                           const candidate = candidateByTargetId.get(row.target.id);
-                          const pairSummary = getPairSummary(
-                            row.target,
-                            pairByPrimaryTargetId,
-                            pairBySecondaryTargetId,
-                            candidateByTargetId,
-                            labels,
-                            formatGeometryType,
-                          );
                           const isChecked = checkedTargetIds.has(row.target.id);
                           const isSelected = selection?.type === 'link'
                             && selection.id === row.target.linkId
@@ -1453,7 +1371,7 @@ export function CollisionOptimizationPlanarGraph({
                                   : 'cursor-not-allowed text-text-tertiary/60'
                               }`}
                             >
-                              {isChecked ? <CheckSquare2 className="h-3 w-3" /> : <Square className="h-3 w-3" />}
+                              {isChecked ? <CheckSquare2 className="h-2.5 w-2.5" /> : <Square className="h-2.5 w-2.5" />}
                             </button>
                           );
                           const connectControl = (
@@ -1463,21 +1381,23 @@ export function CollisionOptimizationPlanarGraph({
                               aria-label={labels.connectionHandle}
                               title={labels.connectionHandle}
                               onPointerDown={(event) => handleConnectionStart(event, row.target)}
-                              className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                              className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
                                 canConnect || !manualConnection
                                   ? 'border-border-black bg-element-bg text-text-secondary hover:bg-element-hover hover:text-text-primary'
                                   : 'border-system-blue/30 bg-system-blue/10 text-system-blue'
                               }`}
                             >
-                              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                              <span className="h-1.25 w-1.25 rounded-full bg-current" />
                             </button>
                           );
+                          const rowLabel = getCompactTargetLabel(row.target, candidate, formatGeometryType);
+                          const rowIndexLabel = row.target.sequenceIndex > 0 ? `#${row.target.sequenceIndex + 1}` : null;
 
                           return (
                             <div
                               key={row.target.id}
                               data-graph-target-id={row.target.id}
-                              className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1 rounded-lg border px-1 py-[3px] transition-colors ${rowToneClass}`}
+                              className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0.5 rounded-md border px-1 py-[2px] transition-colors ${rowToneClass}`}
                               style={{
                                 position: 'absolute',
                                 left: row.localX,
@@ -1492,23 +1412,19 @@ export function CollisionOptimizationPlanarGraph({
                                 type="button"
                                 data-graph-no-pan="true"
                                 onClick={() => onSelectTarget?.(row.target)}
+                                title={`${card.linkName} / ${rowLabel}`}
                                 className="min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
-                                  <span className="min-w-0 flex-1 truncate text-[9px] font-medium text-text-primary">
-                                    {getDisplayTypeLabel(row.target, labels)}
+                                  <span className="min-w-0 flex-1 truncate text-[8.5px] font-medium text-text-primary">
+                                    {rowLabel}
                                   </span>
-                                  <span className="shrink-0 text-[8px] text-text-tertiary">
-                                    {formatGeometryType(row.target.geometry.type)}
-                                  </span>
-                                </div>
-                                {pairSummary ? (
-                                  <div className="mt-0.5">
-                                    <span className={`inline-flex max-w-full items-center rounded-md border px-1 py-0.5 text-[8px] ${getSummaryClass(pairSummary.tone)}`}>
-                                      <span className="truncate">{pairSummary.label}</span>
+                                  {rowIndexLabel ? (
+                                    <span className="shrink-0 rounded-sm bg-panel-bg px-1 py-[1px] text-[7px] font-medium text-text-tertiary">
+                                      {rowIndexLabel}
                                     </span>
-                                  </div>
-                                ) : null}
+                                  ) : null}
+                                </div>
                               </button>
 
                               {card.side === 'right' ? toggleControl : connectControl}

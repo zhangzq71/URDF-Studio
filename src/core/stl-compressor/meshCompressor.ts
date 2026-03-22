@@ -3,8 +3,8 @@
  * TypeScript rewrite of mesh-compressor.js from stl_compressor_web
  */
 
-import type { STLMeshData } from './types';
-import { calculateBoundingBox } from './stlParser';
+import type { STLMeshData } from './types.ts';
+import { calculateBoundingBox } from './stlParser.ts';
 
 // ---------------------------------------------------------------------------
 // Vertex-clustering simplification

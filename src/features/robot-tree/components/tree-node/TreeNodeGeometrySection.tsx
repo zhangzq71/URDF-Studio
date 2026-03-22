@@ -35,6 +35,7 @@ interface TreeNodeGeometrySectionProps {
   onToggleVisualVisibility: (event: MouseEvent) => void;
   onTogglePrimaryCollisionVisibility: (event: MouseEvent) => void;
   onToggleCollisionBodyVisibility: (event: MouseEvent, bodyIndex: number) => void;
+  readOnly: boolean;
 }
 
 export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
@@ -61,6 +62,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
   onToggleVisualVisibility,
   onTogglePrimaryCollisionVisibility,
   onToggleCollisionBodyVisibility,
+  readOnly,
 }: TreeNodeGeometrySectionProps) {
   const isVisualSelected = isLinkSelected
     && robotSelection.subType === 'visual'
@@ -92,19 +94,19 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
       {link.visual?.type && link.visual.type !== GeometryType.NONE && (
         <div
           ref={visualRowRef}
-          className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
+          className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md transition-all duration-200 ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${
             resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
               isHovered: isVisualHovered,
               isSelected: isVisualSelected,
               isAttentionHighlighted: isVisualAttentionHighlighted,
             })
           }`}
-          onClick={onSelectVisual}
-          onContextMenu={(event) => {
+          onClick={readOnly ? undefined : onSelectVisual}
+          onContextMenu={readOnly ? undefined : ((event) => {
             onOpenContextMenu(event, { type: 'geometry', linkId, subType: 'visual', objectIndex: 0 });
-          }}
-          onMouseEnter={() => onSetHoveredSelection({ type: 'link', id: linkId, subType: 'visual', objectIndex: 0 })}
-          onMouseLeave={onClearHover}
+          })}
+          onMouseEnter={readOnly ? undefined : (() => onSetHoveredSelection({ type: 'link', id: linkId, subType: 'visual', objectIndex: 0 }))}
+          onMouseLeave={readOnly ? undefined : onClearHover}
           style={{ marginLeft: `${geometryRowIndentPx}px` }}
           title={t.visualGeometry}
         >
@@ -120,34 +122,36 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
           <span className="text-[10px] font-medium truncate flex-1 min-w-0">
             {t.visualGeometry}
           </span>
-          <button
-            type="button"
-            className={getGeometryVisibilityButtonClass(isVisualVisible)}
-            onClick={onToggleVisualVisibility}
-            title={isVisualVisible ? t.hide : t.show}
-            aria-label={isVisualVisible ? t.hide : t.show}
-          >
-            {isVisualVisible ? <Eye size={10} /> : <EyeOff size={10} />}
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              className={getGeometryVisibilityButtonClass(isVisualVisible)}
+              onClick={onToggleVisualVisibility}
+              title={isVisualVisible ? t.hide : t.show}
+              aria-label={isVisualVisible ? t.hide : t.show}
+            >
+              {isVisualVisible ? <Eye size={10} /> : <EyeOff size={10} />}
+            </button>
+          )}
         </div>
       )}
 
       {link.collision?.type && link.collision.type !== GeometryType.NONE && (
         <div
           ref={primaryCollisionRowRef}
-          className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
+          className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md transition-all duration-200 ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${
             resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
               isHovered: isPrimaryCollisionHovered,
               isSelected: isPrimaryCollisionSelected,
               isAttentionHighlighted: isPrimaryCollisionAttentionHighlighted,
             })
           }`}
-          onClick={onSelectPrimaryCollision}
-          onContextMenu={(event) => {
+          onClick={readOnly ? undefined : onSelectPrimaryCollision}
+          onContextMenu={readOnly ? undefined : ((event) => {
             onOpenContextMenu(event, { type: 'geometry', linkId, subType: 'collision', objectIndex: 0 });
-          }}
-          onMouseEnter={() => onSetHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex: 0 })}
-          onMouseLeave={onClearHover}
+          })}
+          onMouseEnter={readOnly ? undefined : (() => onSetHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }))}
+          onMouseLeave={readOnly ? undefined : onClearHover}
           style={{ marginLeft: `${geometryRowIndentPx}px` }}
           title={t.collision}
         >
@@ -163,15 +167,17 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
           <span className="text-[10px] font-medium truncate flex-1 min-w-0">
             {t.collision}
           </span>
-          <button
-            type="button"
-            className={getGeometryVisibilityButtonClass(isPrimaryCollisionVisible)}
-            onClick={onTogglePrimaryCollisionVisibility}
-            title={isPrimaryCollisionVisible ? t.hide : t.show}
-            aria-label={isPrimaryCollisionVisible ? t.hide : t.show}
-          >
-            {isPrimaryCollisionVisible ? <Eye size={10} /> : <EyeOff size={10} />}
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              className={getGeometryVisibilityButtonClass(isPrimaryCollisionVisible)}
+              onClick={onTogglePrimaryCollisionVisibility}
+              title={isPrimaryCollisionVisible ? t.hide : t.show}
+              aria-label={isPrimaryCollisionVisible ? t.hide : t.show}
+            >
+              {isPrimaryCollisionVisible ? <Eye size={10} /> : <EyeOff size={10} />}
+            </button>
+          )}
         </div>
       )}
 
@@ -194,19 +200,19 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
               collisionBodyRowRefs.current[objectIndex] = element;
             }}
             key={`collision-extra-${bodyIndex}`}
-            className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
+            className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md transition-all duration-200 ${readOnly ? 'cursor-default' : 'cursor-pointer'} ${
               resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
                 isHovered: isCollisionBodyHovered,
                 isSelected: isCollisionBodySelected,
                 isAttentionHighlighted: isCollisionBodyAttentionHighlighted,
               })
             }`}
-            onClick={() => onSelectCollisionBody(objectIndex)}
-            onContextMenu={(event) => {
+            onClick={readOnly ? undefined : (() => onSelectCollisionBody(objectIndex))}
+            onContextMenu={readOnly ? undefined : ((event) => {
               onOpenContextMenu(event, { type: 'geometry', linkId, subType: 'collision', objectIndex });
-            }}
-            onMouseEnter={() => onSetHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex })}
-            onMouseLeave={onClearHover}
+            })}
+            onMouseEnter={readOnly ? undefined : (() => onSetHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex }))}
+            onMouseLeave={readOnly ? undefined : onClearHover}
             style={{ marginLeft: `${geometryRowIndentPx}px` }}
             title={`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
           >
@@ -233,15 +239,17 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
             <span className="text-[10px] font-medium truncate flex-1 min-w-0">
               {`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
             </span>
-            <button
-              type="button"
-              className={getGeometryVisibilityButtonClass(body.visible !== false)}
-              onClick={(event) => onToggleCollisionBodyVisibility(event, bodyIndex)}
-              title={body.visible !== false ? t.hide : t.show}
-              aria-label={body.visible !== false ? t.hide : t.show}
-            >
-              {body.visible !== false ? <Eye size={10} /> : <EyeOff size={10} />}
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                className={getGeometryVisibilityButtonClass(body.visible !== false)}
+                onClick={(event) => onToggleCollisionBodyVisibility(event, bodyIndex)}
+                title={body.visible !== false ? t.hide : t.show}
+                aria-label={body.visible !== false ? t.hide : t.show}
+              >
+                {body.visible !== false ? <Eye size={10} /> : <EyeOff size={10} />}
+              </button>
+            )}
           </div>
         );
       })}

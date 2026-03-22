@@ -2,9 +2,15 @@ import React, { memo, useRef, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { CollisionTransformControls } from './CollisionTransformControls';
+import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
-import { offsetRobotToGround } from '../utils/robotPositioning';
+import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
+import {
+    beginInitialGroundAlignment,
+    hasInitialGroundAlignment,
+    offsetRobotToGround,
+} from '../utils/robotPositioning';
 
 import { useRobotLoader } from '../hooks/useRobotLoader';
 import { useHighlightManager } from '../hooks/useHighlightManager';
@@ -65,6 +71,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     const needsInitialGroundFitRef = useRef(true);
     const initialGroundFitTimersRef = useRef<number[]>([]);
     const appliedJointAnglesRef = useRef<Record<string, number>>({});
+    const autoFrameScopeFallbackRef = useRef<string | null>(null);
+
+    if (!autoFrameScopeFallbackRef.current) {
+        autoFrameScopeFallbackRef.current = `viewer-session:${Math.random().toString(36).slice(2)}`;
+    }
 
     const clearInitialGroundFitTimers = () => {
         initialGroundFitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -87,6 +98,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     const {
         robot,
         error,
+        isLoading,
+        loadingProgress,
         robotVersion,
         linkMeshMapRef
     } = useRobotLoader({
@@ -130,7 +143,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         focusTarget,
         selection,
         mode,
-        autoFrameOnRobotChange: !focusTarget,
+        autoFrameOnRobotChange: !focusTarget && !isLoading,
+        autoFrameScopeKey: sourceFilePath ?? autoFrameScopeFallbackRef.current,
     });
 
     // ============================================================
@@ -156,6 +170,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         onMeshSelect,
         onJointChange,
         onJointChangeCommit,
+        throttleJointChangeDuringDrag: true,
         setIsDragging,
         setActiveJoint,
         justSelectedRef,
@@ -211,7 +226,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         jointAxisSize,
         modelOpacity,
         robotLinks,
-        toolMode,
         selection,
         highlightGeometry,
         highlightedMeshesRef
@@ -249,13 +263,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
         Object.entries(jointAngles).forEach(([jointName, angle]) => {
             const joint = joints[jointName];
-            const previousAngle = appliedJointAnglesRef.current[jointName];
             const currentAngle = joint?.angle ?? joint?.jointValue;
 
-            if (
-                previousAngle === angle
-                && currentAngle === angle
-            ) {
+            if (currentAngle === angle) {
+                appliedJointAnglesRef.current[jointName] = angle;
                 return;
             }
 
@@ -271,20 +282,26 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
             needsInitialGroundFitRef.current = false;
             clearInitialGroundFitTimers();
 
-            initialGroundFitTimersRef.current = [0, 80, 220, 500].map((delay) =>
-                window.setTimeout(() => {
-                    offsetRobotToGround(robot, groundPlaneOffset);
-                    boundingBoxNeedsUpdateRef.current = true;
-                    needsRaycastRef.current = true;
-                    invalidate();
-                }, delay)
-            );
+            if (beginInitialGroundAlignment(robot)) {
+                initialGroundFitTimersRef.current = [0, 80, 220, 500].map((delay) =>
+                    window.setTimeout(() => {
+                        offsetRobotToGround(robot, groundPlaneOffset);
+                        boundingBoxNeedsUpdateRef.current = true;
+                        needsRaycastRef.current = true;
+                        invalidate();
+                    }, delay)
+                );
+            }
         }
 
         if (!hasJointTransformChanges) {
             return () => {
                 clearInitialGroundFitTimers();
             };
+        }
+
+        if (hasInitialGroundAlignment(robot)) {
+            needsInitialGroundFitRef.current = false;
         }
 
         robot.updateMatrixWorld(true);
@@ -300,6 +317,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     // ============================================================
     // RENDER
     // ============================================================
+    const loadingHudState = buildViewerLoadingHudState({
+        loadedCount: loadingProgress?.loadedCount,
+        totalCount: loadingProgress?.totalCount,
+        fallbackDetail: t.loadingRobotPreparing,
+    });
+
     if (error) {
         return (
             <Html center>
@@ -310,17 +333,20 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         );
     }
 
-    if (!robot) {
-        return (
-            <Html center>
-                <div className="text-slate-500 dark:text-slate-400 text-sm">{t.loadingRobot}</div>
-            </Html>
-        );
-    }
-
     return (
         <>
-            <primitive object={robot} />
+            {robot ? <primitive object={robot} /> : null}
+            {isLoading ? (
+                <Html fullscreen>
+                    <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
+                        <ViewerLoadingHud
+                            title={t.loadingRobot}
+                            detail={loadingHudState.detail}
+                            progress={loadingHudState.progress}
+                        />
+                    </div>
+                </Html>
+            ) : null}
             {(() => {
                 const shouldShow = mode === 'detail' && highlightMode === 'collision' && transformMode !== 'select' && selection?.subType === 'collision';
                 return shouldShow ? (

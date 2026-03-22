@@ -29,7 +29,7 @@ export interface TreeEditorProps {
   onDeleteLibraryFile?: (file: RobotFile) => void;
   onDeleteLibraryFolder?: (folderPath: string) => void;
   onDeleteAllLibraryFiles?: () => void;
-  onExportLibraryFile?: (file: RobotFile, format: 'urdf' | 'mjcf') => void | Promise<void>;
+  onExportLibraryFile?: (file: RobotFile) => void | Promise<void>;
   onCreateBridge?: () => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;

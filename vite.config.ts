@@ -1,7 +1,111 @@
+import fs from 'fs';
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+
+function buildConfigurationFileIndex(rootDirs: string[]): Map<string, string> {
+  const fileIndex = new Map<string, string>();
+
+  const visitDirectory = (currentDir: string) => {
+    let entries: fs.Dirent[] = [];
+
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        visitDirectory(fullPath);
+        return;
+      }
+
+      if (!entry.isFile()) return;
+      if (path.extname(entry.name).toLowerCase() !== '.usd') return;
+      if (!fullPath.includes(`${path.sep}configuration${path.sep}`)) return;
+      if (fileIndex.has(entry.name)) return;
+
+      fileIndex.set(entry.name, fullPath);
+    });
+  };
+
+  rootDirs.forEach((rootDir) => visitDirectory(rootDir));
+  return fileIndex;
+}
+
+function resolveUsdConfigurationRootDirs(): string[] {
+  const candidateDirs = [
+    path.resolve(__dirname, 'public/unitree_model'),
+    path.resolve(__dirname, 'public/Robots'),
+  ];
+
+  return candidateDirs.filter((dirPath) => fs.existsSync(dirPath));
+}
+
+function createUsdConfigurationProxyPlugin() {
+  const configurationFileIndex = buildConfigurationFileIndex(resolveUsdConfigurationRootDirs());
+
+  return {
+    name: 'usd-configuration-proxy',
+    configureServer(server: import('vite').ViteDevServer) {
+      server.middlewares.use((request, response, next) => {
+        const requestUrl = String(request.url || '');
+        const urlMatch = requestUrl.match(/^\/configuration\/([^/?#]+)$/);
+        if (!urlMatch) {
+          next();
+          return;
+        }
+
+        const fileName = decodeURIComponent(urlMatch[1] || '');
+        const filePath = configurationFileIndex.get(fileName);
+        if (!filePath) {
+          next();
+          return;
+        }
+
+        response.statusCode = 200;
+        response.setHeader('Content-Type', 'application/octet-stream');
+        fs.createReadStream(filePath).pipe(response);
+      });
+    },
+    generateBundle(this: import('rollup').PluginContext) {
+      configurationFileIndex.forEach((filePath, fileName) => {
+        this.emitFile({
+          type: 'asset',
+          fileName: `configuration/${fileName}`,
+          source: fs.readFileSync(filePath),
+        });
+      });
+    },
+  };
+}
+
+function isUsdViewerChunkModule(normalizedId: string): boolean {
+  return normalizedId.includes('/src/features/urdf-viewer/components/UsdWasmStage.tsx')
+    || normalizedId.includes('/src/features/urdf-viewer/utils/usd')
+    || normalizedId.includes('/src/features/urdf-viewer/runtime/viewer/')
+    || normalizedId.includes('/src/features/urdf-viewer/runtime/embed/usd-viewer-api.ts')
+    || normalizedId.includes('/src/features/urdf-viewer/runtime/vendor/usd-text-parser');
+}
+
+function isSharedUrdfViewerChunkModule(normalizedId: string): boolean {
+  return normalizedId.includes('/src/features/urdf-viewer/utils/cameraFrame.ts')
+    || normalizedId.includes('/src/features/urdf-viewer/utils/dispose.ts')
+    || normalizedId.includes('/src/features/urdf-viewer/utils/materials.ts')
+    || normalizedId.includes('/src/features/urdf-viewer/utils/stabilizedAutoFrame.ts')
+    || normalizedId.includes('/src/features/urdf-viewer/utils/visualizationFactories.ts');
+}
+
+const GENERATED_ARTIFACT_WATCH_IGNORES = [
+  '**/tmp/**',
+  '**/.tmp/**',
+  '**/output/**',
+  '**/dist/**',
+];
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -9,6 +113,24 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        // Verification artifacts are intentionally written into tmp/ by repo policy.
+        // Ignore generated directories so exports, screenshots, logs, and pid files
+        // do not trigger full-page reloads and wipe imported workspace state.
+        watch: {
+          ignored: GENERATED_ARTIFACT_WATCH_IGNORES,
+        },
+        headers: {
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+          'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Resource-Policy': 'same-site',
+        },
+      },
+      preview: {
+        headers: {
+          'Cross-Origin-Embedder-Policy': 'require-corp',
+          'Cross-Origin-Opener-Policy': 'same-origin',
+          'Cross-Origin-Resource-Policy': 'same-site',
+        },
       },
       build: {
         chunkSizeWarningLimit: 800,
@@ -22,6 +144,9 @@ export default defineConfig(({ mode }) => {
               }
 
               if (normalizedId.includes('/src/features/urdf-viewer/')) {
+                if (isUsdViewerChunkModule(normalizedId) || isSharedUrdfViewerChunkModule(normalizedId)) {
+                  return;
+                }
                 return 'feature-urdf-viewer';
               }
 
@@ -105,7 +230,7 @@ export default defineConfig(({ mode }) => {
       worker: {
         format: 'es',
       },
-      plugins: [react(), tailwindcss()],
+      plugins: [react(), tailwindcss(), createUsdConfigurationProxyPlugin()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.OPENAI_API_KEY || env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.OPENAI_API_KEY),

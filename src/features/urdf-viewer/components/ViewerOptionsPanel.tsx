@@ -9,7 +9,6 @@ import {
     OptionsPanelHeader,
     OptionsPanelContent,
     SegmentedControl,
-    CollapsibleSection,
     ToggleSliderOption
 } from '@/shared/components/Panel/OptionsPanel';
 
@@ -191,8 +190,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     setShowInertiaOverlay,
     onAutoFitGround,
 }) => {
-    const panelSections = useUIStore((state) => state.panelSections);
-    const setPanelSection = useUIStore((state) => state.setPanelSection);
     const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
     const setGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
 
@@ -220,7 +217,13 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
             onPointerDown={stopPanelEventPropagation}
             onWheel={stopPanelEventPropagation}
         >
-            <OptionsPanelContainer resizable={true} isCollapsed={isOptionsCollapsed} resizeTitle={t.resize}>
+            <OptionsPanelContainer
+                width="11rem"
+                minWidth={168}
+                resizable={true}
+                isCollapsed={isOptionsCollapsed}
+                resizeTitle={t.resize}
+            >
                 <OptionsPanelHeader
                     title={mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
                     isCollapsed={isOptionsCollapsed}
@@ -230,7 +233,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 />
 
                 <OptionsPanelContent isCollapsed={isOptionsCollapsed}>
-                        <div className="p-2 pb-0">
+                        <div className="px-2 py-2 pb-1">
                             <SegmentedControl
                                 options={[
                                     { value: 'link', label: t.linkMode },
@@ -242,18 +245,13 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                             />
                         </div>
 
-                        {/* General Visuals */}
-                        <CollapsibleSection
-                            title={t.visuals}
-                            isCollapsed={panelSections['viewer_visuals'] ?? false}
-                            onToggle={() => setPanelSection('viewer_visuals', !(panelSections['viewer_visuals'] ?? false))}
-                        >
+                        <div className="px-2 py-2 space-y-2">
                             <CheckboxOption checked={showJointControls} onChange={setShowJointControls} label={t.showJointControls} />
                             <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
                             <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} />
                             
                             {/* Model Transparency */}
-                            <div className="pt-2">
+                            <div className="pt-1">
                                 <SliderOption
                                     label={t.modelOpacity}
                                     value={modelOpacity}
@@ -265,14 +263,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     compact
                                 />
                             </div>
-                        </CollapsibleSection>
 
-                        {/* Coordinate Axes Section */}
-                        <CollapsibleSection
-                            title={t.coordinateAxes}
-                            isCollapsed={panelSections['viewer_coords'] ?? true}
-                            onToggle={() => setPanelSection('viewer_coords', !(panelSections['viewer_coords'] ?? true))}
-                        >
                             <OverlayToggleOption
                                 checked={showOrigins}
                                 icon={<Move className="w-3 h-3 text-slate-500" />}
@@ -309,14 +300,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     step: 0.01,
                                 }}
                             />
-                        </CollapsibleSection>
 
-                        {/* Physics Visualization Section */}
-                        <CollapsibleSection
-                            title={t.physics}
-                            isCollapsed={panelSections['viewer_physics'] ?? true}
-                            onToggle={() => setPanelSection('viewer_physics', !(panelSections['viewer_physics'] ?? true))}
-                        >
                             <OverlayToggleOption
                                 checked={showCenterOfMass}
                                 icon={<div className="flex h-3 w-3 items-center justify-center rounded-full border border-slate-500"><div className="h-1 w-1 rounded-full bg-slate-500"></div></div>}
@@ -346,14 +330,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 overlayActive={showInertiaOverlay}
                                 overlayLabel={t.alwaysOnTop}
                             />
-                        </CollapsibleSection>
 
-                        {/* Ground Plane */}
-                        <CollapsibleSection
-                            title={t.groundPlane}
-                            isCollapsed={panelSections['viewer_ground'] ?? true}
-                            onToggle={() => setPanelSection('viewer_ground', !(panelSections['viewer_ground'] ?? false))}
-                        >
                             <GroundPlaneControls
                                 autoFitIcon={<Crosshair size={11} />}
                                 autoFitLabel={t.autoFitGround}
@@ -365,7 +342,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 resetLabel={t.reset}
                                 sliderIndent={false}
                             />
-                        </CollapsibleSection>
+                        </div>
                 </OptionsPanelContent>
             </OptionsPanelContainer>
         </div>

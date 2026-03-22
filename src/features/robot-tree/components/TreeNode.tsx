@@ -33,6 +33,7 @@ export interface TreeNodeProps {
   mode: AppMode;
   t: TranslationKeys;
   depth?: number;
+  readOnly?: boolean;
 }
 
 export const TreeNode = memo(({
@@ -51,6 +52,7 @@ export const TreeNode = memo(({
   mode,
   t,
   depth = 0,
+  readOnly = false,
 }: TreeNodeProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isGeometryExpanded, setIsGeometryExpanded] = useState(showGeometryDetailsByDefault);
@@ -112,6 +114,9 @@ export const TreeNode = memo(({
     return null;
   }
 
+  const effectiveHoveredSelection = readOnly ? { type: null, id: null } : hoveredSelection;
+  const effectiveAttentionSelection = readOnly ? { type: null, id: null } : attentionSelection;
+
   const linkRowIndentPx = 8;
   const jointRowIndentPx = 10;
   const geometryRowIndentPx = 24;
@@ -139,8 +144,8 @@ export const TreeNode = memo(({
   const hasGeometry = hasVisual || hasCollision;
   const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
-  const isLinkHovered = hoveredSelection.type === 'link' && hoveredSelection.id === linkId;
-  const isLinkAttentionHighlighted = attentionSelection.type === 'link' && attentionSelection.id === linkId;
+  const isLinkHovered = effectiveHoveredSelection.type === 'link' && effectiveHoveredSelection.id === linkId;
+  const isLinkAttentionHighlighted = effectiveAttentionSelection.type === 'link' && effectiveAttentionSelection.id === linkId;
   const isVisualSelected = isLinkSelected
     && robot.selection.subType === 'visual'
     && (robot.selection.objectIndex === undefined || selectedObjectIndex === 0);
@@ -270,8 +275,8 @@ export const TreeNode = memo(({
       <TreeNodeJointBranchList
         childJoints={childJoints}
         robotSelection={robot.selection}
-        hoveredSelection={hoveredSelection}
-        attentionSelection={attentionSelection}
+        hoveredSelection={effectiveHoveredSelection}
+        attentionSelection={effectiveAttentionSelection}
         selectionBranchLinkIds={selectionBranchLinkIds}
         editingTarget={editingTarget}
         renameInputRef={renameInputRef}
@@ -279,6 +284,7 @@ export const TreeNode = memo(({
         jointRowIndentPx={jointRowIndentPx}
         isSkeleton={isSkeleton}
         t={t}
+        readOnly={readOnly}
         onSelect={onSelect}
         onDelete={onDelete}
         onSetHoveredSelection={setHoveredSelection}
@@ -305,6 +311,7 @@ export const TreeNode = memo(({
             mode={mode}
             t={t}
             depth={depth}
+            readOnly={readOnly}
           />
         )}
       />
@@ -336,8 +343,9 @@ export const TreeNode = memo(({
           isAttentionHighlighted={isLinkAttentionHighlighted}
           isConnectorHighlighted={isLinkConnectorHighlighted}
           t={t}
+          readOnly={readOnly}
           onSelect={() => onSelect('link', linkId)}
-          onFocus={onFocus ? () => onFocus(linkId) : undefined}
+          onFocus={readOnly ? undefined : (onFocus ? () => onFocus(linkId) : undefined)}
           onToggleExpanded={() => setIsExpanded(!isExpanded)}
           onOpenContextMenu={(event) => openContextMenu(event, { type: 'link', id: linkId, name: link.name })}
           onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId })}
@@ -370,8 +378,8 @@ export const TreeNode = memo(({
               linkId={linkId}
               link={link}
               robotSelection={robot.selection}
-              hoveredSelection={hoveredSelection}
-              attentionSelection={attentionSelection}
+              hoveredSelection={effectiveHoveredSelection}
+              attentionSelection={effectiveAttentionSelection}
               visualRowRef={visualRowRef}
               primaryCollisionRowRef={primaryCollisionRowRef}
               collisionBodyRowRefs={collisionBodyRowRefs}
@@ -390,6 +398,7 @@ export const TreeNode = memo(({
               onToggleVisualVisibility={toggleVisualVisibility}
               onTogglePrimaryCollisionVisibility={togglePrimaryCollisionVisibility}
               onToggleCollisionBodyVisibility={toggleCollisionBodyVisibility}
+              readOnly={readOnly}
             />
           )}
 
@@ -397,8 +406,8 @@ export const TreeNode = memo(({
             <TreeNodeJointBranchList
               childJoints={childJoints}
               robotSelection={robot.selection}
-              hoveredSelection={hoveredSelection}
-              attentionSelection={attentionSelection}
+              hoveredSelection={effectiveHoveredSelection}
+              attentionSelection={effectiveAttentionSelection}
               selectionBranchLinkIds={selectionBranchLinkIds}
               editingTarget={editingTarget}
               renameInputRef={renameInputRef}
@@ -415,6 +424,7 @@ export const TreeNode = memo(({
               onCommitRenaming={commitRenaming}
               onCancelRenaming={cancelRenaming}
               onNameDoubleClick={handleNameDoubleClick}
+              readOnly={readOnly}
               renderChildNode={(childLinkId) => (
                 <TreeNode
                   linkId={childLinkId}
@@ -432,6 +442,7 @@ export const TreeNode = memo(({
                   mode={mode}
                   t={t}
                   depth={depth + 1}
+                  readOnly={readOnly}
                 />
               )}
             />
@@ -446,6 +457,7 @@ export const TreeNode = memo(({
         contextMenuGeometryType={contextMenuGeometryType}
         isSkeleton={isSkeleton}
         t={t}
+        readOnly={readOnly}
         onRenameMenuAction={handleRenameMenuAction}
         onAddChildMenuAction={handleAddChildMenuAction}
         onDeleteMenuAction={handleDeleteMenuAction}

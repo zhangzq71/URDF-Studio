@@ -1,6 +1,6 @@
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, type RootState } from '@react-three/fiber';
-import { Environment, GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
+import { Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Theme } from '@/types';
 import type { Language } from '@/shared/i18n';
@@ -11,12 +11,16 @@ import {
   SceneLighting,
   SnapshotManager,
   UsageGuide,
+  WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
+  WORKSPACE_DEFAULT_CAMERA_FOV,
+  WORKSPACE_DEFAULT_CAMERA_POSITION,
+  WORKSPACE_DEFAULT_CAMERA_UP,
   WorldOriginAxes,
 } from '@/shared/components/3d';
+import type { WorkspaceOrbitControlsProps } from '@/shared/components/3d/scene/WorkspaceOrbitControls';
 import { useEffectiveTheme } from '@/shared/hooks';
-
-type OrbitControlProps = React.ComponentProps<typeof OrbitControls>;
+import { attachContextMenuBlocker } from '@/shared/utils';
 
 interface WorkspaceCanvasProps {
   theme: Theme;
@@ -37,7 +41,7 @@ interface WorkspaceCanvasProps {
   environment?: 'hdr' | 'studio' | 'none';
   environmentIntensity?: number;
   cameraFollowPrimary?: boolean;
-  orbitControlsProps?: Partial<OrbitControlProps>;
+  orbitControlsProps?: Partial<WorkspaceOrbitControlsProps>;
   controlLayerKey?: string;
   background?: {
     light: string;
@@ -71,10 +75,10 @@ export const WorkspaceCanvas = ({
 }: WorkspaceCanvasProps) => {
   const effectiveTheme = useEffectiveTheme();
   const [contextLost, setContextLost] = useState(false);
+  const contextMenuCleanupRef = useRef<(() => void) | null>(null);
 
-  const finalOrbitControlsProps = useMemo<Partial<OrbitControlProps>>(
+  const finalOrbitControlsProps = useMemo<Partial<WorkspaceOrbitControlsProps>>(
     () => ({
-      makeDefault: true,
       enableDamping: false,
       ...orbitControlsProps,
     }),
@@ -91,6 +95,17 @@ export const WorkspaceCanvas = ({
       }
 
       const canvas = state.gl.domElement;
+      const surfaceEventTarget = canvas.parentElement ?? canvas;
+
+      contextMenuCleanupRef.current?.();
+      const cleanupCanvasBlocker = attachContextMenuBlocker(canvas);
+      const cleanupSurfaceBlocker = surfaceEventTarget === canvas
+        ? () => {}
+        : attachContextMenuBlocker(surfaceEventTarget);
+      contextMenuCleanupRef.current = () => {
+        cleanupSurfaceBlocker();
+        cleanupCanvasBlocker();
+      };
 
       const handleContextLost = (event: Event) => {
         event.preventDefault();
@@ -110,6 +125,8 @@ export const WorkspaceCanvas = ({
       }).__workspaceCanvasCleanup = () => {
         canvas.removeEventListener('webglcontextlost', handleContextLost);
         canvas.removeEventListener('webglcontextrestored', handleContextRestored);
+        contextMenuCleanupRef.current?.();
+        contextMenuCleanupRef.current = null;
       };
 
       onCreated?.(state);
@@ -123,6 +140,8 @@ export const WorkspaceCanvas = ({
         | (HTMLCanvasElement & { __workspaceCanvasCleanup?: () => void })
         | null;
       node?.__workspaceCanvasCleanup?.();
+      contextMenuCleanupRef.current?.();
+      contextMenuCleanupRef.current = null;
     };
   }, [containerRef]);
 
@@ -130,16 +149,22 @@ export const WorkspaceCanvas = ({
     <div
       ref={containerRef}
       className={className}
+      style={{ touchAction: 'none', userSelect: 'none' }}
       onPointerDownCapture={onPointerDownCapture}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseLeave}
+      onContextMenuCapture={(event) => event.preventDefault()}
     >
       {overlays}
       <Canvas
         shadows
         frameloop="demand"
-        camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
+        camera={{
+          position: WORKSPACE_DEFAULT_CAMERA_POSITION,
+          up: WORKSPACE_DEFAULT_CAMERA_UP,
+          fov: WORKSPACE_DEFAULT_CAMERA_FOV,
+        }}
         gl={{
           antialias: true,
           toneMapping: THREE.ACESFilmicToneMapping,
@@ -149,6 +174,7 @@ export const WorkspaceCanvas = ({
         }}
         onCreated={handleCreated}
         onPointerMissed={onPointerMissed}
+        translate="no"
       >
         <CanvasResizeSync />
         <color attach="background" args={[effectiveTheme === 'light' ? background.light : background.dark]} />
@@ -162,7 +188,7 @@ export const WorkspaceCanvas = ({
           {children}
           <ReferenceGrid theme={effectiveTheme} />
           <WorldOriginAxes />
-          <OrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
+          <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
           <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
             <GizmoViewport
               axisColors={['#ef4444', '#22c55e', '#3b82f6']}

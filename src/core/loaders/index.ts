@@ -4,7 +4,6 @@
  */
 
 export {
-    cleanFilePath,
     buildAssetIndex,
     findAssetByIndex,
     findAssetByPath,
@@ -15,3 +14,10 @@ export {
 } from './meshLoader';
 
 export type { AssetIndex } from './meshLoader';
+export { bakeColladaRootTransformInPlace } from './colladaRootTransform';
+export { cleanFilePath } from './pathNormalization';
+export {
+    buildColladaRootNormalizationHints,
+    shouldNormalizeColladaRoot,
+} from './colladaRootNormalization';
+export type { ColladaRootNormalizationHints } from './colladaRootNormalization';

@@ -159,6 +159,10 @@ export function detectSingleGeometryPatch(
 }
 
 function sameLimit(a: UrdfJoint['limit'], b: UrdfJoint['limit']): boolean {
+  if (!a || !b) {
+    return a === b;
+  }
+
   return (
     a.lower === b.lower &&
     a.upper === b.upper &&

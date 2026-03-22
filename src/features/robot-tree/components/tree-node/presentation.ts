@@ -18,6 +18,8 @@ export function getJointTypeLabel(type: JointType, t: TranslationKeys): string {
       return t.jointTypeRevolute;
     case JointType.CONTINUOUS:
       return t.jointTypeContinuous;
+    case JointType.BALL:
+      return 'Ball';
     case JointType.PRISMATIC:
       return t.jointTypePrismatic;
     case JointType.PLANAR:
@@ -37,6 +39,8 @@ export function getJointTypeIcon(type: JointType) {
       return RotateCw;
     case JointType.CONTINUOUS:
       return RefreshCw;
+    case JointType.BALL:
+      return Move3D;
     case JointType.PRISMATIC:
       return ArrowRightLeft;
     case JointType.PLANAR:
@@ -82,22 +86,22 @@ export function resolveTreeRowStateClass(
 
 export function getTreeConnectorRailClass(emphasized: boolean): string {
   return emphasized
-    ? 'bg-system-blue/20 dark:bg-system-blue/30'
-    : 'bg-border-black/60 dark:bg-border-strong/55';
+    ? 'bg-system-blue/20 dark:bg-system-blue/28'
+    : 'bg-border-black/45 dark:bg-border-strong/45';
 }
 
 export function getTreeConnectorElbowClass(emphasized: boolean): string {
   return emphasized
-    ? 'absolute rounded-bl-md border-b-[1.5px] border-l-[1.5px] border-system-blue/55 dark:border-system-blue/65'
-    : 'absolute rounded-bl-md border-b-[1.5px] border-l-[1.5px] border-border-strong/80 dark:border-border-strong/70';
+    ? 'absolute rounded-bl-md border-b border-l border-system-blue/50 dark:border-system-blue/60'
+    : 'absolute rounded-bl-md border-b border-l border-border-strong/70 dark:border-border-strong/60';
 }
 
 export function getTreeConnectorElbowStyle(indentPx: number): CSSProperties {
   return {
     left: `${indentPx * -1}px`,
-    top: 'calc(50% - 10px)',
+    top: 'calc(50% - 8px)',
     width: `${indentPx}px`,
-    height: '10px',
+    height: '8px',
   };
 }
 

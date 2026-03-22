@@ -9,6 +9,7 @@ test/
 scripts/
 .github/
 output/
+tmp/
 
 .claude/
 .codex/

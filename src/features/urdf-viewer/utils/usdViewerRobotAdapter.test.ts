@@ -1,0 +1,294 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { GeometryType, JointType } from '../../../types/index.ts';
+import { adaptUsdViewerSnapshotToRobotData } from './usdViewerRobotAdapter';
+
+test('adapts usd-viewer robot scene snapshot into URDF Studio RobotData', () => {
+  const result = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/unitree/simple_cube.usdz',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/link1', '/Robot/base_link'],
+      ],
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/unitree/simple_cube.usdz',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/link1', '/Robot/base_link'],
+      ],
+      jointCatalogEntries: [
+        {
+          linkPath: '/Robot/link1',
+          parentLinkPath: '/Robot/base_link',
+          jointName: 'joint_link1',
+          jointTypeName: 'revolute',
+          axisToken: 'Y',
+          lowerLimitDeg: -90,
+          upperLimitDeg: 90,
+          localPivotInLink: [1, 2, 3],
+        },
+      ],
+      linkDynamicsEntries: [
+        {
+          linkPath: '/Robot/link1',
+          mass: 1.25,
+          centerOfMassLocal: [0.1, 0.2, 0.3],
+          diagonalInertia: [1, 2, 3],
+          principalAxesLocalWxyz: [Math.cos(Math.PI / 4), 0, 0, Math.sin(Math.PI / 4)],
+        },
+      ],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 1,
+          collisionPrimitiveCounts: {
+            box: 1,
+          },
+        },
+        '/Robot/link1': {
+          visualMeshCount: 1,
+          collisionMeshCount: 2,
+          collisionPrimitiveCounts: {
+            capsule: 2,
+          },
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/collisions.proto_box_id0',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/base_link/collisions/box_0',
+          primType: 'cube',
+          size: 1,
+          extentSize: [0.4, 0.5, 0.6],
+        },
+        {
+          meshId: '/Robot/link1/collisions.proto_capsule_id0',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/link1/collisions/capsule_0',
+          primType: 'capsule',
+          axis: 'Y',
+          radius: 0.1,
+          height: 0.8,
+          extentSize: [0.2, 0.8, 0.2],
+        },
+        {
+          meshId: '/Robot/link1/collisions.proto_capsule_id1',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/link1/collisions/capsule_1',
+          primType: 'capsule',
+          axis: 'Z',
+          radius: 0.15,
+          height: 1.0,
+          extentSize: [0.3, 0.3, 1.0],
+        },
+      ],
+    },
+  }, {
+    fileName: 'simple_cube.usdz',
+  });
+
+  assert.ok(result);
+  assert.equal(result.robotData.name, 'Robot');
+  assert.equal(result.robotData.rootLinkId, 'base_link');
+  assert.equal(result.linkIdByPath['/Robot/base_link'], 'base_link');
+  assert.equal(result.linkPathById.base_link, '/Robot/base_link');
+
+  const baseLink = result.robotData.links.base_link;
+  const link1 = result.robotData.links.link1;
+  assert.ok(baseLink);
+  assert.ok(link1);
+
+  assert.equal(baseLink.visual.type, GeometryType.MESH);
+  assert.equal(baseLink.visual.meshPath, undefined);
+  assert.equal(baseLink.collision.type, GeometryType.BOX);
+  assert.deepEqual(baseLink.collision.dimensions, { x: 0.4, y: 0.5, z: 0.6 });
+  assert.equal(link1.collision.type, GeometryType.CAPSULE);
+  assert.deepEqual(link1.collision.dimensions, { x: 0.1, y: 0.8, z: 0 });
+  assert.equal(link1.visual.meshPath, undefined);
+  assert.equal(link1.collision.meshPath, undefined);
+  assert.equal(link1.collisionBodies?.length, 1);
+  assert.deepEqual(link1.collisionBodies?.[0]?.dimensions, { x: 0.15, y: 1.0, z: 0 });
+  assert.equal(link1.collisionBodies?.[0]?.meshPath, undefined);
+  assert.equal(link1.inertial.mass, 1.25);
+  assert.deepEqual(link1.inertial.origin?.xyz, { x: 0.1, y: 0.2, z: 0.3 });
+  assert.ok(Math.abs((link1.inertial.origin?.rpy.y || 0) - Math.PI / 2) < 1e-6);
+  assert.deepEqual(link1.inertial.inertia, {
+    ixx: 1,
+    ixy: 0,
+    ixz: 0,
+    iyy: 2,
+    iyz: 0,
+    izz: 3,
+  });
+
+  const joint = Object.values(result.robotData.joints).find((candidate) => candidate.name === 'joint_link1');
+  assert.ok(joint);
+  assert.equal(joint.type, JointType.REVOLUTE);
+  assert.equal(joint.parentLinkId, 'base_link');
+  assert.equal(joint.childLinkId, 'link1');
+  assert.deepEqual(joint.axis, { x: 0, y: 1, z: 0 });
+  assert.equal(joint.limit.lower, -Math.PI / 2);
+  assert.equal(joint.limit.upper, Math.PI / 2);
+  assert.deepEqual(joint.origin.xyz, { x: 1, y: 2, z: 3 });
+  assert.equal(result.childLinkPathByJointId[joint.id], '/Robot/link1');
+  assert.equal(result.parentLinkPathByJointId[joint.id], '/Robot/base_link');
+});
+
+test('adapts USD visual materials and extra visuals into RobotState-maintained links/materials', () => {
+  const result = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/unitree/g1.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/torso_link', null],
+      ],
+      rootLinkPaths: ['/Robot/torso_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/unitree/g1.usd',
+      linkParentPairs: [
+        ['/Robot/torso_link', null],
+      ],
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/torso_link': {
+          visualMeshCount: 2,
+          collisionMeshCount: 1,
+          collisionPrimitiveCounts: {
+            box: 1,
+          },
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/torso_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/torso_link/visuals/torso_link',
+          primType: 'mesh',
+          materialId: '/Looks/Torso',
+        },
+        {
+          meshId: '/Robot/torso_link/visuals.proto_mesh_id1',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/torso_link/visuals/head_link',
+          primType: 'mesh',
+          materialId: '/Looks/Head',
+        },
+      ],
+      materials: [
+        {
+          materialId: '/Looks/Torso',
+          color: [0.2, 0.3, 0.4, 1],
+        },
+        {
+          materialId: '/Looks/Head',
+          color: [0.9, 0.9, 0.9, 1],
+        },
+      ],
+    },
+  }, {
+    fileName: 'g1.usd',
+  });
+
+  assert.ok(result);
+  assert.equal(result.robotData.links.torso_link.visual.color, '#7c95aa');
+  assert.equal(result.robotData.links.torso_link.collision.type, GeometryType.BOX);
+  assert.equal(result.robotData.materials?.torso_link?.color, '#7c95aa');
+
+  const extraLink = Object.values(result.robotData.links).find((link) => link.id !== 'torso_link');
+  const extraJoint = Object.values(result.robotData.joints).find((joint) => joint.childLinkId === extraLink?.id);
+
+  assert.ok(extraLink);
+  assert.equal(extraLink.visual.type, GeometryType.MESH);
+  assert.equal(extraLink.visual.color, '#f3f3f3');
+  assert.equal(extraLink.inertial?.mass, 0);
+  assert.ok(extraJoint);
+  assert.equal(extraJoint?.type, JointType.FIXED);
+  assert.equal(extraJoint?.parentLinkId, 'torso_link');
+  assert.equal(result.robotData.materials?.[extraLink.id]?.color, '#f3f3f3');
+});
+
+test('maps folded semantic child visual and collision prims back onto existing child links', () => {
+  const result = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/unitree/folded_child.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/torso_link', null],
+        ['/Robot/head_link', '/Robot/torso_link'],
+      ],
+      rootLinkPaths: ['/Robot/torso_link'],
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/torso_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/torso_link/visuals/torso_link/mesh',
+          primType: 'mesh',
+          materialId: '/Looks/Torso',
+        },
+        {
+          meshId: '/Robot/torso_link/visuals.proto_mesh_id1',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/torso_link/visuals/head_link/mesh',
+          primType: 'mesh',
+          materialId: '/Looks/Head',
+        },
+        {
+          meshId: '/Robot/torso_link/collisions.proto_mesh_id0',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/torso_link/collisions/torso_link/mesh',
+          primType: 'mesh',
+        },
+        {
+          meshId: '/Robot/torso_link/collisions.proto_mesh_id1',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/torso_link/collisions/head_link/mesh',
+          primType: 'mesh',
+        },
+      ],
+      materials: [
+        {
+          materialId: '/Looks/Torso',
+          color: [0.2, 0.3, 0.4, 1],
+        },
+        {
+          materialId: '/Looks/Head',
+          color: [0.9, 0.9, 0.9, 1],
+        },
+      ],
+    },
+  }, {
+    fileName: 'folded_child.usd',
+  });
+
+  assert.ok(result);
+  assert.deepEqual(Object.keys(result.robotData.links).sort(), ['head_link', 'torso_link']);
+  assert.equal(result.robotData.links.torso_link.visual.type, GeometryType.MESH);
+  assert.equal(result.robotData.links.torso_link.collision.type, GeometryType.MESH);
+  assert.equal(result.robotData.links.head_link.visual.type, GeometryType.MESH);
+  assert.equal(result.robotData.links.head_link.collision.type, GeometryType.MESH);
+  assert.equal(result.robotData.materials?.torso_link?.color, '#7c95aa');
+  assert.equal(result.robotData.materials?.head_link?.color, '#f3f3f3');
+  assert.equal(
+    Object.values(result.robotData.joints).filter((joint) => joint.childLinkId === 'head_link').length,
+    1,
+  );
+});

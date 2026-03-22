@@ -1,7 +1,12 @@
-import { parseColor, GAZEBO_COLORS } from './utils';
+import { parseColor, parseTexture, GAZEBO_COLORS } from './utils';
+
+interface ParsedMaterialDefinition {
+    color?: string;
+    texture?: string;
+}
 
 export const parseMaterials = (robotEl: Element) => {
-    const globalMaterials: Record<string, string> = {};
+    const globalMaterials: Record<string, ParsedMaterialDefinition> = {};
     const linkGazeboMaterials: Record<string, string> = {};
 
     // 0. Parse Global Materials
@@ -12,8 +17,9 @@ export const parseMaterials = (robotEl: Element) => {
         if (child.tagName === 'material') {
             const name = child.getAttribute("name");
             const color = parseColor(child);
-            if (name && color) {
-                globalMaterials[name] = color;
+            const texture = parseTexture(child);
+            if (name && (color || texture)) {
+                globalMaterials[name] = { color, texture };
             }
         }
     });

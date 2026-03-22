@@ -200,6 +200,10 @@ export const AssemblyTreeView = memo(({
               const isExpanded = expandedComponents[component.id] ?? false;
               const isVisible = component.visible !== false;
               const isEditingComponent = editingComponent?.id === component.id;
+              const componentRobotState: RobotState = {
+                ...component.robot,
+                selection: robot.selection,
+              };
 
               return (
                 <div key={component.id}>
@@ -271,11 +275,11 @@ export const AssemblyTreeView = memo(({
 
                   {isExpanded && (
                     <div className="ml-2">
-                      {getTreeRenderRootLinkIds(component.robot).map((treeRootLinkId) => (
+                      {getTreeRenderRootLinkIds(componentRobotState).map((treeRootLinkId) => (
                         <TreeNode
                           key={treeRootLinkId}
                           linkId={treeRootLinkId}
-                          robot={robot}
+                          robot={componentRobotState}
                           showGeometryDetailsByDefault={showGeometryDetailsByDefault}
                           onSelect={onSelect}
                           onSelectGeometry={onSelectGeometry}

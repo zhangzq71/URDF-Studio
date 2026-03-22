@@ -8,9 +8,17 @@ export enum JointType {
   FIXED = 'fixed',
   REVOLUTE = 'revolute',
   CONTINUOUS = 'continuous',
+  BALL = 'ball',
   PRISMATIC = 'prismatic',
   PLANAR = 'planar',
   FLOATING = 'floating',
+}
+
+export interface JointQuaternion {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
 }
 
 export interface UrdfInertial {
@@ -36,7 +44,7 @@ export interface UrdfLink {
    * The primary collision is kept in `collision` for backward compatibility.
    */
   collisionBodies?: UrdfVisual[];
-  inertial: UrdfInertial;
+  inertial?: UrdfInertial;
   visible?: boolean; // Controls visibility in the 3D scene
 }
 
@@ -52,6 +60,12 @@ export interface UrdfJointHardware {
   motorDirection: 1 | -1;
 }
 
+export interface UrdfJointMimic {
+  joint: string;
+  multiplier?: number;
+  offset?: number;
+}
+
 export interface UrdfJoint {
   id: string;
   name: string;
@@ -59,11 +73,30 @@ export interface UrdfJoint {
   parentLinkId: string;
   childLinkId: string;
   origin: { xyz: Vector3; rpy: Euler };
-  axis: Vector3;
-  limit: { lower: number; upper: number; effort: number; velocity: number };
+  axis?: Vector3;
+  limit?: { lower: number; upper: number; effort: number; velocity: number };
   dynamics: UrdfJointDynamics;
   hardware: UrdfJointHardware;
+  mimic?: UrdfJointMimic;
   angle?: number;
+  quaternion?: JointQuaternion;
+}
+
+export interface RobotClosedLoopConstraintSource {
+  format: 'mjcf';
+  body1Name: string;
+  body2Name: string;
+}
+
+export interface RobotClosedLoopConstraint {
+  id: string;
+  type: 'connect';
+  linkAId: string;
+  linkBId: string;
+  anchorWorld: Vector3;
+  anchorLocalA: Vector3;
+  anchorLocalB: Vector3;
+  source?: RobotClosedLoopConstraintSource;
 }
 
 export interface RobotState {
@@ -71,6 +104,8 @@ export interface RobotState {
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
+  materials?: Record<string, { color?: string; texture?: string }>;
+  closedLoopConstraints?: RobotClosedLoopConstraint[];
   selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
 }
 
@@ -81,6 +116,7 @@ export interface RobotData {
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
   materials?: Record<string, { color?: string; texture?: string }>;
+  closedLoopConstraints?: RobotClosedLoopConstraint[];
 }
 
 /** Assembly component: a URDF parsed into RobotData with namespace */
@@ -114,4 +150,5 @@ export interface RobotFile {
   name: string;
   content: string;
   format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'mesh';
+  blobUrl?: string;
 }

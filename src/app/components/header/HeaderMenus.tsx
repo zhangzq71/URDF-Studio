@@ -20,6 +20,7 @@ interface HeaderMenusProps {
   onOpenExport: () => void;
   onExportProject: () => void;
   onOpenAI: () => void;
+  onOpenMeasureTool: () => void;
   onOpenCollisionOptimizer: () => void;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
@@ -48,6 +49,7 @@ export function HeaderMenus({
   onOpenExport,
   onExportProject,
   onOpenAI,
+  onOpenMeasureTool,
   onOpenCollisionOptimizer,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
@@ -168,6 +170,7 @@ export function HeaderMenus({
             t={t}
             onClose={() => setActiveMenu(null)}
             onOpenAI={onOpenAI}
+            onOpenMeasureTool={onOpenMeasureTool}
             onOpenCollisionOptimizer={onOpenCollisionOptimizer}
           />
         )}

@@ -12,12 +12,12 @@ interface ReferenceGridProps {
 const REFERENCE_GRID_RENDER_ORDER = -100;
 const REFERENCE_GRID_STYLE = {
   light: {
-    cellColor: '#cfd8e2',
-    sectionColor: '#bcc7d3',
+    cellColor: '#d5d9e0',
+    sectionColor: '#a4acb7',
   },
   dark: {
-    cellColor: '#303741',
-    sectionColor: '#485362',
+    cellColor: '#444444',
+    sectionColor: '#555555',
   },
 } as const;
 

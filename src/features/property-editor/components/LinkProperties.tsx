@@ -23,7 +23,7 @@ import {
   InlineInputGroup,
   NumberInput,
   PROPERTY_EDITOR_INPUT_CLASS,
-  ReadonlyStatField,
+  ReadonlyVectorStatHeader,
   ReadonlyVectorStatRow,
   ReadonlyValueField,
   StaticSection,
@@ -32,6 +32,12 @@ import { GeometryEditor } from './GeometryEditor';
 import { TransformFields } from './TransformFields';
 
 type DetailGeometryTab = 'visual' | 'collision';
+
+const DEFAULT_INERTIAL = {
+  mass: 0,
+  origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+  inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+};
 
 const formatReadonlyNumber = (value: number | null | undefined): string => {
   if (value === null || value === undefined || !Number.isFinite(value)) {
@@ -101,13 +107,10 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
 }) => {
   // Tab state for Visual vs Collision
   const [linkTab, setLinkTab] = useState<DetailGeometryTab>('visual');
+  const inertial = data.inertial ?? DEFAULT_INERTIAL;
   const densityResult = useMemo(() => computeLinkDensity(data), [data]);
   const derivedInertial = useMemo(() => computeInertialDerivedValues(data.inertial), [data.inertial]);
-  const densityLabel = densityResult.source === 'collision'
-    ? `${t.density} (${t.collisionGeometry})`
-    : densityResult.source === 'visual'
-      ? `${t.density} (${t.visualGeometry})`
-      : t.density;
+  const densityLabel = t.density;
 
   // Sync internal tab state with global selection subType
   useEffect(() => {
@@ -122,6 +125,8 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
       onSelect('link', selection.id, tab);
     }
   };
+  const inertiaTensorFields = ['ixx', 'ixy', 'ixz', 'iyy', 'iyz', 'izz'] as const;
+  const diagonalInertiaLabels = ['I1', 'I2', 'I3'] as const;
 
   const nameField = (
     <InlineInputGroup label={t.name} labelWidthClassName="w-11">
@@ -138,135 +143,115 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     <StaticSection title={t.inertial} className="mb-2.5">
       <InlineInputGroup label={t.mass} labelWidthClassName="w-16">
         <NumberInput
-          value={data.inertial.mass}
+          value={inertial.mass}
+          min={0}
           onChange={(v: number) => onUpdate('link', selection.id!, {
             ...data,
-            inertial: { ...data.inertial, mass: v }
+            inertial: { ...inertial, mass: v }
           })}
         />
       </InlineInputGroup>
 
-      <InputGroup label={t.centerOfMass || "Center of Mass"}>
-        <TransformFields
-          lang={lang}
-          positionValue={data.inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
-          rotationValue={data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
-          onPositionChange={(xyz) => onUpdate('link', selection.id!, {
-            ...data,
-            inertial: {
-              ...data.inertial,
-              origin: {
-                xyz: xyz as { x: number; y: number; z: number },
-                rpy: data.inertial.origin?.rpy || { r: 0, p: 0, y: 0 },
+      <div className="mb-1 overflow-hidden rounded-md border border-border-black/60">
+        <div className="bg-element-bg/70 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          {t.centerOfMass || "Center of Mass"}
+        </div>
+        <div className="border-t border-border-black/60 bg-panel-bg px-1.5 py-1">
+          <TransformFields
+            lang={lang}
+            positionValue={inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
+            rotationValue={inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
+            compact={false}
+            onPositionChange={(xyz) => onUpdate('link', selection.id!, {
+              ...data,
+              inertial: {
+                ...inertial,
+                origin: {
+                  xyz: xyz as { x: number; y: number; z: number },
+                  rpy: inertial.origin?.rpy || { r: 0, p: 0, y: 0 },
+                },
               },
-            },
-          })}
-          onRotationChange={(rpy) => onUpdate('link', selection.id!, {
-            ...data,
-            inertial: {
-              ...data.inertial,
-              origin: {
-                xyz: data.inertial.origin?.xyz || { x: 0, y: 0, z: 0 },
-                rpy,
+            })}
+            onRotationChange={(rpy) => onUpdate('link', selection.id!, {
+              ...data,
+              inertial: {
+                ...inertial,
+                origin: {
+                  xyz: inertial.origin?.xyz || { x: 0, y: 0, z: 0 },
+                  rpy,
+                },
               },
-            },
-          })}
-        />
-      </InputGroup>
-
-      <div className="mt-3 border-t border-border-black/60 pt-2">
-        <h4 className="mb-2 text-[10px] font-bold uppercase text-text-tertiary">{t.inertiaTensor}</h4>
-        <div className="grid grid-cols-2 gap-2">
-          <NumberInput
-            label="ixx"
-            value={data.inertial.inertia.ixx}
-            onChange={(v) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: { ...data.inertial, inertia: { ...data.inertial.inertia, ixx: v } }
-            })}
-          />
-          <NumberInput
-            label="ixy"
-            value={data.inertial.inertia.ixy}
-            onChange={(v) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: { ...data.inertial, inertia: { ...data.inertial.inertia, ixy: v } }
-            })}
-          />
-          <NumberInput
-            label="ixz"
-            value={data.inertial.inertia.ixz}
-            onChange={(v) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: { ...data.inertial, inertia: { ...data.inertial.inertia, ixz: v } }
-            })}
-          />
-          <NumberInput
-            label="iyy"
-            value={data.inertial.inertia.iyy}
-            onChange={(v) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: { ...data.inertial, inertia: { ...data.inertial.inertia, iyy: v } }
-            })}
-          />
-          <NumberInput
-            label="iyz"
-            value={data.inertial.inertia.iyz}
-            onChange={(v) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: { ...data.inertial, inertia: { ...data.inertial.inertia, iyz: v } }
-            })}
-          />
-          <NumberInput
-            label="izz"
-            value={data.inertial.inertia.izz}
-            onChange={(v) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: { ...data.inertial, inertia: { ...data.inertial.inertia, izz: v } }
             })}
           />
         </div>
       </div>
 
       <div className="mt-3 border-t border-border-black/60 pt-2">
-        <h4 className="mb-2 text-[10px] font-bold uppercase text-text-tertiary">{t.derivedValues}</h4>
-
-        <InputGroup label={densityLabel}>
-          <ReadonlyValueField>
-            {formatReadonlyNumber(densityResult.value)}
-          </ReadonlyValueField>
-        </InputGroup>
-
-        <InputGroup label={t.diagonalInertia}>
-          <div className="grid grid-cols-3 gap-2">
-            {['I1', 'I2', 'I3'].map((label, index) => (
-              <ReadonlyStatField
-                key={label}
-                label={label}
-                value={formatReadonlyNumber(derivedInertial?.diagonalInertia[index])}
+        <h4 className="mb-2 text-[10px] font-bold uppercase text-text-tertiary">{t.inertiaTensor}</h4>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+          {inertiaTensorFields.map((field) => (
+            <InlineInputGroup key={field} label={field} labelWidthClassName="w-7" className="mb-0">
+              <NumberInput
+                value={inertial.inertia[field]}
+                onChange={(v) => onUpdate('link', selection.id!, {
+                  ...data,
+                  inertial: { ...inertial, inertia: { ...inertial.inertia, [field]: v } }
+                })}
               />
-            ))}
-          </div>
-        </InputGroup>
+            </InlineInputGroup>
+          ))}
+        </div>
+      </div>
 
-        <InputGroup label={t.principalAxes} className="mb-0">
-          <div className="space-y-2">
-            {['A1', 'A2', 'A3'].map((label, index) => {
-              const axis = derivedInertial?.principalAxes[index];
-              return (
-                <ReadonlyVectorStatRow
-                  key={label}
-                  label={label}
-                  values={[
-                    formatReadonlyNumber(axis?.x),
-                    formatReadonlyNumber(axis?.y),
-                    formatReadonlyNumber(axis?.z),
-                  ]}
-                />
-              );
-            })}
-          </div>
-        </InputGroup>
+      <div className="mt-3 overflow-hidden rounded-md border border-border-black/60">
+        <div className="bg-element-bg/70 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary">
+          {t.derivedValues}
+        </div>
+        <div className="space-y-2 border-t border-border-black/60 bg-panel-bg px-1.5 py-1.5">
+          <InlineInputGroup label={densityLabel} labelWidthClassName="w-16" align="start">
+            <ReadonlyValueField>
+              {formatReadonlyNumber(densityResult.value)}
+            </ReadonlyValueField>
+          </InlineInputGroup>
+
+          <InputGroup label={t.diagonalInertia}>
+            <div
+              className="grid items-center gap-x-1 gap-y-1"
+              style={{ gridTemplateColumns: 'max-content minmax(0, 1fr) max-content minmax(0, 1fr) max-content minmax(0, 1fr)' }}
+            >
+              {diagonalInertiaLabels.map((label, index) => (
+                <React.Fragment key={label}>
+                  <span className="whitespace-nowrap text-[8px] font-semibold leading-4 text-text-tertiary">
+                    {label}
+                  </span>
+                  <ReadonlyValueField className="justify-center text-center">
+                    {formatReadonlyNumber(derivedInertial?.diagonalInertia[index])}
+                  </ReadonlyValueField>
+                </React.Fragment>
+              ))}
+            </div>
+          </InputGroup>
+
+          <InputGroup label={t.principalAxes} className="mb-0">
+            <div className="space-y-1.5">
+              <ReadonlyVectorStatHeader />
+              {['A1', 'A2', 'A3'].map((label, index) => {
+                const axis = derivedInertial?.principalAxes[index];
+                return (
+                  <ReadonlyVectorStatRow
+                    key={label}
+                    label={label}
+                    values={[
+                      formatReadonlyNumber(axis?.x),
+                      formatReadonlyNumber(axis?.y),
+                      formatReadonlyNumber(axis?.z),
+                    ]}
+                  />
+                );
+              })}
+            </div>
+          </InputGroup>
+        </div>
       </div>
     </StaticSection>
   );

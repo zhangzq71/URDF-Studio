@@ -28,7 +28,6 @@ import {
   CollapsibleSection,
   NumberInput,
   Vec3Input,
-  PROPERTY_EDITOR_HELPER_TEXT_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
   PROPERTY_EDITOR_LINK_CLASS,
   PROPERTY_EDITOR_SELECT_CLASS,
@@ -55,6 +54,7 @@ const JOINT_TYPE_OPTIONS: JointType[] = [
   JointType.FIXED,
   JointType.REVOLUTE,
   JointType.CONTINUOUS,
+  JointType.BALL,
   JointType.PRISMATIC,
   JointType.PLANAR,
   JointType.FLOATING,
@@ -86,6 +86,8 @@ const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): 
       return t.jointTypeRevolute;
     case JointType.CONTINUOUS:
       return t.jointTypeContinuous;
+    case JointType.BALL:
+      return 'Ball';
     case JointType.PRISMATIC:
       return t.jointTypePrismatic;
     case JointType.PLANAR:
@@ -94,25 +96,6 @@ const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): 
       return t.jointTypeFloating;
     default:
       return jointType;
-  }
-};
-
-const getJointTypeDescription = (jointType: JointType, t: typeof translations['en']): string => {
-  switch (jointType) {
-    case JointType.FIXED:
-      return t.jointTypeFixedDescription;
-    case JointType.REVOLUTE:
-      return t.jointTypeRevoluteDescription;
-    case JointType.CONTINUOUS:
-      return t.jointTypeContinuousDescription;
-    case JointType.PRISMATIC:
-      return t.jointTypePrismaticDescription;
-    case JointType.PLANAR:
-      return t.jointTypePlanarDescription;
-    case JointType.FLOATING:
-      return t.jointTypeFloatingDescription;
-    default:
-      return '';
   }
 };
 
@@ -144,7 +127,10 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
   const supportsAxis = AXIS_BASED_TYPES.has(jointType);
   const supportsFullLimit = LIMITED_TYPES.has(jointType);
   const supportsEffortVelocityLimit = EFFORT_VELOCITY_ONLY_TYPES.has(jointType);
-  const supportsMotorSection = jointType !== JointType.FIXED && jointType !== JointType.FLOATING && jointType !== JointType.PLANAR;
+  const supportsMotorSection = jointType !== JointType.FIXED
+    && jointType !== JointType.FLOATING
+    && jointType !== JointType.PLANAR
+    && jointType !== JointType.BALL;
   const defaultLimit = getDefaultJointLimit(jointType);
   const limitUnit = getJointValueUnitLabel(jointType, 'rad');
   const velocityUnit = getJointVelocityUnitLabel(jointType);
@@ -188,25 +174,20 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
     onUpdate
   });
 
-const renderJointTypeField = () => (
+  const renderJointTypeField = () => (
     <InlineInputGroup label={t.type} labelWidthClassName="w-11">
-      <div className="space-y-1.5">
-        <select
-          value={jointType}
-          onChange={(event) => handleJointTypeChange(event.target.value as JointType)}
-          className={PROPERTY_EDITOR_SELECT_CLASS}
-          aria-label={t.type}
-        >
-          {JOINT_TYPE_OPTIONS.map((option) => (
-            <option key={option} value={option}>
-              {getJointTypeLabel(option, t)}
-            </option>
-          ))}
-        </select>
-        <p className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>
-          {getJointTypeDescription(jointType, t)}
-        </p>
-      </div>
+      <select
+        value={jointType}
+        onChange={(event) => handleJointTypeChange(event.target.value as JointType)}
+        className={PROPERTY_EDITOR_SELECT_CLASS}
+        aria-label={t.type}
+      >
+        {JOINT_TYPE_OPTIONS.map((option) => (
+          <option key={option} value={option}>
+            {getJointTypeLabel(option, t)}
+          </option>
+        ))}
+      </select>
     </InlineInputGroup>
   );
 
@@ -367,6 +348,7 @@ const renderJointTypeField = () => (
                   <InputGroup label={t.armature}>
                     <NumberInput
                       value={data.hardware?.armature || 0}
+                      min={0}
                       onChange={(v: number) => updateJoint({
                         hardware: { ...data.hardware, armature: v }
                       })}
@@ -406,6 +388,7 @@ const renderJointTypeField = () => (
                 <InputGroup label={t.velocity}>
                   <NumberInput
                     value={data.limit?.velocity ?? defaultLimit.velocity}
+                    min={0}
                     onChange={(v: number) => updateJoint({
                       limit: { ...defaultLimit, ...data.limit, velocity: v }
                     })}
@@ -415,6 +398,7 @@ const renderJointTypeField = () => (
                 <InputGroup label={t.effort}>
                   <NumberInput
                     value={data.limit?.effort ?? defaultLimit.effort}
+                    min={0}
                     onChange={(v: number) => updateJoint({
                       limit: { ...defaultLimit, ...data.limit, effort: v }
                     })}
@@ -432,6 +416,7 @@ const renderJointTypeField = () => (
                 <InputGroup label={t.friction}>
                   <NumberInput
                     value={data.dynamics?.friction || 0}
+                    min={0}
                     onChange={(v: number) => updateJoint({
                       dynamics: { ...data.dynamics, friction: v }
                     })}
@@ -440,6 +425,7 @@ const renderJointTypeField = () => (
                 <InputGroup label={t.damping}>
                   <NumberInput
                     value={data.dynamics?.damping || 0}
+                    min={0}
                     onChange={(v: number) => updateJoint({
                       dynamics: { ...data.dynamics, damping: v }
                     })}

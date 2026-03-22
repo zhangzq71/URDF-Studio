@@ -3,7 +3,7 @@
  * TypeScript rewrite of stl-parser.js from stl_compressor_web
  */
 
-import type { STLMeshData, BoundingBox } from './types';
+import type { STLMeshData, BoundingBox } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Format detection

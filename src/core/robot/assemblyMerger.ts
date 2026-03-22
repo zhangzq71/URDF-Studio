@@ -2,12 +2,13 @@
  * Assembly Merger - Merges AssemblyState into a single RobotData
  * Used for rendering and URDF export
  */
-import type { AssemblyState, RobotData, UrdfJoint } from '@/types';
+import type { AssemblyState, RobotClosedLoopConstraint, RobotData, UrdfJoint } from '@/types';
 
 export function mergeAssembly(assembly: AssemblyState): RobotData {
   const links: RobotData['links'] = {};
   const joints: RobotData['joints'] = {};
   const materials: RobotData['materials'] = {};
+  const closedLoopConstraints: RobotClosedLoopConstraint[] = [];
   let rootLinkId = '';
 
   const comps = Object.values(assembly.components).filter(c => c.visible !== false);
@@ -29,6 +30,7 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
     for (const [id, joint] of Object.entries(comp.robot.joints)) {
       joints[id] = { ...joint };
     }
+    closedLoopConstraints.push(...(comp.robot.closedLoopConstraints || []).map((constraint) => ({ ...constraint })));
     if (comp.robot.materials) {
       Object.assign(materials, comp.robot.materials);
     }
@@ -71,5 +73,6 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
     joints,
     rootLinkId,
     materials: Object.keys(materials).length > 0 ? materials : undefined,
+    closedLoopConstraints: closedLoopConstraints.length > 0 ? closedLoopConstraints : undefined,
   };
 }

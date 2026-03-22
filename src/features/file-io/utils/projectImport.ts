@@ -7,6 +7,7 @@ import {
   MotorSpec,
   RobotData,
   RobotFile,
+  UsdPreparedExportCache,
   UrdfJoint,
 } from '@/types';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
@@ -22,6 +23,7 @@ import {
   PROJECT_ROBOT_HISTORY_FILE,
 } from './projectArchive';
 import type { ProjectManifest } from './projectExport';
+import { readUsdPreparedExportCaches } from './projectUsdPreparedExportCaches';
 
 type ProjectActivityEntry = {
   id: string;
@@ -51,6 +53,7 @@ export interface ImportResult {
   selectedFileName: string | null;
   originalUrdfContent: string;
   originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
+  usdPreparedExportCaches: Record<string, UsdPreparedExportCache>;
   robotState: RobotData | null;
   robotHistory: { past: RobotData[]; future: RobotData[] };
   robotActivity: ProjectActivityEntry[];
@@ -179,6 +182,7 @@ const loadHistoryFile = async <T>(
 const loadLibraryFiles = async (
   zip: JSZip,
   manifest: ProjectManifest,
+  assets: Record<string, string>,
 ): Promise<RobotFile[]> => {
   const availableFiles: RobotFile[] = [];
 
@@ -193,6 +197,7 @@ const loadLibraryFiles = async (
       name: fileInfo.name,
       content,
       format: fileInfo.format as RobotFile['format'],
+      blobUrl: assets[fileInfo.name],
     });
   }
 
@@ -221,7 +226,8 @@ export async function importProject(file: File, lang: Language = 'en'): Promise<
 
   const manifest = JSON.parse(manifestContent) as ProjectManifest;
   const assets = await loadPackedAssets(zip, manifest);
-  const availableFiles = await loadLibraryFiles(zip, manifest);
+  const availableFiles = await loadLibraryFiles(zip, manifest, assets);
+  const usdPreparedExportCaches = await readUsdPreparedExportCaches(zip);
 
   const allFileContents = await loadJsonRecord(
     zip,
@@ -265,6 +271,7 @@ export async function importProject(file: File, lang: Language = 'en'): Promise<
     selectedFileName: manifest.workspace?.selectedFile ?? null,
     originalUrdfContent,
     originalFileFormat: manifest.assets.originalFileFormat ?? null,
+    usdPreparedExportCaches,
     robotState,
     robotHistory: {
       past: clampHistoryEntries(robotHistorySnapshot?.past),

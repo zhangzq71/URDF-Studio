@@ -5,6 +5,10 @@ import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
 import { useSelectionStore } from '@/store/selectionStore';
 import { getCachedMaterial } from '../../utils/materialCache';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
+import {
+  shouldNormalizeColladaGeometry,
+  type ColladaRootNormalizationHints,
+} from '@/core/loaders/colladaRootNormalization';
 import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 
 interface GeometryRendererProps {
@@ -22,6 +26,7 @@ interface GeometryRendererProps {
   geometryData?: UrdfVisual;
   geometryId?: string;
   objectIndex?: number;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
 }
 
 /**
@@ -43,6 +48,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   geometryData,
   geometryId,
   objectIndex,
+  colladaRootNormalizationHints,
 }: GeometryRendererProps) {
   const data = geometryData || (isCollision ? link.collision : link.visual);
 
@@ -262,6 +268,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
             material={material}
             assets={assets}
             assetBaseDir={assetBaseDir}
+            normalizeRoot={shouldNormalizeColladaGeometry(meshPath, origin, colladaRootNormalizationHints)}
             scale={dimensions}
           />
         );

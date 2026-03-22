@@ -17,13 +17,13 @@ const DRAG_GRIP_PATH = "M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 
 
 // Chevron icons
 const ChevronDown = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
   </svg>
 );
 
 const ChevronUp = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
   </svg>
 );
@@ -35,7 +35,7 @@ const ChevronRight = () => (
 );
 
 const CloseIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
   </svg>
 );
@@ -115,8 +115,8 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   labelClassName = '',
 }) => {
   const paddingClass = compact
-    ? `${indent ? 'pl-4' : ''} pr-3 pb-1`
-    : `${indent ? 'pl-6' : ''} pr-3 pb-2`;
+    ? `${indent ? 'pl-2.5' : ''} pr-1.5 pb-1`
+    : `${indent ? 'pl-4' : ''} pr-1.5 pb-1.5`;
 
   return (
     <div className={paddingClass}>
@@ -130,7 +130,6 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         icon={icon}
         showValue={true}
         formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
-        className={compact ? "scale-95 origin-left" : ""}
         labelClassName={`text-[10px] text-text-tertiary mb-1 ${labelClassName}`}
       />
     </div>
@@ -317,7 +316,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           collapsed ? 'max-h-0 opacity-0' : 'max-h-[300px] opacity-100'
         } ${contentClassName}`}
       >
-        <div className={`p-2 space-y-2 ${contentInnerClassName}`}>
+        <div className={`px-1 py-1.5 space-y-1.5 ${contentInnerClassName}`}>
           {children}
         </div>
       </div>
@@ -365,7 +364,7 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
         indent={sliderIndent}
         labelClassName={sliderLabelClassName}
       />
-      <div className="flex gap-1.5 px-3 pb-2">
+      <div className="flex gap-1.5 px-2 pb-2">
         {onAutoFit && autoFitLabel && (
           <button
             type="button"
@@ -417,16 +416,16 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
 }) => {
   return (
     <div
-      className="text-[10px] text-text-tertiary uppercase font-bold tracking-wider px-3 py-2 cursor-move bg-element-bg hover:bg-element-hover select-none flex min-w-0 items-center justify-between gap-2 shrink-0 border-b border-border-black/60 transition-colors"
+      className="text-[9px] text-text-tertiary uppercase font-bold tracking-wide px-2 py-1 cursor-move bg-element-bg hover:bg-element-hover select-none flex min-w-0 items-center justify-between gap-1 shrink-0 border-b border-border-black/60 transition-colors"
       onMouseDown={onMouseDown}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
         <span className="hidden shrink-0 @[220px]:inline-flex">
           <DragGripIcon />
         </span>
         <span className="truncate whitespace-nowrap leading-tight">{title}</span>
       </div>
-      <div className="flex min-w-fit shrink-0 items-center gap-1 pl-1">
+      <div className="flex min-w-fit shrink-0 items-center gap-0.5">
         {additionalControls}
         {showCollapseButton && (
           <button
@@ -435,7 +434,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               e.stopPropagation();
               onToggleCollapse();
             }}
-            className="p-1 hover:bg-element-hover rounded-md transition-colors"
+            className="rounded-md p-0 hover:bg-element-hover transition-colors"
             title={isCollapsed ? expandText : collapseText}
           >
             {isCollapsed ? <ChevronDown /> : <ChevronUp />}
@@ -449,6 +448,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               onClose();
             }}
             size="sm"
+            className="p-0"
             variant="close"
             title={closeText}
           >

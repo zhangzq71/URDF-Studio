@@ -106,14 +106,14 @@ export function TreeEditorSidebarHeader({
                   onCancelNameEditing();
                 }
               }}
-              className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-[13px] font-medium text-text-primary px-2 py-1 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
+              className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-[11px] font-medium text-text-primary px-1.5 py-0.5 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
               placeholder={namePlaceholder}
             />
           ) : (
             <button
               type="button"
               onClick={onStartNameEditing}
-              className="flex-1 min-w-0 text-left text-[13px] font-medium text-text-primary hover:text-system-blue transition-colors truncate"
+              className="flex-1 min-w-0 text-left text-[11px] font-medium text-text-primary hover:text-system-blue transition-colors truncate"
               title={currentName || namePlaceholder}
             >
               {currentName || namePlaceholder}

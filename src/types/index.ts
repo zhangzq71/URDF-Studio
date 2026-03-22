@@ -18,5 +18,8 @@ export * from './inspection';
 // UI types
 export * from './ui';
 
+// USD runtime/cache types
+export * from './usd';
+
 // Constants
 export * from './constants';

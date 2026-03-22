@@ -63,17 +63,26 @@ export const DAERenderer = React.memo(({
   material,
   assets,
   assetBaseDir,
+  normalizeRoot,
   scale
 }: {
   url: string;
   material: THREE.Material;
   assets: Record<string, string>;
   assetBaseDir?: string;
+  normalizeRoot?: boolean;
   scale?: ScaleProps;
 }) => {
   return (
     <Suspense fallback={null}>
-      <LazyDAERenderer url={url} material={material} assets={assets} assetBaseDir={assetBaseDir} scale={scale} />
+      <LazyDAERenderer
+        url={url}
+        material={material}
+        assets={assets}
+        assetBaseDir={assetBaseDir}
+        normalizeRoot={normalizeRoot}
+        scale={scale}
+      />
     </Suspense>
   );
 });

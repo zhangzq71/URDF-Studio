@@ -34,5 +34,7 @@ export { getDroppedFiles } from './fileTraverser';
 
 export { exportProject } from './projectExport';
 export { importProject } from './projectImport';
+export { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
+export { exportRobotToUsd } from './usdExport';
 export type { ImportResult } from './projectImport';
 export type { ProjectManifest } from './projectExport';

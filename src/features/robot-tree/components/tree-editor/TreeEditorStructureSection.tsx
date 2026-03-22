@@ -36,6 +36,7 @@ interface TreeEditorStructureSectionProps {
   onRenameComponent?: (id: string, name: string) => void;
   onCreateBridge?: () => void;
   onToggleComponentVisibility: (componentId: string) => void;
+  isReadOnly?: boolean;
 }
 
 export function TreeEditorStructureSection({
@@ -68,11 +69,12 @@ export function TreeEditorStructureSection({
   onRenameComponent,
   onCreateBridge,
   onToggleComponentVisibility,
+  isReadOnly = false,
 }: TreeEditorStructureSectionProps) {
   return (
     <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}>
       <div
-        className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none border-b border-border-black dark:border-border-black"
+        className="flex items-center justify-between px-3 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
         onClick={onToggleOpen}
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -81,16 +83,21 @@ export function TreeEditorStructureSection({
           ) : (
             <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
           )}
-          <span className="shrink-0 text-xs font-bold text-text-secondary uppercase tracking-wider">
+          <span className="shrink-0 text-[11px] leading-none font-semibold text-text-secondary uppercase tracking-[0.14em]">
             {isAssemblyView ? t.assemblyTree : t.structureTree}
           </span>
+          {isReadOnly && (
+            <span className="rounded-md border border-system-blue/20 bg-system-blue/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-system-blue">
+              {t.preview}
+            </span>
+          )}
           {showStructureFilePath && (
             <div
               className="flex min-w-0 items-center gap-1 rounded-md border border-border-black bg-white px-1.5 py-0.5 dark:bg-panel-bg"
               title={currentFileName}
             >
               <FileCode className="h-3 w-3 shrink-0 text-system-blue" />
-              <span className="truncate text-[10px] font-medium text-text-secondary dark:text-text-tertiary">
+              <span className="truncate text-[9px] leading-none font-medium text-text-secondary dark:text-text-tertiary">
                 {currentFileName}
               </span>
             </div>
@@ -100,7 +107,7 @@ export function TreeEditorStructureSection({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${
+            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors ${
               structureTreeShowGeometryDetails
                 ? 'bg-element-hover text-text-primary ring-1 ring-inset ring-border-black/60'
                 : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
@@ -116,9 +123,9 @@ export function TreeEditorStructureSection({
             <Shield size={11} />
           </button>
 
-          {mode === 'skeleton' && !isAssemblyView && (
+          {mode === 'skeleton' && !isAssemblyView && !isReadOnly && (
             <button
-              className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
+              className="p-0.5 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
               onClick={(event) => {
                 event.stopPropagation();
                 onAddChildFromSelection();
@@ -129,7 +136,7 @@ export function TreeEditorStructureSection({
             </button>
           )}
 
-          {!isAssemblyView && (
+          {!isAssemblyView && !isReadOnly && (
             <div
               className="flex items-center justify-center w-5 h-5 rounded hover:bg-element-hover cursor-pointer text-text-tertiary transition-colors"
               onClick={(event) => {
@@ -186,6 +193,7 @@ export function TreeEditorStructureSection({
                     onUpdate={onUpdate}
                     mode={mode}
                     t={t}
+                    readOnly={isReadOnly}
                   />
                 ))
               )}

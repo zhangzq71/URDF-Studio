@@ -1,27 +1,55 @@
 import React from 'react';
 import * as THREE from 'three';
 import type { Language, translations } from '@/shared/i18n';
-import type { Theme, UrdfJoint, UrdfLink } from '@/types';
+import type { JointQuaternion, RobotFile, Theme, UrdfJoint, UrdfLink } from '@/types';
+import type { ViewerRobotDataResolution } from './utils/viewerRobotData';
+import type {
+    MeasureAnchorMode,
+    MeasureGroup,
+    MeasureMeasurement,
+    MeasureObjectType,
+    MeasureSlot,
+    MeasureState,
+    MeasureTarget,
+} from './utils/measurements';
+import type { MeasureSelectionLike } from './utils/measureTargetResolvers';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
+export type { MeasureAnchorMode, MeasureGroup, MeasureMeasurement, MeasureObjectType, MeasureSlot, MeasureState, MeasureTarget };
+export type MeasureTargetResolver = (
+    selection?: MeasureSelectionLike,
+    fallbackSelection?: MeasureSelectionLike,
+    anchorMode?: MeasureAnchorMode,
+) => MeasureTarget | null;
 
-export interface MeasureState {
-    measurements: [THREE.Vector3, THREE.Vector3][];
-    currentPoints: THREE.Vector3[];
-    tempPoint: THREE.Vector3 | null;
+export interface ViewerRuntimeStageBridge {
+    onRobotResolved?: (robot: any | null) => void;
+    onSelectionChange?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onJointAnglesChange?: (jointAngles: Record<string, number>) => void;
+}
+
+export interface ViewerJointMotionStateValue {
+    angle?: number;
+    quaternion?: JointQuaternion;
 }
 
 export interface URDFViewerProps {
     urdfContent: string;
     assets: Record<string, string>;
+    sourceFile?: RobotFile | null;
+    availableFiles?: RobotFile[];
     sourceFilePath?: string;
+    onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
     onJointChange?: (jointName: string, angle: number) => void;
+    syncJointChangesToApp?: boolean;
     jointAngleState?: Record<string, number>;
+    jointMotionState?: Record<string, ViewerJointMotionStateValue>;
     lang: Language;
     mode?: 'detail' | 'hardware';
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
+    onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
     theme: Theme;
     selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
     hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
@@ -121,9 +149,13 @@ export interface ViewerToolbarProps {
 export interface MeasureToolProps {
     active: boolean;
     robot: THREE.Object3D | null;
+    robotLinks?: Record<string, UrdfLink>;
     measureState: MeasureState;
     setMeasureState: React.Dispatch<React.SetStateAction<MeasureState>>;
+    measureAnchorMode: MeasureAnchorMode;
+    showDecomposition: boolean;
     deleteTooltip?: string;
+    measureTargetResolverRef?: React.RefObject<MeasureTargetResolver | null>;
 }
 
 export interface JointInteractionProps {

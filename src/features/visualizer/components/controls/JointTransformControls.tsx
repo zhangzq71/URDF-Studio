@@ -7,6 +7,7 @@ import { TransformControlsState } from '../../hooks/useTransformControls';
 interface JointTransformControlsProps {
   mode: 'skeleton' | 'detail' | 'hardware';
   selectedJointPivot: THREE.Group | null;
+  selectedJointMotion: THREE.Group | null;
   robot: RobotState;
   transformMode: 'translate' | 'rotate' | 'universal';
   transformControlsState: TransformControlsState;
@@ -24,6 +25,7 @@ interface JointTransformControlsProps {
 export const JointTransformControls = memo(function JointTransformControls({
   mode,
   selectedJointPivot,
+  selectedJointMotion,
   robot,
   transformMode,
   transformControlsState,
@@ -32,6 +34,7 @@ export const JointTransformControls = memo(function JointTransformControls({
     transformControlRef,
     rotateTransformControlRef,
     handleObjectChange,
+    handleRotateObjectChange,
   } = transformControlsState;
   const [translateProxy, setTranslateProxy] = useState<THREE.Group | null>(null);
   const translateProxyRef = useRef<THREE.Group | null>(null);
@@ -103,11 +106,11 @@ export const JointTransformControls = memo(function JointTransformControls({
   });
 
   if (mode !== 'skeleton') return null;
-  if (!selectedJointPivot || !jointId || !joint) return null;
+  if (!selectedJointPivot || !selectedJointMotion || !jointId || !joint) return null;
 
   // Don't show TransformControls for fixed joints
   const jointTypeStr = String(joint.type).toLowerCase();
-  if (jointTypeStr === 'fixed' || joint.type === JointType.FIXED) return null;
+  if (jointTypeStr === 'fixed' || joint.type === JointType.FIXED || joint.type === JointType.BALL) return null;
 
   const shouldRenderTranslateProxy =
     transformMode === 'translate' || transformMode === 'universal';
@@ -124,7 +127,7 @@ export const JointTransformControls = memo(function JointTransformControls({
           rotateRef={rotateTransformControlRef}
           object={selectedJointPivot}
           translateObject={shouldRenderTranslateProxy ? translateProxy ?? undefined : undefined}
-          rotateObject={selectedJointPivot}
+          rotateObject={selectedJointMotion}
           mode={transformMode}
           size={VISUALIZER_UNIFIED_GIZMO_SIZE}
           translateSpace="local"
@@ -133,10 +136,10 @@ export const JointTransformControls = memo(function JointTransformControls({
           displayStyle="thick-primary"
           onChange={
             transformMode === 'rotate'
-              ? handleObjectChange
+              ? handleRotateObjectChange
               : handleTranslateChange
           }
-          onRotateChange={handleObjectChange}
+          onRotateChange={handleRotateObjectChange}
           onDraggingChanged={handleDraggingChanged}
         />
       )}

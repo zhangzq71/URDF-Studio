@@ -12,6 +12,7 @@ interface TreeNodeContextMenuProps {
   contextMenuGeometryType: GeometryType | null;
   isSkeleton: boolean;
   t: TranslationKeys;
+  readOnly: boolean;
   onRenameMenuAction: () => void;
   onAddChildMenuAction: () => void;
   onDeleteMenuAction: () => void;
@@ -27,6 +28,7 @@ export const TreeNodeContextMenu = memo(function TreeNodeContextMenu({
   contextMenuGeometryType,
   isSkeleton,
   t,
+  readOnly,
   onRenameMenuAction,
   onAddChildMenuAction,
   onDeleteMenuAction,
@@ -34,7 +36,7 @@ export const TreeNodeContextMenu = memo(function TreeNodeContextMenu({
   onDeleteGeometryMenuAction,
   onDeleteLinkGeometry,
 }: TreeNodeContextMenuProps) {
-  if (!contextMenu) {
+  if (!contextMenu || readOnly) {
     return null;
   }
 

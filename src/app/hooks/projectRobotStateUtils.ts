@@ -1,0 +1,78 @@
+import type {
+  RobotClosedLoopConstraint,
+  RobotData,
+  RobotState,
+  UrdfJoint,
+  UrdfLink,
+} from '@/types';
+
+export interface RobotActivityEntryLike {
+  id: string;
+  timestamp: string;
+  label: string;
+}
+
+export interface RobotHistoryLike {
+  past: RobotData[];
+  future: RobotData[];
+}
+
+interface CurrentRobotExportInput {
+  robotName: string;
+  robotLinks: Record<string, UrdfLink>;
+  robotJoints: Record<string, UrdfJoint>;
+  rootLinkId: string;
+  robotMaterials?: Record<string, { color?: string; texture?: string }>;
+  closedLoopConstraints?: RobotClosedLoopConstraint[];
+}
+
+export function buildCurrentRobotExportData({
+  robotName,
+  robotLinks,
+  robotJoints,
+  rootLinkId,
+  robotMaterials,
+  closedLoopConstraints,
+}: CurrentRobotExportInput): RobotData {
+  return {
+    name: robotName,
+    links: robotLinks,
+    joints: robotJoints,
+    rootLinkId,
+    materials: robotMaterials,
+    closedLoopConstraints,
+  };
+}
+
+export function buildCurrentRobotExportState(
+  input: CurrentRobotExportInput,
+): RobotState {
+  return {
+    ...buildCurrentRobotExportData(input),
+    selection: { type: null, id: null },
+  };
+}
+
+export function buildImportedRobotStoreState(
+  robotState: RobotData | null,
+  robotHistory: RobotHistoryLike,
+  robotActivity: RobotActivityEntryLike[],
+) {
+  if (!robotState) {
+    return {
+      _history: robotHistory,
+      _activity: robotActivity,
+    };
+  }
+
+  return {
+    name: robotState.name,
+    links: robotState.links,
+    joints: robotState.joints,
+    rootLinkId: robotState.rootLinkId,
+    materials: robotState.materials,
+    closedLoopConstraints: robotState.closedLoopConstraints,
+    _history: robotHistory,
+    _activity: robotActivity,
+  };
+}

@@ -10,7 +10,7 @@ interface GroundShadowPlaneProps {
 const GROUND_SHADOW_STYLE = {
   light: {
     color: '#000000',
-    opacity: 0.05,
+    opacity: 0.08,
   },
   dark: {
     color: '#000000',

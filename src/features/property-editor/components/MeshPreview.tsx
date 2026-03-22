@@ -12,6 +12,7 @@ import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 interface MeshPreviewProps {
   meshPath: string;
   assets: Record<string, string>;
+  normalizeColladaRoot?: boolean;
   notFoundText?: string;
 }
 
@@ -106,7 +107,17 @@ function RotatingGroup({ children }: { children: React.ReactNode }) {
 }
 
 /** Render the appropriate mesh based on file extension */
-function MeshContent({ meshPath, assetUrl, assets }: { meshPath: string; assetUrl: string; assets: Record<string, string> }) {
+function MeshContent({
+  meshPath,
+  assetUrl,
+  assets,
+  normalizeColladaRoot = false,
+}: {
+  meshPath: string;
+  assetUrl: string;
+  assets: Record<string, string>;
+  normalizeColladaRoot?: boolean;
+}) {
   const material = useMemo(
     () => new THREE.MeshStandardMaterial({ color: '#6b9bd2', metalness: 0.1, roughness: 0.6 }),
     []
@@ -120,7 +131,15 @@ function MeshContent({ meshPath, assetUrl, assets }: { meshPath: string; assetUr
   } else if (ext === 'obj') {
     return <OBJRenderer url={assetUrl} material={material} color="#6b9bd2" assets={assets} assetBaseDir={assetBaseDir} />;
   } else if (ext === 'dae') {
-    return <DAERenderer url={assetUrl} material={material} assets={assets} assetBaseDir={assetBaseDir} />;
+    return (
+      <DAERenderer
+        url={assetUrl}
+        material={material}
+        assets={assets}
+        assetBaseDir={assetBaseDir}
+        normalizeRoot={normalizeColladaRoot}
+      />
+    );
   }
   return (
     <mesh>
@@ -142,6 +161,7 @@ function LoadingFallback() {
 export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({
   meshPath,
   assets,
+  normalizeColladaRoot = false,
   notFoundText = 'Mesh not found'
 }) => {
   const assetUrl = findAssetByPath(meshPath, assets);
@@ -165,7 +185,12 @@ export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({
         <directionalLight position={[-1, -1, -1]} intensity={0.3} />
         <Suspense fallback={<LoadingFallback />}>
           <RotatingGroup>
-            <MeshContent meshPath={meshPath} assetUrl={assetUrl} assets={assets} />
+            <MeshContent
+              meshPath={meshPath}
+              assetUrl={assetUrl}
+              assets={assets}
+              normalizeColladaRoot={normalizeColladaRoot}
+            />
           </RotatingGroup>
           <AutoFitCamera />
         </Suspense>

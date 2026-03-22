@@ -2,7 +2,10 @@ import React from 'react';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
 import type { Vec3Value } from './FormControls';
-import { Vec3InlineInput, PROPERTY_EDITOR_SUBLABEL_CLASS } from './FormControls';
+import {
+  PROPERTY_EDITOR_SUBLABEL_CLASS,
+  Vec3InlineInput,
+} from './FormControls';
 import { RotationValueInput } from './RotationValueInput';
 import {
   PROPERTY_EDITOR_POSITION_STEP,
@@ -18,6 +21,7 @@ interface TransformFieldsProps {
   onPositionChange: (value: Vec3Value) => void;
   onRotationChange: (value: EulerRadiansValue) => void;
   compact?: boolean;
+  axisLabelPlacement?: 'stacked' | 'inline';
 }
 
 export const TransformFields: React.FC<TransformFieldsProps> = ({
@@ -27,11 +31,12 @@ export const TransformFields: React.FC<TransformFieldsProps> = ({
   onPositionChange,
   onRotationChange,
   compact = true,
+  axisLabelPlacement = 'inline',
 }) => {
   const t = translations[lang];
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="space-y-1">
         <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
         <Vec3InlineInput
@@ -39,6 +44,7 @@ export const TransformFields: React.FC<TransformFieldsProps> = ({
           onChange={onPositionChange}
           labels={['X', 'Y', 'Z']}
           compact={compact}
+          labelPlacement={axisLabelPlacement}
           step={PROPERTY_EDITOR_POSITION_STEP}
           precision={MAX_TRANSFORM_DECIMALS}
           repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
@@ -48,9 +54,11 @@ export const TransformFields: React.FC<TransformFieldsProps> = ({
         value={rotationValue}
         onChange={onRotationChange}
         lang={lang}
-        label={t.rotation}
         compact={compact}
+        label={t.rotation}
+        axisLabelPlacement={axisLabelPlacement}
         holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
+        showFrameHint={false}
       />
     </div>
   );

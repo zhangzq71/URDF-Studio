@@ -12,14 +12,20 @@ import { URDFViewerScene } from './URDFViewerScene';
 export const URDFViewer = memo(function URDFViewer({
   urdfContent,
   assets,
+  sourceFile,
+  availableFiles = [],
+  onRobotDataResolved,
   onJointChange,
+  syncJointChangesToApp = false,
   jointAngleState,
+  jointMotionState,
   lang,
   theme,
   mode = 'detail',
   onSelect,
   onMeshSelect,
   onHover,
+  onUpdate,
   selection,
   hoveredSelection,
   robotLinks,
@@ -51,7 +57,10 @@ export const URDFViewer = memo(function URDFViewer({
   const resolvedTheme = theme ? explicitTheme : inheritedTheme;
   const controller = useURDFViewerController({
     onJointChange,
+    syncJointChangesToApp,
+    showJointPanel,
     jointAngleState,
+    jointMotionState,
     onSelect,
     onMeshSelect,
     onHover,
@@ -75,6 +84,7 @@ export const URDFViewer = memo(function URDFViewer({
         lang={lang}
         mode={mode}
         controller={controller}
+        onUpdate={onUpdate}
         showToolbar={showToolbar}
         setShowToolbar={setShowToolbar}
         showOptionsPanel={showOptionsPanel}
@@ -101,8 +111,11 @@ export const URDFViewer = memo(function URDFViewer({
       >
         <URDFViewerScene
           controller={controller}
+          sourceFile={sourceFile}
+          availableFiles={availableFiles}
           urdfContent={urdfContent}
           assets={assets}
+          onRobotDataResolved={onRobotDataResolved}
           sourceFilePath={sourceFilePath}
           groundPlaneOffset={groundPlaneOffset}
           mode={mode}
@@ -114,6 +127,7 @@ export const URDFViewer = memo(function URDFViewer({
           robotLinks={robotLinks}
           robotJoints={robotJoints}
           focusTarget={focusTarget}
+          toolMode={controller.toolMode}
           onCollisionTransformPreview={onCollisionTransformPreview}
           onCollisionTransform={onCollisionTransform}
           isMeshPreview={isMeshPreview}

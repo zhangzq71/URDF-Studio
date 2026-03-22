@@ -20,7 +20,9 @@ export function patchJointInPlace(
   joint.origQuaternion = joint.quaternion.clone();
 
   const axis = patch.jointData.axis;
-  const axisLengthSq = axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
+  const axisLengthSq = axis
+    ? axis.x * axis.x + axis.y * axis.y + axis.z * axis.z
+    : 0;
   if (axisLengthSq > 0) {
     joint.axis.set(axis.x, axis.y, axis.z).normalize();
   } else if (joint.jointType === 'planar') {
@@ -29,10 +31,20 @@ export function patchJointInPlace(
     joint.axis.set(1, 0, 0);
   }
 
-  joint.limit.lower = patch.jointData.limit.lower;
-  joint.limit.upper = patch.jointData.limit.upper;
-  joint.limit.effort = patch.jointData.limit.effort;
-  joint.limit.velocity = patch.jointData.limit.velocity;
+  const nextLimit = patch.jointData.limit;
+  if (nextLimit) {
+    joint.limit.lower = nextLimit.lower;
+    joint.limit.upper = nextLimit.upper;
+    joint.limit.effort = nextLimit.effort;
+    joint.limit.velocity = nextLimit.velocity;
+    joint.ignoreLimits = false;
+  } else {
+    joint.limit.lower = 0;
+    joint.limit.upper = 0;
+    delete joint.limit.effort;
+    delete joint.limit.velocity;
+    joint.ignoreLimits = joint.jointType === 'revolute' || joint.jointType === 'prismatic';
+  }
 
   switch (joint.jointType) {
     case 'fixed':

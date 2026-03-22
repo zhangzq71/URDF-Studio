@@ -27,6 +27,7 @@ interface JointsPanelProps {
     handleJointChangeCommit: (name: string, angle: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
+    onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }
 
 export const JointsPanel: React.FC<JointsPanelProps> = ({
@@ -52,6 +53,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     handleJointChangeCommit,
     onSelect,
     onHover,
+    onUpdate,
 }) => {
     // Condition to show
     const shouldShow = showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
@@ -118,7 +120,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             resizeTitle={t.resize}
             panelClassName="urdf-joint-panel"
         >
-            <div className="p-2 space-y-2" onMouseLeave={() => onHover?.(null, null)}>
+            <div className="px-1 py-1.5 space-y-1" onMouseLeave={() => onHover?.(null, null)}>
                 {robot?.joints && Object.entries(robot.joints)
                     .filter(([_, joint]: [string, any]) => isSingleDofJoint(joint))
                     .map(([name, joint]: [string, any]) => (
@@ -135,6 +137,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             onSelect={onSelect}
                             onHover={onHover}
                             isAdvanced={isAdvanced}
+                            onUpdate={onUpdate}
                         />
                     ))}
             </div>

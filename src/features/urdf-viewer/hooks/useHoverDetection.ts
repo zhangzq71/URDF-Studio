@@ -278,7 +278,7 @@ export function useHoverDetection({
         // Skip raycast if no update needed
         if (!needsRaycastRef.current) return;
 
-        const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
+        const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal', 'measure'].includes(toolMode || 'select');
         const { subType: activeInteractionSubType } = resolveEffectiveInteractionSubType(
             highlightMode,
             showVisual,

@@ -5,6 +5,10 @@ import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
 } from '@/app/utils/overlayLoaders';
+import {
+  isSourceCodeDocumentReadOnly,
+  type SourceCodeDocumentFlavor,
+} from '@/app/utils/sourceCodeDisplay';
 import type { Language } from '@/shared/i18n';
 import type { Theme, UrdfJoint } from '@/types';
 import type { AssemblyState } from '@/types';
@@ -29,6 +33,7 @@ const BridgeCreateModal = lazy(() =>
 interface AppLayoutOverlaysProps {
   isCodeViewerOpen: boolean;
   sourceCodeContent: string;
+  sourceCodeDocumentFlavor: SourceCodeDocumentFlavor;
   onCodeChange: (newCode: string) => void;
   onCloseCodeViewer: () => void;
   theme: Theme;
@@ -67,6 +72,7 @@ interface AppLayoutOverlaysProps {
 export function AppLayoutOverlays({
   isCodeViewerOpen,
   sourceCodeContent,
+  sourceCodeDocumentFlavor,
   onCodeChange,
   onCloseCodeViewer,
   theme,
@@ -92,7 +98,6 @@ export function AppLayoutOverlays({
   const codeEditorFileName = selectedFileName
     ? selectedFileName.split('/').pop() || `${robotName}.urdf`
     : `${robotName}.urdf`;
-
   return (
     <>
       {isCodeViewerOpen && (
@@ -104,6 +109,8 @@ export function AppLayoutOverlays({
             theme={theme}
             fileName={codeEditorFileName}
             lang={lang}
+            documentFlavor={sourceCodeDocumentFlavor}
+            readOnly={isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor)}
           />
         </Suspense>
       )}

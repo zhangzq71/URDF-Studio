@@ -14,6 +14,7 @@ export interface CreateMaterialOptions {
     side?: THREE.Side;
     map?: THREE.Texture | null;
     name?: string;
+    preserveExactColor?: boolean;
 }
 
 export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshStandardMaterial {
@@ -24,11 +25,12 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
         side = THREE.DoubleSide,
         map = null,
         name = '',
+        preserveExactColor = false,
     } = options;
 
     let finalColor = new THREE.Color(color);
 
-    if (finalColor.r > 0.95 && finalColor.g > 0.95 && finalColor.b > 0.95) {
+    if (!preserveExactColor && finalColor.r > 0.95 && finalColor.g > 0.95 && finalColor.b > 0.95) {
         finalColor.multiplyScalar(MATERIAL_CONFIG.whiteColorMultiplier);
     }
 

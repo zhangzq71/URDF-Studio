@@ -2,10 +2,11 @@
  * App Layout Component
  * Main application layout with Header and workspace area
  */
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
 import { AppLayoutOverlays } from './components/AppLayoutOverlays';
+import { FileDropOverlay } from './components/FileDropOverlay';
 import { UnifiedViewer } from './components/UnifiedViewer';
 import {
   loadBridgeCreateModalModule,
@@ -14,6 +15,9 @@ import {
 import type { HeaderQuickAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
+import type { ToolMode } from '@/features/urdf-viewer';
+import { prepareUsdExportCacheFromSnapshot } from '@/features/urdf-viewer/utils/usdExportBundle';
+import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
 import {
   useAppLayoutEffects,
   useCollisionOptimizationWorkflow,
@@ -22,12 +26,14 @@ import {
   useWorkspaceMutations,
   useWorkspaceSourceSync,
 } from './hooks';
+import { shouldUseEmptyRobotForUsdHydration } from './hooks/workspaceSourceSyncUtils';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { parseMJCF, parseURDF } from '@/core/parsers';
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type { RobotFile } from '@/types';
 import { translations } from '@/shared/i18n';
 import { processMJCFIncludes } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { shouldApplyUsdStageHydration } from './utils/usdStageHydration';
 
 interface AppLayoutProps {
   // Import handlers (passed from App)
@@ -35,6 +41,7 @@ interface AppLayoutProps {
   importFolderInputRef: React.RefObject<HTMLInputElement>;
   onFileDrop: (files: File[]) => void;
   onOpenExport: () => void;
+  onOpenLibraryExport: (file: RobotFile) => void;
   onExportProject: () => void;
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
@@ -44,7 +51,7 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: React.MouseEventHandler;
+  onOpenUser?: () => void;
   headerQuickAction?: HeaderQuickAction;
   // View config
   viewConfig: {
@@ -61,6 +68,7 @@ interface AppLayoutProps {
   }>>;
   // Robot file handling
   onLoadRobot: (file: RobotFile) => void;
+  viewerReloadKey: number;
 }
 
 export function AppLayout({
@@ -68,6 +76,7 @@ export function AppLayout({
   importFolderInputRef,
   onFileDrop,
   onOpenExport,
+  onOpenLibraryExport,
   onExportProject,
   showToast,
   onOpenAI,
@@ -80,9 +89,10 @@ export function AppLayout({
   viewConfig,
   setViewConfig,
   onLoadRobot,
+  viewerReloadKey,
 }: AppLayoutProps) {
   // UI Store (grouped with useShallow to reduce subscriptions)
-  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab } = useUIStore(
+  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab, setAppMode } = useUIStore(
     useShallow((state) => ({
       appMode: state.appMode,
       lang: state.lang,
@@ -90,6 +100,7 @@ export function AppLayout({
       sidebar: state.sidebar,
       toggleSidebar: state.toggleSidebar,
       sidebarTab: state.sidebarTab,
+      setAppMode: state.setAppMode,
     }))
   );
   const t = translations[lang];
@@ -111,6 +122,7 @@ export function AppLayout({
     assets, motorLibrary, availableFiles, selectedFile, allFileContents,
     setAvailableFiles, setSelectedFile, setAllFileContents, originalUrdfContent, setOriginalUrdfContent,
     uploadAsset, removeRobotFile, removeRobotFolder, clearRobotLibrary,
+    setUsdSceneSnapshot, setUsdPreparedExportCache, getUsdPreparedExportCache, documentLoadState, setDocumentLoadState,
   } = useAssetsStore(
     useShallow((state) => ({
       assets: state.assets,
@@ -127,12 +139,17 @@ export function AppLayout({
       removeRobotFile: state.removeRobotFile,
       removeRobotFolder: state.removeRobotFolder,
       clearRobotLibrary: state.clearRobotLibrary,
+      setUsdSceneSnapshot: state.setUsdSceneSnapshot,
+      setUsdPreparedExportCache: state.setUsdPreparedExportCache,
+      getUsdPreparedExportCache: state.getUsdPreparedExportCache,
+      documentLoadState: state.documentLoadState,
+      setDocumentLoadState: state.setDocumentLoadState,
     }))
   );
 
   // Robot Store
   const {
-    robotName, robotLinks, robotJoints, rootLinkId, robotMaterials,
+    robotName, robotLinks, robotJoints, rootLinkId, robotMaterials, closedLoopConstraints,
     setName, setRobot, resetRobot, addChild, deleteSubtree,
     updateLink, updateJoint, setAllLinksVisibility, setJointAngle,
   } = useRobotStore(
@@ -142,6 +159,7 @@ export function AppLayout({
       robotJoints: state.joints,
       rootLinkId: state.rootLinkId,
       robotMaterials: state.materials,
+      closedLoopConstraints: state.closedLoopConstraints,
       setName: state.setName,
       setRobot: state.setRobot,
       resetRobot: state.resetRobot,
@@ -173,6 +191,9 @@ export function AppLayout({
 
   const snapshotActionRef = useRef<(() => void) | null>(null);
   const transformPendingRef = useRef(false);
+  const pendingUsdAssemblyFileRef = useRef<RobotFile | null>(null);
+  const pendingUsdHydrationFileRef = useRef<string | null>(null);
+  const [pendingViewerToolMode, setPendingViewerToolMode] = useState<ToolMode | null>(null);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
@@ -180,15 +201,125 @@ export function AppLayout({
     setSelection({ type: null, id: null });
   }, [setSelection]);
 
+  const isSelectedUsdHydrating = shouldUseEmptyRobotForUsdHydration({
+    selectedFileFormat: selectedFile?.format ?? null,
+    selectedFileName: selectedFile?.name ?? null,
+    documentLoadStatus: documentLoadState.status,
+    documentLoadFileName: documentLoadState.fileName,
+  });
+
+  useEffect(() => {
+    if (!isSelectedUsdHydrating || selectedFile?.format !== 'usd') {
+      pendingUsdHydrationFileRef.current = null;
+      return;
+    }
+
+    pendingUsdHydrationFileRef.current = selectedFile.name;
+  }, [isSelectedUsdHydrating, selectedFile]);
+
+  const handleRobotDataResolved = useCallback((result: ViewerRobotDataResolution) => {
+    const liveAssetsState = useAssetsStore.getState();
+    const normalizedStageSourcePath = String(result.stageSourcePath || '').replace(/^\/+/, '');
+    const resolvedSelectedFile = liveAssetsState.selectedFile
+      ?? (
+        normalizedStageSourcePath
+          ? liveAssetsState.availableFiles.find((file) => (
+              file.format === 'usd'
+              && String(file.name || '').replace(/^\/+/, '') === normalizedStageSourcePath
+            )) ?? null
+          : null
+      )
+      ?? selectedFile;
+
+    if (!resolvedSelectedFile) {
+      return;
+    }
+
+    const normalizedSelectedFileName = String(resolvedSelectedFile.name || '').replace(/^\/+/, '');
+    if (normalizedSelectedFileName && normalizedStageSourcePath && normalizedSelectedFileName !== normalizedStageSourcePath) {
+      return;
+    }
+
+    if (resolvedSelectedFile.format === 'usd') {
+      setUsdSceneSnapshot(resolvedSelectedFile.name, result.usdSceneSnapshot ?? null);
+      setUsdPreparedExportCache(
+        resolvedSelectedFile.name,
+        result.usdSceneSnapshot
+          ? prepareUsdExportCacheFromSnapshot(result.usdSceneSnapshot, {
+              fileName: resolvedSelectedFile.name,
+              resolution: result,
+            })
+          : null,
+      );
+    }
+
+    const pendingHydrationFileName = pendingUsdHydrationFileRef.current
+      ?? (
+        liveAssetsState.documentLoadState.status === 'hydrating'
+          ? liveAssetsState.documentLoadState.fileName
+          : null
+      );
+
+    const shouldApplyResolvedRobotData = resolvedSelectedFile.format !== 'usd'
+      || shouldApplyUsdStageHydration({
+        pendingFileName: pendingHydrationFileName,
+        selectedFileName: resolvedSelectedFile.name,
+        stageSourcePath: result.stageSourcePath,
+      });
+
+    if (shouldApplyResolvedRobotData) {
+      const isColdUsdHydration = resolvedSelectedFile.format === 'usd'
+        && pendingHydrationFileName === resolvedSelectedFile.name;
+      setRobot(
+        result.robotData,
+        resolvedSelectedFile.format === 'usd'
+          ? isColdUsdHydration
+            ? { resetHistory: true, label: 'Hydrate USD stage' }
+            : { skipHistory: true, label: 'Hydrate USD stage' }
+          : undefined,
+      );
+      setDocumentLoadState({
+        status: 'ready',
+        fileName: resolvedSelectedFile.name,
+        format: resolvedSelectedFile.format,
+        error: null,
+      });
+      setSelection({ type: null, id: null });
+      if (resolvedSelectedFile.format === 'usd') {
+        pendingUsdHydrationFileRef.current = null;
+      }
+    }
+
+    const pendingUsdAssemblyFile = pendingUsdAssemblyFileRef.current;
+    if (
+      pendingUsdAssemblyFile
+      && resolvedSelectedFile.format === 'usd'
+      && pendingUsdAssemblyFile.name === resolvedSelectedFile.name
+    ) {
+      const component = addComponent(pendingUsdAssemblyFile, {
+        availableFiles: liveAssetsState.availableFiles,
+        assets: liveAssetsState.assets,
+        preResolvedRobotData: result.robotData,
+      });
+      if (component) {
+        showToast(t.addedComponent.replace('{name}', component.name), 'success');
+      }
+      pendingUsdAssemblyFileRef.current = null;
+    }
+  }, [addComponent, selectedFile, setDocumentLoadState, setRobot, setSelection, setUsdPreparedExportCache, setUsdSceneSnapshot, showToast, t]);
+
   const {
     emptyRobot,
     robot,
     jointAngleState,
+    jointMotionState,
     showVisual,
     urdfContentForViewer,
     viewerSourceFilePath,
     sourceCodeContent,
+    sourceCodeDocumentFlavor,
     filePreview,
+    previewRobot,
     previewFileName,
     handlePreviewFile,
     handleClosePreview,
@@ -201,6 +332,8 @@ export function AppLayout({
     robotLinks,
     robotJoints,
     rootLinkId,
+    robotMaterials,
+    closedLoopConstraints,
     isCodeViewerOpen,
     selectedFile,
     setSelectedFile,
@@ -209,8 +342,14 @@ export function AppLayout({
     setAvailableFiles,
     setAllFileContents,
     originalUrdfContent,
+    isSelectedUsdHydrating,
+    assets,
+    getUsdPreparedExportCache,
     setOriginalUrdfContent,
   });
+
+  const previewContextRobot = previewRobot ?? robot;
+  const isPreviewingWorkspaceSource = Boolean(previewRobot);
 
   const {
     handleSelect,
@@ -271,7 +410,6 @@ export function AppLayout({
     handleDeleteAllLibraryFiles,
     handleExportLibraryFile,
   } = useLibraryFileActions({
-    assets,
     availableFiles,
     selectedFile,
     assemblyState,
@@ -283,16 +421,31 @@ export function AppLayout({
     resetRobot,
     clearSelection,
     uploadAsset,
+    openLibraryExportDialog: onOpenLibraryExport,
     showToast,
     t,
   });
 
   const handleAddComponent = useCallback((file: RobotFile) => {
-    const component = addComponent(file, { availableFiles, assets });
+    const preResolvedRobotData = file.format === 'usd'
+      ? getUsdPreparedExportCache(file.name)?.robotData ?? null
+      : null;
+
+    if (file.format === 'usd' && !preResolvedRobotData) {
+      pendingUsdAssemblyFileRef.current = file;
+      onLoadRobot(file);
+      return;
+    }
+
+    const component = addComponent(file, {
+      availableFiles,
+      assets,
+      preResolvedRobotData,
+    });
     if (component) {
       showToast(t.addedComponent.replace('{name}', component.name), 'success');
     }
-  }, [addComponent, assets, availableFiles, showToast, t]);
+  }, [addComponent, assets, availableFiles, getUsdPreparedExportCache, onLoadRobot, showToast, t]);
 
   const handleCreateBridge = useCallback(() => {
     setShouldRenderBridgeModal(true);
@@ -304,6 +457,14 @@ export function AppLayout({
     void loadCollisionOptimizationDialogModule();
     setIsCollisionOptimizerOpen(true);
   }, []);
+
+  const handleOpenMeasureTool = useCallback(() => {
+    setViewConfig((prev) => ({ ...prev, showToolbar: true }));
+    if (appMode === 'skeleton') {
+      setAppMode('detail');
+    }
+    setPendingViewerToolMode('measure');
+  }, [appMode, setAppMode, setViewConfig]);
 
   const {
     collisionOptimizationSource,
@@ -327,6 +488,10 @@ export function AppLayout({
   });
 
   const handleCodeChange = useCallback((newCode: string) => {
+    if (selectedFile?.format === 'usd') {
+      return;
+    }
+
     const mjcfBasePath = selectedFile?.name
       ? selectedFile.name.split('/').slice(0, -1).join('/')
       : '';
@@ -361,7 +526,14 @@ export function AppLayout({
     }
   }, [showToast, t]);
 
-  const { handleDragOver, handleDrop, prefetchSourceCodeEditor } = useAppLayoutEffects({
+  const {
+    isFileDragActive,
+    handleDragEnter,
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+    prefetchSourceCodeEditor,
+  } = useAppLayoutEffects({
     robot,
     selection,
     clearSelection,
@@ -370,9 +542,13 @@ export function AppLayout({
   });
 
   const handleOpenCodeViewer = useCallback(() => {
+    if (isSelectedUsdHydrating) {
+      showToast(t.usdLoadInProgress, 'info');
+      return;
+    }
     prefetchSourceCodeEditor();
     setIsCodeViewerOpen(true);
-  }, [prefetchSourceCodeEditor, setIsCodeViewerOpen]);
+  }, [isSelectedUsdHydrating, prefetchSourceCodeEditor, setIsCodeViewerOpen, showToast, t.usdLoadInProgress]);
 
   const handlePrefetchCodeViewer = useCallback(() => {
     prefetchSourceCodeEditor();
@@ -381,13 +557,21 @@ export function AppLayout({
   return (
     <div
       className="flex flex-col h-screen font-sans bg-google-light-bg dark:bg-app-bg text-slate-800 dark:text-slate-200"
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      <FileDropOverlay
+        visible={isFileDragActive}
+        title={t.dropFilesToImport}
+        hint={t.dropFilesToImportHint}
+      />
+
       {/* Hidden file inputs */}
       <input
         type="file"
-        accept=".zip,.urdf,.xml,.usda,.usd,.xacro,.usp"
+        accept=".zip,.urdf,.xml,.usda,.usdc,.usdz,.usd,.xacro,.usp"
         ref={importInputRef}
         className="hidden"
       />
@@ -405,6 +589,7 @@ export function AppLayout({
         onOpenExport={onOpenExport}
         onExportProject={onExportProject}
         onOpenAI={onOpenAI}
+        onOpenMeasureTool={handleOpenMeasureTool}
         onOpenCodeViewer={handleOpenCodeViewer}
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
@@ -420,7 +605,7 @@ export function AppLayout({
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
         <TreeEditor
-          robot={robot}
+          robot={previewContextRobot}
           onSelect={handleSelect}
           onSelectGeometry={handleSelectGeometry}
           onFocus={handleFocus}
@@ -438,7 +623,7 @@ export function AppLayout({
           onToggle={() => toggleSidebar('left')}
           availableFiles={availableFiles}
           onLoadRobot={onLoadRobot}
-          currentFileName={selectedFile?.name}
+          currentFileName={previewFileName ?? selectedFile?.name}
           assemblyState={assemblyState}
           onAddComponent={handleAddComponent}
           onDeleteLibraryFile={handleDeleteLibraryFile}
@@ -451,6 +636,7 @@ export function AppLayout({
           onRenameComponent={handleRenameComponent}
           onPreviewFile={handlePreviewFile}
           previewFileName={previewFileName}
+          isReadOnly={isPreviewingWorkspaceSource}
         />
 
         {/* Viewer Container */}
@@ -476,9 +662,13 @@ export function AppLayout({
             setShowSkeletonOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: show }))}
             showJointPanel={viewConfig.showJointPanel}
             setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
+            availableFiles={availableFiles}
             urdfContent={urdfContentForViewer}
             sourceFilePath={viewerSourceFilePath}
+            sourceFile={selectedFile}
+            onRobotDataResolved={handleRobotDataResolved}
             jointAngleState={jointAngleState}
+            jointMotionState={jointMotionState}
             onJointChange={handleJointChange}
             selection={robot.selection}
             focusTarget={focusTarget}
@@ -486,11 +676,14 @@ export function AppLayout({
             onCollisionTransform={handleCollisionTransform}
             filePreview={filePreview}
             onClosePreview={handleClosePreview}
+            pendingViewerToolMode={pendingViewerToolMode}
+            onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
+            viewerReloadKey={viewerReloadKey}
           />
         </div>
 
         <PropertyEditor
-          robot={robot}
+          robot={previewContextRobot}
           onUpdate={handleUpdate}
           onSelect={handleSelect}
           onHover={handleHover}
@@ -502,12 +695,14 @@ export function AppLayout({
           theme={theme}
           collapsed={sidebar.rightCollapsed}
           onToggle={() => toggleSidebar('right')}
+          readOnlyMessage={isPreviewingWorkspaceSource ? t.previewReadOnlyHint : undefined}
         />
       </div>
 
       <AppLayoutOverlays
         isCodeViewerOpen={isCodeViewerOpen}
         sourceCodeContent={sourceCodeContent}
+        sourceCodeDocumentFlavor={sourceCodeDocumentFlavor}
         onCodeChange={handleCodeChange}
         onCloseCodeViewer={() => setIsCodeViewerOpen(false)}
         theme={theme}

@@ -23,7 +23,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
         setIsLongPressing(true);
         if (elementRef.current) {
           elementRef.current.style.userSelect = 'text';
-          elementRef.current.style.WebkitUserSelect = 'text';
+          elementRef.current.style.webkitUserSelect = 'text';
         }
       }, longPressMs);
     },
@@ -38,7 +38,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
 
     if (!isLongPressing && elementRef.current) {
       elementRef.current.style.userSelect = 'none';
-      elementRef.current.style.WebkitUserSelect = 'none';
+      elementRef.current.style.webkitUserSelect = 'none';
     }
 
     setIsLongPressing(false);
@@ -54,7 +54,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
 
     if (elementRef.current) {
       elementRef.current.style.userSelect = 'none';
-      elementRef.current.style.WebkitUserSelect = 'none';
+      elementRef.current.style.webkitUserSelect = 'none';
     }
   }, []);
 

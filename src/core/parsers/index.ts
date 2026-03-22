@@ -15,8 +15,7 @@ export { generateMujocoXML } from './mjcf/mjcfGenerator';
 export { generateSkeletonXML } from './mjcf/skeletonGenerator';
 
 // USD Parser (Universal Scene Description)
-export { parseUSDA, isUSDA, isUSDCBinary } from './usd/usdParser';
-export { parseUSDAToThreeJS } from './usd/usdLoader';
+export { isUSDA, isUSDCBinary } from './usd/usdFormatUtils';
 
 // Xacro Parser (ROS Xacro format)
 export { isXacro, processXacro, parseXacro, getXacroArgs } from './xacro/xacroParser';
@@ -24,3 +23,5 @@ export type { XacroArgs, XacroFileMap } from './xacro/xacroParser';
 
 // File Preview - Convert various robot file formats to URDF for preview
 export { computePreviewUrdf } from './filePreview';
+export { createUsdPlaceholderRobotData, resolveRobotFileData } from './importRobotFile';
+export type { RobotImportErrorReason, RobotImportResult } from './importRobotFile';

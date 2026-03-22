@@ -30,6 +30,7 @@ interface TreeNodeLinkRowProps {
   isAttentionHighlighted: boolean;
   isConnectorHighlighted: boolean;
   t: TranslationKeys;
+  readOnly: boolean;
   onSelect: () => void;
   onFocus?: () => void;
   onToggleExpanded: () => void;
@@ -67,6 +68,7 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
   isAttentionHighlighted,
   isConnectorHighlighted,
   t,
+  readOnly,
   onSelect,
   onFocus,
   onToggleExpanded,
@@ -85,18 +87,18 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
 
   return (
     <div
-      className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-all duration-200 ${
+      className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md transition-all duration-200 ${readOnly ? 'cursor-default' : 'cursor-pointer group'} ${
         resolveTreeRowStateClass('text-text-primary dark:text-text-secondary', {
           isHovered,
           isSelected,
           isAttentionHighlighted,
         })
       }`}
-      onClick={onSelect}
-      onDoubleClick={onFocus}
-      onContextMenu={onOpenContextMenu}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
+      onClick={readOnly ? undefined : onSelect}
+      onDoubleClick={readOnly ? undefined : onFocus}
+      onContextMenu={readOnly ? undefined : onOpenContextMenu}
+      onMouseEnter={readOnly ? undefined : onMouseEnter}
+      onMouseLeave={readOnly ? undefined : onMouseLeave}
       title={linkName || linkId}
       style={{ marginLeft: depth > 0 ? `${linkRowIndentPx}px` : '0' }}
     >
@@ -109,7 +111,7 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
 
       <button
         type="button"
-        className={`w-6 h-6 flex items-center justify-center shrink-0 mr-0.5 rounded
+        className={`w-5 h-5 flex items-center justify-center shrink-0 mr-0.5 rounded
           ${hasExpandableContent
             ? (isSelected || isHovered || isAttentionHighlighted)
               ? 'hover:bg-system-blue/15 dark:hover:bg-system-blue/25 cursor-pointer transition-colors'
@@ -127,19 +129,19 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
       >
         {hasExpandableContent
           && (isExpanded ? (
-            <ChevronDown size={12} className={isSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
+            <ChevronDown size={11} className={isSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
           ) : (
-            <ChevronRight size={12} className={isSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
+            <ChevronRight size={11} className={isSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
           ))}
       </button>
 
       <div
-        className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
+        className={`w-4 h-4 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors
           ${(isSelected || isHovered || isAttentionHighlighted)
             ? 'bg-system-blue/15 dark:bg-system-blue/20 border-system-blue/25 dark:border-system-blue/30'
             : 'bg-system-blue/10 dark:bg-system-blue/12 border-transparent'}`}
       >
-        <Box size={12} className="text-system-blue" />
+        <Box size={10} className="text-system-blue" />
       </div>
 
       {isEditingLink ? (
@@ -166,7 +168,7 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
         <div className="flex items-center gap-1 min-w-0">
           <span
             className="text-xs font-medium whitespace-nowrap select-none truncate"
-            onDoubleClick={onNameDoubleClick}
+            onDoubleClick={readOnly ? undefined : onNameDoubleClick}
             onDragStart={(event) => event.preventDefault()}
             title={linkName}
           >
@@ -200,21 +202,23 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
           </button>
         )}
 
-        <button
-          type="button"
-          className={`p-1 rounded cursor-pointer transition-colors ${
-            isSelected
-              ? selectedLinkActionClass
-              : 'text-text-tertiary hover:bg-system-blue/10 hover:text-text-primary dark:hover:bg-system-blue/20'
-          }`}
-          onClick={onToggleVisibility}
-          title={isVisible ? t.hide : t.show}
-          aria-label={isVisible ? t.hide : t.show}
-        >
-          {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            className={`p-1 rounded cursor-pointer transition-colors ${
+              isSelected
+                ? selectedLinkActionClass
+                : 'text-text-tertiary hover:bg-system-blue/10 hover:text-text-primary dark:hover:bg-system-blue/20'
+            }`}
+            onClick={onToggleVisibility}
+            title={isVisible ? t.hide : t.show}
+            aria-label={isVisible ? t.hide : t.show}
+          >
+            {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+          </button>
+        )}
 
-        {isSkeleton && (
+        {isSkeleton && !readOnly && (
           <button
             type="button"
             onClick={onAddChild}

@@ -382,6 +382,7 @@ function expandMacros(content: string, ctx: XacroContext): string {
  * Expand a single macro call
  */
 function expandMacroCall(
+    _macroName: string,
     attrsStr: string,
     innerContent: string,
     macroDef: { params: string[], body: string },

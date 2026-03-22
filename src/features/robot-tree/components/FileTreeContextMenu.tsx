@@ -5,36 +5,30 @@ import { ContextMenuFrame, ContextMenuItem } from '@/shared/components/ui';
 export interface FileTreeContextMenuProps {
   position: { x: number; y: number } | null;
   addLabel?: string;
-  exportAsURDFLabel?: string;
-  exportAsMJCFLabel?: string;
+  exportLabel?: string;
   deleteLabel: string;
   onAdd?: () => void;
-  onExportAsURDF?: () => void;
-  onExportAsMJCF?: () => void;
+  onExport?: () => void;
   onDelete: () => void;
   showAddAction?: boolean;
-  showExportAsURDFAction?: boolean;
-  showExportAsMJCFAction?: boolean;
+  showExportAction?: boolean;
   showDeleteAction?: boolean;
 }
 
 export const FileTreeContextMenu: React.FC<FileTreeContextMenuProps> = ({
   position,
   addLabel,
-  exportAsURDFLabel,
-  exportAsMJCFLabel,
+  exportLabel,
   deleteLabel,
   onAdd,
-  onExportAsURDF,
-  onExportAsMJCF,
+  onExport,
   onDelete,
   showAddAction = true,
-  showExportAsURDFAction = false,
-  showExportAsMJCFAction = false,
+  showExportAction = false,
   showDeleteAction = true,
 }) => {
   if (!position) return null;
-  if (!showAddAction && !showExportAsURDFAction && !showExportAsMJCFAction && !showDeleteAction) return null;
+  if (!showAddAction && !showExportAction && !showDeleteAction) return null;
 
   return (
     <ContextMenuFrame position={position} widthClassName="w-44">
@@ -43,14 +37,9 @@ export const FileTreeContextMenu: React.FC<FileTreeContextMenuProps> = ({
           {addLabel}
         </ContextMenuItem>
       )}
-      {showExportAsURDFAction && exportAsURDFLabel && onExportAsURDF && (
-        <ContextMenuItem onClick={onExportAsURDF} icon={<Download size={12} />}>
-          {exportAsURDFLabel}
-        </ContextMenuItem>
-      )}
-      {showExportAsMJCFAction && exportAsMJCFLabel && onExportAsMJCF && (
-        <ContextMenuItem onClick={onExportAsMJCF} icon={<Download size={12} />}>
-          {exportAsMJCFLabel}
+      {showExportAction && exportLabel && onExport && (
+        <ContextMenuItem onClick={onExport} icon={<Download size={12} />}>
+          {exportLabel}
         </ContextMenuItem>
       )}
       {showDeleteAction && (

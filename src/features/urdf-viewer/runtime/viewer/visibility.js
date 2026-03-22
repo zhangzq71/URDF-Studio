@@ -1,0 +1,82 @@
+import { collisionBaseMaterial } from "../../utils/materials.ts";
+
+const VISUAL_SEGMENT_PATTERN = /(?:^|\/)visuals?(?:$|[/.])/i;
+const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
+function matchesVisualIdentifier(value = "") {
+    const source = String(value || "").toLowerCase();
+    return VISUAL_SEGMENT_PATTERN.test(source);
+}
+function matchesCollisionIdentifier(value = "") {
+    const source = String(value || "").toLowerCase();
+    return COLLISION_SEGMENT_PATTERN.test(source);
+}
+export function isVisualMeshId(meshId, meshName = "") {
+    return matchesVisualIdentifier(meshId) || matchesVisualIdentifier(meshName);
+}
+export function isCollisionMeshId(meshId, meshName = "") {
+    return matchesCollisionIdentifier(meshId) || matchesCollisionIdentifier(meshName);
+}
+function getMeshMaterials(mesh) {
+    if (!mesh?.material)
+        return [];
+    return Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+}
+function setCollisionMeshStyle(mesh, enabled, showVisualMeshes) {
+    const stateKey = "usdViewerCollisionMeshState";
+    if (!mesh.userData[stateKey]) {
+        mesh.userData[stateKey] = {
+            material: mesh.material,
+            renderOrder: mesh.renderOrder,
+        };
+    }
+
+    if (enabled) {
+        mesh.material = collisionBaseMaterial;
+        mesh.renderOrder = 999;
+        return;
+    }
+
+    if (mesh.userData[stateKey].material) {
+        mesh.material = mesh.userData[stateKey].material;
+    }
+    mesh.renderOrder = mesh.userData[stateKey].renderOrder;
+}
+export function applyMeshVisibilityFilters(renderInterface, showVisualMeshes, showCollisionMeshes) {
+    if (!renderInterface?.meshes)
+        return;
+    for (const [meshId, hydraMesh] of Object.entries(renderInterface.meshes)) {
+        const mesh = hydraMesh?._mesh;
+        if (!mesh)
+            continue;
+        const meshName = mesh.name || "";
+        if (isCollisionMeshId(meshId, meshName)) {
+            mesh.userData = mesh.userData || {};
+            mesh.userData.isCollisionMesh = true;
+            mesh.userData.geometryRole = "collision";
+            const wasVisible = mesh.visible === true;
+            mesh.visible = showCollisionMeshes;
+            if (showCollisionMeshes && !wasVisible) {
+                try {
+                    hydraMesh?.ensureProtoReadyForVisibility?.();
+                }
+                catch {
+                    // Keep visibility toggles resilient even if a single proto mesh fails.
+                }
+            }
+            setCollisionMeshStyle(mesh, showCollisionMeshes, showVisualMeshes);
+            continue;
+        }
+        if (isVisualMeshId(meshId, meshName)) {
+            mesh.userData = mesh.userData || {};
+            mesh.userData.isVisualMesh = true;
+            mesh.userData.geometryRole = "visual";
+            mesh.visible = showVisualMeshes;
+            continue;
+        }
+        mesh.userData = mesh.userData || {};
+        if (!mesh.userData.geometryRole) {
+            mesh.userData.geometryRole = "visual";
+        }
+        mesh.visible = true;
+    }
+}

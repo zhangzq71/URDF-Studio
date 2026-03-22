@@ -1,7 +1,9 @@
 import { useCallback } from 'react';
 import {
+  addChildToRobot,
   appendCollisionBody,
   getCollisionGeometryEntries,
+  resolveClosedLoopJointOriginCompensation,
   resolveJointKey,
   resolveLinkKey,
   updateCollisionGeometryByObjectIndex,
@@ -94,6 +96,7 @@ export function useWorkspaceMutations({
       joints: state.joints,
       rootLinkId: state.rootLinkId,
       materials: state.materials,
+      closedLoopConstraints: state.closedLoopConstraints,
     });
   }, []);
 
@@ -296,12 +299,29 @@ export function useWorkspaceMutations({
       if (resolvedJointId) {
         const historyKey = options.historyKey ?? `robot:joint:${resolvedJointId}`;
         const historyLabel = options.historyLabel ?? 'Update joint';
+        const currentRobotState = useRobotStore.getState();
+        const currentJoint = currentRobotState.joints[resolvedJointId];
 
         ensurePendingRobotHistory(historyKey, historyLabel);
         updateJoint(resolvedJointId, data as Partial<UrdfJoint>, {
           skipHistory: true,
           label: historyLabel,
         });
+
+        if (currentJoint && (data as Partial<UrdfJoint>).origin) {
+          const compensatedOrigins = resolveClosedLoopJointOriginCompensation(
+            currentRobotState,
+            resolvedJointId,
+            (data as Partial<UrdfJoint>).origin ?? currentJoint.origin,
+          );
+
+          Object.entries(compensatedOrigins).forEach(([jointId, origin]) => {
+            updateJoint(jointId, { origin }, {
+              skipHistory: true,
+              label: historyLabel,
+            });
+          });
+        }
 
         if (commitMode === 'immediate') {
           commitPendingRobotHistory(historyKey);
@@ -419,9 +439,48 @@ export function useWorkspaceMutations({
   }, [clearPendingCollisionTransform, handleTransformPendingChange]);
 
   const handleAddChild = useCallback((parentId: string) => {
+    if (assemblyState && sidebarTab === 'workspace') {
+      commitPendingAssemblyHistory();
+
+      for (const component of Object.values(assemblyState.components)) {
+        const resolvedParentId = resolveLinkKey(component.robot.links, parentId);
+        if (!resolvedParentId) continue;
+
+        const nextRobotState = addChildToRobot(
+          {
+            ...component.robot,
+            selection: { type: null, id: null },
+          },
+          resolvedParentId,
+        );
+        const jointId = nextRobotState.selection.id;
+
+        updateComponentRobot(component.id, {
+          links: nextRobotState.links,
+          joints: nextRobotState.joints,
+        }, {
+          label: 'Add child link',
+        });
+
+        if (jointId) {
+          setSelection({ type: 'joint', id: jointId });
+        }
+        return;
+      }
+    }
+
+    commitPendingRobotHistory();
     const { jointId } = addChild(parentId);
     setSelection({ type: 'joint', id: jointId });
-  }, [addChild, setSelection]);
+  }, [
+    addChild,
+    assemblyState,
+    commitPendingAssemblyHistory,
+    commitPendingRobotHistory,
+    setSelection,
+    sidebarTab,
+    updateComponentRobot,
+  ]);
 
   const handleAddCollisionBody = useCallback((parentId: string) => {
     if (assemblyState && sidebarTab === 'workspace') {

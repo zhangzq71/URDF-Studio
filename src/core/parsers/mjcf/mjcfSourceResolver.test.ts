@@ -1,0 +1,90 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { JSDOM } from 'jsdom';
+import type { RobotFile } from '@/types';
+
+import {
+  MJCF_COMPILER_ANGLE_SCOPE_ATTR,
+  MJCF_COMPILER_EULERSEQ_SCOPE_ATTR,
+} from './mjcfCompilerScope.ts';
+import { parseMJCFModel } from './mjcfModel.ts';
+import { resolveMJCFSource } from './mjcfSourceResolver.ts';
+
+function installDomGlobals(): void {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { contentType: 'text/html' });
+  globalThis.window = dom.window as any;
+  globalThis.document = dom.window.document as any;
+  globalThis.DOMParser = dom.window.DOMParser as any;
+  globalThis.XMLSerializer = dom.window.XMLSerializer as any;
+  globalThis.Node = dom.window.Node as any;
+  globalThis.Element = dom.window.Element as any;
+  globalThis.Document = dom.window.Document as any;
+}
+
+function assertQuaternionClose(
+  actual: [number, number, number, number] | undefined,
+  expected: [number, number, number, number],
+  tolerance = 1e-5,
+): void {
+  assert.ok(actual, 'expected quaternion to be defined');
+  const direct = actual.every((value, index) => Math.abs(value - expected[index]!) <= tolerance);
+  const negated = actual.every((value, index) => Math.abs(value + expected[index]!) <= tolerance);
+  assert.ok(direct || negated, `expected quaternion ${expected.join(', ')}, got ${actual.join(', ')}`);
+}
+
+test('resolveMJCFSource scopes attached compiler settings to the imported subtree', () => {
+  installDomGlobals();
+
+  const files: RobotFile[] = [
+    {
+      name: '/tmp/mjcf-scoped/scene.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="scene">
+          <asset>
+            <model name="child_model" file="attached.xml" />
+          </asset>
+          <worldbody>
+            <geom name="host_geom" type="box" size="0.1 0.1 0.1" euler="90 0 0" />
+            <attach model="child_model" body="subtree" prefix="child/" />
+          </worldbody>
+        </mujoco>
+      `,
+    },
+    {
+      name: '/tmp/mjcf-scoped/attached.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="attached">
+          <compiler angle="radian" eulerseq="xyz" />
+          <worldbody>
+            <body name="subtree" euler="1.5707963267948966 0 0">
+              <geom name="child_geom" type="box" size="0.1 0.1 0.1" />
+            </body>
+          </worldbody>
+        </mujoco>
+      `,
+    },
+  ];
+
+  const resolved = resolveMJCFSource(files[0]!, files);
+  const resolvedDoc = new DOMParser().parseFromString(resolved.content, 'text/xml');
+  const importedBody = resolvedDoc.querySelector('worldbody > body[name="child/subtree"]');
+
+  assert.ok(importedBody);
+  assert.equal(resolvedDoc.querySelectorAll('mujoco > compiler').length, 0);
+  assert.equal(importedBody.getAttribute(MJCF_COMPILER_ANGLE_SCOPE_ATTR), 'radian');
+  assert.equal(importedBody.getAttribute(MJCF_COMPILER_EULERSEQ_SCOPE_ATTR), 'xyz');
+
+  const parsedModel = parseMJCFModel(resolved.content);
+  assert.ok(parsedModel);
+
+  const hostGeom = parsedModel.worldBody.geoms.find((geom) => geom.sourceName === 'host_geom');
+  const childBody = parsedModel.worldBody.children.find((body) => body.sourceName === 'child/subtree');
+
+  assert.ok(hostGeom);
+  assert.ok(childBody);
+  assertQuaternionClose(hostGeom.quat, [0.70710678, 0.70710678, 0, 0]);
+  assertQuaternionClose(childBody.quat, [0.70710678, 0.70710678, 0, 0]);
+});

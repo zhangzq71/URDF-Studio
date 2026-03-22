@@ -2,7 +2,7 @@ export const LIGHTING_CONFIG = {
   ambientIntensity: 0.65,
   hemisphereIntensity: 0.5,
   hemisphereSky: '#ffffff',
-  hemisphereGround: '#d4d4d8',
+  hemisphereGround: '#888888',
   mainLightIntensity: 0.6,
   mainLightPosition: [5, 5, 5] as [number, number, number],
   leftFillIntensity: 0.5,
@@ -24,6 +24,11 @@ export const LIGHTING_CONFIG = {
 } as const;
 
 export const WORKSPACE_CANVAS_BACKGROUND = {
-  light: '#e7ecf1',
-  dark: '#171b20',
+  light: '#f3f4f6',
+  dark: '#1f1f1f',
 } as const;
+
+// Match robot_viewer's +Z presentation while preserving URDF Studio's internal Z-up world.
+export const WORKSPACE_DEFAULT_CAMERA_POSITION: [number, number, number] = [2, -2, 2];
+export const WORKSPACE_DEFAULT_CAMERA_UP: [number, number, number] = [0, 0, 1];
+export const WORKSPACE_DEFAULT_CAMERA_FOV = 60;

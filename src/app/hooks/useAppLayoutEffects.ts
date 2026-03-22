@@ -1,9 +1,12 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import { getDroppedFiles } from '@/features/file-io';
 import type { RobotState } from '@/types';
 import { preloadSourceCodeEditor } from '@/app/utils/sourceCodeEditorLoader';
 import { useActiveHistory } from './useActiveHistory';
+
+const SOURCE_EDITOR_WARMUP_IDLE_TIMEOUT_MS = 400;
+const SOURCE_EDITOR_WARMUP_FALLBACK_MS = 120;
 
 interface LayoutSelection {
   type: 'link' | 'joint' | null;
@@ -18,6 +21,11 @@ interface UseAppLayoutEffectsParams {
   onDropError: () => void;
 }
 
+function containsFiles(dataTransfer: Pick<DataTransfer, 'types'> | null | undefined): boolean {
+  if (!dataTransfer) return false;
+  return Array.from(dataTransfer.types ?? []).includes('Files');
+}
+
 export function useAppLayoutEffects({
   robot,
   selection,
@@ -26,6 +34,20 @@ export function useAppLayoutEffects({
   onDropError,
 }: UseAppLayoutEffectsParams) {
   const { undo, redo, canUndo, canRedo } = useActiveHistory();
+  const dragLeaveFrameRef = useRef<number | null>(null);
+  const [isFileDragActive, setIsFileDragActive] = useState(false);
+
+  const cancelPendingDragLeaveCheck = useCallback(() => {
+    if (dragLeaveFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragLeaveFrameRef.current);
+      dragLeaveFrameRef.current = null;
+    }
+  }, []);
+
+  const clearFileDragState = useCallback(() => {
+    cancelPendingDragLeaveCheck();
+    setIsFileDragActive(false);
+  }, [cancelPendingDragLeaveCheck]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -59,11 +81,13 @@ export function useAppLayoutEffects({
     };
 
     if (typeof idleWindow.requestIdleCallback === 'function') {
-      const idleId = idleWindow.requestIdleCallback(warmup, { timeout: 1800 });
+      const idleId = idleWindow.requestIdleCallback(warmup, {
+        timeout: SOURCE_EDITOR_WARMUP_IDLE_TIMEOUT_MS,
+      });
       return () => idleWindow.cancelIdleCallback?.(idleId);
     }
 
-    const timer = window.setTimeout(warmup, 800);
+    const timer = window.setTimeout(warmup, SOURCE_EDITOR_WARMUP_FALLBACK_MS);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -79,14 +103,93 @@ export function useAppLayoutEffects({
     }
   }, [clearSelection, robot.joints, robot.links, selection]);
 
-  const handleDragOver = useCallback((event: DragEvent) => {
+  useEffect(() => {
+    const handleWindowReset = () => {
+      clearFileDragState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        clearFileDragState();
+      }
+    };
+
+    window.addEventListener('drop', handleWindowReset);
+    window.addEventListener('dragend', handleWindowReset);
+    window.addEventListener('blur', handleWindowReset);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('drop', handleWindowReset);
+      window.removeEventListener('dragend', handleWindowReset);
+      window.removeEventListener('blur', handleWindowReset);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      cancelPendingDragLeaveCheck();
+    };
+  }, [cancelPendingDragLeaveCheck, clearFileDragState]);
+
+  const handleDragEnter = useCallback((event: DragEvent) => {
+    if (!containsFiles(event.dataTransfer)) return;
+
     event.preventDefault();
     event.stopPropagation();
-  }, []);
+
+    cancelPendingDragLeaveCheck();
+    setIsFileDragActive(true);
+  }, [cancelPendingDragLeaveCheck]);
+
+  const handleDragOver = useCallback((event: DragEvent) => {
+    if (!containsFiles(event.dataTransfer)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    cancelPendingDragLeaveCheck();
+
+    if (!isFileDragActive) {
+      setIsFileDragActive(true);
+    }
+  }, [cancelPendingDragLeaveCheck, isFileDragActive]);
+
+  const handleDragLeave = useCallback((event: DragEvent) => {
+    if (!containsFiles(event.dataTransfer)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    const currentTarget = event.currentTarget;
+    const { clientX, clientY } = event;
+
+    if (
+      clientX <= 0
+      || clientY <= 0
+      || clientX >= window.innerWidth
+      || clientY >= window.innerHeight
+    ) {
+      clearFileDragState();
+      return;
+    }
+
+    cancelPendingDragLeaveCheck();
+    dragLeaveFrameRef.current = window.requestAnimationFrame(() => {
+      dragLeaveFrameRef.current = null;
+      const pointTarget = document.elementFromPoint(clientX, clientY);
+      if (!(pointTarget instanceof Node) || !currentTarget.contains(pointTarget)) {
+        setIsFileDragActive(false);
+      }
+    });
+  }, [cancelPendingDragLeaveCheck, clearFileDragState]);
 
   const handleDrop = useCallback(async (event: DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    cancelPendingDragLeaveCheck();
+    setIsFileDragActive(false);
 
     if (!event.dataTransfer.items) return;
 
@@ -99,14 +202,17 @@ export function useAppLayoutEffects({
       console.error('Failed to process dropped files:', error);
       onDropError();
     }
-  }, [onDropError, onFileDrop]);
+  }, [cancelPendingDragLeaveCheck, onDropError, onFileDrop]);
 
   const prefetchSourceCodeEditor = useCallback(() => {
     void preloadSourceCodeEditor();
   }, []);
 
   return {
+    isFileDragActive,
+    handleDragEnter,
     handleDragOver,
+    handleDragLeave,
     handleDrop,
     prefetchSourceCodeEditor,
   };

@@ -74,7 +74,7 @@ export function useResponsivePanelLayout({
 
     const observer = new ResizeObserver(updateMetrics);
     const observedNodes = [containerRef.current, optionsPanelRef.current, jointPanelRef.current].filter(
-      (node): node is HTMLElement => Boolean(node)
+      (node): node is HTMLDivElement => Boolean(node)
     );
 
     observedNodes.forEach((node) => observer.observe(node));

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { GeometryType } from '@/types';
+import type { TranslationKeys } from '@/shared/i18n';
 import type { AssemblyState, RobotData } from '@/types';
 import type {
   CollisionOptimizationOperation,
@@ -33,7 +34,7 @@ interface UseCollisionOptimizationWorkflowParams {
   pulseSelection: (selection: SelectionPayload) => void;
   setSelection: (selection: SelectionPayload) => void;
   showToast: (message: string, type?: 'info' | 'success') => void;
-  t: Record<string, string>;
+  t: TranslationKeys;
 }
 
 export function useCollisionOptimizationWorkflow({
