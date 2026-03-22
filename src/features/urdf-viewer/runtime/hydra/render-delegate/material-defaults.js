@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Color, DoubleSide, MeshPhysicalMaterial } from 'three';
+import { Color, FrontSide, MeshPhysicalMaterial } from 'three';
 
 export const HYDRA_DEFAULT_GRAY_HEX = 0x888888;
 export const HYDRA_UNIFIED_MATERIAL_DEFAULTS = Object.freeze({
@@ -20,7 +20,7 @@ export function applyUnifiedHydraMaterialDefaults(material) {
 export function createUnifiedHydraPhysicalMaterial(options = {}) {
     const {
         color = HYDRA_DEFAULT_GRAY_HEX,
-        side = DoubleSide,
+        side = FrontSide,
         name = '',
     } = options;
     const material = new MeshPhysicalMaterial({

@@ -124,6 +124,9 @@ export class LinkRotationController {
             this.dragHitDistance = 0;
             if (this.controls)
                 this.controls.enabled = true;
+            if (this.selectedLinkPath) {
+                this.emitSelectionChanged(this.selectedLinkPath);
+            }
             this.updateCursor();
         };
     }
@@ -310,7 +313,7 @@ export class LinkRotationController {
         }
         return entries;
     }
-    setJointAngleForLink(linkPath, angleDeg) {
+    setJointAngleForLink(linkPath, angleDeg, options = {}) {
         const jointState = this.getOrResolveJointStateForLinkPath(linkPath);
         if (!jointState)
             return null;
@@ -322,7 +325,8 @@ export class LinkRotationController {
         if (Math.abs(jointState.angleDeg - previousAngle) > 1e-8) {
             this.jointPoseDirty = true;
         }
-        if (this.selectedLinkPath === linkPath || this.activeLinkPath === linkPath) {
+        const shouldEmitSelectionChanged = options.emitSelectionChanged !== false;
+        if (shouldEmitSelectionChanged && (this.selectedLinkPath === linkPath || this.activeLinkPath === linkPath)) {
             this.emitSelectionChanged(linkPath);
         }
         return this.getJointInfoForLink(linkPath);
@@ -750,7 +754,10 @@ export class LinkRotationController {
             const parentLinkPath = toUsdPathListFromValue(safeGetPrimAttribute(prim, "physics:body0"))[0] || null;
             const axisToken = normalizeAxisToken(safeGetPrimAttribute(prim, "physics:axis"));
             const localRot1 = toQuaternionFromValue(safeGetPrimAttribute(prim, "physics:localRot1"));
-            const axisLocal = rotateAxisByQuaternion(axisToken, localRot1);
+            const axisLocal = normalizeAxisVector(
+                toVector3FromValue(safeGetPrimAttribute(prim, "urdf:axisLocal"))
+                    || rotateAxisByQuaternion(axisToken, localRot1)
+            );
             const limits = normalizeLimits(toFiniteNumber(safeGetPrimAttribute(prim, "physics:lowerLimit")), toFiniteNumber(safeGetPrimAttribute(prim, "physics:upperLimit")));
             const localPivotInLink = toVector3FromValue(safeGetPrimAttribute(prim, "physics:localPos1"));
             const state = {

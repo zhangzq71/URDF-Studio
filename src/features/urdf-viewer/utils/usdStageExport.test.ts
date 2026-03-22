@@ -63,6 +63,26 @@ test('exports a USD stage snapshot without persisting to the server', async () =
   assert.equal(payload.downloadFileName, 'go2.viewer_roundtrip.usd');
 });
 
+test('normalizes bare stage source paths before invoking the export bridge', async () => {
+  let receivedOptions: Record<string, unknown> | null = null;
+
+  await exportUsdStageSnapshot({
+    stageSourcePath: 'robots/b2/b2.usd',
+    targetWindow: {
+      exportLoadedStageSnapshot: async (options) => {
+        receivedOptions = options || null;
+        return {
+          ok: true,
+          content: '#usda 1.0\n',
+          outputFileName: 'b2.viewer_roundtrip.usd',
+        };
+      },
+    },
+  });
+
+  assert.equal(receivedOptions?.stageSourcePath, '/robots/b2/b2.usd');
+});
+
 test('throws an export-unavailable error when no USD export bridge is registered', async () => {
   await assert.rejects(
     () => exportUsdStageSnapshot({ targetWindow: {} }),

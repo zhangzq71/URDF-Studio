@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Color, DoubleSide, LinearSRGBColorSpace, MeshPhysicalMaterial, RGBAFormat, RepeatWrapping, SRGBColorSpace, Vector2 } from 'three';
+import { Color, FrontSide, LinearSRGBColorSpace, MeshPhysicalMaterial, RGBAFormat, RepeatWrapping, SRGBColorSpace, Vector2 } from 'three';
 import * as Shared from './shared.js';
 import { getDefaultMaterial, setDefaultMaterial } from './default-material-state.js';
 import { applyUnifiedHydraMaterialDefaults, createUnifiedHydraPhysicalMaterial } from './material-defaults.js';
@@ -55,7 +55,7 @@ class HydraMaterial {
         this._interface = hydraInterface;
         if (!getDefaultMaterial()) {
             setDefaultMaterial(applyUnifiedHydraMaterialDefaults(new MeshPhysicalMaterial({
-                side: DoubleSide,
+                side: FrontSide,
                 color: new Color(0xff2997), // a bright pink color to indicate a missing material
                 // envMap: window.envMap,
                 name: 'DefaultMaterial',

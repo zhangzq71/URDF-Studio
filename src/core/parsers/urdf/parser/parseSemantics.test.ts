@@ -243,6 +243,37 @@ test('parseURDF preserves named material textures in robot materials state and e
   assert.match(urdf, /<texture filename="package:\/\/material_texture_parse\/textures\/paint\.png" \/>/);
 });
 
+test('generateURDF does not fall back to the default visual blue when a texture-only material is present', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="material_texture_only_export">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="base.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+
+  const urdf = generateURDF({
+    ...robot,
+    materials: {
+      base_link: {
+        texture: 'textures/paint.png',
+      },
+    },
+    selection: { type: null, id: null },
+  });
+
+  assert.match(urdf, /<texture filename="package:\/\/material_texture_only_export\/textures\/paint\.png" \/>/);
+  assert.doesNotMatch(
+    urdf,
+    /<color rgba="0\.23137647 0\.50980784 0\.96470980 1\.00000000"\/>/,
+  );
+});
+
 test('generateURDF keeps go2 Collada exports package-relative without collapsing embedded mesh materials', () => {
   const source = fs.readFileSync('test/unitree_ros/robots/go2_description/urdf/go2_description.urdf', 'utf8');
   const robot = parseURDF(source);

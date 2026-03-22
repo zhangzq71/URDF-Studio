@@ -9,10 +9,12 @@ import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
+import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import { resolveRobotFileData } from '@/core/parsers';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { translations } from '@/shared/i18n';
+import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
@@ -63,6 +65,7 @@ function AppContent() {
   const selectedFile = useAssetsStore((state) => state.selectedFile);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const assets = useAssetsStore((state) => state.assets);
+  const getUsdSceneSnapshot = useAssetsStore((state) => state.getUsdSceneSnapshot);
   const getUsdPreparedExportCache = useAssetsStore((state) => state.getUsdPreparedExportCache);
   const motorLibrary = useAssetsStore((state) => state.motorLibrary);
 
@@ -132,6 +135,14 @@ function AppContent() {
   const isSelectedUsdHydrating = selectedFile?.format === 'usd'
     && documentLoadState.status === 'hydrating'
     && documentLoadState.fileName === selectedFile.name;
+  const currentUsdExportMode = selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+    ? resolveCurrentUsdExportMode({
+      isHydrating: isSelectedUsdHydrating,
+      hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
+      hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
+      hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
+    })
+    : 'unavailable';
 
   // Keep one internal loader so debug automation can force a reload of the
   // currently selected file without changing normal click behavior.
@@ -147,7 +158,6 @@ function AppContent() {
       setAppMode('detail');
       return;
     }
-
     const liveAssetsState = useAssetsStore.getState();
     setDocumentLoadState({
       status: 'loading',
@@ -302,14 +312,10 @@ function AppContent() {
   }, [isSelectedUsdHydrating, setIsAIModalOpen, showToast, t.usdLoadInProgress]);
 
   const handleOpenExportDialog = useCallback(() => {
-    if (isSelectedUsdHydrating) {
-      showToast(t.usdExportUnavailable, 'info');
-      return;
-    }
     void loadExportDialogModule();
     setExportDialogTarget({ type: 'current' });
     setIsExportDialogOpen(true);
-  }, [isSelectedUsdHydrating, setIsExportDialogOpen, showToast, t.usdExportUnavailable]);
+  }, [setIsExportDialogOpen]);
 
   const handleOpenLibraryExportDialog = useCallback((file: RobotFile) => {
     void loadExportDialogModule();
@@ -318,7 +324,9 @@ function AppContent() {
   }, [setIsExportDialogOpen]);
 
   const canExportUsd = exportDialogTarget.type === 'current'
-    ? !isSelectedUsdHydrating
+    ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+      ? currentUsdExportMode !== 'unavailable'
+      : !isSelectedUsdHydrating
     : exportDialogTarget.file.format === 'urdf'
       || exportDialogTarget.file.format === 'mjcf'
       || exportDialogTarget.file.format === 'xacro';

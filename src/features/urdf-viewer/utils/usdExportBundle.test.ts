@@ -1138,3 +1138,29 @@ test('resolveUsdExportSceneSnapshot enriches cached snapshots with live preferre
     },
   });
 });
+
+test('resolveUsdExportSceneSnapshot normalizes bare stage source paths for live snapshot lookups', () => {
+  let receivedStageSourcePath: string | null = null;
+  const liveSnapshot = {
+    stageSourcePath: '/robots/b2/b2.usd',
+    render: {
+      meshDescriptors: [],
+    },
+  };
+
+  const resolved = resolveUsdExportSceneSnapshot({
+    stageSourcePath: 'robots/b2/b2.usd',
+    cachedSnapshot: null,
+    targetWindow: {
+      renderInterface: {
+        getCachedRobotSceneSnapshot: (stageSourcePath: string | null) => {
+          receivedStageSourcePath = stageSourcePath;
+          return stageSourcePath === '/robots/b2/b2.usd' ? liveSnapshot : null;
+        },
+      },
+    },
+  });
+
+  assert.equal(receivedStageSourcePath, '/robots/b2/b2.usd');
+  assert.equal(resolved, liveSnapshot);
+});

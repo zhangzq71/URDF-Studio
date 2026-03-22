@@ -27,7 +27,7 @@ export function ingestJointCatalogFromStage(controller, stage, layerText, fallba
                 ? `${preferredRootPath}/joints/${jointRecord.jointName}`
                 : `/joints/${jointRecord.jointName}`;
             const axisToken = jointRecord.axisToken;
-            const axisLocal = rotateAxisByQuaternion(axisToken, jointRecord.localRot1);
+            const axisLocal = jointRecord.axisLocal ? jointRecord.axisLocal.clone() : rotateAxisByQuaternion(axisToken, jointRecord.localRot1);
             const limits = normalizeLimits(jointRecord.lowerLimitDeg, jointRecord.upperLimitDeg);
             const localPivotInLink = jointRecord.localPos1 ? jointRecord.localPos1.clone() : null;
             controller.applyJointCatalogEntry({

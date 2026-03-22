@@ -12,6 +12,10 @@ export {
     resetUnitDetection,
     createMeshLoader
 } from './meshLoader';
+export {
+    mitigateCoplanarMaterialZFighting,
+    isCoplanarOffsetMaterial,
+} from './coplanarMaterialOffset';
 
 export type { AssetIndex } from './meshLoader';
 export { bakeColladaRootTransformInPlace } from './colladaRootTransform';

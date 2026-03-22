@@ -470,6 +470,61 @@ test('generated MJCF exports texture assets and binds them through material defi
     assert.match(generated, /<texture name="base_link_tex" type="2d" file="coat\.png" \/>/);
 });
 
+test('generated MJCF uses a neutral white rgba for texture-only materials', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'texture-only-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.BOX,
+                    dimensions: { x: 1, y: 1, z: 1 },
+                    color: '#3b82f6',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {
+            base_link: {
+                texture: 'textures/coat.png',
+            },
+        },
+    };
+
+    const generated = generateMujocoXML(robot, {
+        includeSceneHelpers: false,
+        meshdir: 'meshes/',
+    });
+
+    assert.match(
+        generated,
+        /<material name="base_link_mat" rgba="1 1 1 1" texture="base_link_tex" \/>/,
+    );
+    assert.doesNotMatch(
+        generated,
+        /<material name="base_link_mat" rgba="0\.2314 0\.5098 0\.9647 1" texture="base_link_tex" \/>/,
+    );
+});
+
 test('generated MJCF honors mesh export path overrides for converted assets', () => {
     installDomParser();
 

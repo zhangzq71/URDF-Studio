@@ -48,6 +48,7 @@ interface WorkspaceCanvasProps {
     dark: string;
   };
   contextLostMessage?: string;
+  showWorldOriginAxes?: boolean;
 }
 
 export const WorkspaceCanvas = ({
@@ -72,6 +73,7 @@ export const WorkspaceCanvas = ({
   controlLayerKey = 'default',
   background = WORKSPACE_CANVAS_BACKGROUND,
   contextLostMessage,
+  showWorldOriginAxes = true,
 }: WorkspaceCanvasProps) => {
   const effectiveTheme = useEffectiveTheme();
   const [contextLost, setContextLost] = useState(false);
@@ -187,7 +189,7 @@ export const WorkspaceCanvas = ({
           <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
           {children}
           <ReferenceGrid theme={effectiveTheme} />
-          <WorldOriginAxes />
+          {showWorldOriginAxes && <WorldOriginAxes />}
           <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
           <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
             <GizmoViewport

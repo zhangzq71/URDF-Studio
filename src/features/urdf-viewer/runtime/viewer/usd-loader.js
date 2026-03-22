@@ -93,7 +93,7 @@ async function ensureRootPathIsLoadable(pathToLoad, usdFsHelper) {
     }
 }
 export async function loadUsdStage(args) {
-    const { USD, usdFsHelper, messageLog, progressBar, progressLabel, showLoadUi = true, readStageMetadata, loadCollisionPrims, loadVisualPrims: requestedLoadVisualPrims, loadPassLabel, params, displayName, pathToLoad, isLoadActive, debugFileHandling = false, onResolvedFilename, applyMeshFilters, rebuildLinkAxes, renderFrame, } = args;
+    const { USD, usdFsHelper, messageLog, progressBar, progressLabel, showLoadUi = true, readStageMetadata, loadCollisionPrims, loadVisualPrims: requestedLoadVisualPrims, loadPassLabel, params, displayName, pathToLoad, isLoadActive, debugFileHandling = false, onResolvedFilename, applyMeshFilters, rebuildLinkAxes, renderFrame, onProgress, } = args;
     const fastLoad = parseBooleanFlag(params.get("fastLoad"), true);
     const forceDependencyPreload = parseBooleanFlag(params.get("forceDependencyPreload"), false);
     const autoLoadDependencies = parseBooleanFlag(params.get("autoLoadDependencies"), true);
@@ -278,19 +278,56 @@ export async function loadUsdStage(args) {
             return false;
         }
     };
+    let currentProgress = 0;
+    let currentProgressPhase = "checking-path";
+    let currentProgressMessage = null;
+    let currentLoadedCount = null;
+    let currentTotalCount = null;
+    const emitProgress = (patch = {}) => {
+        if (!isLoadStillActive())
+            return;
+        if (typeof onProgress !== "function")
+            return;
+        if (Object.prototype.hasOwnProperty.call(patch, "phase")) {
+            currentProgressPhase = patch.phase || currentProgressPhase;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "message")) {
+            currentProgressMessage = patch.message ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "loadedCount")) {
+            currentLoadedCount = Number.isFinite(patch.loadedCount) ? Math.max(0, Math.floor(patch.loadedCount)) : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "totalCount")) {
+            currentTotalCount = Number.isFinite(patch.totalCount) ? Math.max(0, Math.floor(patch.totalCount)) : null;
+        }
+        const nextProgressPercent = Object.prototype.hasOwnProperty.call(patch, "progressPercent")
+            ? patch.progressPercent
+            : currentProgress;
+        try {
+            onProgress({
+                phase: currentProgressPhase,
+                message: currentProgressMessage,
+                progressPercent: Number.isFinite(nextProgressPercent) ? Math.max(0, Math.min(100, Math.round(nextProgressPercent))) : null,
+                loadedCount: currentLoadedCount,
+                totalCount: currentTotalCount,
+            });
+        }
+        catch {
+            // Keep progress emission best-effort and non-blocking.
+        }
+    };
     const setMessage = (text) => {
         if (!isLoadStillActive())
             return;
-        if (!showLoadUi)
-            return;
         if (messageLog)
             messageLog.textContent = text;
+        currentProgressMessage = text ?? null;
+        emitProgress({
+            message: currentProgressMessage,
+        });
     };
-    let currentProgress = 0;
     const setProgress = (rawPercent, force = false) => {
         if (!isLoadStillActive())
-            return;
-        if (!showLoadUi)
             return;
         const clamped = Math.max(0, Math.min(100, Math.round(rawPercent)));
         currentProgress = force ? clamped : Math.max(currentProgress, clamped);
@@ -300,6 +337,9 @@ export async function loadUsdStage(args) {
         if (progressLabel) {
             progressLabel.textContent = `${currentProgress}%`;
         }
+        emitProgress({
+            progressPercent: currentProgress,
+        });
     };
     const hideProgress = () => {
         if (!isLoadStillActive())
@@ -337,6 +377,11 @@ export async function loadUsdStage(args) {
     if (!isLoadStillActive())
         return state;
     onResolvedFilename(normalizedPath, displayName || normalizedPath);
+    emitProgress({
+        phase: "checking-path",
+        loadedCount: null,
+        totalCount: null,
+    });
     setMessage("Checking file path...");
     setProgress(4);
     const canLoadRootPath = await ensureRootPathIsLoadable(normalizedPath, usdFsHelper);
@@ -351,6 +396,12 @@ export async function loadUsdStage(args) {
     }
     setProgress(10);
     markLoadPhase("root-path-checked");
+    emitProgress({
+        phase: "preloading-dependencies",
+        loadedCount: null,
+        totalCount: null,
+    });
+    setMessage("Preloading USD dependencies...");
     const unitreeDependencyStemByRootUsdFile = {
         "g1_29dof_rev_1_0.usd": "g1_29dof_rev_1_0",
         "g1_23dof_rev_1_0.usd": "g1_23dof_rev_1_0",
@@ -561,6 +612,11 @@ export async function loadUsdStage(args) {
         return state;
     setProgress(22);
     markLoadPhase("dependency-preload-done");
+    emitProgress({
+        phase: "initializing-renderer",
+        loadedCount: null,
+        totalCount: null,
+    });
     setMessage("Initializing USD driver...");
     window.usdStage = null;
     let driver = null;
@@ -929,6 +985,11 @@ export async function loadUsdStage(args) {
         return state;
     }
     markLoadPhase("stage-transform-prefetch-done");
+    emitProgress({
+        phase: "streaming-meshes",
+        loadedCount: null,
+        totalCount: null,
+    });
     setMessage("Loading meshes...");
     setProgress(38);
     markLoadPhase("driver-created");
@@ -990,6 +1051,11 @@ export async function loadUsdStage(args) {
         const meshReadyPercent = Math.min(100, Math.round((stats.ready / Math.max(stats.total, 1)) * 100));
         setMessage(`Streaming meshes... ${stats.ready}/${Math.max(stats.total, 1)} ready`);
         setProgress(88 + (meshReadyPercent * 0.03));
+        emitProgress({
+            phase: "streaming-meshes",
+            loadedCount: stats.ready,
+            totalCount: Math.max(stats.total, 1),
+        });
         return stats;
     };
     let stats = { total: 0, ready: 0, collisions: 0, visuals: 0 };
@@ -1019,6 +1085,11 @@ export async function loadUsdStage(args) {
         }
     }
     applyMeshFilters();
+    emitProgress({
+        phase: "finalizing-scene",
+        loadedCount: null,
+        totalCount: null,
+    });
     setMessage("Finishing load...");
     setProgress(92);
     await yieldToMainThread();
@@ -1044,6 +1115,11 @@ export async function loadUsdStage(args) {
     if (!shouldRunStageOverrides) {
     }
     else {
+        emitProgress({
+            phase: "applying-stage-fixes",
+            loadedCount: null,
+            totalCount: null,
+        });
         setMessage("Applying transform/collision fixes...");
         refreshMeshStageOverrides();
         setProgress(96);
@@ -1130,6 +1206,12 @@ export async function loadUsdStage(args) {
     if (!fitted) {
         scheduleCameraRefit(window.camera, window._controls, [window.usdRoot], params);
     }
+    emitProgress({
+        phase: "resolving-metadata",
+        loadedCount: null,
+        totalCount: null,
+    });
+    setMessage("Resolving robot metadata...");
     await ensureRobotMetadataReadyBeforeInteractive();
     if (!isLoadStillActive())
         return state;
@@ -1161,6 +1243,11 @@ export async function loadUsdStage(args) {
     // is paid while still inside the loading phase instead of after UI completion.
     runEagerRender("pre-complete", { forceRender: true });
     setProgress(100, true);
+    emitProgress({
+        phase: "ready",
+        loadedCount: null,
+        totalCount: null,
+    });
     hideProgress();
     flushLoadProfile("ok");
     return state;

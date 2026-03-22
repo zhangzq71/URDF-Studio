@@ -41,3 +41,14 @@ test('createMatteMaterial can preserve exact authored white when requested', () 
 
   assertColorClose(material.color, new THREE.Color(0xffffff));
 });
+
+test('createMatteMaterial derives opacity from 8-digit hex colors without changing the authored rgb channels', () => {
+  const material = createMatteMaterial({
+    color: '#12345680',
+    preserveExactColor: true,
+  });
+
+  assertColorClose(material.color, new THREE.Color('#123456'));
+  assert.ok(Math.abs(material.opacity - (128 / 255)) <= 1e-6);
+  assert.equal(material.transparent, true);
+});

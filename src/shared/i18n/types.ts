@@ -244,6 +244,13 @@ export interface TranslationKeys {
   viewOptions: string;
   loadingRobot: string;
   loadingRobotPreparing: string;
+  loadingRobotCheckingPath: string;
+  loadingRobotPreloadingDependencies: string;
+  loadingRobotInitializingRenderer: string;
+  loadingRobotStreamingMeshes: string;
+  loadingRobotApplyingStageFixes: string;
+  loadingRobotResolvingMetadata: string;
+  loadingRobotFinalizingScene: string;
   enterRobotName: string;
   enterMotorType: string;
   modeLabel: string;

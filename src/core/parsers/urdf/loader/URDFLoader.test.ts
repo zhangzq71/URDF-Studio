@@ -122,6 +122,45 @@ test('URDFLoader preserves named mesh materials for multi-material DAE groups', 
     assert.deepEqual(materialNames, ['磨砂铝合金.008', '灰色硅胶.009']);
 });
 
+test('URDFLoader overrides single named OBJ materials when URDF provides the export color', () => {
+    const loader = new URDFLoader();
+    loader.loadMeshCb = (_url, _manager, onLoad) => {
+        const group = new THREE.Group();
+        const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshPhongMaterial({ name: 'material_0', color: new THREE.Color(0.5, 0.5, 0.5) }),
+        );
+        group.add(mesh);
+        onLoad(group);
+    };
+
+    const robot = loader.parse(`<?xml version="1.0"?>
+<robot name="single_named_obj_material">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="link.obj" />
+      </geometry>
+      <material name="exported_color">
+        <color rgba="0.82 0.15 0.15 1" />
+      </material>
+    </visual>
+  </link>
+</robot>`, '/tmp/');
+
+    let nestedMesh: THREE.Mesh | null = null;
+    robot.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && !nestedMesh) {
+            nestedMesh = child as THREE.Mesh;
+        }
+    });
+
+    assert.ok(nestedMesh);
+    const material = nestedMesh.material as THREE.MeshPhongMaterial;
+    assert.equal(material.name, 'exported_color');
+    assert.deepEqual(material.color.toArray().map((value) => Number(value.toFixed(2))), [0.82, 0.15, 0.15]);
+});
+
 test('URDFLoader preserves Z-up semantics for b2w base_link Collada meshes before link attachment', async () => {
     const meshPath = 'test/unitree_ros/robots/b2w_description/meshes/base_link.dae';
     const urdfContent = fs.readFileSync('test/unitree_ros/robots/b2w_description/urdf/b2w_description.urdf', 'utf8');

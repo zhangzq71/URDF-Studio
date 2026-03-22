@@ -12,6 +12,7 @@ import {
     createMeshLoader,
     findAssetByIndex,
     findAssetByPath,
+    isCoplanarOffsetMaterial,
 } from './index';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
@@ -34,6 +35,16 @@ function getFirstMesh(object: THREE.Object3D): THREE.Mesh {
     });
     assert.ok(found, 'expected Collada scene to contain a mesh');
     return found;
+}
+
+function getAllMeshes(object: THREE.Object3D): THREE.Mesh[] {
+    const meshes: THREE.Mesh[] = [];
+    object.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+            meshes.push(child as THREE.Mesh);
+        }
+    });
+    return meshes;
 }
 
 test('createMeshLoader normalizes go2 Collada scene roots for unitree DAE assets', async () => {
@@ -183,6 +194,48 @@ test('createMeshLoader keeps b2 Collada package meshes in Z-up robot space', asy
     assert.ok(Math.abs(loadedObject.quaternion.y) < 1e-6);
     assert.ok(Math.abs(loadedObject.quaternion.z) < 1e-6);
     assert.ok(Math.abs(loadedObject.quaternion.w - 1) < 1e-6);
+});
+
+test('createMeshLoader offsets duplicated coplanar material subsets in b2 base_link.dae', async () => {
+    const meshPath = 'test/unitree_ros/robots/b2_description/meshes/base_link.dae';
+    const urdfContent = fs.readFileSync('test/unitree_ros/robots/b2_description/urdf/b2_description.urdf', 'utf8');
+    const colladaRootNormalizationHints = buildColladaRootNormalizationHints(parseURDF(urdfContent).links);
+    const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
+    const manager = new THREE.LoadingManager();
+    const loadMesh = createMeshLoader(
+        {
+            [meshPath]: meshDataUrl,
+            'package://b2_description/meshes/base_link.dae': meshDataUrl,
+            'base_link.dae': meshDataUrl,
+        },
+        manager,
+        '',
+        { colladaRootNormalizationHints },
+    );
+
+    const loadedObject = await new Promise<THREE.Object3D>((resolve, reject) => {
+        loadMesh('package://b2_description/meshes/base_link.dae', manager, (result, err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve(result);
+        });
+    });
+
+    const meshes = getAllMeshes(loadedObject);
+    const adjustedMaterials = meshes.flatMap((mesh) => {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        return materials.filter((material) => isCoplanarOffsetMaterial(material));
+    });
+
+    assert.ok(adjustedMaterials.length > 0, 'expected b2 base_link to receive coplanar material offsets');
+    adjustedMaterials.forEach((material) => {
+        assert.equal(material.polygonOffset, true);
+        assert.equal(material.polygonOffsetFactor, -2);
+        assert.equal(material.polygonOffsetUnits, -2);
+    });
 });
 
 test('findAssetByPath resolves package-prefixed b2w mesh paths against imported zip assets', () => {

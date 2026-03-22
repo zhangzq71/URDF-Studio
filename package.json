@@ -30,7 +30,12 @@
     "codex:retry": "python3 scripts/codex_resilient_exec.py",
     "codex:retry:strict": "python3 scripts/codex_resilient_exec.py --completion-token TASK_COMPLETE",
     "codex:gui": "python3 scripts/codex_resilient_gui.py",
-    "codex:tui": "python3 scripts/codex_resilient_tui.py"
+    "codex:tui": "python3 scripts/codex_resilient_tui.py",
+    "codex:key-router:deploy": "python3 scripts/codex_key_router/deploy_and_start.py",
+    "codex:key-router:deploy:dry": "python3 scripts/codex_key_router/deploy_and_start.py --dry-run",
+    "codex:key-router:gui": "python3 scripts/codex_key_router/deploy_gui.py",
+    "codex:key-router:server-gui": "python3 scripts/codex_key_router/server_gui.py",
+    "codex:key-router:simple-gui": "python3 scripts/codex_key_router/simple_gui_router.py"
   },
   "license": "Apache-2.0",
   "dependencies": {

@@ -105,6 +105,41 @@ function createTexturedMeshRobot(meshPath: string, texturePath: string): RobotSt
   };
 }
 
+function createColoredMeshRobot(meshPath: string, color: string): RobotState {
+  return {
+    name: 'mesh_robot_colored',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    joints: {},
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: 'mesh',
+          meshPath,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: 'none',
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+    },
+    materials: {
+      base_link: {
+        color,
+      },
+    },
+  };
+}
+
 async function withSuppressedColladaLogs<T>(run: () => Promise<T>): Promise<T> {
   const originalLog = console.log;
   const originalInfo = console.info;
@@ -354,9 +389,15 @@ test('go2 USD roundtrip metadata rebuilds the original link and joint hierarchy 
   assert.ok(Object.values(adapted.robotData.links).some((link) => link.name === 'RR_foot'));
 
   const flHipJoint = Object.values(adapted.robotData.joints).find((joint) => joint.name === 'FL_hip_joint');
+  const sourceFlHipJoint = Object.values(robot.joints).find((joint) => joint.name === 'FL_hip_joint');
   assert.ok(flHipJoint, 'expected FL_hip_joint to survive roundtrip hydration');
+  assert.ok(sourceFlHipJoint, 'expected source FL_hip_joint to exist');
   assert.equal(flHipJoint?.parentLinkId, 'base');
   assert.equal(flHipJoint?.childLinkId, 'FL_hip');
+  assert.deepEqual(
+    Object.values(flHipJoint?.origin.xyz || {}).map((value) => Number(value.toFixed(6))),
+    Object.values(sourceFlHipJoint?.origin.xyz || {}).map((value) => Number(value.toFixed(6))),
+  );
 });
 
 test('textured USD roundtrip preserves visual color and texture references after reload hydration', async () => {
@@ -442,4 +483,84 @@ test('textured USD roundtrip preserves visual color and texture references after
   assert.equal(adapted.robotData.links[reloadedLinkId]?.visual.color, '#ffffff');
   assert.equal(adapted.robotData.materials?.[reloadedLinkId]?.color, '#ffffff');
   assert.equal(adapted.robotData.materials?.[reloadedLinkId]?.texture, '../assets/checker.png');
+});
+
+test('mesh USD roundtrip preserves explicit MJCF/URDF material colors after reload hydration', async () => {
+  const meshPath = 'meshes/colored_triangle.obj';
+  const robot = createColoredMeshRobot(meshPath, '#12ab34');
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'mesh_robot_colored',
+    assets: {},
+    extraMeshFiles: new Map([[meshPath, createUvObjBlob()]]),
+  });
+
+  const rootLayer = await payload.archiveFiles.get('mesh_robot_colored/usd/mesh_robot_colored.usd')?.text();
+  const baseLayer = await payload.archiveFiles.get('mesh_robot_colored/usd/configuration/mesh_robot_colored_description_base.usd')?.text();
+  const physicsLayer = await payload.archiveFiles.get('mesh_robot_colored/usd/configuration/mesh_robot_colored_description_physics.usd')?.text();
+  const sensorLayer = await payload.archiveFiles.get('mesh_robot_colored/usd/configuration/mesh_robot_colored_description_sensor.usd')?.text();
+
+  assert.ok(rootLayer, 'expected colored USD root layer to exist');
+  assert.ok(baseLayer, 'expected colored USD base layer to exist');
+  assert.ok(physicsLayer, 'expected colored USD physics layer to exist');
+  assert.ok(sensorLayer, 'expected colored USD sensor layer to exist');
+
+  const materialBindingMatch = baseLayer.match(/rel material:binding = <([^>]+)>/);
+  assert.ok(materialBindingMatch, 'expected exported colored mesh to bind a preview material');
+
+  const metadata = createRoundtripMetadataSnapshot(robot, {
+    rootLayer,
+    baseLayer,
+    physicsLayer,
+    sensorLayer,
+  });
+
+  const defaultPrimPath = '/mesh_robot_colored_description';
+  const linkPath = `${defaultPrimPath}/base_link`;
+  const adapted = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/mesh_robot_colored/usd/mesh_robot_colored.usd',
+    stage: {
+      defaultPrimPath,
+    },
+    robotMetadataSnapshot: metadata,
+    robotTree: {
+      linkParentPairs: metadata.linkParentPairs,
+      jointCatalogEntries: metadata.jointCatalogEntries,
+      rootLinkPaths: [linkPath],
+    },
+    physics: {
+      linkDynamicsEntries: metadata.linkDynamicsEntries,
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: `${linkPath}/visuals.proto_mesh_id0`,
+          sectionName: 'visuals',
+          resolvedPrimPath: `${linkPath}/visuals/visual_0/visual/colored_triangle`,
+          primType: 'mesh',
+          materialId: materialBindingMatch[1],
+        },
+      ],
+      materials: [
+        {
+          materialId: materialBindingMatch[1],
+          color: [0.006049, 0.40724, 0.03434, 1],
+          mapPath: null,
+        },
+      ],
+    },
+  });
+
+  assert.ok(adapted, 'expected colored USD snapshot to adapt back into robot data');
+  if (!adapted) {
+    return;
+  }
+
+  const reloadedLinkId = adapted.linkIdByPath[linkPath];
+  assert.ok(reloadedLinkId, 'expected colored roundtrip to map the exported base link path back to a live link id');
+  assert.equal(adapted.robotData.rootLinkId, reloadedLinkId);
+  assert.equal(adapted.linkPathById[reloadedLinkId], linkPath);
+  assert.equal(adapted.robotData.links[reloadedLinkId]?.visual.color, '#12ab34');
+  assert.equal(adapted.robotData.materials?.[reloadedLinkId]?.color, '#12ab34');
 });

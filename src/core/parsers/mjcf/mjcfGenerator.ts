@@ -218,7 +218,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
   const resolveLinkMaterialColor = (link: UrdfLink): string => {
     const material = robot.materials?.[link.id] || robot.materials?.[link.name];
-    return material?.color || link.visual.color || '#808080';
+    return material?.color || (material?.texture ? '#ffffff' : undefined) || link.visual.color || '#808080';
   };
 
   const resolveLinkMaterialTexture = (link: UrdfLink): string | undefined => {

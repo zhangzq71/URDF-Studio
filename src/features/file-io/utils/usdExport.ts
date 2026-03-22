@@ -15,6 +15,7 @@ import {
 } from '../../../core/loaders/colladaRootNormalization.ts';
 import { normalizeTexturePathForExport } from '../../../core/parsers/meshPathUtils.ts';
 import { createMatteMaterial } from '../../../core/utils/materialFactory.ts';
+import { parseThreeColorWithOpacity } from '../../../core/utils/color.ts';
 import { disposeMaterial, disposeObject3D } from '../../../shared/utils/three/dispose.ts';
 import { computeUsdInertiaProperties } from '../../../shared/utils/inertiaUsd.ts';
 
@@ -448,7 +449,7 @@ function resolveLinkMaterialEntry(robot: RobotState, link: UrdfLink): UsdMateria
     || {};
 
   return {
-    color: entry.color || link.visual.color || undefined,
+    color: entry.color || (entry.texture ? '#ffffff' : link.visual.color || undefined),
     texture: entry.texture || undefined,
   };
 }
@@ -622,6 +623,20 @@ function createPrimitiveSceneNode(
   return anchor;
 }
 
+function applyExplicitMeshDisplayColor(root: THREE.Object3D, color: string | undefined): void {
+  if (!color) {
+    return;
+  }
+
+  root.traverse((child) => {
+    if (!isMeshObject(child)) {
+      return;
+    }
+
+    child.userData.usdDisplayColor = color;
+  });
+}
+
 async function createMeshSceneNode(
   visual: UrdfVisual,
   role: DescriptorRole,
@@ -661,6 +676,8 @@ async function createMeshSceneNode(
       child.userData.usdMeshCollision = isMeshObject(child);
     });
   }
+
+  applyExplicitMeshDisplayColor(object, materialState?.color);
 
   anchor.add(object);
   return anchor;
@@ -894,7 +911,7 @@ function quaternionToUsdTuple(quaternion: THREE.Quaternion | JointQuaternion | n
 }
 
 function rpyToQuaternion(r: number, p: number, y: number): THREE.Quaternion {
-  return new THREE.Quaternion().setFromEuler(new THREE.Euler(r, p, y, 'XYZ'));
+  return new THREE.Quaternion().setFromEuler(new THREE.Euler(r, p, y, 'ZYX'));
 }
 
 function serializeTransformOps(lines: string[], depth: number, object: THREE.Object3D): void {
@@ -937,13 +954,16 @@ function serializeTransformOps(lines: string[], depth: number, object: THREE.Obj
   }
 }
 
-function parseDisplayColor(value: string | null | undefined): THREE.Color | null {
-  if (!value) return null;
-  try {
-    return new THREE.Color(value);
-  } catch {
+function parseDisplayColor(value: string | null | undefined): { color: THREE.Color; opacity: number } | null {
+  const parsed = parseThreeColorWithOpacity(value);
+  if (!parsed) {
     return null;
   }
+
+  return {
+    color: parsed.color,
+    opacity: parsed.opacity ?? 1,
+  };
 }
 
 function getRenderableTextureRecord(object: THREE.Object3D): UsdTextureRecord | null {
@@ -980,8 +1000,8 @@ function getRenderableAppearance(object: THREE.Object3D): UsdRenderableAppearanc
   const explicitColor = parseDisplayColor(object.userData?.usdDisplayColor);
   if (explicitColor) {
     return {
-      color: explicitColor,
-      opacity: 1,
+      color: explicitColor.color,
+      opacity: explicitColor.opacity,
       texture,
     };
   }
@@ -1464,6 +1484,11 @@ function serializeJointDefinition(
   if (typeName !== 'PhysicsFixedJoint') {
     lines.push(`${childIndent}uniform token physics:axis = "${getAxisToken(joint.axis)}"`);
   }
+  lines.push(`${childIndent}custom float3 urdf:axisLocal = ${formatTuple([
+    joint.axis?.x ?? 1,
+    joint.axis?.y ?? 0,
+    joint.axis?.z ?? 0,
+  ])}`);
 
   if (typeName === 'PhysicsRevoluteJoint' && String(joint.type || '').toLowerCase() !== 'continuous' && joint.limit) {
     lines.push(`${childIndent}float physics:lowerLimit = ${formatFloat(radiansToDegrees(joint.limit.lower))}`);
@@ -1478,11 +1503,18 @@ function serializeJointDefinition(
     joint.origin?.xyz?.y ?? 0,
     joint.origin?.xyz?.z ?? 0,
   ])}`);
-  lines.push(`${childIndent}quatf physics:localRot0 = ${quaternionToUsdTuple(rpyToQuaternion(
+  const originQuaternion = rpyToQuaternion(
     joint.origin?.rpy?.r ?? 0,
     joint.origin?.rpy?.p ?? 0,
     joint.origin?.rpy?.y ?? 0,
-  ))}`);
+  );
+  lines.push(`${childIndent}custom point3f urdf:originXyz = ${formatTuple([
+    joint.origin?.xyz?.x ?? 0,
+    joint.origin?.xyz?.y ?? 0,
+    joint.origin?.xyz?.z ?? 0,
+  ])}`);
+  lines.push(`${childIndent}custom quatf urdf:originQuatWxyz = ${quaternionToUsdTuple(originQuaternion)}`);
+  lines.push(`${childIndent}quatf physics:localRot0 = ${quaternionToUsdTuple(originQuaternion)}`);
   lines.push(`${childIndent}point3f physics:localPos1 = (0, 0, 0)`);
   lines.push(`${childIndent}quatf physics:localRot1 = (1, 0, 0, 0)`);
   lines.push(`${indent}}`);
@@ -1935,6 +1967,7 @@ function createArchiveFiles(
 }
 
 async function collectUsdAssetFiles(
+  sceneRoot: THREE.Object3D,
   context: UsdSerializationContext,
   registry: AssetRegistry,
 ): Promise<Map<string, Blob>> {
@@ -1943,6 +1976,20 @@ async function collectUsdAssetFiles(
   context.materialRecords.forEach((record) => {
     const texture = record.appearance.texture;
     if (!texture) return;
+    textureFiles.set(texture.exportPath, texture.sourcePath);
+  });
+
+  sceneRoot.traverse((object) => {
+    const materialMetadata = object.userData?.usdMaterial as UsdMaterialMetadata | undefined;
+    if (!materialMetadata?.texture) {
+      return;
+    }
+
+    const texture = createUsdTextureRecord(materialMetadata.texture);
+    if (!texture) {
+      return;
+    }
+
     textureFiles.set(texture.exportPath, texture.sourcePath);
   });
 
@@ -2021,7 +2068,8 @@ export async function exportRobotToUsd({
     const baseLayerContent = buildBaseLayerContent(sceneRoot);
     const physicsLayerContent = buildPhysicsLayerContent(robot, pathMaps, rootPrimName, configStem);
     const sensorLayerContent = buildSensorLayerContent(rootPrimName);
-    const usdAssetFiles = await collectUsdAssetFiles(collectUsdPreviewMaterials(sceneRoot), registry);
+    const usdContext = collectUsdPreviewMaterials(sceneRoot);
+    const usdAssetFiles = await collectUsdAssetFiles(sceneRoot, usdContext, registry);
 
     const archive = createArchiveFiles(
       normalizedExportName,

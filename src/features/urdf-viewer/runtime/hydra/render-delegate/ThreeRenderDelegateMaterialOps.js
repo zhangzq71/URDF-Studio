@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Color, DoubleSide, LinearSRGBColorSpace, Quaternion, SRGBColorSpace, Vector2 } from 'three';
+import { Color, FrontSide, LinearSRGBColorSpace, Quaternion, SRGBColorSpace, Vector2 } from 'three';
 import * as Shared from './shared.js';
 import { ThreeRenderDelegateCore } from './ThreeRenderDelegateCore.js';
 import { createUnifiedHydraPhysicalMaterial, HYDRA_UNIFIED_MATERIAL_DEFAULTS } from './material-defaults.js';
@@ -1962,7 +1962,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
         const materialName = String(record?.name || normalizedMaterialPath.split('/').filter(Boolean).pop() || normalizedMaterialPath).trim() || normalizedMaterialPath;
         const inferredColorHex = this.inferColorHexFromMaterialName(materialName);
         const material = createUnifiedHydraPhysicalMaterial({
-            side: DoubleSide,
+            side: FrontSide,
             color: inferredColorHex ?? 0x888888,
             name: materialName,
         });
@@ -2113,7 +2113,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
         const inferredColorHex = this.inferColorHexFromMaterialName(materialName);
         const shaderPrim = this.findMaterialShaderPrim(stage, materialPath, materialName);
         const material = createUnifiedHydraPhysicalMaterial({
-            side: DoubleSide,
+            side: FrontSide,
             color: inferredColorHex ?? 0x888888,
             name: materialName,
         });

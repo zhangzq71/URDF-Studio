@@ -4,13 +4,7 @@ import { Html } from '@react-three/drei';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps } from '../types';
-import { isSingleDofJoint } from '../utils/jointTypes';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
-import {
-    beginInitialGroundAlignment,
-    hasInitialGroundAlignment,
-    offsetRobotToGround,
-} from '../utils/robotPositioning';
 
 import { useRobotLoader } from '../hooks/useRobotLoader';
 import { useHighlightManager } from '../hooks/useHighlightManager';
@@ -33,7 +27,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     onMeshSelect,
     onJointChange,
     onJointChangeCommit,
-    jointAngles,
+    initialJointAngles,
+    registerSceneRefresh,
     setIsDragging,
     setActiveJoint,
     justSelectedRef,
@@ -68,19 +63,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     groundPlaneOffset = 0,
 }) => {
     const { invalidate } = useThree();
-    const needsInitialGroundFitRef = useRef(true);
-    const initialGroundFitTimersRef = useRef<number[]>([]);
-    const appliedJointAnglesRef = useRef<Record<string, number>>({});
     const autoFrameScopeFallbackRef = useRef<string | null>(null);
 
     if (!autoFrameScopeFallbackRef.current) {
         autoFrameScopeFallbackRef.current = `viewer-session:${Math.random().toString(36).slice(2)}`;
     }
-
-    const clearInitialGroundFitTimers = () => {
-        initialGroundFitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-        initialGroundFitTimersRef.current = [];
-    };
 
     // Keep ref for setIsDragging to avoid stale closures
     const setIsDraggingRef = useRef(setIsDragging);
@@ -112,7 +99,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         isMeshPreview,
         robotLinks,
         robotJoints,
-        initialJointAngles: jointAngles,
+        initialJointAngles,
         onRobotLoaded,
         groundPlaneOffset,
     });
@@ -243,76 +230,23 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         hoveredSelection,
     ]);
 
-    useEffect(() => {
-        needsInitialGroundFitRef.current = true;
-        appliedJointAnglesRef.current = {};
-        return () => {
-            clearInitialGroundFitTimers();
-        };
-    }, [robot, robotVersion]);
-
-    // ============================================================
-    // Apply joint angles when jointAngles prop changes
-    // ============================================================
-    useEffect(() => {
-        if (!robot || !jointAngles) return;
-
-        const joints = (robot as any).joints;
-        if (!joints) return;
-        let hasJointTransformChanges = false;
-
-        Object.entries(jointAngles).forEach(([jointName, angle]) => {
-            const joint = joints[jointName];
-            const currentAngle = joint?.angle ?? joint?.jointValue;
-
-            if (currentAngle === angle) {
-                appliedJointAnglesRef.current[jointName] = angle;
-                return;
-            }
-
-            if (isSingleDofJoint(joint) && typeof joint.setJointValue === 'function') {
-                joint.setJointValue(angle);
-                hasJointTransformChanges = true;
-            }
-
-            appliedJointAnglesRef.current[jointName] = angle;
-        });
-
-        if (needsInitialGroundFitRef.current && Object.keys(jointAngles).length > 0) {
-            needsInitialGroundFitRef.current = false;
-            clearInitialGroundFitTimers();
-
-            if (beginInitialGroundAlignment(robot)) {
-                initialGroundFitTimersRef.current = [0, 80, 220, 500].map((delay) =>
-                    window.setTimeout(() => {
-                        offsetRobotToGround(robot, groundPlaneOffset);
-                        boundingBoxNeedsUpdateRef.current = true;
-                        needsRaycastRef.current = true;
-                        invalidate();
-                    }, delay)
-                );
-            }
-        }
-
-        if (!hasJointTransformChanges) {
-            return () => {
-                clearInitialGroundFitTimers();
-            };
-        }
-
-        if (hasInitialGroundAlignment(robot)) {
-            needsInitialGroundFitRef.current = false;
+    const requestSceneRefresh = useCallback(() => {
+        if (!robot) {
+            return;
         }
 
         robot.updateMatrixWorld(true);
         boundingBoxNeedsUpdateRef.current = true;
         needsRaycastRef.current = true;
         invalidate();
+    }, [boundingBoxNeedsUpdateRef, invalidate, needsRaycastRef, robot]);
 
+    useEffect(() => {
+        registerSceneRefresh?.(requestSceneRefresh);
         return () => {
-            clearInitialGroundFitTimers();
+            registerSceneRefresh?.(null);
         };
-    }, [robot, jointAngles, groundPlaneOffset, invalidate, boundingBoxNeedsUpdateRef, needsRaycastRef]);
+    }, [registerSceneRefresh, requestSceneRefresh]);
 
     // ============================================================
     // RENDER
@@ -341,8 +275,9 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                     <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
                         <ViewerLoadingHud
                             title={t.loadingRobot}
-                            detail={loadingHudState.detail}
+                            detail={t.loadingRobotPreparing}
                             progress={loadingHudState.progress}
+                            statusLabel={loadingHudState.statusLabel}
                         />
                     </div>
                 </Html>

@@ -173,7 +173,7 @@ export const RobotNode = memo(function RobotNode({
   }, [linkId]);
 
   const showRootAxes = isRoot && ((mode === 'skeleton' && showSkeletonOrigin) || (mode === 'detail' && showDetailOrigin) || (mode === 'hardware' && showHardwareOrigin));
-  const shouldRenderGeometry = !(mode === 'skeleton' && !showGeometry && !showCollision);
+  const shouldRenderGeometry = mode !== 'skeleton' || showGeometry || showCollision || Boolean(link.visual);
   const showLinkLabel = (mode === 'detail' && showDetailLabels) || (mode === 'hardware' && showHardwareLabels);
   const showRootLabel = isRoot && ((mode === 'skeleton' && showLabels) || (mode === 'hardware' && showHardwareLabels));
 

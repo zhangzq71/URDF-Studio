@@ -13,6 +13,7 @@ test('buildViewerLoadingHudState prefers normalized resource counts when availab
     {
       detail: '3 / 8',
       progress: 0.375,
+      statusLabel: '3 / 8',
     },
   );
 });
@@ -26,6 +27,7 @@ test('buildViewerLoadingHudState falls back to a clamped percent when resource c
     {
       detail: '100%',
       progress: 1,
+      statusLabel: '100%',
     },
   );
 });
@@ -40,6 +42,7 @@ test('buildViewerLoadingHudState keeps the fallback detail when no determinate p
     {
       detail: 'Preparing scene…',
       progress: null,
+      statusLabel: null,
     },
   );
 });

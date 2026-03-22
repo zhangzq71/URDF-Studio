@@ -10,6 +10,7 @@ import {
   type ColladaRootNormalizationHints,
 } from '@/core/loaders/colladaRootNormalization';
 import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
+import { resolveGeometryVisibilityState } from './geometryVisibility';
 
 interface GeometryRendererProps {
   isCollision: boolean;
@@ -51,19 +52,20 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   colladaRootNormalizationHints,
 }: GeometryRendererProps) {
   const data = geometryData || (isCollision ? link.collision : link.visual);
+  const visibilityState = resolveGeometryVisibilityState({
+    mode,
+    isCollision,
+    showGeometry,
+    showCollision,
+  });
 
-  // Fallback if collision data doesn't exist yet
-  if (isCollision && !data) return null;
+  if (!data) return null;
   if (data?.visible === false) return null;
 
-  if (mode === 'skeleton' && !showGeometry && !isCollision) return null;
+  if (!visibilityState.shouldRender) return null;
 
-  if (mode === 'detail') {
-    if (isCollision && !showCollision) return null;
-    if (!isCollision && link.visible === false) return null;
-  } else {
-    if (isCollision && !showCollision) return null;
-    if (isCollision) return null;
+  if (mode === 'detail' && !isCollision && link.visible === false) {
+    return null;
   }
 
   const { type, dimensions, color, origin, meshPath } = data;
@@ -162,27 +164,34 @@ export const GeometryRenderer = memo(function GeometryRenderer({
 
   // Use array format for position/rotation to avoid creating new objects
   const wrapperProps = {
-    onClick: (e: any) => {
-      onLinkClick(e, geometrySubType);
-    },
-    onPointerOver: (e: any) => {
-      e.stopPropagation();
-      setHoveredSelection({
-        type: 'link',
-        id: link.id,
-        subType: geometrySubType,
-        objectIndex: isCollision ? (objectIndex ?? 0) : undefined,
-      });
-    },
-    onPointerOut: (e: any) => {
-      e.stopPropagation();
-      clearGeometryHover();
-    },
+    onClick: visibilityState.interactive
+      ? (e: any) => {
+          onLinkClick(e, geometrySubType);
+        }
+      : undefined,
+    onPointerOver: visibilityState.interactive
+      ? (e: any) => {
+          e.stopPropagation();
+          setHoveredSelection({
+            type: 'link',
+            id: link.id,
+            subType: geometrySubType,
+            objectIndex: isCollision ? (objectIndex ?? 0) : undefined,
+          });
+        }
+      : undefined,
+    onPointerOut: visibilityState.interactive
+      ? (e: any) => {
+          e.stopPropagation();
+          clearGeometryHover();
+        }
+      : undefined,
     position: origin
       ? ([origin.xyz.x, origin.xyz.y, origin.xyz.z] as [number, number, number])
       : undefined,
     rotation: originRotation,
     ref: isCollision ? setCollisionRef : setVisualRef,
+    visible: visibilityState.visible,
     userData: {
       geometryRole: isCollision ? 'collision' : 'visual',
     },

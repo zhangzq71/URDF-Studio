@@ -3,6 +3,7 @@ import {
   buildUsdBindingsScriptUrl,
   ensureClassicScriptLoaded,
 } from './usdBindingsScriptLoader.ts';
+import type { UsdLoadingProgress } from '../types';
 
 const EMHD_BINDINGS_CACHE_KEY = '20260318a';
 
@@ -52,6 +53,7 @@ type LoadUsdStageFn = (args: {
   applyMeshFilters: () => void;
   rebuildLinkAxes: () => void;
   renderFrame: () => void;
+  onProgress?: (progress: UsdLoadingProgress) => void;
 }) => Promise<{
   driver: any;
   ready: boolean;

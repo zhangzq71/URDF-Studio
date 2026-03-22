@@ -1,7 +1,14 @@
 import { Suspense, lazy, useMemo, useRef } from 'react';
 import { MeasureTool } from './MeasureTool';
 import { RobotModel } from './RobotModel';
-import type { MeasureTargetResolver, RobotModelProps, ToolMode, URDFViewerProps, ViewerRuntimeStageBridge } from '../types';
+import type {
+  MeasureTargetResolver,
+  RobotModelProps,
+  ToolMode,
+  URDFViewerProps,
+  ViewerRuntimeStageBridge,
+  UsdLoadingPhaseLabels,
+} from '../types';
 import type { URDFViewerController } from '../hooks/useURDFViewerController';
 import type { RobotFile } from '@/types';
 import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
@@ -67,11 +74,30 @@ export const URDFViewerScene = ({
   const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(() => ({
     onRobotResolved: controller.handleJointPanelRobotLoaded,
     onSelectionChange: controller.handleSelectWrapper,
+    onActiveJointChange: controller.handleActiveJointChange,
     onJointAnglesChange: controller.handleRuntimeJointAnglesChange,
   }), [
+    controller.handleActiveJointChange,
     controller.handleJointPanelRobotLoaded,
     controller.handleRuntimeJointAnglesChange,
     controller.handleSelectWrapper,
+  ]);
+  const usdLoadingPhaseLabels = useMemo<UsdLoadingPhaseLabels>(() => ({
+    'checking-path': t.loadingRobotCheckingPath,
+    'preloading-dependencies': t.loadingRobotPreloadingDependencies,
+    'initializing-renderer': t.loadingRobotInitializingRenderer,
+    'streaming-meshes': t.loadingRobotStreamingMeshes,
+    'applying-stage-fixes': t.loadingRobotApplyingStageFixes,
+    'resolving-metadata': t.loadingRobotResolvingMetadata,
+    'finalizing-scene': t.loadingRobotFinalizingScene,
+  }), [
+    t.loadingRobotApplyingStageFixes,
+    t.loadingRobotCheckingPath,
+    t.loadingRobotFinalizingScene,
+    t.loadingRobotInitializingRenderer,
+    t.loadingRobotPreloadingDependencies,
+    t.loadingRobotResolvingMetadata,
+    t.loadingRobotStreamingMeshes,
   ]);
 
   return (
@@ -126,6 +152,7 @@ export const URDFViewerScene = ({
             setIsDragging={controller.setIsDragging}
             loadingLabel={t.loadingRobot}
             loadingDetailLabel={t.loadingRobotPreparing}
+            loadingPhaseLabels={usdLoadingPhaseLabels}
             onRobotDataResolved={onRobotDataResolved}
             runtimeBridge={runtimeBridge}
             measureTargetResolverRef={measureTargetResolverRef}
@@ -147,9 +174,10 @@ export const URDFViewerScene = ({
             onMeshSelect={onMeshSelect}
             onJointChange={controller.handleJointAngleChange}
             onJointChangeCommit={controller.handleJointChangeCommit}
-            jointAngles={controller.jointAngles}
+            initialJointAngles={controller.getJointAnglesSnapshot()}
+            registerSceneRefresh={controller.registerSceneRefresh}
             setIsDragging={controller.setIsDragging}
-            setActiveJoint={controller.setActiveJoint}
+            setActiveJoint={controller.handleActiveJointChange}
             justSelectedRef={controller.justSelectedRef}
             t={t}
             mode={mode}

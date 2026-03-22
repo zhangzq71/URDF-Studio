@@ -15,6 +15,25 @@ import type {
 import type { MeasureSelectionLike } from './utils/measureTargetResolvers';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
+export type UsdLoadingPhase =
+    | 'checking-path'
+    | 'preloading-dependencies'
+    | 'initializing-renderer'
+    | 'streaming-meshes'
+    | 'applying-stage-fixes'
+    | 'resolving-metadata'
+    | 'finalizing-scene'
+    | 'ready';
+
+export interface UsdLoadingProgress {
+    phase: UsdLoadingPhase;
+    message?: string | null;
+    progressPercent?: number | null;
+    loadedCount?: number | null;
+    totalCount?: number | null;
+}
+
+export type UsdLoadingPhaseLabels = Record<Exclude<UsdLoadingPhase, 'ready'>, string>;
 export type { MeasureAnchorMode, MeasureGroup, MeasureMeasurement, MeasureObjectType, MeasureSlot, MeasureState, MeasureTarget };
 export type MeasureTargetResolver = (
     selection?: MeasureSelectionLike,
@@ -25,6 +44,7 @@ export type MeasureTargetResolver = (
 export interface ViewerRuntimeStageBridge {
     onRobotResolved?: (robot: any | null) => void;
     onSelectionChange?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onActiveJointChange?: (jointName: string | null) => void;
     onJointAnglesChange?: (jointAngles: Record<string, number>) => void;
 }
 
@@ -88,7 +108,8 @@ export interface RobotModelProps {
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
     onJointChangeCommit?: (name: string, angle: number) => void;
-    jointAngles?: Record<string, number>;
+    initialJointAngles?: Record<string, number>;
+    registerSceneRefresh?: (refreshScene: (() => void) | null) => void;
     setIsDragging?: (dragging: boolean) => void;
     setActiveJoint?: (jointName: string | null) => void;
     justSelectedRef?: React.RefObject<boolean>;

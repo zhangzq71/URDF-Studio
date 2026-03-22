@@ -18,7 +18,9 @@ import {
 } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { exportUsdStageSnapshot, getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import { addRobotAssetsToZip } from '../utils/exportArchiveAssets';
+import { resolveCurrentUsdExportMode } from '../utils/currentUsdExportMode';
 import { flushPendingHistory } from '../utils/pendingHistory';
 import { buildCurrentRobotExportData, buildCurrentRobotExportState } from './projectRobotStateUtils';
 import { resolveCurrentUsdExportBundle } from '../utils/usdExportContext';
@@ -200,6 +202,14 @@ export function useFileExport() {
   const isCurrentUsdHydrating = selectedFile?.format === 'usd'
     && documentLoadState.status === 'hydrating'
     && documentLoadState.fileName === selectedFile.name;
+  const currentUsdExportMode = selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+    ? resolveCurrentUsdExportMode({
+      isHydrating: isCurrentUsdHydrating,
+      hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
+      hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
+      hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
+    })
+    : 'unavailable';
 
   const buildRobotForExport = useCallback((): RobotState => {
     // Keep export source aligned with current viewer:
@@ -403,7 +413,11 @@ export function useFileExport() {
   ]);
 
   const buildCurrentUsdExportContext = useCallback((): ExportContext | null => {
-    if (selectedFile?.format !== 'usd' || sidebarTab === 'workspace' || isCurrentUsdHydrating) {
+    if (
+      selectedFile?.format !== 'usd'
+      || sidebarTab === 'workspace'
+      || isCurrentUsdHydrating
+    ) {
       return null;
     }
 
@@ -645,6 +659,35 @@ export function useFileExport() {
         stageProgress: 0.2,
         indeterminate: true,
       });
+
+      const shouldExportLiveUsdStage = (
+        target.type === 'current'
+        && selectedFile?.format === 'usd'
+        && sidebarTab !== 'workspace'
+        && currentUsdExportMode === 'live-stage'
+      );
+
+      if (shouldExportLiveUsdStage) {
+        reportProgress(2, t.exportProgressBuildingUsdScene, t.exportProgressUsdScenePreparingDetail, {
+          stageProgress: 0.16,
+          indeterminate: true,
+        });
+
+        const stageExport = await exportUsdStageSnapshot({
+          stageSourcePath: selectedFile.name,
+        });
+
+        reportProgress(3, t.exportProgressPackaging, t.exportProgressPackagingDetail, {
+          stageProgress: 1,
+          indeterminate: false,
+        });
+
+        downloadBlob(
+          new Blob([stageExport.content], { type: 'text/plain;charset=utf-8' }),
+          stageExport.downloadFileName,
+        );
+        return;
+      }
 
       const exportContext = resolveExportContext(target);
 
@@ -894,6 +937,7 @@ export function useFileExport() {
     addArchiveFilesToZip,
     addSkeletonToZip,
     buildGeneratedUrdfOptions,
+    currentUsdExportMode,
     createProgressReporter,
     createArchiveRoot,
     downloadBlob,

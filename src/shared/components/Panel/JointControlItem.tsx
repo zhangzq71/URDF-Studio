@@ -1,6 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useRobotStore } from '@/store/robotStore';
-import { Slider } from '@/shared/components/ui';
 import { JointType } from '@/types';
 import { getJointType } from '@/shared/utils/jointTypes';
 import {
@@ -50,6 +49,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const isContinuousJoint = normalizeJointTypeValue(jointType) === JointType.CONTINUOUS;
     const itemRef = useRef<HTMLDivElement>(null);
     const continuousPreviewValueRef = useRef(value);
+    const isSliderDraggingRef = useRef(false);
     
     const updateJoint = useRobotStore(state => state.updateJoint);
 
@@ -126,9 +126,16 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     }, [isActive, name]);
 
     const [continuousSliderAnchor, setContinuousSliderAnchor] = useState(value);
-    const [isContinuousSliderDragging, setIsContinuousSliderDragging] = useState(false);
+    const continuousSliderAnchorRef = useRef(value);
+    const [sliderPreviewValue, setSliderPreviewValue] = useState(value);
+    const [isSliderDragging, setIsSliderDragging] = useState(false);
 
-    const displayValue = toJointDisplayValue(value, jointType, angleUnit);
+    const syncContinuousSliderAnchor = useCallback((nextAnchor: number) => {
+        continuousSliderAnchorRef.current = nextAnchor;
+        setContinuousSliderAnchor(nextAnchor);
+    }, []);
+
+    const displayValue = toJointDisplayValue(sliderPreviewValue, jointType, angleUnit);
     const displayMin = hasFiniteLimits
         ? toJointDisplayValue(localLimits.lower, jointType, angleUnit)
         : Number.NEGATIVE_INFINITY;
@@ -139,7 +146,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const step = getJointSliderStep(jointType, angleUnit);
     const continuousSliderWindow = angleUnit === 'deg' ? 180 : Math.PI;
     const sliderValue = isContinuousJoint
-        ? toJointDisplayValue(value - continuousSliderAnchor, jointType, angleUnit)
+        ? toJointDisplayValue(sliderPreviewValue - continuousSliderAnchor, jointType, angleUnit)
         : displayValue;
     const sliderMin = isContinuousJoint
         ? -continuousSliderWindow
@@ -151,6 +158,11 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
         : hasFiniteLimits
             ? Math.max(displayMax, displayValue)
             : displayValue + (angleUnit === 'deg' && usesAngularUnits ? 180 : Math.PI);
+    const sliderRange = sliderMax - sliderMin;
+    const sliderPercentage = sliderRange > 0
+        ? ((sliderValue - sliderMin) / sliderRange) * 100
+        : 0;
+    const clampedSliderPercentage = Math.min(Math.max(sliderPercentage, 0), 100);
 
     const [inputValue, setInputValue] = useState(displayValue.toFixed(2));
     const [isEditingValue, setIsEditingValue] = useState(false);
@@ -188,20 +200,73 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     }, [localLimits.velocity, isEditingVelocity]);
 
     useEffect(() => {
-        if (!isContinuousJoint || !isContinuousSliderDragging) {
-            setContinuousSliderAnchor(value);
-            continuousPreviewValueRef.current = value;
+        if (isSliderDraggingRef.current) {
+            return;
         }
-    }, [value, isContinuousJoint, isContinuousSliderDragging]);
+
+        setSliderPreviewValue(value);
+        continuousPreviewValueRef.current = value;
+
+        if (isContinuousJoint) {
+            syncContinuousSliderAnchor(value);
+        }
+    }, [isContinuousJoint, syncContinuousSliderAnchor, value]);
+
+    const handleSliderChangeStart = useCallback(() => {
+        if (isSliderDraggingRef.current) {
+            return;
+        }
+
+        isSliderDraggingRef.current = true;
+        setIsSliderDragging(true);
+        setActiveJoint(name);
+        onSelect?.('joint', name);
+        setSliderPreviewValue(value);
+        continuousPreviewValueRef.current = value;
+
+        if (isContinuousJoint) {
+            syncContinuousSliderAnchor(value);
+        }
+    }, [isContinuousJoint, name, onSelect, setActiveJoint, syncContinuousSliderAnchor, value]);
 
     const handleSliderChangeEnd = useCallback(() => {
-        if (isContinuousJoint) {
-            setContinuousSliderAnchor(continuousPreviewValueRef.current);
-            setIsContinuousSliderDragging(false);
+        if (!isSliderDraggingRef.current) {
+            return;
         }
 
-        handleJointChangeCommit(name, continuousPreviewValueRef.current);
-    }, [handleJointChangeCommit, isContinuousJoint, name]);
+        const committedValue = continuousPreviewValueRef.current;
+
+        isSliderDraggingRef.current = false;
+        setIsSliderDragging(false);
+
+        if (isContinuousJoint) {
+            syncContinuousSliderAnchor(committedValue);
+        }
+
+        handleJointChangeCommit(name, committedValue);
+    }, [handleJointChangeCommit, isContinuousJoint, name, syncContinuousSliderAnchor]);
+
+    useEffect(() => {
+        if (!isSliderDragging) {
+            return;
+        }
+
+        const handleWindowPointerUp = () => {
+            handleSliderChangeEnd();
+        };
+
+        window.addEventListener('pointerup', handleWindowPointerUp);
+        window.addEventListener('mouseup', handleWindowPointerUp);
+        window.addEventListener('touchend', handleWindowPointerUp);
+        window.addEventListener('blur', handleWindowPointerUp);
+
+        return () => {
+            window.removeEventListener('pointerup', handleWindowPointerUp);
+            window.removeEventListener('mouseup', handleWindowPointerUp);
+            window.removeEventListener('touchend', handleWindowPointerUp);
+            window.removeEventListener('blur', handleWindowPointerUp);
+        };
+    }, [handleSliderChangeEnd, isSliderDragging]);
 
     useEffect(() => {
         const currentParsed = parseFloat(inputValue);
@@ -462,27 +527,82 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                     )}
                 </div>
 
-                <div className="min-w-0">
-                    <Slider
-                        value={sliderValue}
+                <div
+                    className="relative flex min-w-0 items-center"
+                    data-testid="joint-slider-shell"
+                >
+                    <div className="pointer-events-none absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 overflow-hidden rounded-full bg-slider-track">
+                        <div
+                            data-testid="joint-slider-fill"
+                            className="h-full bg-slider-accent"
+                            style={{ width: `${clampedSliderPercentage}%` }}
+                        />
+                    </div>
+                    <div
+                        data-testid="joint-slider-thumb"
+                        className={`pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border transition-[transform,box-shadow] duration-75 ${
+                            isSliderDragging ? 'scale-110 ring-4 ring-system-blue/15' : 'scale-100'
+                        }`}
+                        style={{
+                            left: `calc(${clampedSliderPercentage}% - 0.4375rem)`,
+                            backgroundColor: 'var(--ui-slider-thumb-bg)',
+                            borderColor: 'var(--ui-slider-thumb-border)',
+                            boxShadow: isSliderDragging
+                                ? 'var(--ui-slider-thumb-shadow-active)'
+                                : 'var(--ui-slider-thumb-shadow)',
+                        }}
+                    />
+                    <input
+                        type="range"
                         min={sliderMin}
                         max={sliderMax}
                         step={step}
-                        onChange={(val) => {
+                        value={sliderValue}
+                        onInput={(e) => {
+                            const val = parseFloat((e.target as HTMLInputElement).value);
                             const nextValue = isContinuousJoint
-                                ? continuousSliderAnchor + fromJointDisplayValue(val, jointType, angleUnit)
+                                ? continuousSliderAnchorRef.current + fromJointDisplayValue(val, jointType, angleUnit)
                                 : fromJointDisplayValue(val, jointType, angleUnit);
+                            setSliderPreviewValue(nextValue);
                             continuousPreviewValueRef.current = nextValue;
                             handleJointAngleChange(name, nextValue);
                         }}
-                        onChangeStart={isContinuousJoint ? () => {
-                            setContinuousSliderAnchor(value);
-                            continuousPreviewValueRef.current = value;
-                            setIsContinuousSliderDragging(true);
-                        } : undefined}
-                        onChangeEnd={handleSliderChangeEnd}
-                        showValue={false}
-                        className="w-full"
+                        onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            const nextValue = isContinuousJoint
+                                ? continuousSliderAnchorRef.current + fromJointDisplayValue(val, jointType, angleUnit)
+                                : fromJointDisplayValue(val, jointType, angleUnit);
+                            setSliderPreviewValue(nextValue);
+                            continuousPreviewValueRef.current = nextValue;
+                            handleJointAngleChange(name, nextValue);
+                        }}
+                        onPointerDown={(e) => {
+                            e.stopPropagation();
+                            handleSliderChangeStart();
+                        }}
+                        onMouseDown={(e) => {
+                            e.stopPropagation();
+                            handleSliderChangeStart();
+                        }}
+                        onTouchStart={(e) => {
+                            e.stopPropagation();
+                            handleSliderChangeStart();
+                        }}
+                        onPointerUp={(e) => {
+                            e.stopPropagation();
+                            handleSliderChangeEnd();
+                        }}
+                        onMouseUp={(e) => {
+                            e.stopPropagation();
+                            handleSliderChangeEnd();
+                        }}
+                        onTouchEnd={(e) => {
+                            e.stopPropagation();
+                            handleSliderChangeEnd();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="relative z-10 block h-4 w-full cursor-pointer appearance-none bg-transparent opacity-0"
+                        style={{ accentColor: 'var(--ui-slider-accent)' }}
                     />
                 </div>
 

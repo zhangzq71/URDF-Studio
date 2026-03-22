@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { RobotState, UrdfLink, UrdfJoint, DEFAULT_LINK, DEFAULT_JOINT, GeometryType, JointType, UrdfVisual } from '@/types';
 import { computeLinkWorldMatrices, createRobotClosedLoopConstraint, resolveLinkKey } from '@/core/robot';
-import { looksLikeMJCFDocument, type MJCFCompilerSettings, type MJCFMaterial, type MJCFMesh } from './mjcfUtils';
+import { looksLikeMJCFDocument, type MJCFCompilerSettings, type MJCFMaterial, type MJCFMesh, type MJCFTexture } from './mjcfUtils';
 import { assignMJCFBodyGeomRoles, classifyMJCFGeom } from './mjcfGeomClassification';
 import { normalizeMultiJointBodies, parseMJCFModel, type MJCFModelConnectConstraint } from './mjcfModel';
 
@@ -527,12 +527,65 @@ function mjcfToRobotState(
     bodies: MJCFBody[],
     meshMap: Map<string, MJCFMesh>,
     materialMap: Map<string, MJCFMaterial>,
+    textureMap: Map<string, MJCFTexture>,
     actuatorMap: Map<string, MJCFActuator[]>,
 ): RobotState {
     const links: Record<string, UrdfLink> = {};
     const joints: Record<string, UrdfJoint> = {};
+    const materials: NonNullable<RobotState['materials']> = {};
     let rootLinkId = '';
     let linkCounter = 0;
+
+    function resolveGeomMaterialState(geom: MJCFGeom): { color?: string; texture?: string } | null {
+        const materialDef = geom.material
+            ? materialMap.get(geom.material)
+            : undefined;
+        const texturePath = materialDef?.texture
+            ? textureMap.get(materialDef.texture)?.file
+            : undefined;
+
+        const explicitGeomRgba = geom.hasExplicitRgba && geom.rgba && geom.rgba.length >= 3
+            ? geom.rgba
+            : undefined;
+        const materialRgba = materialDef?.rgba && materialDef.rgba.length >= 3
+            ? materialDef.rgba
+            : undefined;
+        const inheritedGeomRgba = geom.rgba && geom.rgba.length >= 3
+            ? geom.rgba
+            : undefined;
+        const resolvedRgba = explicitGeomRgba
+            ?? materialRgba
+            ?? inheritedGeomRgba;
+        const resolvedColor = resolvedRgba
+            ? rgbaToHexColor(resolvedRgba) || undefined
+            : undefined;
+
+        // MJCF textures use white as the neutral color multiplier when rgba is absent.
+        const neutralTextureColor = texturePath ? '#ffffff' : undefined;
+        const color = resolvedColor ?? neutralTextureColor;
+
+        if (!color && !texturePath) {
+            return null;
+        }
+
+        return {
+            ...(color ? { color } : {}),
+            ...(texturePath ? { texture: texturePath } : {}),
+        };
+    }
+
+    function assignLinkMaterial(linkId: string, geom: MJCFGeom | null | undefined): void {
+        if (!geom) {
+            return;
+        }
+
+        const materialState = resolveGeomMaterialState(geom);
+        if (!materialState) {
+            return;
+        }
+
+        materials[linkId] = materialState;
+    }
 
     function processGeometry(geom: MJCFGeom): UrdfVisual {
         const result: UrdfVisual = { ...DEFAULT_LINK.visual };
@@ -590,24 +643,9 @@ function mjcfToRobotState(
             result.dimensions = { x: 0.05, y: 0, z: 0 };
         }
 
-        const explicitGeomRgba = geom.hasExplicitRgba && geom.rgba && geom.rgba.length >= 3
-            ? geom.rgba
-            : undefined;
-        const materialRgba = geom.material
-            ? materialMap.get(geom.material)?.rgba
-            : undefined;
-        const inheritedGeomRgba = geom.rgba && geom.rgba.length >= 3
-            ? geom.rgba
-            : undefined;
-        const resolvedRgba = explicitGeomRgba
-            ?? (materialRgba && materialRgba.length >= 3 ? materialRgba : undefined)
-            ?? inheritedGeomRgba;
-
-        if (resolvedRgba && resolvedRgba.length >= 3) {
-            const resolvedColor = rgbaToHexColor(resolvedRgba);
-            if (resolvedColor) {
-                result.color = resolvedColor;
-            }
+        const materialState = resolveGeomMaterialState(geom);
+        if (materialState?.color) {
+            result.color = materialState.color;
         }
 
         const geomRotation = toRPYObjectFromQuat(geom.quat);
@@ -707,6 +745,7 @@ function mjcfToRobotState(
         let visual = { ...DEFAULT_LINK.visual };
         if (mainPair.visual) {
             visual = processGeometry(mainPair.visual);
+            assignLinkMaterial(mainLinkId, mainPair.visual);
         } else {
             visual.type = GeometryType.NONE;
         }
@@ -846,6 +885,7 @@ function mjcfToRobotState(
             let subVisual = { ...DEFAULT_LINK.visual };
             if (pair.visual) {
                 subVisual = processGeometry(pair.visual);
+                assignLinkMaterial(subLinkId, pair.visual);
             } else {
                 subVisual.type = GeometryType.NONE;
             }
@@ -907,12 +947,6 @@ function mjcfToRobotState(
         links[rootLinkId] = { ...DEFAULT_LINK, id: rootLinkId, name: 'base_link' };
     }
 
-    const materials = Object.fromEntries(
-        Object.values(links)
-            .filter((link) => link.visual.type !== GeometryType.NONE && !!link.visual.color)
-            .map((link) => [link.id, { color: link.visual.color }]),
-    );
-
     return {
         name: robotName,
         links,
@@ -940,6 +974,7 @@ export function parseMJCF(xmlContent: string): RobotState | null {
         rootBodies,
         parsedModel.meshMap,
         parsedModel.materialMap,
+        parsedModel.textureMap,
         toParserActuatorMap(parsedModel.actuatorMap),
     );
 

@@ -361,6 +361,13 @@ export function extractJointRecordsFromLayerText(layerText) {
         const axisToken = normalizeAxisToken(body.match(/physics:axis\s*=\s*"?([A-Za-z]+)"?/i)?.[1] || "X");
         const lowerLimitDeg = toFiniteNumberLocal(body.match(/physics:lowerLimit\s*=\s*([-+0-9.eE]+)/i)?.[1]);
         const upperLimitDeg = toFiniteNumberLocal(body.match(/physics:upperLimit\s*=\s*([-+0-9.eE]+)/i)?.[1]);
+        const axisLocal = parseVector3FromTupleLiteral(body.match(/urdf:axisLocal\s*=\s*\(([^)]+)\)/i)?.[1] || "");
+        const originXyz = parseVector3FromTupleLiteral((body.match(/urdf:originXyz\s*=\s*\(([^)]+)\)/i)?.[1]
+            || body.match(/physics:localPos0\s*=\s*\(([^)]+)\)/i)?.[1]
+            || ""));
+        const originQuatWxyz = parseQuaternionWxyzFromTupleLiteral((body.match(/urdf:originQuatWxyz\s*=\s*\(([^)]+)\)/i)?.[1]
+            || body.match(/physics:localRot0\s*=\s*\(([^)]+)\)/i)?.[1]
+            || ""));
         const localPos1 = parseVector3FromTupleLiteral(body.match(/physics:localPos1\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         const localRot1Wxyz = parseQuaternionWxyzFromTupleLiteral(body.match(/physics:localRot1\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         records.push({
@@ -369,8 +376,11 @@ export function extractJointRecordsFromLayerText(layerText) {
             body0Path,
             body1Path,
             axisToken,
+            axisLocal,
             lowerLimitDeg: lowerLimitDeg === undefined ? null : lowerLimitDeg,
             upperLimitDeg: upperLimitDeg === undefined ? null : upperLimitDeg,
+            originXyz,
+            originQuatWxyz,
             localPos1,
             localRot1Wxyz,
         });

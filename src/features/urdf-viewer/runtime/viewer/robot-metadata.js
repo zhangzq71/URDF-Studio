@@ -49,6 +49,20 @@ function toQuaternionTuple(value, fallback) {
         return fallback;
     return [x, y, z, w];
 }
+function toQuaternionWxyzTuple(value, fallback) {
+    const source = Array.isArray(value)
+        ? value
+        : (value && typeof value.length === "number" ? Array.from(value) : null);
+    if (!source || source.length < 4)
+        return fallback;
+    const w = toFiniteNumber(source[0]);
+    const x = toFiniteNumber(source[1]);
+    const y = toFiniteNumber(source[2]);
+    const z = toFiniteNumber(source[3]);
+    if (x === null || y === null || z === null || w === null)
+        return fallback;
+    return [w, x, y, z];
+}
 function toQuaternionWxyzTupleAsXyzw(value, fallback) {
     const source = Array.isArray(value)
         ? value
@@ -94,6 +108,8 @@ export function normalizeRenderRobotMetadataSnapshot(raw) {
         const lowerLimitDeg = toFiniteNumber(entry?.lowerLimitDeg);
         const upperLimitDeg = toFiniteNumber(entry?.upperLimitDeg);
         const localPivotSource = entry?.localPivotInLink;
+        const originXyzSource = entry?.originXyz;
+        const originQuatWxyzSource = entry?.originQuatWxyz;
         normalizedJointCatalogEntries.push({
             linkPath,
             jointPath,
@@ -107,6 +123,12 @@ export function normalizeRenderRobotMetadataSnapshot(raw) {
             upperLimitDeg: upperLimitDeg ?? 180,
             localPivotInLink: Array.isArray(localPivotSource)
                 ? toVector3Tuple(localPivotSource, [0, 0, 0])
+                : null,
+            originXyz: originXyzSource && typeof originXyzSource.length === "number"
+                ? toVector3Tuple(originXyzSource, [0, 0, 0])
+                : null,
+            originQuatWxyz: originQuatWxyzSource && typeof originQuatWxyzSource.length === "number"
+                ? toQuaternionWxyzTuple(originQuatWxyzSource, [1, 0, 0, 0])
                 : null,
         });
     }

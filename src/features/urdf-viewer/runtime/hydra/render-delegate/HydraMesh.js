@@ -1,6 +1,7 @@
 // @ts-nocheck
-import { BoxGeometry, BufferGeometry, CapsuleGeometry, CylinderGeometry, DoubleSide, Float32BufferAttribute, Matrix4, Mesh, MeshPhysicalMaterial, Quaternion, SkinnedMesh, SphereGeometry, Uint32BufferAttribute, Vector3, } from 'three';
+import { BackSide, BoxGeometry, BufferGeometry, CapsuleGeometry, CylinderGeometry, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, MeshPhysicalMaterial, Quaternion, SkinnedMesh, SphereGeometry, Uint32BufferAttribute, Vector3, } from 'three';
 import * as Shared from './shared.js';
+import { mitigateCoplanarMaterialZFighting } from '../../../../../core/loaders/coplanarMaterialOffset.ts';
 import { getDefaultMaterial } from './default-material-state.js';
 import { createUnifiedHydraPhysicalMaterial } from './material-defaults.js';
 const { buildProtoPrimPathCandidates, clamp01, createMatrixFromXformOp, debugInstancer, debugMaterials, debugMeshes, debugPrims, debugTextures, defaultGrayComponent, disableMaterials, disableTextures, extractPrimPathFromMaterialBindingWarning, extractReferencePrimTargets, extractScopeBodyText, extractUsdAssetReferencesFromLayerText, getActiveMaterialBindingWarningOwner, getAngleInRadians, getCollisionGeometryTypeFromUrdfElement, getExpectedPrimTypesForCollisionProto, getExpectedPrimTypesForProtoType, getMatrixMaxElementDelta, getPathBasename, getPathWithoutRoot, getRawConsoleMethod, getRootPathFromPrimPath, getSafePrimTypeName, hasNonZeroTranslation, hydraCallbackErrorCounts, installMaterialBindingApiWarningInterceptor, isIdentityQuaternion, isLikelyDefaultGrayMaterial, isLikelyInverseTransform, isMaterialBindingApiWarningMessage, isMatrixApproximatelyIdentity, isNonZero, isPotentiallyLargeBaseAssetPath, logHydraCallbackError, materialBindingRepairMaxLayerTextLength, materialBindingWarningHandlers, maxHydraCallbackErrorLogsPerMethod, nearlyEqual, normalizeHydraPath, normalizeUsdPathToken, parseGuideCollisionReferencesFromLayerText, parseProtoMeshIdentifier, parseUrdfTruthFromText, parseVector3Text, parseXformOpFallbacksFromLayerText, rawConsoleError, rawConsoleWarn, registerMaterialBindingApiWarningHandler, remapRootPathIfNeeded, resolveUrdfTruthFileNameForStagePath, resolveUsdAssetPath, setActiveMaterialBindingWarningOwner, shouldAllowLargeBaseAssetScan, stringifyConsoleArgs, toArrayLike, toColorArray, toFiniteNumber, toFiniteQuaternionWxyzTuple, toFiniteVector2Tuple, toFiniteVector3Tuple, toMatrixFromUrdfOrigin, toQuaternionWxyzFromRpy, transformEpsilon, wrapHydraCallbackObject } = Shared;
@@ -149,6 +150,8 @@ class HydraMesh {
         this._lastProtoBlobTransformMatrix = null;
         this._lastGeomSubsetSignature = '';
         this._pendingGeomSubsetSections = null;
+        this._doubleSided = false;
+        this._cullStyle = null;
         this._resolvedFaceTopologyCache = new Map();
         this._decomposeScratchPositionA = new Vector3();
         this._decomposeScratchQuaternionA = new Quaternion();
@@ -157,7 +160,7 @@ class HydraMesh {
         this._decomposeScratchQuaternionB = new Quaternion();
         this._decomposeScratchScaleB = new Vector3();
         let material = createUnifiedHydraPhysicalMaterial({
-            side: DoubleSide,
+            side: FrontSide,
             // envMap: hydraInterface.config.envMap,
         });
         this._materials.push(material);
@@ -173,6 +176,48 @@ class HydraMesh {
         this._mesh.name = _name;
         // console.log("Creating HydraMesh: " + id + " -> " + _name);
         hydraInterface.config.usdRoot.add(this._mesh); // FIXME
+    }
+    _getAssignedMaterials() {
+        const material = this._mesh?.material;
+        if (Array.isArray(material)) {
+            return material.filter(Boolean);
+        }
+        return material ? [material] : [];
+    }
+    _resolveMaterialSide() {
+        const normalizedCullStyle = String(this._cullStyle || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+        if (!normalizedCullStyle || normalizedCullStyle === 'derived' || normalizedCullStyle === 'default') {
+            return this._doubleSided ? DoubleSide : FrontSide;
+        }
+        if (normalizedCullStyle.includes('nothing') || normalizedCullStyle === 'none' || normalizedCullStyle === 'dontcare') {
+            return DoubleSide;
+        }
+        if (normalizedCullStyle.includes('front')) {
+            return BackSide;
+        }
+        if (normalizedCullStyle.includes('backunlessdoublesided')) {
+            return this._doubleSided ? DoubleSide : FrontSide;
+        }
+        if (normalizedCullStyle.includes('back')) {
+            return FrontSide;
+        }
+        return this._doubleSided ? DoubleSide : FrontSide;
+    }
+    _applySurfaceState() {
+        const side = this._resolveMaterialSide();
+        for (const material of this._getAssignedMaterials()) {
+            if (material && material.side !== side) {
+                material.side = side;
+            }
+        }
+    }
+    setDoubleSided(value) {
+        this._doubleSided = !!value;
+        this._applySurfaceState();
+    }
+    setCullStyle(value) {
+        this._cullStyle = value ?? null;
+        this._applySurfaceState();
     }
     _getPrimitiveSegmentProfile() {
         if (this.isCollisionProtoMesh()) {
@@ -2121,7 +2166,7 @@ class HydraMesh {
         //console.log("setting subset material: ", this._id, sections)
         const previousMaterial = Array.isArray(this._mesh.material) ? this._mesh.material.find(Boolean) : this._mesh.material;
         const fallbackMaterial = previousMaterial || this._materials.find(Boolean) || getDefaultMaterial() || createUnifiedHydraPhysicalMaterial({
-            side: DoubleSide,
+            side: FrontSide,
         });
         this._geometry.clearGroups();
         const nextMaterials = [];
@@ -2174,11 +2219,13 @@ class HydraMesh {
         const meshCreateStart = this._nowMs();
         this._mesh.material = meshMaterial;
         this._mesh.geometry = this._geometry;
+        mitigateCoplanarMaterialZFighting(this._mesh);
         const meshCreateEnd = this._nowMs();
         if (profile) {
             profile.meshCreateMs = (Number(profile.meshCreateMs) || 0) + (meshCreateEnd - meshCreateStart);
         }
-        this._materials = Array.isArray(meshMaterial) ? meshMaterial : [meshMaterial];
+        this._materials = Array.isArray(this._mesh.material) ? this._mesh.material : [this._mesh.material];
+        this._applySurfaceState();
         this._lastGeomSubsetSignature = subsetSignature;
         this._pendingGeomSubsetSections = hasUnresolvedSectionMaterials ? pendingSections : null;
         const proto = parseProtoMeshIdentifier(this._id);
@@ -2663,6 +2710,9 @@ class HydraMesh {
         const inheritMaterialStart = this._nowMs();
         this.tryInheritVisualMaterialFromLink();
         trackStep('inheritMaterialMs', this._nowMs() - inheritMaterialStart);
+        const surfaceStateStart = this._nowMs();
+        this._applySurfaceState();
+        trackStep('surfaceStateMs', this._nowMs() - surfaceStateStart);
         if (!this._id.includes(".proto_")) {
             trackStep('meshTotalMs', this._nowMs() - commitStart);
             trackStep('meshCount', 1);

@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from './JointControlItem';
 import { isSingleDofJoint } from '@/shared/utils/jointTypes';
+import { resolveViewerJointAngleValue } from '@/shared/utils/jointPanelState';
+import type { JointPanelStore } from '@/shared/utils/jointPanelStore';
 
 interface JointsPanelProps {
     showJointControls: boolean;
@@ -20,8 +22,7 @@ interface JointsPanelProps {
     isJointsCollapsed: boolean;
     toggleJointsCollapsed: () => void;
     setShowJointPanel?: (show: boolean) => void;
-    jointAngles: Record<string, number>;
-    activeJoint: string | null;
+    jointPanelStore: JointPanelStore;
     setActiveJoint: (name: string | null) => void;
     handleJointAngleChange: (name: string, angle: number) => void;
     handleJointChangeCommit: (name: string, angle: number) => void;
@@ -46,8 +47,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     isJointsCollapsed,
     toggleJointsCollapsed,
     setShowJointPanel,
-    jointAngles,
-    activeJoint,
+    jointPanelStore,
     setActiveJoint,
     handleJointAngleChange,
     handleJointChangeCommit,
@@ -59,6 +59,11 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     const shouldShow = showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
     const [isAdvanced, setIsAdvanced] = useState(false);
     const onHoverRef = useRef(onHover);
+    const { jointAngles, activeJoint } = useSyncExternalStore(
+        jointPanelStore.subscribe,
+        jointPanelStore.getSnapshot,
+        jointPanelStore.getSnapshot,
+    );
 
     useEffect(() => {
         onHoverRef.current = onHover;
@@ -128,7 +133,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             key={name}
                             name={name}
                             joint={joint}
-                            value={jointAngles[name] || 0}
+                            value={resolveViewerJointAngleValue(jointAngles, name, joint, 0)}
                             angleUnit={angleUnit}
                             isActive={activeJoint === name}
                             setActiveJoint={setActiveJoint}

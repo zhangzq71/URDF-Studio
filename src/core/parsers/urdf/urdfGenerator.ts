@@ -49,7 +49,7 @@ function resolveLinkExportMaterial(
 ): { color?: string; texture?: string } {
   const material = robot.materials?.[link.id] || robot.materials?.[link.name];
   return {
-    color: material?.color || link.visual.color,
+    color: material?.color || (!material?.texture ? link.visual.color : undefined),
     texture: material?.texture,
   };
 }

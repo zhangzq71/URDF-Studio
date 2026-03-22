@@ -1044,7 +1044,15 @@ export class ThreeRenderDelegateCore {
                 const axisToken = normalizeAxisToken(jointRecord?.axisToken || jointRecord?.axis || 'X');
                 const localPos1 = normalizeVector3(jointRecord?.localPos1 || [0, 0, 0], [0, 0, 0]);
                 const localRot1Wxyz = normalizeQuaternionWxyz(jointRecord?.localRot1Wxyz || jointRecord?.localRot1 || [1, 0, 0, 0], [1, 0, 0, 0]);
-                const axisLocal = rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz);
+                const originXyz = jointRecord?.originXyz && typeof jointRecord.originXyz.length === 'number'
+                    ? normalizeVector3(jointRecord.originXyz, [0, 0, 0])
+                    : null;
+                const originQuatWxyz = jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number'
+                    ? normalizeQuaternionWxyz(jointRecord.originQuatWxyz, [1, 0, 0, 0])
+                    : null;
+                const axisLocal = jointRecord?.axisLocal && typeof jointRecord.axisLocal.length === 'number'
+                    ? normalizeVector3(jointRecord.axisLocal, rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz))
+                    : rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz);
                 const limits = normalizeStageJointLimits(jointTypeName || jointType, Number(jointRecord?.lowerLimitDeg), Number(jointRecord?.upperLimitDeg));
                 const childLinkPaths = resolveRuntimeLinkPathsFromSourcePathForMerge(body1Path);
                 for (const childLinkPath of childLinkPaths) {
@@ -1081,6 +1089,18 @@ export class ThreeRenderDelegateCore {
                             existingEntry.jointType = jointType;
                             mutated = true;
                         }
+                        if ((!existingEntry.originXyz || typeof existingEntry.originXyz.length !== 'number') && originXyz) {
+                            existingEntry.originXyz = originXyz;
+                            mutated = true;
+                        }
+                        if ((!existingEntry.originQuatWxyz || typeof existingEntry.originQuatWxyz.length !== 'number') && originQuatWxyz) {
+                            existingEntry.originQuatWxyz = originQuatWxyz;
+                            mutated = true;
+                        }
+                        if ((!existingEntry.axisLocal || typeof existingEntry.axisLocal.length !== 'number') && axisLocal) {
+                            existingEntry.axisLocal = axisLocal;
+                            mutated = true;
+                        }
                         if (isNonRotationalStageJointType(jointTypeName || jointType)) {
                             const existingLowerLimit = Number(existingEntry.lowerLimitDeg);
                             const existingUpperLimit = Number(existingEntry.upperLimitDeg);
@@ -1115,6 +1135,8 @@ export class ThreeRenderDelegateCore {
                         lowerLimitDeg: limits.lower,
                         upperLimitDeg: limits.upper,
                         localPivotInLink: localPos1,
+                        originXyz,
+                        originQuatWxyz,
                     };
                     existingJointCatalogEntries.push(newEntry);
                     existingEntryByChildLinkPath.set(childLinkPath, newEntry);
@@ -1247,6 +1269,15 @@ export class ThreeRenderDelegateCore {
                 const limits = normalizeStageJointLimits(jointTypeName || jointType, Number(jointRecord?.lowerLimitDeg), Number(jointRecord?.upperLimitDeg));
                 const localPos1 = normalizeVector3(jointRecord?.localPos1 || [0, 0, 0], [0, 0, 0]);
                 const localRot1Wxyz = normalizeQuaternionWxyz(jointRecord?.localRot1Wxyz || jointRecord?.localRot1 || [1, 0, 0, 0], [1, 0, 0, 0]);
+                const originXyz = jointRecord?.originXyz && typeof jointRecord.originXyz.length === 'number'
+                    ? normalizeVector3(jointRecord.originXyz, [0, 0, 0])
+                    : null;
+                const originQuatWxyz = jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number'
+                    ? normalizeQuaternionWxyz(jointRecord.originQuatWxyz, [1, 0, 0, 0])
+                    : null;
+                const axisLocal = jointRecord?.axisLocal && typeof jointRecord.axisLocal.length === 'number'
+                    ? normalizeVector3(jointRecord.axisLocal, rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz))
+                    : rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz);
                 const key = `${jointName}|${body0Path || ''}|${body1Path}`;
                 if (seenJointKeys.has(key))
                     continue;
@@ -1271,8 +1302,11 @@ export class ThreeRenderDelegateCore {
                         body0Path,
                         body1Path,
                         axisToken,
+                        axisLocal,
                         lowerLimitDeg: limits.lower,
                         upperLimitDeg: limits.upper,
+                        originXyz,
+                        originQuatWxyz,
                         localPos1,
                         localRot1Wxyz,
                         parentLinkPath,
@@ -1384,10 +1418,11 @@ export class ThreeRenderDelegateCore {
             if (jointEntry) {
                 const isUrdfJointEntry = !!(jointByChildLinkName?.get?.(linkName));
                 const stageAxisToken = normalizeAxisToken(jointEntry.axisToken || 'X');
-                const axisLocal = isUrdfJointEntry
-                    ? normalizeVector3(jointEntry.axisLocal, [1, 0, 0])
-                    : rotateAxisByQuaternionWxyz(stageAxisToken, jointEntry.localRot1Wxyz);
-                const axisToken = isUrdfJointEntry ? axisTokenFromAxis(axisLocal) : stageAxisToken;
+                const fallbackAxisLocal = rotateAxisByQuaternionWxyz(stageAxisToken, jointEntry.localRot1Wxyz);
+                const resolvedAxisLocal = jointEntry.axisLocal && typeof jointEntry.axisLocal.length === 'number'
+                    ? normalizeVector3(jointEntry.axisLocal, isUrdfJointEntry ? [1, 0, 0] : fallbackAxisLocal)
+                    : (isUrdfJointEntry ? normalizeVector3(jointEntry.axisLocal, [1, 0, 0]) : fallbackAxisLocal);
+                const axisToken = isUrdfJointEntry ? axisTokenFromAxis(resolvedAxisLocal) : stageAxisToken;
                 const jointName = String(jointEntry.jointName || `${linkName}_joint`).trim() || `${linkName}_joint`;
                 const stageParentCandidates = resolveRuntimeLinkPathsFromSourcePath(jointEntry.body0Path, rootPath);
                 const parentLinkName = String(jointEntry.parentLinkName || '').trim();
@@ -1400,9 +1435,15 @@ export class ThreeRenderDelegateCore {
                 const jointTypeName = String(jointEntry.jointTypeName || jointEntry.jointType || '').trim();
                 const jointType = normalizeStageJointType(jointTypeName);
                 const limits = normalizeStageJointLimits(jointTypeName || jointType, Number(jointEntry.lowerLimitDeg), Number(jointEntry.upperLimitDeg));
-                const localPivotInLink = Array.isArray(jointEntry.originXyz)
+                const localPivotInLink = jointEntry.localPos1 && typeof jointEntry.localPos1.length === 'number'
+                    ? normalizeVector3(jointEntry.localPos1, [0, 0, 0])
+                    : null;
+                const originXyz = jointEntry.originXyz && typeof jointEntry.originXyz.length === 'number'
                     ? normalizeVector3(jointEntry.originXyz, [0, 0, 0])
-                    : (Array.isArray(jointEntry.localPos1) ? normalizeVector3(jointEntry.localPos1, [0, 0, 0]) : null);
+                    : null;
+                const originQuatWxyz = jointEntry.originQuatWxyz && typeof jointEntry.originQuatWxyz.length === 'number'
+                    ? normalizeQuaternionWxyz(jointEntry.originQuatWxyz, [1, 0, 0, 0])
+                    : null;
                 jointCatalogEntries.push({
                     linkPath,
                     jointPath: rootPath ? `${rootPath}/joints/${jointName}` : `/joints/${jointName}`,
@@ -1411,10 +1452,12 @@ export class ThreeRenderDelegateCore {
                     jointTypeName: jointTypeName || null,
                     parentLinkPath,
                     axisToken,
-                    axisLocal,
+                    axisLocal: resolvedAxisLocal,
                     lowerLimitDeg: limits.lower,
                     upperLimitDeg: limits.upper,
                     localPivotInLink,
+                    originXyz,
+                    originQuatWxyz,
                 });
             }
             const inertialEntry = inertialByLinkName?.get?.(linkName) || null;

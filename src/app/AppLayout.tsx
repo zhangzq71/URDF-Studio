@@ -16,7 +16,10 @@ import type { HeaderQuickAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
 import type { ToolMode } from '@/features/urdf-viewer';
-import { prepareUsdExportCacheFromSnapshot } from '@/features/urdf-viewer/utils/usdExportBundle';
+import {
+  getCurrentUsdViewerSceneSnapshot,
+  prepareUsdExportCacheFromSnapshot,
+} from '@/features/urdf-viewer/utils/usdExportBundle';
 import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
 import {
   useAppLayoutEffects,
@@ -30,10 +33,33 @@ import { shouldUseEmptyRobotForUsdHydration } from './hooks/workspaceSourceSyncU
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { parseMJCF, parseURDF } from '@/core/parsers';
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
-import type { RobotFile } from '@/types';
+import type { RobotData, RobotFile, UsdSceneSnapshot } from '@/types';
 import { translations } from '@/shared/i18n';
+import { createRobotSemanticSnapshot } from '@/shared/utils/robot/semanticSnapshot';
 import { processMJCFIncludes } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { registerPendingUsdCacheFlusher } from './utils/pendingUsdCache';
 import { shouldApplyUsdStageHydration } from './utils/usdStageHydration';
+import { buildUsdHydrationPersistencePlan } from './utils/usdHydrationPersistence';
+
+interface UsdPersistenceBaseline {
+  fileName: string | null;
+  robotSnapshot: string | null;
+  fallbackSceneSnapshot: UsdSceneSnapshot | null;
+  hadPreparedExportCache: boolean;
+  hadSceneSnapshot: boolean;
+}
+
+const EMPTY_USD_PERSISTENCE_BASELINE: UsdPersistenceBaseline = {
+  fileName: null,
+  robotSnapshot: null,
+  fallbackSceneSnapshot: null,
+  hadPreparedExportCache: false,
+  hadSceneSnapshot: false,
+};
+
+function normalizeUsdPersistenceFileName(path: string | null | undefined): string {
+  return String(path || '').trim().replace(/^\/+/, '').split('?')[0];
+}
 
 interface AppLayoutProps {
   // Import handlers (passed from App)
@@ -122,7 +148,7 @@ export function AppLayout({
     assets, motorLibrary, availableFiles, selectedFile, allFileContents,
     setAvailableFiles, setSelectedFile, setAllFileContents, originalUrdfContent, setOriginalUrdfContent,
     uploadAsset, removeRobotFile, removeRobotFolder, clearRobotLibrary,
-    setUsdSceneSnapshot, setUsdPreparedExportCache, getUsdPreparedExportCache, documentLoadState, setDocumentLoadState,
+    getUsdPreparedExportCache, documentLoadState, setDocumentLoadState,
   } = useAssetsStore(
     useShallow((state) => ({
       assets: state.assets,
@@ -139,8 +165,6 @@ export function AppLayout({
       removeRobotFile: state.removeRobotFile,
       removeRobotFolder: state.removeRobotFolder,
       clearRobotLibrary: state.clearRobotLibrary,
-      setUsdSceneSnapshot: state.setUsdSceneSnapshot,
-      setUsdPreparedExportCache: state.setUsdPreparedExportCache,
       getUsdPreparedExportCache: state.getUsdPreparedExportCache,
       documentLoadState: state.documentLoadState,
       setDocumentLoadState: state.setDocumentLoadState,
@@ -193,6 +217,7 @@ export function AppLayout({
   const transformPendingRef = useRef(false);
   const pendingUsdAssemblyFileRef = useRef<RobotFile | null>(null);
   const pendingUsdHydrationFileRef = useRef<string | null>(null);
+  const usdPersistenceBaselineRef = useRef<UsdPersistenceBaseline>(EMPTY_USD_PERSISTENCE_BASELINE);
   const [pendingViewerToolMode, setPendingViewerToolMode] = useState<ToolMode | null>(null);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
@@ -216,6 +241,79 @@ export function AppLayout({
 
     pendingUsdHydrationFileRef.current = selectedFile.name;
   }, [isSelectedUsdHydrating, selectedFile]);
+
+  const flushPendingUsdCache = useCallback(() => {
+    const liveAssetsState = useAssetsStore.getState();
+    const currentSelectedFile = liveAssetsState.selectedFile;
+    if (!currentSelectedFile || currentSelectedFile.format !== 'usd') {
+      return;
+    }
+
+    const normalizedSelectedFileName = normalizeUsdPersistenceFileName(currentSelectedFile.name);
+    const baseline = usdPersistenceBaselineRef.current;
+    if (!baseline.fileName || baseline.fileName !== normalizedSelectedFileName || !baseline.robotSnapshot) {
+      return;
+    }
+
+    const liveRobotState = useRobotStore.getState();
+    const currentRobotData: RobotData = {
+      name: liveRobotState.name,
+      links: liveRobotState.links,
+      joints: liveRobotState.joints,
+      rootLinkId: liveRobotState.rootLinkId,
+      materials: liveRobotState.materials,
+      closedLoopConstraints: liveRobotState.closedLoopConstraints,
+    };
+    const currentRobotSnapshot = createRobotSemanticSnapshot(currentRobotData);
+    const hasSemanticEdits = currentRobotSnapshot !== baseline.robotSnapshot;
+
+    if (!hasSemanticEdits) {
+      if (!baseline.hadSceneSnapshot) {
+        liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, null);
+      }
+      if (!baseline.hadPreparedExportCache) {
+        liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, null);
+      }
+      return;
+    }
+
+    const sceneSnapshot = getCurrentUsdViewerSceneSnapshot({
+      stageSourcePath: currentSelectedFile.name,
+    }) ?? baseline.fallbackSceneSnapshot;
+
+    if (!sceneSnapshot) {
+      return;
+    }
+
+    const preparedCache = prepareUsdExportCacheFromSnapshot(sceneSnapshot, {
+      fileName: currentSelectedFile.name,
+    });
+
+    liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, sceneSnapshot);
+    liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, preparedCache);
+    usdPersistenceBaselineRef.current = {
+      fileName: normalizedSelectedFileName,
+      robotSnapshot: currentRobotSnapshot,
+      fallbackSceneSnapshot: sceneSnapshot,
+      hadPreparedExportCache: Boolean(preparedCache),
+      hadSceneSnapshot: true,
+    };
+  }, []);
+
+  useEffect(() => {
+    registerPendingUsdCacheFlusher(flushPendingUsdCache);
+    return () => {
+      registerPendingUsdCacheFlusher(null);
+    };
+  }, [flushPendingUsdCache]);
+
+  useEffect(() => {
+    if (selectedFile?.format === 'usd') {
+      return;
+    }
+
+    usdPersistenceBaselineRef.current = EMPTY_USD_PERSISTENCE_BASELINE;
+  }, [selectedFile?.format]);
 
   const handleRobotDataResolved = useCallback((result: ViewerRobotDataResolution) => {
     const liveAssetsState = useAssetsStore.getState();
@@ -241,16 +339,35 @@ export function AppLayout({
     }
 
     if (resolvedSelectedFile.format === 'usd') {
-      setUsdSceneSnapshot(resolvedSelectedFile.name, result.usdSceneSnapshot ?? null);
-      setUsdPreparedExportCache(
-        resolvedSelectedFile.name,
-        result.usdSceneSnapshot
-          ? prepareUsdExportCacheFromSnapshot(result.usdSceneSnapshot, {
-              fileName: resolvedSelectedFile.name,
-              resolution: result,
-            })
-          : null,
-      );
+      const existingSceneSnapshot = liveAssetsState.getUsdSceneSnapshot(resolvedSelectedFile.name);
+      const existingPreparedExportCache = liveAssetsState.getUsdPreparedExportCache(resolvedSelectedFile.name);
+      const hydrationPersistencePlan = buildUsdHydrationPersistencePlan({
+        resolution: result,
+        existingSceneSnapshot,
+        existingPreparedExportCache,
+      });
+      const preparedHydrationExportCache = hydrationPersistencePlan.shouldSeedPreparedExportCache
+        && hydrationPersistencePlan.sceneSnapshot
+        ? prepareUsdExportCacheFromSnapshot(hydrationPersistencePlan.sceneSnapshot, {
+            fileName: resolvedSelectedFile.name,
+            resolution: result,
+          })
+        : existingPreparedExportCache;
+
+      if (hydrationPersistencePlan.shouldSeedSceneSnapshot && hydrationPersistencePlan.sceneSnapshot) {
+        liveAssetsState.setUsdSceneSnapshot(resolvedSelectedFile.name, hydrationPersistencePlan.sceneSnapshot);
+      }
+      if (hydrationPersistencePlan.shouldSeedPreparedExportCache && preparedHydrationExportCache) {
+        liveAssetsState.setUsdPreparedExportCache(resolvedSelectedFile.name, preparedHydrationExportCache);
+      }
+
+      usdPersistenceBaselineRef.current = {
+        fileName: normalizedSelectedFileName,
+        robotSnapshot: createRobotSemanticSnapshot(result.robotData),
+        fallbackSceneSnapshot: hydrationPersistencePlan.sceneSnapshot as UsdSceneSnapshot | null,
+        hadPreparedExportCache: Boolean(preparedHydrationExportCache),
+        hadSceneSnapshot: Boolean(hydrationPersistencePlan.sceneSnapshot),
+      };
     }
 
     const pendingHydrationFileName = pendingUsdHydrationFileRef.current
@@ -306,7 +423,7 @@ export function AppLayout({
       }
       pendingUsdAssemblyFileRef.current = null;
     }
-  }, [addComponent, selectedFile, setDocumentLoadState, setRobot, setSelection, setUsdPreparedExportCache, setUsdSceneSnapshot, showToast, t]);
+  }, [addComponent, selectedFile, setDocumentLoadState, setRobot, setSelection, showToast, t]);
 
   const {
     emptyRobot,

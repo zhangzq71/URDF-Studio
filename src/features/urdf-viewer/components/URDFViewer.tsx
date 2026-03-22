@@ -78,7 +78,6 @@ export const URDFViewer = memo(function URDFViewer({
       className="flex-1 relative h-full min-w-0 bg-google-light-bg dark:bg-google-dark-bg"
       onMouseMove={controller.handleMouseMove}
       onMouseUp={controller.handleMouseUp}
-      onMouseLeave={controller.handleMouseUp}
     >
       <URDFViewerPanels
         lang={lang}

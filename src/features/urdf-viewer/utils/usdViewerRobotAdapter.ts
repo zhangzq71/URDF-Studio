@@ -508,6 +508,12 @@ function createJointFromViewerEntry(
   const jointType = jointTypeFromViewerValue(entry.jointTypeName || entry.jointType);
   const lower = degreesToRadians(entry.lowerLimitDeg);
   const upper = degreesToRadians(entry.upperLimitDeg);
+  const originXyz = entry.originXyz && typeof entry.originXyz.length === 'number'
+    ? toVector3(entry.originXyz)
+    : toVector3(entry.localPivotInLink);
+  const originQuatWxyz = entry.originQuatWxyz && typeof entry.originQuatWxyz.length === 'number'
+    ? Array.from(entry.originQuatWxyz).slice(0, 4)
+    : null;
 
   return {
     ...DEFAULT_JOINT,
@@ -517,8 +523,15 @@ function createJointFromViewerEntry(
     parentLinkId,
     childLinkId,
     origin: {
-      xyz: toVector3(entry.localPivotInLink),
-      rpy: { r: 0, p: 0, y: 0 },
+      xyz: originXyz,
+      rpy: originQuatWxyz
+        ? quaternionComponentsToEuler(
+            originQuatWxyz[1],
+            originQuatWxyz[2],
+            originQuatWxyz[3],
+            originQuatWxyz[0],
+          )
+        : { r: 0, p: 0, y: 0 },
     },
     axis: axisFromViewerEntry(entry),
     limit: {

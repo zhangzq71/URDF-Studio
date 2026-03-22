@@ -210,6 +210,13 @@ export const UnifiedViewer = React.memo(({
   const workspaceEnvironmentIntensity = isViewerMode
     ? (resolvedTheme === 'light' ? 0.24 : 0.22)
     : 0.46;
+  const showWorldOriginAxes = isViewerMode
+    ? !viewerController.showOrigins
+    : !(
+      (mode === 'skeleton' && visualizerController.state.showSkeletonOrigin)
+      || (mode === 'detail' && visualizerController.state.showDetailOrigin)
+      || (mode === 'hardware' && visualizerController.state.showHardwareOrigin)
+    );
   const viewerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
   const visualizerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
 
@@ -320,6 +327,7 @@ export const UnifiedViewer = React.memo(({
       environmentIntensity={workspaceEnvironmentIntensity}
       cameraFollowPrimary={isViewerMode}
       controlLayerKey={controlLayerKey}
+      showWorldOriginAxes={showWorldOriginAxes}
       orbitControlsProps={
         isViewerMode
           ? {

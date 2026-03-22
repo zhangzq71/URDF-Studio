@@ -21,9 +21,9 @@ export const ThickerAxes = ({
   opacity = 1,
   onClick,
 }: CoordinateAxesProps) => {
-  const thickness = size * 0.04;
-  const headSize = size * 0.2;
-  const headRadius = thickness * 2.5;
+  const thickness = Math.max(size * 0.05, 0.0055);
+  const headSize = Math.max(size * 0.22, thickness * 4.5);
+  const headRadius = Math.max(thickness * 2.6, 0.012);
   const transparent = opacity < 1;
   const ignoreRaycast = (_raycaster: any, _intersects: any[]) => undefined;
 
@@ -52,7 +52,7 @@ export const ThickerAxes = ({
         raycast={onClick ? undefined : ignoreRaycast}
       >
         <cylinderGeometry args={[thickness, thickness, size, 12]} />
-        <meshBasicMaterial color="#ef4444" depthTest={depthTest} depthWrite={depthTest} transparent={transparent} opacity={opacity} />
+        <meshBasicMaterial color="#ef4444" depthTest={depthTest} depthWrite={false} toneMapped={false} transparent={transparent} opacity={opacity} />
       </mesh>
       <mesh
         rotation={[0, 0, -Math.PI / 2]}
@@ -62,7 +62,7 @@ export const ThickerAxes = ({
         raycast={onClick ? undefined : ignoreRaycast}
       >
         <coneGeometry args={[headRadius, headSize, 12]} />
-        <meshBasicMaterial color="#ef4444" depthTest={depthTest} depthWrite={depthTest} transparent={transparent} opacity={opacity} />
+        <meshBasicMaterial color="#ef4444" depthTest={depthTest} depthWrite={false} toneMapped={false} transparent={transparent} opacity={opacity} />
       </mesh>
 
       {/* Y Axis - Green */}
@@ -73,7 +73,7 @@ export const ThickerAxes = ({
         raycast={onClick ? undefined : ignoreRaycast}
       >
         <cylinderGeometry args={[thickness, thickness, size, 12]} />
-        <meshBasicMaterial color="#22c55e" depthTest={depthTest} depthWrite={depthTest} transparent={transparent} opacity={opacity} />
+        <meshBasicMaterial color="#22c55e" depthTest={depthTest} depthWrite={false} toneMapped={false} transparent={transparent} opacity={opacity} />
       </mesh>
       <mesh
         position={[0, size, 0]}
@@ -82,7 +82,7 @@ export const ThickerAxes = ({
         raycast={onClick ? undefined : ignoreRaycast}
       >
         <coneGeometry args={[headRadius, headSize, 12]} />
-        <meshBasicMaterial color="#22c55e" depthTest={depthTest} depthWrite={depthTest} transparent={transparent} opacity={opacity} />
+        <meshBasicMaterial color="#22c55e" depthTest={depthTest} depthWrite={false} toneMapped={false} transparent={transparent} opacity={opacity} />
       </mesh>
 
       {/* Z Axis - Blue */}
@@ -94,7 +94,7 @@ export const ThickerAxes = ({
         raycast={onClick ? undefined : ignoreRaycast}
       >
         <cylinderGeometry args={[thickness, thickness, size, 12]} />
-        <meshBasicMaterial color="#3b82f6" depthTest={depthTest} depthWrite={depthTest} transparent={transparent} opacity={opacity} />
+        <meshBasicMaterial color="#3b82f6" depthTest={depthTest} depthWrite={false} toneMapped={false} transparent={transparent} opacity={opacity} />
       </mesh>
       <mesh
         rotation={[Math.PI / 2, 0, 0]}
@@ -104,7 +104,7 @@ export const ThickerAxes = ({
         raycast={onClick ? undefined : ignoreRaycast}
       >
         <coneGeometry args={[headRadius, headSize, 12]} />
-        <meshBasicMaterial color="#3b82f6" depthTest={depthTest} depthWrite={depthTest} transparent={transparent} opacity={opacity} />
+        <meshBasicMaterial color="#3b82f6" depthTest={depthTest} depthWrite={false} toneMapped={false} transparent={transparent} opacity={opacity} />
       </mesh>
     </group>
   );
@@ -118,15 +118,15 @@ interface WorldOriginAxesProps {
 }
 
 export const WorldOriginAxes = ({
-  size = 0.08,
-  lift = 0.001,
+  size = 0.1,
+  lift = 0.002,
   opacity = 1,
   renderOrder = 10,
 }: WorldOriginAxesProps) => (
   <ThickerAxes
     size={size}
     position={[0, 0, lift]}
-    depthTest
+    depthTest={false}
     renderOrder={renderOrder}
     opacity={opacity}
   />

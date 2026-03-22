@@ -27,6 +27,10 @@ import {
   PROJECT_VERSION,
 } from './projectArchive';
 import { writeUsdPreparedExportCaches } from './projectUsdPreparedExportCaches';
+import {
+  stripTransientJointMotionFromJoint,
+  stripTransientJointMotionFromRobotData,
+} from '@/shared/utils/robot/semanticSnapshot';
 
 const AXIS_EXPORT_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -263,22 +267,14 @@ const writeReferencedMeshesToFolder = async (
   );
 };
 
-const stripTransientJointState = (data: RobotData): RobotData => {
-  const clone = structuredClone(data);
-  Object.values(clone.joints).forEach((joint) => {
-    delete joint.angle;
-  });
-  return clone;
-};
-
 const stripTransientAssemblyState = (state: AssemblyState | null): AssemblyState | null => {
   if (!state) return null;
   const clone = structuredClone(state);
   Object.values(clone.components).forEach((component) => {
-    component.robot = stripTransientJointState(component.robot);
+    component.robot = stripTransientJointMotionFromRobotData(component.robot);
   });
   Object.values(clone.bridges).forEach((bridge) => {
-    delete bridge.joint.angle;
+    bridge.joint = stripTransientJointMotionFromJoint(bridge.joint) as BridgeJoint['joint'];
   });
   return clone;
 };
@@ -369,7 +365,7 @@ export async function exportProject(params: {
 
   const zip = new JSZip();
   const currentAssembly = stripTransientAssemblyState(assemblyState.present);
-  const currentRobot = stripTransientJointState(robotState.present);
+  const currentRobot = stripTransientJointMotionFromRobotData(robotState.present);
   const assetEntries = await writePackedAssets(zip, assetsState.assets);
   writeTextLibraryFiles(zip, assetsState.availableFiles);
   await writeUsdPreparedExportCaches(zip, assetsState.usdPreparedExportCaches);
@@ -383,8 +379,8 @@ export async function exportProject(params: {
 
   const serializedRobotHistory: ProjectHistorySnapshot<RobotData> = {
     present: currentRobot,
-    past: clampHistoryEntries(robotState.history.past).map((snapshot) => stripTransientJointState(snapshot)),
-    future: clampFutureEntries(robotState.history.future).map((snapshot) => stripTransientJointState(snapshot)),
+    past: clampHistoryEntries(robotState.history.past).map((snapshot) => stripTransientJointMotionFromRobotData(snapshot)),
+    future: clampFutureEntries(robotState.history.future).map((snapshot) => stripTransientJointMotionFromRobotData(snapshot)),
     activity: normalizeActivityLog(robotState.activity),
   };
   zip.file(PROJECT_ROBOT_HISTORY_FILE, JSON.stringify(serializedRobotHistory, null, 2));

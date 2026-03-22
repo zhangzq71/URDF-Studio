@@ -6,6 +6,8 @@ import { GeometryType, JointType, type RobotState } from '@/types';
 import { computeUsdInertiaProperties } from '@/shared/utils/inertiaUsd.ts';
 import { exportRobotToUsd } from './usdExport.ts';
 
+const BASE_COLOR_TEXTURE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+
 if (typeof globalThis.ProgressEvent === 'undefined') {
   class ProgressEventPolyfill extends Event {
     loaded: number;
@@ -21,6 +23,12 @@ if (typeof globalThis.ProgressEvent === 'undefined') {
   }
 
   globalThis.ProgressEvent = ProgressEventPolyfill as typeof ProgressEvent;
+}
+
+function createTwoLinkAssets(): Record<string, string> {
+  return {
+    'textures/base_color.png': BASE_COLOR_TEXTURE_DATA_URL,
+  };
 }
 
 function createTwoLinkRobot(): RobotState {
@@ -228,7 +236,7 @@ test('exports robot state into a layered USD package', async () => {
   const payload = await exportRobotToUsd({
     robot: createTwoLinkRobot(),
     exportName: 'two_link_robot',
-    assets: {},
+    assets: createTwoLinkAssets(),
   });
 
   assert.equal(payload.downloadFileName, 'two_link_robot.usd');
@@ -237,6 +245,7 @@ test('exports robot state into a layered USD package', async () => {
   assert.deepEqual(
     Array.from(payload.archiveFiles.keys()).sort(),
     [
+      'two_link_robot/usd/assets/base_color.png',
       'two_link_robot/usd/configuration/two_link_robot_description_base.usd',
       'two_link_robot/usd/configuration/two_link_robot_description_physics.usd',
       'two_link_robot/usd/configuration/two_link_robot_description_sensor.usd',
@@ -256,7 +265,7 @@ test('preserves link transforms and writes physics joints into separate USD laye
   const payload = await exportRobotToUsd({
     robot: createTwoLinkRobot(),
     exportName: 'two_link_robot',
-    assets: {},
+    assets: createTwoLinkAssets(),
   });
 
   const baseLayer = await readArchiveText(
@@ -305,15 +314,53 @@ test('preserves link transforms and writes physics joints into separate USD laye
   assert.match(physicsLayer, /float physics:lowerLimit = -90/);
   assert.match(physicsLayer, /float physics:upperLimit = 60/);
   assert.match(physicsLayer, /point3f physics:localPos0 = \(1, 2, 3\)/);
+  assert.match(physicsLayer, /custom point3f urdf:originXyz = \(1, 2, 3\)/);
+  assert.match(physicsLayer, /custom float3 urdf:axisLocal = \(0, 0, 1\)/);
 
   assert.match(sensorLayer, /def Xform "two_link_robot_description"/);
+});
+
+test('serializes joint origin quaternions using URDF ZYX rpy semantics', async () => {
+  const robot = createTwoLinkRobot();
+  robot.joints.joint_link1.origin.rpy = {
+    r: 0.31,
+    p: -0.47,
+    y: 0.83,
+  };
+  robot.joints.joint_link1.axis = { x: 0, y: 0, z: -1 };
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'two_link_robot',
+    assets: createTwoLinkAssets(),
+  });
+
+  const physicsLayer = await readArchiveText(
+    payload,
+    'two_link_robot/usd/configuration/two_link_robot_description_physics.usd',
+  );
+
+  const exportedOriginQuat = extractTuples(physicsLayer, 'urdf:originQuatWxyz').at(0);
+  assert.ok(exportedOriginQuat, 'expected joint origin quaternion metadata');
+  assertQuaternionClose(
+    exportedOriginQuat,
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0.31, -0.47, 0.83, 'ZYX')),
+  );
+
+  const exportedPhysicsQuat = extractTuples(physicsLayer, 'physics:localRot0').at(0);
+  assert.ok(exportedPhysicsQuat, 'expected physics:localRot0 on the exported joint');
+  assertQuaternionClose(
+    exportedPhysicsQuat,
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0.31, -0.47, 0.83, 'ZYX')),
+  );
+  assert.match(physicsLayer, /custom float3 urdf:axisLocal = \(0, 0, -1\)/);
 });
 
 test('serializes internal material metadata and display colors into the base layer', async () => {
   const payload = await exportRobotToUsd({
     robot: createTwoLinkRobot(),
     exportName: 'two_link_robot',
-    assets: {},
+    assets: createTwoLinkAssets(),
   });
 
   const baseLayer = await readArchiveText(
@@ -329,6 +376,34 @@ test('serializes internal material metadata and display colors into the base lay
   assert.match(baseLayer, /uniform token info:id = "UsdPreviewSurface"/);
   assert.match(baseLayer, /color3f inputs:diffuseColor = \(0\.006049, 0\.40724, 0\.03434\)/);
   assert.match(baseLayer, /rel material:binding = <\/two_link_robot_description\/Looks\/Material_0>/);
+});
+
+test('exports explicit mesh material colors into USD preview materials instead of loader defaults', async () => {
+  const meshPath = 'meshes/colored_triangle.obj';
+  const robot = createMeshRobot(meshPath);
+  robot.links.base_link.visual.color = '#ffffff';
+  robot.materials = {
+    base_link: {
+      color: '#12ab34',
+    },
+  };
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'mesh_robot_colored',
+    assets: {},
+    extraMeshFiles: new Map([[meshPath, createUvObjBlob()]]),
+  });
+
+  const baseLayer = await readArchiveText(
+    payload,
+    'mesh_robot_colored/usd/configuration/mesh_robot_colored_description_base.usd',
+  );
+
+  assert.match(baseLayer, /custom string urdf:materialColor = "#12ab34"/);
+  assert.match(baseLayer, /primvars:displayColor = \[\(0\.006049, 0\.40724, 0\.03434\)\]/);
+  assert.match(baseLayer, /color3f inputs:diffuseColor = \(0\.006049, 0\.40724, 0\.03434\)/);
+  assert.doesNotMatch(baseLayer, /color3f inputs:diffuseColor = \(1, 1, 1\)/);
 });
 
 test('diagonalizes off-diagonal inertial tensors before writing USD mass properties', async () => {
@@ -349,7 +424,7 @@ test('diagonalizes off-diagonal inertial tensors before writing USD mass propert
   const payload = await exportRobotToUsd({
     robot,
     exportName: 'two_link_robot',
-    assets: {},
+    assets: createTwoLinkAssets(),
   });
 
   const physicsLayer = await readArchiveText(
@@ -447,4 +522,99 @@ test('exports textured mesh materials with UV primvars and archived texture asse
   assert.match(baseLayer, /color3f inputs:diffuseColor\.connect = <\/mesh_robot_textured_description\/Looks\/Material_0\/DiffuseTexture\.outputs:rgb>/);
   assert.match(baseLayer, /texCoord2f\[] primvars:st = \[/);
   assert.match(baseLayer, /uniform token primvars:st:interpolation = "faceVarying"/);
+});
+
+test('exports texture-only mesh materials with a neutral white USD preview color instead of the default visual blue', async () => {
+  const meshPath = 'meshes/textured_triangle.obj';
+  const texturePath = 'textures/checker.png';
+  const textureDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  const robot = createMeshRobot(meshPath);
+  robot.materials = {
+    base_link: {
+      texture: texturePath,
+    },
+  };
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'mesh_robot_texture_only',
+    assets: {
+      [texturePath]: textureDataUrl,
+    },
+    extraMeshFiles: new Map([[meshPath, createUvObjBlob()]]),
+  });
+
+  const baseLayer = await readArchiveText(
+    payload,
+    'mesh_robot_texture_only/usd/configuration/mesh_robot_texture_only_description_base.usd',
+  );
+
+  assert.match(baseLayer, /custom string urdf:materialColor = "#ffffff"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/checker\.png"/);
+  assert.match(baseLayer, /asset inputs:file = @\.\.\/assets\/checker\.png@/);
+  assert.doesNotMatch(baseLayer, /custom string urdf:materialColor = "#6699ff"/);
+  assert.doesNotMatch(baseLayer, /color3f inputs:diffuseColor = \(0\.133209, 0\.318547, 1\)/);
+});
+
+test('archives texture assets for mesh metadata even when the mesh has no UV coordinates', async () => {
+  const meshPath = 'meshes/grid.stl';
+  const texturePath = 'textures/checker.png';
+  const textureDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  const robot = createTexturedMeshRobot(meshPath, texturePath);
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'mesh_robot_textured_stl',
+    assets: {
+      [texturePath]: textureDataUrl,
+    },
+    extraMeshFiles: new Map([[meshPath, createGridStlBlob()]]),
+  });
+
+  const baseLayer = await readArchiveText(
+    payload,
+    'mesh_robot_textured_stl/usd/configuration/mesh_robot_textured_stl_description_base.usd',
+  );
+
+  assert.match(baseLayer, /custom string urdf:materialColor = "#ffffff"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/checker\.png"/);
+  assert.ok(
+    payload.archiveFiles.has('mesh_robot_textured_stl/usd/assets/checker.png'),
+    'expected exported USD archive to include texture assets referenced by material metadata even without UVs',
+  );
+});
+
+test('exports 8-digit hex display colors without emitting Three.js invalid color warnings', async () => {
+  const robot = createTwoLinkRobot();
+  robot.links.base_link.visual.color = '#00000000';
+  robot.materials = {};
+
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((value) => String(value)).join(' '));
+  };
+
+  try {
+    const payload = await exportRobotToUsd({
+      robot,
+      exportName: 'two_link_robot_alpha_color',
+      assets: createTwoLinkAssets(),
+    });
+
+    const baseLayer = await readArchiveText(
+      payload,
+      'two_link_robot_alpha_color/usd/configuration/two_link_robot_alpha_color_description_base.usd',
+    );
+
+    assert.match(baseLayer, /custom string urdf:materialColor = "#00000000"/);
+    assert.match(baseLayer, /float inputs:opacity = 0/);
+    assert.equal(
+      warnings.some((warning) => warning.includes('Invalid hex color')),
+      false,
+      `expected no invalid color warnings, got: ${warnings.join(' | ')}`,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
 });

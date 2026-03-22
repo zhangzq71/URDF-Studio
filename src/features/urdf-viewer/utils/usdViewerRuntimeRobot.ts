@@ -10,13 +10,19 @@ type RuntimeJointInfo = {
 type LinkRotationControllerLike = {
   apply: (renderInterface?: unknown, options?: Record<string, unknown>) => unknown;
   getJointInfoForLink?: (linkPath: string) => RuntimeJointInfo;
-  setJointAngleForLink: (linkPath: string, angleDeg: number) => unknown;
+  setJointAngleForLink: (
+    linkPath: string,
+    angleDeg: number,
+    options?: { emitSelectionChanged?: boolean },
+  ) => RuntimeJointInfo;
 };
 
 export interface CreateUsdViewerRuntimeRobotOptions {
-  afterJointValueApplied?: () => void;
+  flushDecorationRefresh?: () => void;
   linkRotationController: LinkRotationControllerLike;
+  requestRender?: () => void;
   resolution: ViewerRobotDataResolution;
+  scheduleDecorationRefresh?: () => void;
 }
 
 function degreesToRadians(value: number | null | undefined): number | undefined {
@@ -36,9 +42,11 @@ function getResolvedJointLimits(
 }
 
 export function createUsdViewerRuntimeRobot({
-  afterJointValueApplied,
+  flushDecorationRefresh,
   linkRotationController,
+  requestRender,
   resolution,
+  scheduleDecorationRefresh,
 }: CreateUsdViewerRuntimeRobotOptions) {
   const joints = Object.fromEntries(
     Object.entries(resolution.robotData.joints).map(([jointId, joint]) => {
@@ -65,16 +73,33 @@ export function createUsdViewerRuntimeRobot({
         },
         angle: degreesToRadians(jointInfo?.angleDeg) ?? joint.angle ?? 0,
         setJointValue(nextValue: number) {
-          this.angle = nextValue;
+          const numericValue = Number(nextValue);
+          if (!Number.isFinite(numericValue)) {
+            return;
+          }
+
+          const previousAngle = Number(this.angle);
+          let resolvedAngle = numericValue;
 
           if (childLinkPath && joint.type !== JointType.FIXED) {
-            linkRotationController.setJointAngleForLink(
+            if (Number.isFinite(previousAngle) && Math.abs(previousAngle - numericValue) <= 1e-8) {
+              return;
+            }
+
+            const updatedJointInfo = linkRotationController.setJointAngleForLink(
               childLinkPath,
-              (Number(nextValue) * 180) / Math.PI,
+              (numericValue * 180) / Math.PI,
+              { emitSelectionChanged: false },
             );
-            linkRotationController.apply(undefined, { force: true });
-            afterJointValueApplied?.();
+            resolvedAngle = degreesToRadians(updatedJointInfo?.angleDeg) ?? numericValue;
+            requestRender?.();
+            scheduleDecorationRefresh?.();
           }
+
+          this.angle = resolvedAngle;
+        },
+        finalizeJointValue() {
+          flushDecorationRefresh?.();
         },
       };
 

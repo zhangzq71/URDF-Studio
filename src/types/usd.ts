@@ -58,6 +58,8 @@ export interface UsdJointCatalogEntry {
   lowerLimitDeg?: number | null;
   upperLimitDeg?: number | null;
   localPivotInLink?: ArrayLike<number> | null;
+  originXyz?: ArrayLike<number> | null;
+  originQuatWxyz?: ArrayLike<number> | null;
 }
 
 export interface UsdLinkDynamicsEntry {

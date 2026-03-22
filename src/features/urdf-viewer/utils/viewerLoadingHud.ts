@@ -8,6 +8,7 @@ export interface ViewerLoadingHudInput {
 export interface ViewerLoadingHudState {
   detail: string;
   progress: number | null;
+  statusLabel: string | null;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -29,6 +30,7 @@ export function buildViewerLoadingHudState({
     return {
       detail: `${normalizedLoadedCount} / ${safeTotalCount}`,
       progress: normalizedLoadedCount / safeTotalCount,
+      statusLabel: `${normalizedLoadedCount} / ${safeTotalCount}`,
     };
   }
 
@@ -38,11 +40,13 @@ export function buildViewerLoadingHudState({
     return {
       detail: `${normalizedPercent}%`,
       progress: normalizedPercent / 100,
+      statusLabel: `${normalizedPercent}%`,
     };
   }
 
   return {
     detail: fallbackDetail,
     progress: null,
+    statusLabel: null,
   };
 }

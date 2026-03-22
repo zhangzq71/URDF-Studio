@@ -42,6 +42,19 @@ export const Slider: React.FC<SliderProps> = ({
     if (!Number.isFinite(nextValue)) return safeMin;
     return Math.min(Math.max(nextValue, safeMin), safeMax);
   }, [safeMin, safeMax]);
+  const snapToStep = React.useCallback((nextValue: number) => {
+    const clampedValue = clampToRange(nextValue);
+
+    if (!Number.isFinite(step) || step <= 0) {
+      return clampedValue;
+    }
+
+    const steppedValue = safeMin + Math.round((clampedValue - safeMin) / step) * step;
+    const stepDecimals = `${step}`.split('.')[1]?.length ?? 0;
+    const precision = Math.min(stepDecimals + 2, 10);
+
+    return clampToRange(Number(steppedValue.toFixed(precision)));
+  }, [clampToRange, safeMin, step]);
 
   const [localValue, setLocalValue] = React.useState(() => clampToRange(value));
   const [isDragging, setIsDragging] = React.useState(false);
@@ -58,29 +71,27 @@ export const Slider: React.FC<SliderProps> = ({
     onChangeEnd?.();
   }, [onChangeEnd]);
 
-  React.useEffect(() => {
-    if (!isDragging) return;
-
-    window.addEventListener('pointerup', stopDragging);
-    window.addEventListener('pointercancel', stopDragging);
-    window.addEventListener('mouseup', stopDragging);
-    window.addEventListener('touchend', stopDragging);
-    window.addEventListener('blur', stopDragging);
-
-    return () => {
-      window.removeEventListener('pointerup', stopDragging);
-      window.removeEventListener('pointercancel', stopDragging);
-      window.removeEventListener('mouseup', stopDragging);
-      window.removeEventListener('touchend', stopDragging);
-      window.removeEventListener('blur', stopDragging);
-    };
-  }, [isDragging, stopDragging]);
-
   const handleChange = React.useCallback((newValue: number) => {
     const clampedValue = clampToRange(newValue);
     setLocalValue(clampedValue);
     onChange(clampedValue);
   }, [clampToRange, onChange]);
+
+  const updateValueFromClientX = React.useCallback((clientX: number) => {
+    const sliderElement = sliderRef.current;
+    if (!sliderElement) {
+      return;
+    }
+
+    const rect = sliderElement.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return;
+    }
+
+    const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+    const rawValue = safeMin + ratio * (safeMax - safeMin);
+    handleChange(snapToStep(rawValue));
+  }, [handleChange, safeMax, safeMin, snapToStep]);
 
   const range = safeMax - safeMin;
   const percentage = range > 0 ? ((localValue - safeMin) / range) * 100 : 0;
@@ -106,6 +117,66 @@ export const Slider: React.FC<SliderProps> = ({
 
     setIsThumbHovered(withinX && withinY);
   }, [clampedPercentage, disabled, halfThumb]);
+
+  React.useEffect(() => {
+    if (!isDragging) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      updateValueFromClientX(event.clientX);
+      updateThumbHover(event.clientX, event.clientY);
+    };
+    const handleMouseMove = (event: MouseEvent) => {
+      updateValueFromClientX(event.clientX);
+      updateThumbHover(event.clientX, event.clientY);
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+
+      updateValueFromClientX(touch.clientX);
+      updateThumbHover(touch.clientX, touch.clientY);
+    };
+
+    window.addEventListener('pointerup', stopDragging);
+    window.addEventListener('pointercancel', stopDragging);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('touchmove', handleTouchMove);
+    window.addEventListener('mouseup', stopDragging);
+    window.addEventListener('touchend', stopDragging);
+    window.addEventListener('blur', stopDragging);
+
+    return () => {
+      window.removeEventListener('pointerup', stopDragging);
+      window.removeEventListener('pointercancel', stopDragging);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('mouseup', stopDragging);
+      window.removeEventListener('touchend', stopDragging);
+      window.removeEventListener('blur', stopDragging);
+    };
+  }, [isDragging, stopDragging, updateThumbHover, updateValueFromClientX]);
+
+  const startDragging = React.useCallback((clientX: number) => {
+    if (disabled) {
+      return;
+    }
+
+    setIsDragging((wasDragging) => {
+      if (!wasDragging) {
+        onChangeStart?.();
+      }
+      return true;
+    });
+    updateValueFromClientX(clientX);
+  }, [disabled, onChangeStart, updateValueFromClientX]);
+
+  const handleTrackPointerDown = React.useCallback((clientX: number) => {
+    startDragging(clientX);
+  }, [startDragging]);
 
   const displayValue = formatValue ? formatValue(localValue) : localValue;
   const thumbBoxShadow = disabled
@@ -137,7 +208,28 @@ export const Slider: React.FC<SliderProps> = ({
       
       <div
         ref={sliderRef}
+        data-testid="ui-slider-track"
         className="group relative flex h-6 select-none items-center"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          handleTrackPointerDown(event.clientX);
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          handleTrackPointerDown(event.clientX);
+        }}
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          if (!touch) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+          handleTrackPointerDown(touch.clientX);
+        }}
         onPointerEnter={(e) => updateThumbHover(e.clientX, e.clientY)}
         onPointerMove={(e) => updateThumbHover(e.clientX, e.clientY)}
         onPointerLeave={() => setIsThumbHovered(false)}
@@ -151,6 +243,7 @@ export const Slider: React.FC<SliderProps> = ({
           />
         </div>
         <input
+          data-testid="ui-slider-input"
           type="range"
           min={safeMin}
           max={safeMax}
@@ -159,16 +252,18 @@ export const Slider: React.FC<SliderProps> = ({
           onInput={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
           onChange={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
           onPointerDown={(e) => {
-            e.stopPropagation();
-            setIsDragging(true);
-            onChangeStart?.();
+            e.preventDefault();
           }}
           onPointerUp={stopDragging}
           onPointerCancel={stopDragging}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.preventDefault();
+          }}
+          onClick={(e) => {
+            e.preventDefault();
+          }}
           disabled={disabled}
-          className="absolute -top-1.5 z-10 h-8 cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed [&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent"
+          className="pointer-events-none absolute -top-1.5 z-10 h-8 appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed [&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent"
           style={{
             left: `-${halfThumb}px`,
             width: `calc(100% + ${thumbWidth}px)`,

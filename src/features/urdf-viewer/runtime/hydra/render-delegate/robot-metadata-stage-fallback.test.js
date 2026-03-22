@@ -118,6 +118,7 @@ def Scope "joints"
         rel physics:body0 = </Robot/base_link>
         rel physics:body1 = </Robot/base_link/link1>
         uniform token physics:axis = "Z"
+        custom float3 urdf:axisLocal = (0, 0, -1)
         float physics:lowerLimit = -90
         float physics:upperLimit = 60
         point3f physics:localPos0 = (1, 2, 3)
@@ -196,7 +197,10 @@ test('buildRobotMetadataSnapshotForStage reconstructs robot metadata from export
         assert.equal(joint.jointName, 'joint_link1');
         assert.equal(joint.jointType, 'revolute');
         assert.equal(joint.axisToken, 'Z');
+        assert.deepEqual(joint.axisLocal, [0, 0, -1]);
         assert.deepEqual(joint.localPivotInLink, [0, 0, 0]);
+        assert.deepEqual(joint.originXyz, [1, 2, 3]);
+        assert.deepEqual(joint.originQuatWxyz.map((value) => Number(value.toFixed(6))), [0.707107, 0, 0, 0.707107]);
         assert.equal(joint.lowerLimitDeg, -90);
         assert.equal(joint.upperLimitDeg, 60);
 

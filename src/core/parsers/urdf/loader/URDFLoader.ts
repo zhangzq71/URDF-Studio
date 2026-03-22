@@ -31,20 +31,35 @@ function applyMaterialToLoadedObject(obj: THREE.Object3D, material: THREE.Materi
     });
 }
 
-function loadedObjectHasNamedMaterials(obj: THREE.Object3D): boolean {
-    let hasNamedMaterials = false;
+function loadedObjectShouldPreserveEmbeddedMaterials(obj: THREE.Object3D): boolean {
+    const materialNames = new Set<string>();
+    let hasMaterialTexture = false;
+    let hasMultiMaterialMesh = false;
 
     obj.traverse((child) => {
-        if (hasNamedMaterials || !(child as THREE.Mesh).isMesh) {
+        if (!(child as THREE.Mesh).isMesh) {
             return;
         }
 
         const material = (child as THREE.Mesh).material;
         const materials = Array.isArray(material) ? material : [material];
-        hasNamedMaterials = materials.some((entry) => Boolean(entry?.name?.trim()));
+        if (materials.length > 1) {
+            hasMultiMaterialMesh = true;
+        }
+
+        materials.forEach((entry) => {
+            const materialName = entry?.name?.trim();
+            if (materialName) {
+                materialNames.add(materialName);
+            }
+
+            if ('map' in (entry || {}) && (entry as THREE.MeshPhongMaterial).map) {
+                hasMaterialTexture = true;
+            }
+        });
     });
 
-    return hasNamedMaterials;
+    return hasMaterialTexture || hasMultiMaterialMesh || materialNames.size > 1;
 }
 
 export interface MeshLoadDoneFunc {
@@ -231,7 +246,7 @@ export class URDFLoader {
                                     console.error('URDFLoader: Error loading mesh.', err);
                                 } else if (obj) {
                                     if (materialNode) {
-                                        if (!loadedObjectHasNamedMaterials(obj)) {
+                                        if (!loadedObjectShouldPreserveEmbeddedMaterials(obj)) {
                                             applyMaterialToLoadedObject(obj, material);
                                         }
                                     } else if (obj instanceof THREE.Mesh) {

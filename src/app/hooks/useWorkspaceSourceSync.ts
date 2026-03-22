@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { computePreviewUrdf, generateMujocoXML, generateURDF } from '@/core/parsers';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { DEFAULT_LINK, GeometryType, type AssemblyState, type JointQuaternion, type RobotClosedLoopConstraint, type RobotData, type RobotFile, type RobotState, type UrdfJoint, type UrdfLink } from '@/types';
+import { stripTransientJointMotionFromJoints } from '@/shared/utils/robot/semanticSnapshot';
 import { getSourceCodeDocumentFlavor, type SourceCodeDocumentFlavor } from '@/app/utils/sourceCodeDisplay';
 import { createPreviewRobotState, createRobotSourceSnapshot, getPreferredUrdfContent } from './workspaceSourceSyncUtils';
 
@@ -65,15 +66,6 @@ function areJointSourceCompatible(
   }
 
   return true;
-}
-
-function stripTransientJointState(joints: Record<string, UrdfJoint>): Record<string, UrdfJoint> {
-  return Object.fromEntries(
-    Object.entries(joints).map(([jointId, joint]) => {
-      const { angle: _angle, ...sourceJoint } = joint as UrdfJoint & { angle?: number };
-      return [jointId, sourceJoint as UrdfJoint];
-    }),
-  );
 }
 
 function buildMjcfViewerBaselineKey(file: RobotFile | null, resolvedSourceContent: string | undefined): string | null {
@@ -218,7 +210,7 @@ export function useWorkspaceSourceSync({
       return sourceJointsRef.current;
     }
 
-    const nextSourceJoints = stripTransientJointState(robotJoints);
+    const nextSourceJoints = stripTransientJointMotionFromJoints(robotJoints);
     sourceJointsRef.current = nextSourceJoints;
     return nextSourceJoints;
   }, [robotJoints]);

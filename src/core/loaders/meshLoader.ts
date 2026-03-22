@@ -14,6 +14,7 @@ import {
     buildExplicitlyScaledMeshPathHints,
     hasExplicitMeshScaleHint,
 } from './meshScaleHints';
+import { mitigateCoplanarMaterialZFighting } from './coplanarMaterialOffset';
 import {
     type ColladaRootNormalizationHints,
 } from './colladaRootNormalization';
@@ -477,6 +478,11 @@ export const createMeshLoader = (
             }
 
             if (meshObject) {
+                meshObject.traverse((child) => {
+                    if ((child as THREE.Mesh).isMesh) {
+                        mitigateCoplanarMaterialZFighting(child as THREE.Mesh);
+                    }
+                });
                 done(meshObject);
             } else {
                 console.warn('[MeshLoader] Unsupported mesh format, using placeholder:', ext, path);

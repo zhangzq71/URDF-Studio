@@ -22,6 +22,7 @@ import {
   adaptUsdViewerSnapshotToRobotData,
 } from './usdViewerRobotAdapter.ts';
 import { resolveUsdPrimitiveGeometryFromDescriptor as resolvePrimitiveGeometryFromDescriptor } from './usdPrimitiveGeometry.ts';
+import { toVirtualUsdPath } from './usdPreloadSources.ts';
 import type { ViewerRobotDataResolution } from './viewerRobotData.ts';
 
 type MeshRange = UsdMeshRange;
@@ -79,6 +80,21 @@ function sanitizeFileToken(value: string): string {
     .replace(/[^\w.-]+/g, '_')
     .replace(/^_+|_+$/g, '');
   return normalized || 'mesh';
+}
+
+function buildUsdSnapshotLookupPaths(stageSourcePath?: string | null): Array<string | null> {
+  const rawStagePath = String(stageSourcePath || '').trim().split('?')[0];
+  if (!rawStagePath) {
+    return [null];
+  }
+
+  const normalizedStagePath = rawStagePath.startsWith('/')
+    ? rawStagePath
+    : toVirtualUsdPath(rawStagePath);
+
+  return normalizedStagePath === rawStagePath
+    ? [normalizedStagePath]
+    : [normalizedStagePath, rawStagePath];
 }
 
 function normalizeSemanticToken(value: string | null | undefined): string {
@@ -1211,12 +1227,14 @@ export function getCurrentUsdViewerSceneSnapshot(
   options: { stageSourcePath?: string | null; targetWindow?: SnapshotHost } = {},
 ): UsdExportSnapshot | null {
   const host = options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
-  const snapshot = host?.renderInterface?.getCachedRobotSceneSnapshot?.(options.stageSourcePath || null);
-  if (!snapshot || typeof snapshot !== 'object') {
-    return null;
+  for (const stageSourcePath of buildUsdSnapshotLookupPaths(options.stageSourcePath)) {
+    const snapshot = host?.renderInterface?.getCachedRobotSceneSnapshot?.(stageSourcePath);
+    if (snapshot && typeof snapshot === 'object') {
+      return enrichSnapshotWithLivePreferredMaterials(snapshot as UsdExportSnapshot, host);
+    }
   }
 
-  return enrichSnapshotWithLivePreferredMaterials(snapshot as UsdExportSnapshot, host);
+  return null;
 }
 
 export function resolveUsdExportSceneSnapshot(

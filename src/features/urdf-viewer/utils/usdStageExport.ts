@@ -1,4 +1,5 @@
 import type { ViewerRoundtripExportResult } from '../runtime/embed/usd-viewer-api';
+import { toVirtualUsdPath } from './usdPreloadSources.ts';
 
 type ExportLoadedStageSnapshotResult = ViewerRoundtripExportResult & {
   content?: string | null;
@@ -26,6 +27,17 @@ export interface ExportUsdStageSnapshotOptions {
 export interface ExportUsdStageSnapshotPayload extends ExportLoadedStageSnapshotResult {
   content: string;
   downloadFileName: string;
+}
+
+function normalizeUsdStageSourcePath(stageSourcePath?: string | null): string | undefined {
+  const normalizedStagePath = String(stageSourcePath || '').trim().split('?')[0];
+  if (!normalizedStagePath) {
+    return undefined;
+  }
+
+  return normalizedStagePath.startsWith('/')
+    ? normalizedStagePath
+    : toVirtualUsdPath(normalizedStagePath);
 }
 
 function getStageExportHost(targetWindow?: UsdStageExportHost): UsdStageExportHost {
@@ -83,11 +95,13 @@ export async function exportUsdStageSnapshot(
     throw new Error('export-unavailable');
   }
 
+  const normalizedStageSourcePath = normalizeUsdStageSourcePath(options.stageSourcePath);
+
   const exportResult = await exportLoadedStageSnapshot({
     persistToServer: false,
     overwrite: true,
     flattenStage: options.flattenStage === true,
-    stageSourcePath: options.stageSourcePath || undefined,
+    stageSourcePath: normalizedStageSourcePath,
     outputFileName: options.outputFileName || undefined,
   });
 
@@ -106,7 +120,7 @@ export async function exportUsdStageSnapshot(
     ...exportResult,
     content,
     downloadFileName: buildUsdRoundtripDownloadName(
-      options.stageSourcePath,
+      normalizedStageSourcePath,
       exportResult.outputFileName,
     ),
   };

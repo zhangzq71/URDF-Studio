@@ -153,3 +153,30 @@ test('parseMJCF prefers material colors over inherited default geom rgba', () =>
     assert.equal(robot.links.base_link.visual.color, '#1a334d');
     assert.equal(robot.materials?.base_link?.color, '#1a334d');
 });
+
+test('parseMJCF preserves texture-backed material assets with a neutral white multiplier', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="textured-material-sync">
+          <compiler texturedir="textures" />
+          <asset>
+            <texture name="robot_texture" type="2d" file="robot_texture.png" />
+            <material name="robot_mtl" texture="robot_texture" />
+            <mesh name="base_mesh" file="base.stl" />
+          </asset>
+          <worldbody>
+            <body name="base_link">
+              <geom type="mesh" mesh="base_mesh" material="robot_mtl" group="1" contype="0" conaffinity="0" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.links.base_link.visual.color, '#ffffff');
+    assert.deepEqual(robot.materials?.base_link, {
+        color: '#ffffff',
+        texture: 'textures/robot_texture.png',
+    });
+});

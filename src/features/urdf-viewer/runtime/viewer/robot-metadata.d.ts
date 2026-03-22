@@ -10,6 +10,8 @@ export type RenderRobotJointCatalogEntry = {
   lowerLimitDeg: number;
   upperLimitDeg: number;
   localPivotInLink: [number, number, number] | null;
+  originXyz: [number, number, number] | null;
+  originQuatWxyz: [number, number, number, number] | null;
 };
 
 export type RenderRobotLinkDynamicsEntry = {

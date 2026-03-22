@@ -11,7 +11,14 @@ import { ViewerLoadingHud } from './ViewerLoadingHud';
 import { LinkAxesController } from '../runtime/viewer/link-axes.js';
 import { LinkDynamicsController } from '../runtime/viewer/link-dynamics.js';
 import { LinkRotationController } from '../runtime/viewer/link-rotation.js';
-import type { MeasureTargetResolver, ToolMode, URDFViewerProps, ViewerRuntimeStageBridge } from '../types';
+import type {
+  MeasureTargetResolver,
+  ToolMode,
+  URDFViewerProps,
+  ViewerRuntimeStageBridge,
+  UsdLoadingPhaseLabels,
+  UsdLoadingProgress,
+} from '../types';
 import { disposeUsdDriver, ensureUsdWasmRuntime, type UsdWasmRuntime } from '../utils/usdWasmRuntime';
 import { collisionHighlightMaterial, highlightMaterial } from '../utils/materials';
 import { UsdJointAxesController } from '../utils/usdJointAxesController';
@@ -55,6 +62,7 @@ import {
   resolveUsdStageInteractionPolicy,
   resolveUsdStageJointRotationRuntime,
 } from '../utils/usdInteractionPolicy';
+import { resolveUsdStageJointPreview, type UsdStageJointInfoLike } from '../utils/usdStageJointPreview';
 import {
   armSelectionMissGuard,
   clearSelectionMissGuardTimer,
@@ -99,6 +107,7 @@ interface UsdWasmStageProps {
   setIsDragging?: (dragging: boolean) => void;
   loadingLabel: string;
   loadingDetailLabel: string;
+  loadingPhaseLabels: UsdLoadingPhaseLabels;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   runtimeBridge?: ViewerRuntimeStageBridge;
   measureTargetResolverRef?: MutableRefObject<MeasureTargetResolver | null>;
@@ -108,6 +117,8 @@ type ViewerControls = {
   update?: () => boolean;
   target?: THREE.Vector3;
 };
+
+const RUNTIME_DECORATION_REFRESH_DEBOUNCE_MS = 96;
 
 type RuntimeWindow = Window & {
   USD?: unknown;
@@ -589,6 +600,7 @@ export function UsdWasmStage({
   setIsDragging,
   loadingLabel,
   loadingDetailLabel,
+  loadingPhaseLabels,
   onRobotDataResolved,
   runtimeBridge,
   measureTargetResolverRef,
@@ -603,6 +615,7 @@ export function UsdWasmStage({
   const controls = (threeState as typeof threeState & { controls?: unknown }).controls;
   const onRuntimeRobotResolved = runtimeBridge?.onRobotResolved;
   const onRuntimeSelectionChange = runtimeBridge?.onSelectionChange;
+  const onRuntimeActiveJointChange = runtimeBridge?.onActiveJointChange;
   const onRuntimeJointAnglesChange = runtimeBridge?.onJointAnglesChange;
   const driverRef = useRef<any>(null);
   const runtimeRef = useRef<UsdWasmRuntime | null>(null);
@@ -642,8 +655,10 @@ export function UsdWasmStage({
   const visibilityRef = useRef({ showVisual, showCollision });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState<UsdLoadingProgress | null>(null);
   const [visibleStagePath, setVisibleStagePath] = useState<string | null>(null);
   const [previewCollisionTransform, setPreviewCollisionTransform] = useState<RuntimePreviewCollisionTransform | null>(null);
+  const runtimeDecorationRefreshTimerRef = useRef<number | null>(null);
   const interactionPolicy = useMemo(() => resolveUsdStageInteractionPolicy(mode), [mode]);
   const jointRotationRuntime = useMemo(() => (
     resolveUsdStageJointRotationRuntime({
@@ -666,8 +681,15 @@ export function UsdWasmStage({
   const runtimePointerRef = useRef(new THREE.Vector2());
   const runtimeRaycasterRef = useRef(new THREE.Raycaster());
   const loadingHudState = useMemo(() => buildViewerLoadingHudState({
+    loadedCount: loadingProgress?.loadedCount,
+    totalCount: loadingProgress?.totalCount,
+    progressPercent: loadingProgress?.progressPercent,
     fallbackDetail: loadingDetailLabel,
-  }), [loadingDetailLabel]);
+  }), [loadingDetailLabel, loadingProgress?.loadedCount, loadingProgress?.progressPercent, loadingProgress?.totalCount]);
+  const loadingStageLabel = loadingProgress?.phase && loadingProgress.phase !== 'ready'
+    ? loadingPhaseLabels[loadingProgress.phase]
+    : null;
+  const loadingDetail = loadingStageLabel || loadingDetailLabel;
 
   useEffect(() => {
     visibilityRef.current = { showVisual, showCollision };
@@ -1253,6 +1275,32 @@ export function UsdWasmStage({
     syncUsdHighlights,
   ]);
 
+  const clearScheduledRuntimeDecorationRefresh = useCallback(() => {
+    if (runtimeDecorationRefreshTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(runtimeDecorationRefreshTimerRef.current);
+    runtimeDecorationRefreshTimerRef.current = null;
+  }, []);
+
+  const requestRuntimeRender = useCallback(() => {
+    invalidate();
+  }, [invalidate]);
+
+  const scheduleRuntimeDecorationRefresh = useCallback(() => {
+    clearScheduledRuntimeDecorationRefresh();
+    runtimeDecorationRefreshTimerRef.current = window.setTimeout(() => {
+      runtimeDecorationRefreshTimerRef.current = null;
+      refreshRuntimeDecorationsRef.current();
+    }, RUNTIME_DECORATION_REFRESH_DEBOUNCE_MS);
+  }, [clearScheduledRuntimeDecorationRefresh]);
+
+  const flushRuntimeDecorationRefresh = useCallback(() => {
+    clearScheduledRuntimeDecorationRefresh();
+    refreshRuntimeDecorationsRef.current();
+  }, [clearScheduledRuntimeDecorationRefresh]);
+
   const syncRuntimeJointPanelRobot = useCallback(() => {
     if (!onRuntimeRobotResolved) return;
 
@@ -1263,11 +1311,18 @@ export function UsdWasmStage({
     }
 
     onRuntimeRobotResolved(createUsdViewerRuntimeRobot({
+      flushDecorationRefresh: flushRuntimeDecorationRefresh,
+      requestRender: requestRuntimeRender,
       resolution: resolvedRobotData,
       linkRotationController: linkRotationControllerRef.current,
-      afterJointValueApplied: refreshRuntimeDecorations,
+      scheduleDecorationRefresh: scheduleRuntimeDecorationRefresh,
     }));
-  }, [onRuntimeRobotResolved, refreshRuntimeDecorations]);
+  }, [
+    flushRuntimeDecorationRefresh,
+    onRuntimeRobotResolved,
+    requestRuntimeRender,
+    scheduleRuntimeDecorationRefresh,
+  ]);
 
   const emitRuntimeSelectionChange = useCallback((linkPath: string | null) => {
     if (!linkPath) {
@@ -1338,6 +1393,25 @@ export function UsdWasmStage({
     onRuntimeJointAnglesChange(nextJointAngles);
   }, [onRuntimeJointAnglesChange]);
 
+  const emitRuntimeJointPreview = useCallback((
+    linkPath: string | null,
+    jointInfo: UsdStageJointInfoLike | null | undefined,
+  ) => {
+    const preview = resolveUsdStageJointPreview(
+      resolvedRobotDataRef.current,
+      linkPath,
+      jointInfo,
+    );
+
+    if (preview.activeJointId) {
+      onRuntimeActiveJointChange?.(preview.activeJointId);
+    }
+
+    if (Object.keys(preview.jointAngles).length > 0) {
+      onRuntimeJointAnglesChange?.(preview.jointAngles);
+    }
+  }, [onRuntimeActiveJointChange, onRuntimeJointAnglesChange]);
+
   const pickRuntimeMeshMetaAtClientPoint = useCallback((clientX: number, clientY: number): RuntimeMeshMeta | null => {
     if (!camera) return null;
 
@@ -1395,15 +1469,23 @@ export function UsdWasmStage({
   const refreshRuntimeDecorationsRef = useRef(refreshRuntimeDecorations);
   const syncRuntimeJointPanelRobotRef = useRef(syncRuntimeJointPanelRobot);
   const emitRuntimeSelectionChangeRef = useRef(emitRuntimeSelectionChange);
+  const emitRuntimeJointPreviewRef = useRef(emitRuntimeJointPreview);
   const emitRuntimeJointAnglesChangeRef = useRef(emitRuntimeJointAnglesChange);
   const applyUsdRuntimeLinkOverridesRef = useRef(applyUsdRuntimeLinkOverrides);
   const rebuildRuntimeMeshIndexRef = useRef(rebuildRuntimeMeshIndex);
   const onRobotDataResolvedRef = useRef(onRobotDataResolved);
+  const onRuntimeActiveJointChangeRef = useRef(onRuntimeActiveJointChange);
   const onRuntimeRobotResolvedRef = useRef(onRuntimeRobotResolved);
 
   useEffect(() => {
     refreshRuntimeDecorationsRef.current = refreshRuntimeDecorations;
   }, [refreshRuntimeDecorations]);
+
+  useEffect(() => {
+    return () => {
+      clearScheduledRuntimeDecorationRefresh();
+    };
+  }, [clearScheduledRuntimeDecorationRefresh]);
 
   useEffect(() => {
     syncRuntimeJointPanelRobotRef.current = syncRuntimeJointPanelRobot;
@@ -1412,6 +1494,10 @@ export function UsdWasmStage({
   useEffect(() => {
     emitRuntimeSelectionChangeRef.current = emitRuntimeSelectionChange;
   }, [emitRuntimeSelectionChange]);
+
+  useEffect(() => {
+    emitRuntimeJointPreviewRef.current = emitRuntimeJointPreview;
+  }, [emitRuntimeJointPreview]);
 
   useEffect(() => {
     emitRuntimeJointAnglesChangeRef.current = emitRuntimeJointAnglesChange;
@@ -1428,6 +1514,10 @@ export function UsdWasmStage({
   useEffect(() => {
     onRobotDataResolvedRef.current = onRobotDataResolved;
   }, [onRobotDataResolved]);
+
+  useEffect(() => {
+    onRuntimeActiveJointChangeRef.current = onRuntimeActiveJointChange;
+  }, [onRuntimeActiveJointChange]);
 
   useEffect(() => {
     onRuntimeRobotResolvedRef.current = onRuntimeRobotResolved;
@@ -1602,6 +1692,13 @@ export function UsdWasmStage({
     let disposed = false;
     setIsLoading(true);
     setErrorMessage(null);
+    setLoadingProgress({
+      phase: 'checking-path',
+      progressPercent: 0,
+      message: null,
+      loadedCount: null,
+      totalCount: null,
+    });
     setVisibleStagePath(null);
 
     const clearCurrentStage = () => {
@@ -1620,11 +1717,13 @@ export function UsdWasmStage({
       lastPointerDownMeshMetaRef.current = null;
       lastRuntimeJointAnglesRef.current = {};
       lastRuntimeHoverRef.current = { type: null, id: null, subType: undefined, objectIndex: undefined };
+      onRuntimeActiveJointChangeRef.current?.(null);
       clearUsdHoverPointerState({
         hoverPointerClientRef,
         hoverPointerInsideRef,
         hoverNeedsRaycastRef,
       });
+      setLoadingProgress(null);
       onHover?.(null, null);
       onRuntimeRobotResolvedRef.current?.(null);
       linkAxesControllerRef.current.clear(rootGroup);
@@ -1718,6 +1817,24 @@ export function UsdWasmStage({
           },
           rebuildLinkAxes: () => {},
           renderFrame: () => invalidate(),
+          onProgress: (nextProgress) => {
+            if (!isActive()) return;
+            setLoadingProgress((current) => ({
+              phase: nextProgress.phase,
+              progressPercent: nextProgress.progressPercent !== undefined
+                ? nextProgress.progressPercent ?? null
+                : current?.progressPercent ?? null,
+              message: nextProgress.message !== undefined
+                ? nextProgress.message ?? null
+                : current?.message ?? null,
+              loadedCount: nextProgress.loadedCount !== undefined
+                ? nextProgress.loadedCount ?? null
+                : current?.loadedCount ?? null,
+              totalCount: nextProgress.totalCount !== undefined
+                ? nextProgress.totalCount ?? null
+                : current?.totalCount ?? null,
+            }));
+          },
         });
         if (!isActive()) {
           disposeUsdDriver(runtime, loadState?.driver);
@@ -1753,9 +1870,13 @@ export function UsdWasmStage({
 
         if (renderInterface) {
           linkRotationController.attach(gl.domElement, camera, controls as ViewerControls);
-          linkRotationController.setOnSelectionChanged((linkPath: string | null) => {
+          linkRotationController.setOnSelectionChanged((linkPath: string | null, jointInfo?: UsdStageJointInfoLike | null) => {
             emitRuntimeSelectionChangeRef.current(linkPath);
-            emitRuntimeJointAnglesChangeRef.current();
+            emitRuntimeJointPreviewRef.current(linkPath, jointInfo);
+
+            if (!linkRotationController.dragging) {
+              emitRuntimeJointAnglesChangeRef.current();
+            }
           });
           linkRotationController.setPickSubType(activeJointRotationRuntime.pickSubType);
           linkRotationController.setEnabled(activeJointRotationRuntime.enabled);
@@ -1831,6 +1952,13 @@ export function UsdWasmStage({
           delays: [0, 96, 224],
           onSettled: () => {
             if (!isActive()) return;
+            setLoadingProgress({
+              phase: 'ready',
+              progressPercent: 100,
+              message: null,
+              loadedCount: null,
+              totalCount: null,
+            });
             setVisibleStagePath(sourceFile.name);
             setIsLoading(false);
             invalidate();
@@ -1842,6 +1970,7 @@ export function UsdWasmStage({
         setErrorMessage(error instanceof Error ? error.message : 'Failed to load USD stage');
         setVisibleStagePath(null);
         setIsLoading(false);
+        setLoadingProgress(null);
       }
     };
 
@@ -1929,7 +2058,9 @@ export function UsdWasmStage({
     }
 
     if (changed) {
-      emitRuntimeJointAnglesChangeRef.current();
+      if ((linkRotationControllerRef.current as { dragging?: boolean }).dragging !== true) {
+        emitRuntimeJointAnglesChangeRef.current();
+      }
       invalidate();
     }
   });
@@ -1953,8 +2084,11 @@ export function UsdWasmStage({
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
             <ViewerLoadingHud
               title={loadingLabel}
-              detail={loadingHudState.detail}
+              detail={loadingDetail}
               progress={loadingHudState.progress}
+              statusLabel={loadingHudState.statusLabel}
+              stageLabel={loadingStageLabel}
+              delayMs={120}
             />
           </div>
         </Html>

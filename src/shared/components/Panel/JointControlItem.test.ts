@@ -175,6 +175,30 @@ test('finite-limit sliders keep imported out-of-range poses visible instead of c
   dom.window.close();
 });
 
+test('joint slider keeps a visible track shell around the native range input', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root);
+
+  const rangeInput = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+  assert.ok(rangeInput, 'slider input should render');
+
+  const sliderShell = container.querySelector('[data-testid="joint-slider-shell"]');
+  const sliderFill = container.querySelector('[data-testid="joint-slider-fill"]') as HTMLDivElement | null;
+  const sliderThumb = container.querySelector('[data-testid="joint-slider-thumb"]') as HTMLDivElement | null;
+
+  assert.ok(sliderShell, 'joint slider should keep the visible shell');
+  assert.ok(sliderFill, 'joint slider should render the filled track');
+  assert.ok(sliderThumb, 'joint slider should render the thumb');
+  assert.match(sliderFill.getAttribute('style') ?? '', /width:/);
+  assert.match(sliderThumb.getAttribute('style') ?? '', /left:/);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
 test('slider drag previews locally and only commits on pointer release', async () => {
   const { dom, container, root } = createComponentRoot();
   const previewAngles: number[] = [];
@@ -205,6 +229,88 @@ test('slider drag previews locally and only commits on pointer release', async (
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
   });
 
+  assert.deepEqual(committedAngles, [0.5]);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('starting a slider drag activates and selects the current joint', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const activeJointNames: Array<string | null> = [];
+  const selectedJoints: Array<{ type: 'link' | 'joint'; id: string }> = [];
+
+  await renderJointControlItem(root, {
+    setActiveJoint: (jointName) => {
+      activeJointNames.push(jointName);
+    },
+    onSelect: (type, id) => {
+      selectedJoints.push({ type, id });
+    },
+  });
+
+  const rangeInput = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+  assert.ok(rangeInput, 'slider input should render');
+
+  await act(async () => {
+    rangeInput.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 12, clientY: 6 }));
+  });
+
+  assert.deepEqual(activeJointNames, ['R_thigh_joint']);
+  assert.deepEqual(selectedJoints, [{ type: 'joint', id: 'R_thigh_joint' }]);
+
+  await act(async () => {
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('slider drag ignores transient external echoes until the drag finishes', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const previewAngles: number[] = [];
+  const committedAngles: number[] = [];
+
+  const handleJointAngleChange = (_name: string, angle: number) => {
+    previewAngles.push(angle);
+  };
+  const handleJointChangeCommit = (_name: string, angle: number) => {
+    committedAngles.push(angle);
+  };
+
+  await renderJointControlItem(root, {
+    value: 0,
+    handleJointAngleChange,
+    handleJointChangeCommit,
+  });
+
+  let rangeInput = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+  assert.ok(rangeInput, 'slider input should render');
+
+  await act(async () => {
+    rangeInput.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    rangeInput.value = '0.5';
+    rangeInput.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  await renderJointControlItem(root, {
+    value: 12,
+    handleJointAngleChange,
+    handleJointChangeCommit,
+  });
+
+  rangeInput = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+  assert.ok(rangeInput, 'slider input should stay mounted after rerender');
+  assert.equal(parseFloat(rangeInput.max), 3.49);
+  assert.ok(container.textContent?.includes('0.50'), 'value display should keep the local drag preview');
+
+  await act(async () => {
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+
+  assert.deepEqual(previewAngles, [0.5]);
   assert.deepEqual(committedAngles, [0.5]);
 
   await act(async () => {
