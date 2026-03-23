@@ -349,7 +349,6 @@ export const en: TranslationKeys = {
   language: "Language",
   theme: "Theme",
   about: "About",
-  user: "Login",
   more: "More",
   importUspZipFile: "Import USP / ZIP / File",
   skeletonHardwareOptions: "Skeleton/Hardware Options",

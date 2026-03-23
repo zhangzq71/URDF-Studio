@@ -351,7 +351,6 @@ export const zh: TranslationKeys = {
   language: "语言",
   theme: "主题",
   about: "关于",
-  user: "登录",
   more: "更多",
   importUspZipFile: "导入 USP / ZIP / 文件",
   skeletonHardwareOptions: "骨架/硬件选项",
