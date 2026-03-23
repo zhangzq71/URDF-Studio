@@ -15,6 +15,7 @@ import {
   collectReferencedMeshes,
   fetchMeshBlobs,
   downloadBlob,
+  prepareMjcfMeshExportAssets,
 } from '../utils';
 
 interface UseFileExportReturn {
@@ -53,6 +54,12 @@ export function useFileExport(): UseFileExportReturn {
     const meshFolder = zip.folder('meshes');
     const hardwareFolder = zip.folder('hardware');
     const mujocoFolder = zip.folder('mujoco');
+    const mjcfMeshExport = includeMuJoCo
+      ? await prepareMjcfMeshExportAssets({
+          robot,
+          assets,
+        })
+      : null;
 
     // 1. Generate Standard URDF
     const xml = generateURDF(robot, false);
@@ -72,16 +79,28 @@ export function useFileExport(): UseFileExportReturn {
 
     // 4. Generate MuJoCo XML
     if (includeMuJoCo) {
-      const mujocoXml = generateMujocoXML(robot);
+      const mujocoXml = generateMujocoXML(robot, {
+        meshdir: 'meshes/',
+        meshPathOverrides: mjcfMeshExport?.meshPathOverrides,
+        visualMeshVariants: mjcfMeshExport?.visualMeshVariants,
+      });
       mujocoFolder?.file(`${robot.name}.xml`, mujocoXml);
     }
 
     // 5. Add Meshes
     if (includeMeshes) {
       const referencedFiles = collectReferencedMeshes(robot.links, GeometryType.MESH);
-      const meshBlobs = await fetchMeshBlobs(referencedFiles, assets);
+      const exportedMeshPaths = mjcfMeshExport?.convertedSourceMeshPaths;
+      const remainingMeshFiles = exportedMeshPaths
+        ? new Set(Array.from(referencedFiles).filter((meshPath) => !exportedMeshPaths.has(meshPath)))
+        : referencedFiles;
+      const meshBlobs = await fetchMeshBlobs(remainingMeshFiles, assets);
 
       meshBlobs.forEach(({ name, blob }) => {
+        meshFolder?.file(name, blob);
+      });
+
+      mjcfMeshExport?.archiveFiles.forEach((blob, name) => {
         meshFolder?.file(name, blob);
       });
     }

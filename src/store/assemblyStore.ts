@@ -8,19 +8,21 @@ import type {
   AssemblyState,
   AssemblyComponent,
   BridgeJoint,
+  RobotClosedLoopConstraint,
   RobotData,
   RobotFile,
   UrdfLink,
   UrdfJoint,
 } from '@/types';
-import { DEFAULT_JOINT, JointType, GeometryType } from '@/types';
-import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
+import { DEFAULT_JOINT, JointType } from '@/types';
+import { resolveRobotFileData } from '@/core/parsers';
+import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
-import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 
 interface AssemblyContext {
   availableFiles?: RobotFile[];
   assets?: Record<string, string>;
+  preResolvedRobotData?: RobotData | null;
 }
 
 interface UpdateOptions {
@@ -34,8 +36,11 @@ function applyPrefix(
 ): RobotData {
   const { idPrefix, rootName } = options;
   const linkIdMap: Record<string, string> = {};
+  const linkNameMap: Record<string, string> = {};
   const links: Record<string, UrdfLink> = {};
   const joints: Record<string, UrdfJoint> = {};
+  const closedLoopConstraints: RobotClosedLoopConstraint[] = [];
+  const materials: NonNullable<RobotData['materials']> = {};
 
   // Find the asset prefix used during import (from useFileImport)
   // We can't easily get the timestamp here, so we'll use a prefixing strategy
@@ -46,14 +51,21 @@ function applyPrefix(
     linkIdMap[id] = newId;
     const originalName = link.name?.trim() || id;
     const isRootLink = id === data.rootLinkId;
+    const newName = isRootLink ? rootName : `${rootName}_${originalName}`;
+    linkNameMap[originalName] = newId;
     
     // Create namespaced link
     links[newId] = {
       ...link,
       id: newId,
-      name: isRootLink ? rootName : `${rootName}_${originalName}`,
+      name: newName,
     };
   }
+
+  Object.entries(data.materials || {}).forEach(([key, material]) => {
+    const targetLinkId = linkIdMap[key] || linkNameMap[key] || key;
+    materials[targetLinkId] = { ...material };
+  });
 
   for (const [id, joint] of Object.entries(data.joints)) {
     const newId = idPrefix + id;
@@ -71,12 +83,29 @@ function applyPrefix(
 
   const rootLinkId = linkIdMap[data.rootLinkId] ?? idPrefix + data.rootLinkId;
 
+  (data.closedLoopConstraints || []).forEach((constraint) => {
+    closedLoopConstraints.push({
+      ...constraint,
+      id: `${idPrefix}${constraint.id}`,
+      linkAId: linkIdMap[constraint.linkAId] ?? idPrefix + constraint.linkAId,
+      linkBId: linkIdMap[constraint.linkBId] ?? idPrefix + constraint.linkBId,
+      source: constraint.source
+        ? {
+            ...constraint.source,
+            body1Name: `${rootName}_${constraint.source.body1Name}`,
+            body2Name: `${rootName}_${constraint.source.body2Name}`,
+          }
+        : undefined,
+    });
+  });
+
   return {
     name: data.name,
     links,
     joints,
     rootLinkId,
-    materials: data.materials,
+    materials: Object.keys(materials).length > 0 ? materials : undefined,
+    closedLoopConstraints: closedLoopConstraints.length > 0 ? closedLoopConstraints : undefined,
   };
 }
 
@@ -100,6 +129,28 @@ function createUniqueComponentName(baseName: string, existingNames: Set<string>)
   return candidate;
 }
 
+function normalizeAssemblySourcePath(path: string): string {
+  return path.trim().replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+}
+
+function isSameOrNestedAssemblySourcePath(path: string, basePath: string): boolean {
+  const normalizedPath = normalizeAssemblySourcePath(path);
+  return normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`);
+}
+
+function replaceAssemblySourcePathPrefix(path: string, fromPath: string, toPath: string): string {
+  const normalizedPath = normalizeAssemblySourcePath(path);
+  if (normalizedPath === fromPath) {
+    return toPath;
+  }
+
+  if (normalizedPath.startsWith(`${fromPath}/`)) {
+    return `${toPath}/${normalizedPath.slice(fromPath.length + 1)}`;
+  }
+
+  return normalizedPath;
+}
+
 interface AssemblyActions {
   setAssembly: (state: AssemblyState | null) => void;
   initAssembly: (name?: string) => void;
@@ -110,6 +161,7 @@ interface AssemblyActions {
     context?: AssemblyContext
   ) => AssemblyComponent | null;
   removeComponent: (id: string) => void;
+  renameComponentSourceFolder: (fromPath: string, toPath: string, options?: UpdateOptions) => void;
   updateComponentName: (id: string, name: string, options?: UpdateOptions) => void;
   updateComponentRobot: (id: string, robot: Partial<RobotData>, options?: UpdateOptions) => void;
   toggleComponentVisibility: (id: string, visible?: boolean) => void;
@@ -208,78 +260,15 @@ export const useAssemblyStore = create<
       },
 
       addComponent: (file, context = {}) => {
-        let robotData: RobotData | null = null;
+        const importResult = resolveRobotFileData(file, {
+          availableFiles: context.availableFiles,
+          assets: context.assets,
+          usdRobotData: context.preResolvedRobotData ?? null,
+        });
 
-        switch (file.format) {
-          case 'urdf':
-            robotData = parseURDF(file.content);
-            break;
-          case 'mjcf': {
-            const resolved = resolveMJCFSource(file, context.availableFiles ?? []);
-            robotData = parseMJCF(resolved.content);
-            break;
-          }
-          case 'usd':
-            robotData = parseUSDA(file.content);
-            break;
-          case 'xacro': {
-            const fileMap: Record<string, string> = {};
-            (context.availableFiles ?? []).forEach((f) => {
-              fileMap[f.name] = f.content;
-            });
-            const pathParts = file.name.split('/');
-            pathParts.pop();
-            const basePath = pathParts.join('/');
-            const parsed = parseXacro(file.content, {}, fileMap, basePath);
-            robotData = parsed
-              ? {
-                  name: parsed.name,
-                  links: parsed.links,
-                  joints: parsed.joints,
-                  rootLinkId: parsed.rootLinkId,
-                  materials: (parsed as RobotData & { materials?: RobotData['materials'] }).materials,
-                }
-              : null;
-            break;
-          }
-          case 'mesh': {
-            const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
-            const linkId = 'base_link';
-            robotData = {
-              name: meshName,
-              links: {
-                [linkId]: {
-                  id: linkId,
-                  name: 'base_link',
-                  visible: true,
-                  visual: {
-                    type: GeometryType.MESH,
-                    dimensions: { x: 1, y: 1, z: 1 },
-                    color: '#808080',
-                    meshPath: file.name,
-                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                  },
-                  collision: {
-                    type: GeometryType.NONE,
-                    dimensions: { x: 0, y: 0, z: 0 },
-                    color: '#ef4444',
-                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                  },
-                  inertial: {
-                    mass: 1.0,
-                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                    inertia: { ixx: 0.1, ixy: 0, ixz: 0, iyy: 0.1, iyz: 0, izz: 0.1 },
-                  },
-                },
-              },
-              joints: {},
-              rootLinkId: linkId,
-            };
-            break;
-          }
-        }
+        if (importResult.status !== 'ready') return null;
 
-        if (!robotData) return null;
+        const robotData = importResult.robotData;
 
         const baseId = sanitizeComponentId(file.name);
         const state = get().assemblyState;
@@ -338,6 +327,47 @@ export const useAssemblyStore = create<
         });
       },
 
+      renameComponentSourceFolder: (fromPath, toPath, options) => {
+        const normalizedFromPath = normalizeAssemblySourcePath(fromPath);
+        const normalizedToPath = normalizeAssemblySourcePath(toPath);
+
+        if (!normalizedFromPath || !normalizedToPath || normalizedFromPath === normalizedToPath) {
+          return;
+        }
+
+        const currentAssembly = get().assemblyState;
+        if (!currentAssembly) {
+          return;
+        }
+
+        const hasMatchingComponent = Object.values(currentAssembly.components).some((component) => (
+          isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)
+        ));
+
+        if (!hasMatchingComponent) {
+          return;
+        }
+
+        if (!options?.skipHistory) {
+          saveToHistory(options?.label ?? 'Rename assembly component sources');
+        }
+
+        set((s) => {
+          const components = s.assemblyState?.components;
+          if (!components) return;
+
+          Object.values(components).forEach((component) => {
+            if (isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)) {
+              component.sourceFile = replaceAssemblySourcePathPrefix(
+                component.sourceFile,
+                normalizedFromPath,
+                normalizedToPath,
+              );
+            }
+          });
+        });
+      },
+
       updateComponentName: (id, name, options) => {
         if (!options?.skipHistory) {
           saveToHistory(options?.label ?? 'Rename assembly component');
@@ -355,7 +385,31 @@ export const useAssemblyStore = create<
         set((s) => {
           const component = s.assemblyState?.components[id];
           if (component) {
+            const hasExplicitMaterials = Object.prototype.hasOwnProperty.call(robotUpdates, 'materials');
+            let nextMaterials = hasExplicitMaterials
+              ? robotUpdates.materials
+              : component.robot.materials;
+
+            if (!hasExplicitMaterials && robotUpdates.links) {
+              Object.entries(robotUpdates.links).forEach(([linkId, nextLink]) => {
+                const previousLink = component.robot.links[linkId];
+                if (previousLink === nextLink) {
+                  return;
+                }
+
+                nextMaterials = syncRobotMaterialsForLinkUpdate(
+                  nextMaterials,
+                  nextLink,
+                  previousLink,
+                );
+              });
+            }
+
             Object.assign(component.robot, robotUpdates);
+
+            if (!hasExplicitMaterials && nextMaterials !== component.robot.materials) {
+              component.robot.materials = nextMaterials;
+            }
           }
         });
       },

@@ -6,3 +6,4 @@
 export { parseMJCF, isMJCF } from './mjcfParser';
 export { loadMJCFToThreeJS, isMJCFContent } from './mjcfLoader';
 export { generateMujocoXML } from './mjcfGenerator';
+export { generateSkeletonXML } from './skeletonGenerator';

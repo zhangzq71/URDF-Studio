@@ -1,16 +1,34 @@
-import { Suspense } from 'react';
-import { JointInteraction } from './JointInteraction';
+import { Suspense, lazy, useMemo, useRef } from 'react';
 import { MeasureTool } from './MeasureTool';
 import { RobotModel } from './RobotModel';
-import type { RobotModelProps, URDFViewerProps } from '../types';
+import type {
+  MeasureTargetResolver,
+  RobotModelProps,
+  ToolMode,
+  URDFViewerProps,
+  ViewerRuntimeStageBridge,
+  UsdLoadingPhaseLabels,
+} from '../types';
 import type { URDFViewerController } from '../hooks/useURDFViewerController';
+import type { RobotFile } from '@/types';
+import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
+
+const LazyUsdWasmStage = lazy(async () => ({
+  default: (await import('./UsdWasmStage')).UsdWasmStage,
+}));
 
 interface URDFViewerSceneProps {
   controller: URDFViewerController;
+  sourceFile?: RobotFile | null;
+  availableFiles: RobotFile[];
   urdfContent: string;
   assets: Record<string, string>;
+  onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  sourceFilePath?: string;
+  groundPlaneOffset?: number;
   mode: 'detail' | 'hardware';
   selection?: URDFViewerProps['selection'];
+  hoveredSelection?: URDFViewerProps['hoveredSelection'];
   hoverSelectionEnabled?: boolean;
   onHover?: URDFViewerProps['onHover'];
   onMeshSelect?: URDFViewerProps['onMeshSelect'];
@@ -20,15 +38,23 @@ interface URDFViewerSceneProps {
   onCollisionTransformPreview?: URDFViewerProps['onCollisionTransformPreview'];
   onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
   isMeshPreview?: boolean;
+  runtimeInstanceKey?: number;
+  toolMode: ToolMode;
   t: RobotModelProps['t'];
 }
 
 export const URDFViewerScene = ({
   controller,
+  sourceFile,
+  availableFiles,
   urdfContent,
   assets,
+  onRobotDataResolved,
+  sourceFilePath,
+  groundPlaneOffset,
   mode,
   selection,
+  hoveredSelection,
   hoverSelectionEnabled = true,
   onHover,
   onMeshSelect,
@@ -38,74 +64,153 @@ export const URDFViewerScene = ({
   onCollisionTransformPreview,
   onCollisionTransform,
   isMeshPreview = false,
+  runtimeInstanceKey = 0,
+  toolMode,
   t,
 }: URDFViewerSceneProps) => {
+  const useUsdStage = sourceFile?.format === 'usd' && !isMeshPreview;
+  const usdSourceFile = useUsdStage ? sourceFile : null;
+  const measureTargetResolverRef = useRef<MeasureTargetResolver | null>(null);
+  const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(() => ({
+    onRobotResolved: controller.handleJointPanelRobotLoaded,
+    onSelectionChange: controller.handleSelectWrapper,
+    onActiveJointChange: controller.handleActiveJointChange,
+    onJointAnglesChange: controller.handleRuntimeJointAnglesChange,
+  }), [
+    controller.handleActiveJointChange,
+    controller.handleJointPanelRobotLoaded,
+    controller.handleRuntimeJointAnglesChange,
+    controller.handleSelectWrapper,
+  ]);
+  const usdLoadingPhaseLabels = useMemo<UsdLoadingPhaseLabels>(() => ({
+    'checking-path': t.loadingRobotCheckingPath,
+    'preloading-dependencies': t.loadingRobotPreloadingDependencies,
+    'initializing-renderer': t.loadingRobotInitializingRenderer,
+    'streaming-meshes': t.loadingRobotStreamingMeshes,
+    'applying-stage-fixes': t.loadingRobotApplyingStageFixes,
+    'resolving-metadata': t.loadingRobotResolvingMetadata,
+    'finalizing-scene': t.loadingRobotFinalizingScene,
+  }), [
+    t.loadingRobotApplyingStageFixes,
+    t.loadingRobotCheckingPath,
+    t.loadingRobotFinalizingScene,
+    t.loadingRobotInitializingRenderer,
+    t.loadingRobotPreloadingDependencies,
+    t.loadingRobotResolvingMetadata,
+    t.loadingRobotStreamingMeshes,
+  ]);
+
   return (
     <>
       <MeasureTool
         active={controller.toolMode === 'measure'}
         robot={controller.robot}
+        robotLinks={robotLinks}
         measureState={controller.measureState}
         setMeasureState={controller.setMeasureState}
+        measureAnchorMode={controller.measureAnchorMode}
+        showDecomposition={controller.showMeasureDecomposition}
         deleteTooltip={t.deleteMeasurement}
+        measureTargetResolverRef={measureTargetResolverRef}
       />
 
-      <Suspense fallback={null}>
-        <RobotModel
-          urdfContent={urdfContent}
-          assets={assets}
-          onRobotLoaded={controller.handleRobotLoaded}
-          showCollision={controller.showCollision}
-          showVisual={controller.showVisual}
-          onSelect={controller.handleSelectWrapper}
-          onHover={onHover}
-          onMeshSelect={onMeshSelect}
-          onJointChange={controller.handleJointAngleChange}
-          onJointChangeCommit={controller.handleJointChangeCommit}
-          jointAngles={controller.jointAngles}
-          setIsDragging={controller.setIsDragging}
-          setActiveJoint={controller.setActiveJoint}
-          justSelectedRef={controller.justSelectedRef}
-          t={t}
-          mode={mode}
-          selection={selection}
-          hoverSelectionEnabled={hoverSelectionEnabled}
-          highlightMode={controller.highlightMode}
-          showInertia={controller.showInertia}
-          showInertiaOverlay={controller.showInertiaOverlay}
-          showCenterOfMass={controller.showCenterOfMass}
-          showCoMOverlay={controller.showCoMOverlay}
-          centerOfMassSize={controller.centerOfMassSize}
-          showOrigins={controller.showOrigins}
-          showOriginsOverlay={controller.showOriginsOverlay}
-          originSize={controller.originSize}
-          showJointAxes={controller.showJointAxes}
-          showJointAxesOverlay={controller.showJointAxesOverlay}
-          jointAxisSize={controller.jointAxisSize}
-          modelOpacity={controller.modelOpacity}
-          robotLinks={robotLinks}
-          robotJoints={robotJoints}
-          focusTarget={focusTarget}
-          transformMode={controller.transformMode}
-          toolMode={controller.toolMode}
-          onCollisionTransformPreview={onCollisionTransformPreview}
-          onCollisionTransformEnd={onCollisionTransform}
-          isOrbitDragging={controller.isOrbitDragging}
-          onTransformPending={controller.handleTransformPending}
-          isSelectionLockedRef={controller.transformPendingRef}
-          isMeshPreview={isMeshPreview}
-        />
-      </Suspense>
-
-      {controller.activeJoint && controller.robot?.joints?.[controller.activeJoint] && (
-        <JointInteraction
-          joint={controller.robot.joints[controller.activeJoint]}
-          value={controller.jointAngles[controller.activeJoint] || 0}
-          onChange={(value) => controller.handleJointAngleChange(controller.activeJoint!, value)}
-          onCommit={(value) => controller.handleJointChangeCommit(controller.activeJoint!, value)}
-          setIsDragging={controller.setIsDragging}
-          onInteractionLockChange={controller.handleTransformPending}
-        />
+      {usdSourceFile ? (
+        <Suspense fallback={null}>
+          <LazyUsdWasmStage
+            key={runtimeInstanceKey}
+            sourceFile={usdSourceFile}
+            availableFiles={availableFiles}
+            assets={assets}
+            groundPlaneOffset={groundPlaneOffset}
+            mode={mode}
+            justSelectedRef={controller.justSelectedRef}
+            selection={selection}
+            hoveredSelection={hoveredSelection}
+            hoverSelectionEnabled={hoverSelectionEnabled}
+            onHover={onHover}
+            onMeshSelect={onMeshSelect}
+            showOrigins={controller.showOrigins}
+            showOriginsOverlay={controller.showOriginsOverlay}
+            originSize={controller.originSize}
+            showJointAxes={controller.showJointAxes}
+            showJointAxesOverlay={controller.showJointAxesOverlay}
+            jointAxisSize={controller.jointAxisSize}
+            highlightMode={controller.highlightMode}
+            showCenterOfMass={controller.showCenterOfMass}
+            showCoMOverlay={controller.showCoMOverlay}
+            centerOfMassSize={controller.centerOfMassSize}
+            showInertia={controller.showInertia}
+            showInertiaOverlay={controller.showInertiaOverlay}
+            showVisual={controller.showVisual}
+            showCollision={controller.showCollision}
+            robotLinks={robotLinks}
+            toolMode={toolMode}
+            transformMode={controller.transformMode}
+            onCollisionTransformPreview={onCollisionTransformPreview}
+            onCollisionTransformEnd={onCollisionTransform}
+            onTransformPending={controller.handleTransformPending}
+            setIsDragging={controller.setIsDragging}
+            loadingLabel={t.loadingRobot}
+            loadingDetailLabel={t.loadingRobotPreparing}
+            loadingPhaseLabels={usdLoadingPhaseLabels}
+            onRobotDataResolved={onRobotDataResolved}
+            runtimeBridge={runtimeBridge}
+            measureTargetResolverRef={measureTargetResolverRef}
+          />
+        </Suspense>
+      ) : (
+        <Suspense fallback={null}>
+          <RobotModel
+            key={runtimeInstanceKey}
+            urdfContent={urdfContent}
+            assets={assets}
+            sourceFormat={sourceFile?.format === 'mjcf' ? 'mjcf' : sourceFile?.format === 'urdf' ? 'urdf' : 'auto'}
+            sourceFilePath={sourceFilePath}
+            onRobotLoaded={controller.handleRobotLoaded}
+            showCollision={controller.showCollision}
+            showVisual={controller.showVisual}
+            onSelect={controller.handleSelectWrapper}
+            onHover={onHover}
+            onMeshSelect={onMeshSelect}
+            onJointChange={controller.handleJointAngleChange}
+            onJointChangeCommit={controller.handleJointChangeCommit}
+            initialJointAngles={controller.getJointAnglesSnapshot()}
+            registerSceneRefresh={controller.registerSceneRefresh}
+            setIsDragging={controller.setIsDragging}
+            setActiveJoint={controller.handleActiveJointChange}
+            justSelectedRef={controller.justSelectedRef}
+            t={t}
+            mode={mode}
+            selection={selection}
+            hoveredSelection={hoveredSelection}
+            hoverSelectionEnabled={hoverSelectionEnabled}
+            groundPlaneOffset={groundPlaneOffset}
+            highlightMode={controller.highlightMode}
+            showInertia={controller.showInertia}
+            showInertiaOverlay={controller.showInertiaOverlay}
+            showCenterOfMass={controller.showCenterOfMass}
+            showCoMOverlay={controller.showCoMOverlay}
+            centerOfMassSize={controller.centerOfMassSize}
+            showOrigins={controller.showOrigins}
+            showOriginsOverlay={controller.showOriginsOverlay}
+            originSize={controller.originSize}
+            showJointAxes={controller.showJointAxes}
+            showJointAxesOverlay={controller.showJointAxesOverlay}
+            jointAxisSize={controller.jointAxisSize}
+            modelOpacity={controller.modelOpacity}
+            robotLinks={robotLinks}
+            robotJoints={robotJoints}
+            focusTarget={focusTarget}
+            transformMode={controller.transformMode}
+            toolMode={toolMode}
+            onCollisionTransformPreview={onCollisionTransformPreview}
+            onCollisionTransformEnd={onCollisionTransform}
+            isOrbitDragging={controller.isOrbitDragging}
+            onTransformPending={controller.handleTransformPending}
+            isSelectionLockedRef={controller.transformPendingRef}
+            isMeshPreview={isMeshPreview}
+          />
+        </Suspense>
       )}
     </>
   );

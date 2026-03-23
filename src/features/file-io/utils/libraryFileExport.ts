@@ -1,8 +1,13 @@
 import JSZip from 'jszip';
 import { parseMJCF, parseURDF, generateMujocoXML, generateURDF } from '@/core/parsers';
-import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
+import {
+  normalizeMeshPathForExport,
+  resolveMeshAssetUrl,
+  rewriteUrdfAssetPathsForExport,
+} from '@/core/parsers/meshPathUtils';
 import { GeometryType, type RobotFile, type RobotState } from '@/types';
 import { downloadBlob } from './assetUtils';
+import { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
 
 export type LibraryExportFormat = 'urdf' | 'mjcf';
 
@@ -68,6 +73,7 @@ async function addReferencedMeshesToZip(
   robot: RobotState,
   assets: Record<string, string>,
   zip: JSZip,
+  skipMeshPaths?: Set<string>,
 ): Promise<string[]> {
   const missing = new Set<string>();
   const exportedPaths = new Set<string>();
@@ -75,8 +81,10 @@ async function addReferencedMeshesToZip(
   const meshes = collectReferencedMeshes(robot);
 
   const tasks = meshes.map(async (meshPath) => {
+    if (skipMeshPaths?.has(meshPath)) return;
+
     const exportPath = normalizeMeshPathForExport(meshPath);
-    if (!exportPath || exportedPaths.has(exportPath)) return;
+    if (!exportPath || exportedPaths.has(exportPath) || skipMeshPaths?.has(exportPath)) return;
     exportedPaths.add(exportPath);
 
     const blobUrl = resolveMeshAssetUrl(meshPath, assets);
@@ -124,20 +132,43 @@ export async function exportLibraryRobotFile(
   const baseName = getFileBaseName(file.name);
   const zip = new JSZip();
   const archiveRoot = createArchiveRoot(zip, baseName);
+  const mjcfMeshExport = targetFormat === 'mjcf' && file.format !== 'mjcf'
+    ? await prepareMjcfMeshExportAssets({
+      robot: robotState,
+      assets,
+    })
+    : null;
 
   if (targetFormat === 'urdf') {
     const urdfContent = file.format === 'urdf'
-      ? file.content
+      ? rewriteUrdfAssetPathsForExport(file.content, {
+          exportRobotName: baseName,
+        })
       : generateURDF(robotState, false);
     archiveRoot.file(`${baseName}.urdf`, urdfContent);
   } else {
     const mjcfContent = file.format === 'mjcf'
       ? file.content
-      : generateMujocoXML(robotState, { meshdir: 'meshes/' });
+      : generateMujocoXML(robotState, {
+        meshdir: 'meshes/',
+        meshPathOverrides: mjcfMeshExport?.meshPathOverrides,
+        visualMeshVariants: mjcfMeshExport?.visualMeshVariants,
+      });
     archiveRoot.file(`${baseName}.xml`, mjcfContent);
   }
 
-  const missingMeshPaths = await addReferencedMeshesToZip(robotState, assets, archiveRoot);
+  const missingMeshPaths = await addReferencedMeshesToZip(
+    robotState,
+    assets,
+    archiveRoot,
+    mjcfMeshExport?.convertedSourceMeshPaths,
+  );
+  if (mjcfMeshExport) {
+    const meshFolder = archiveRoot.folder('meshes');
+    mjcfMeshExport.archiveFiles.forEach((blob, relativePath) => {
+      meshFolder?.file(relativePath, blob);
+    });
+  }
   const blob = await zip.generateAsync({ type: 'blob' });
   const zipFileName = `${baseName}_${targetFormat}.zip`;
   downloadBlob(blob, zipFileName);

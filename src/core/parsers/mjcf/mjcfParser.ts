@@ -5,8 +5,10 @@
 
 import * as THREE from 'three';
 import { RobotState, UrdfLink, UrdfJoint, DEFAULT_LINK, DEFAULT_JOINT, GeometryType, JointType, UrdfVisual } from '@/types';
-import { type MJCFCompilerSettings, type MJCFMesh } from './mjcfUtils';
-import { parseMJCFModel } from './mjcfModel';
+import { computeLinkWorldMatrices, createRobotClosedLoopConstraint, resolveLinkKey } from '@/core/robot';
+import { looksLikeMJCFDocument, type MJCFCompilerSettings, type MJCFMaterial, type MJCFMesh, type MJCFTexture } from './mjcfUtils';
+import { assignMJCFBodyGeomRoles, classifyMJCFGeom } from './mjcfGeomClassification';
+import { normalizeMultiJointBodies, parseMJCFModel, type MJCFModelConnectConstraint } from './mjcfModel';
 
 interface MJCFBody {
     name: string;
@@ -21,10 +23,15 @@ interface MJCFBody {
 
 interface MJCFGeom {
     name?: string;
+    className?: string;
+    classQName?: string;
     type: string;
     size?: number[];
+    mass?: number;
     mesh?: string;
+    material?: string;
     rgba?: number[];
+    hasExplicitRgba?: boolean;
     pos?: { x: number, y: number, z: number };
     quat?: { w: number, x: number, y: number, z: number };
     fromto?: number[];
@@ -39,6 +46,21 @@ interface MJCFJointDef {
     axis?: { x: number, y: number, z: number };
     range?: [number, number];
     pos?: { x: number, y: number, z: number };
+    limited?: boolean;
+    damping?: number;
+    frictionloss?: number;
+    armature?: number;
+    actuatorForceRange?: [number, number];
+    actuatorForceLimited?: boolean;
+}
+
+interface MJCFActuator {
+    name: string;
+    type: string;
+    joint?: string;
+    ctrlrange?: [number, number];
+    forcerange?: [number, number];
+    gear?: number[];
 }
 
 interface MJCFInertial {
@@ -52,11 +74,11 @@ interface MJCFInertial {
 const tempRPYQuaternion = new THREE.Quaternion();
 const tempRPYEuler = new THREE.Euler(0, 0, 0, 'ZYX');
 
-function convertJointType(mjcfType: string): JointType {
+function convertJointType(mjcfType: string, range?: [number, number], limited?: boolean): JointType {
     switch (mjcfType.toLowerCase()) {
-        case 'hinge': return JointType.REVOLUTE;
+        case 'hinge': return limited === false || !range ? JointType.CONTINUOUS : JointType.REVOLUTE;
         case 'slide': return JointType.PRISMATIC;
-        case 'ball': return JointType.CONTINUOUS;
+        case 'ball': return JointType.BALL;
         case 'free': return JointType.FLOATING;
         default: return JointType.FIXED;
     }
@@ -101,13 +123,210 @@ function shouldPreserveSyntheticWorldRoot(worldBody: MJCFBody): boolean {
     }
 
     const [onlyChild] = worldBody.children;
-    return onlyChild.joints.some((joint) => joint.type.toLowerCase() === 'free');
+    return onlyChild.joints.length > 0;
 }
 
 function convertAngle(value: number, settings: MJCFCompilerSettings): number {
     return settings.angleUnit === 'degree'
         ? value * (Math.PI / 180)
         : value;
+}
+
+function convertJointRange(
+    range: [number, number] | undefined,
+    _mjcfType: string | undefined,
+    _settings: MJCFCompilerSettings,
+): [number, number] | undefined {
+    return range;
+}
+
+function toEffortMagnitude(range: [number, number] | undefined): number | undefined {
+    if (!range) {
+        return undefined;
+    }
+
+    const lower = range[0];
+    const upper = range[1];
+    if (!Number.isFinite(lower) || !Number.isFinite(upper)) {
+        return undefined;
+    }
+
+    return Math.max(Math.abs(lower), Math.abs(upper));
+}
+
+function pickMaxDefined(values: Array<number | undefined>): number | undefined {
+    let maxValue: number | undefined;
+    values.forEach((value) => {
+        if (value == null || !Number.isFinite(value)) {
+            return;
+        }
+
+        maxValue = maxValue == null ? value : Math.max(maxValue, value);
+    });
+
+    return maxValue;
+}
+
+function resolveJointMechanicalRange(
+    joint: MJCFJointDef | undefined,
+    jointType: JointType,
+): [number, number] | undefined {
+    if (!joint?.range) {
+        return undefined;
+    }
+
+    if (jointType === JointType.CONTINUOUS || jointType === JointType.BALL || joint.limited === false) {
+        return undefined;
+    }
+
+    return joint.range;
+}
+
+function resolveJointEffortLimit(
+    joint: MJCFJointDef | undefined,
+    actuators: MJCFActuator[] | undefined,
+): number {
+    if (joint?.actuatorForceLimited !== false) {
+        const jointActuatorForce = toEffortMagnitude(joint?.actuatorForceRange);
+        if (jointActuatorForce != null) {
+            return jointActuatorForce;
+        }
+    }
+
+    const actuatorForce = pickMaxDefined(
+        (actuators || []).map((actuator) => toEffortMagnitude(actuator.forcerange)),
+    );
+    if (actuatorForce != null) {
+        return actuatorForce;
+    }
+
+    const motorControlLimit = pickMaxDefined(
+        (actuators || [])
+            .filter((actuator) => actuator.type.toLowerCase() === 'motor')
+            .map((actuator) => toEffortMagnitude(actuator.ctrlrange)),
+    );
+    return motorControlLimit ?? 0;
+}
+
+function buildImportedJointLimit(
+    jointType: JointType,
+    range: [number, number] | undefined,
+    effort: number,
+    velocity = 0,
+): UrdfJoint['limit'] | undefined {
+    if (jointType === JointType.FIXED || jointType === JointType.FLOATING || jointType === JointType.BALL) {
+        return undefined;
+    }
+
+    return {
+        lower: range?.[0] as UrdfJoint['limit']['lower'],
+        upper: range?.[1] as UrdfJoint['limit']['upper'],
+        effort,
+        velocity,
+    };
+}
+
+function createEmptyLinkInertial(): UrdfLink['inertial'] {
+    return {
+        mass: 0,
+        origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+    };
+}
+
+function getGeomMassCenter(geom: MJCFGeom): { x: number, y: number, z: number } {
+    if (geom.pos) {
+        return geom.pos;
+    }
+
+    if (geom.fromto && geom.fromto.length >= 6) {
+        return {
+            x: ((geom.fromto[0] ?? 0) + (geom.fromto[3] ?? 0)) / 2,
+            y: ((geom.fromto[1] ?? 0) + (geom.fromto[4] ?? 0)) / 2,
+            z: ((geom.fromto[2] ?? 0) + (geom.fromto[5] ?? 0)) / 2,
+        };
+    }
+
+    return { x: 0, y: 0, z: 0 };
+}
+
+function rgbaToHexColor(rgba: number[]): string | null {
+    if (rgba.length < 3) {
+        return null;
+    }
+
+    const [r, g, b, a] = rgba;
+    if (![r, g, b].every((value) => Number.isFinite(value))) {
+        return null;
+    }
+
+    const toHexChannel = (value: number): string => (
+        Math.max(0, Math.min(255, Math.round(value * 255))).toString(16).padStart(2, '0')
+    );
+
+    const rgbHex = `${toHexChannel(r)}${toHexChannel(g)}${toHexChannel(b)}`;
+    if (!Number.isFinite(a) || a >= 0.999) {
+        return `#${rgbHex}`;
+    }
+
+    return `#${rgbHex}${toHexChannel(a)}`;
+}
+
+function deriveGeomMassInertial(geoms: MJCFGeom[]): UrdfLink['inertial'] | null {
+    const massGeoms = geoms.filter((geom) => typeof geom.mass === 'number'
+        && Number.isFinite(geom.mass)
+        && (geom.mass ?? 0) > 0);
+
+    if (massGeoms.length === 0) {
+        return null;
+    }
+
+    const totalMass = massGeoms.reduce((sum, geom) => sum + (geom.mass ?? 0), 0);
+    if (!Number.isFinite(totalMass) || totalMass <= 0) {
+        return null;
+    }
+
+    const weightedCenter = massGeoms.reduce((sum, geom) => {
+        const mass = geom.mass ?? 0;
+        const center = getGeomMassCenter(geom);
+        return {
+            x: sum.x + center.x * mass,
+            y: sum.y + center.y * mass,
+            z: sum.z + center.z * mass,
+        };
+    }, { x: 0, y: 0, z: 0 });
+
+    const centerOfMass = {
+        x: weightedCenter.x / totalMass,
+        y: weightedCenter.y / totalMass,
+        z: weightedCenter.z / totalMass,
+    };
+
+    const inertia = massGeoms.reduce((sum, geom) => {
+        const mass = geom.mass ?? 0;
+        const center = getGeomMassCenter(geom);
+        const dx = center.x - centerOfMass.x;
+        const dy = center.y - centerOfMass.y;
+        const dz = center.z - centerOfMass.z;
+
+        return {
+            ixx: sum.ixx + mass * (dy * dy + dz * dz),
+            ixy: sum.ixy - mass * dx * dy,
+            ixz: sum.ixz - mass * dx * dz,
+            iyy: sum.iyy + mass * (dx * dx + dz * dz),
+            iyz: sum.iyz - mass * dy * dz,
+            izz: sum.izz + mass * (dx * dx + dy * dy),
+        };
+    }, { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 });
+
+    return {
+        mass: totalMass,
+        origin: {
+            xyz: centerOfMass,
+            rpy: { r: 0, p: 0, y: 0 },
+        },
+        inertia,
+    };
 }
 
 function toPositionObject(tuple: [number, number, number] | undefined): { x: number, y: number, z: number } {
@@ -138,7 +357,7 @@ function toRPYObjectFromQuat(
         return undefined;
     }
 
-    tempRPYQuaternion.set(quat.x, quat.y, quat.z, quat.w);
+    tempRPYQuaternion.set(quat.x, quat.y, quat.z, quat.w).normalize();
     tempRPYEuler.setFromQuaternion(tempRPYQuaternion, 'ZYX');
 
     return {
@@ -148,7 +367,7 @@ function toRPYObjectFromQuat(
     };
 }
 
-function toEulerObject(
+function toRPYObjectFromEulerTuple(
     tuple: [number, number, number] | undefined,
     settings: MJCFCompilerSettings,
 ): { r: number, p: number, y: number } | undefined {
@@ -156,10 +375,71 @@ function toEulerObject(
         return undefined;
     }
 
+    const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        convertAngle(tuple[0] ?? 0, settings),
+        convertAngle(tuple[1] ?? 0, settings),
+        convertAngle(tuple[2] ?? 0, settings),
+    ));
+
+    return toRPYObjectFromQuat({
+        w: quaternion.w,
+        x: quaternion.x,
+        y: quaternion.y,
+        z: quaternion.z,
+    });
+}
+
+function isNonZeroPosition(position: { x: number, y: number, z: number } | undefined): boolean {
+    if (!position) {
+        return false;
+    }
+
+    return Math.abs(position.x) > 1e-9
+        || Math.abs(position.y) > 1e-9
+        || Math.abs(position.z) > 1e-9;
+}
+
+function subtractLocalOffset(
+    position: { x: number, y: number, z: number } | undefined,
+    localOffset: { x: number, y: number, z: number } | null,
+): { x: number, y: number, z: number } | undefined {
+    if (!position) {
+        return undefined;
+    }
+
+    if (!localOffset) {
+        return position;
+    }
+
     return {
-        r: convertAngle(tuple[0] ?? 0, settings),
-        p: convertAngle(tuple[1] ?? 0, settings),
-        y: convertAngle(tuple[2] ?? 0, settings),
+        x: position.x - localOffset.x,
+        y: position.y - localOffset.y,
+        z: position.z - localOffset.z,
+    };
+}
+
+function rotateLocalOffsetToParentFrame(
+    localOffset: { x: number, y: number, z: number } | null,
+    rotation: { r: number, p: number, y: number } | undefined,
+): { x: number, y: number, z: number } | null {
+    if (!localOffset) {
+        return null;
+    }
+
+    if (!rotation) {
+        return localOffset;
+    }
+
+    const quaternion = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(rotation.r, rotation.p, rotation.y, 'ZYX'),
+    );
+    const rotated = new THREE.Vector3(localOffset.x, localOffset.y, localOffset.z)
+        .applyQuaternion(quaternion);
+
+    return {
+        x: rotated.x,
+        y: rotated.y,
+        z: rotated.z,
     };
 }
 
@@ -167,14 +447,19 @@ function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody
     return {
         name: sharedBody.name,
         pos: toPositionObject(sharedBody.pos),
-        euler: toEulerObject(sharedBody.euler, settings),
+        euler: toRPYObjectFromEulerTuple(sharedBody.euler, settings),
         quat: toQuatObject(sharedBody.quat),
         geoms: (sharedBody.geoms || []).map((geom: any) => ({
             name: geom.sourceName || geom.name,
+            className: geom.className,
+            classQName: geom.classQName,
             type: geom.type,
             size: geom.size,
+            mass: typeof geom.mass === 'number' ? geom.mass : undefined,
             mesh: geom.mesh,
+            material: geom.material,
             rgba: geom.rgba,
+            hasExplicitRgba: geom.hasExplicitRgba,
             pos: geom.pos ? toPositionObject(geom.pos) : undefined,
             quat: toQuatObject(geom.quat),
             fromto: geom.fromto,
@@ -186,13 +471,14 @@ function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody
             name: joint.name,
             type: joint.type,
             axis: joint.axis ? toPositionObject(joint.axis) : undefined,
-            range: joint.range
-                ? [
-                    convertAngle(joint.range[0] ?? 0, settings),
-                    convertAngle(joint.range[1] ?? 0, settings),
-                ] as [number, number]
-                : undefined,
+            range: convertJointRange(joint.range, joint.type, settings),
             pos: joint.pos ? toPositionObject(joint.pos) : undefined,
+            limited: typeof joint.limited === 'boolean' ? joint.limited : undefined,
+            damping: typeof joint.damping === 'number' ? joint.damping : undefined,
+            frictionloss: typeof joint.frictionloss === 'number' ? joint.frictionloss : undefined,
+            armature: typeof joint.armature === 'number' ? joint.armature : undefined,
+            actuatorForceRange: joint.actuatorForceRange,
+            actuatorForceLimited: typeof joint.actuatorForceLimited === 'boolean' ? joint.actuatorForceLimited : undefined,
         })),
         inertial: sharedBody.inertial ? {
             mass: sharedBody.inertial.mass,
@@ -209,19 +495,156 @@ function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody
     };
 }
 
+function toParserActuatorMap(sharedActuatorMap: Map<string, any[]> | undefined): Map<string, MJCFActuator[]> {
+    const actuatorMap = new Map<string, MJCFActuator[]>();
+    if (!sharedActuatorMap) {
+        return actuatorMap;
+    }
+
+    sharedActuatorMap.forEach((actuators, jointName) => {
+        actuatorMap.set(jointName, (actuators || []).map((actuator) => ({
+            name: actuator.name,
+            type: actuator.type,
+            joint: actuator.joint,
+            ctrlrange: actuator.ctrlrange,
+            forcerange: actuator.forcerange,
+            gear: actuator.gear,
+        })));
+    });
+
+    return actuatorMap;
+}
+
+function buildClosedLoopConstraints(
+    robot: Pick<RobotState, 'links' | 'joints' | 'rootLinkId'>,
+    connectConstraints: MJCFModelConnectConstraint[],
+): RobotState['closedLoopConstraints'] {
+    if (connectConstraints.length === 0) {
+        return undefined;
+    }
+
+    const linkWorldMatrices = computeLinkWorldMatrices(robot);
+    const closedLoopConstraints = connectConstraints.flatMap((constraint) => {
+        const linkAId = resolveLinkKey(robot.links, constraint.body1);
+        const linkBId = resolveLinkKey(robot.links, constraint.body2);
+
+        if (!linkAId || !linkBId) {
+            return [];
+        }
+
+        const linkAMatrix = linkWorldMatrices[linkAId];
+        const linkBMatrix = linkWorldMatrices[linkBId];
+        if (!linkAMatrix || !linkBMatrix) {
+            return [];
+        }
+
+        const anchorLocalA = {
+            x: constraint.anchor[0] ?? 0,
+            y: constraint.anchor[1] ?? 0,
+            z: constraint.anchor[2] ?? 0,
+        };
+        const anchorWorldVector = new THREE.Vector3(anchorLocalA.x, anchorLocalA.y, anchorLocalA.z)
+            .applyMatrix4(linkAMatrix);
+        const anchorLocalBVector = anchorWorldVector.clone().applyMatrix4(linkBMatrix.clone().invert());
+
+        return [
+            createRobotClosedLoopConstraint(
+                constraint.name || `mjcf-connect-${constraint.body1}-${constraint.body2}`,
+                linkAId,
+                linkBId,
+                anchorLocalA,
+                {
+                    x: anchorLocalBVector.x,
+                    y: anchorLocalBVector.y,
+                    z: anchorLocalBVector.z,
+                },
+                {
+                    x: anchorWorldVector.x,
+                    y: anchorWorldVector.y,
+                    z: anchorWorldVector.z,
+                },
+                {
+                    format: 'mjcf',
+                    body1Name: constraint.body1,
+                    body2Name: constraint.body2,
+                },
+            ),
+        ];
+    });
+
+    return closedLoopConstraints.length > 0 ? closedLoopConstraints : undefined;
+}
+
 // Convert parsed MJCF to RobotState
 function mjcfToRobotState(
     robotName: string,
     bodies: MJCFBody[],
-    meshMap: Map<string, MJCFMesh>
+    meshMap: Map<string, MJCFMesh>,
+    materialMap: Map<string, MJCFMaterial>,
+    textureMap: Map<string, MJCFTexture>,
+    actuatorMap: Map<string, MJCFActuator[]>,
 ): RobotState {
     const links: Record<string, UrdfLink> = {};
     const joints: Record<string, UrdfJoint> = {};
+    const materials: NonNullable<RobotState['materials']> = {};
     let rootLinkId = '';
     let linkCounter = 0;
-    let jointCounter = 0;
 
-    function processGeometry(geom: MJCFGeom): UrdfVisual {
+    function resolveGeomMaterialState(geom: MJCFGeom): { color?: string; texture?: string } | null {
+        const materialDef = geom.material
+            ? materialMap.get(geom.material)
+            : undefined;
+        const texturePath = materialDef?.texture
+            ? textureMap.get(materialDef.texture)?.file
+            : undefined;
+
+        const explicitGeomRgba = geom.hasExplicitRgba && geom.rgba && geom.rgba.length >= 3
+            ? geom.rgba
+            : undefined;
+        const materialRgba = materialDef?.rgba && materialDef.rgba.length >= 3
+            ? materialDef.rgba
+            : undefined;
+        const inheritedGeomRgba = geom.rgba && geom.rgba.length >= 3
+            ? geom.rgba
+            : undefined;
+        const resolvedRgba = explicitGeomRgba
+            ?? materialRgba
+            ?? inheritedGeomRgba;
+        const resolvedColor = resolvedRgba
+            ? rgbaToHexColor(resolvedRgba) || undefined
+            : undefined;
+
+        // MJCF textures use white as the neutral color multiplier when rgba is absent.
+        const neutralTextureColor = texturePath ? '#ffffff' : undefined;
+        const color = resolvedColor ?? neutralTextureColor;
+
+        if (!color && !texturePath) {
+            return null;
+        }
+
+        return {
+            ...(color ? { color } : {}),
+            ...(texturePath ? { texture: texturePath } : {}),
+        };
+    }
+
+    function assignLinkMaterial(linkId: string, geom: MJCFGeom | null | undefined): void {
+        if (!geom) {
+            return;
+        }
+
+        const materialState = resolveGeomMaterialState(geom);
+        if (!materialState) {
+            return;
+        }
+
+        materials[linkId] = materialState;
+    }
+
+    function processGeometry(
+        geom: MJCFGeom,
+        linkFrameOffsetLocal: { x: number, y: number, z: number } | null = null,
+    ): UrdfVisual {
         const result: UrdfVisual = { ...DEFAULT_LINK.visual };
         result.type = geom.mesh ? GeometryType.MESH : convertGeomType(geom.type);
 
@@ -277,11 +700,9 @@ function mjcfToRobotState(
             result.dimensions = { x: 0.05, y: 0, z: 0 };
         }
 
-        if (geom.rgba && geom.rgba.length >= 3) {
-            const r = Math.round(geom.rgba[0] * 255);
-            const g = Math.round(geom.rgba[1] * 255);
-            const b = Math.round(geom.rgba[2] * 255);
-            result.color = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        const materialState = resolveGeomMaterialState(geom);
+        if (materialState?.color) {
+            result.color = materialState.color;
         }
 
         const geomRotation = toRPYObjectFromQuat(geom.quat);
@@ -290,13 +711,14 @@ function mjcfToRobotState(
             || Math.abs(geomRotation.p) > 1e-9
             || Math.abs(geomRotation.y) > 1e-9
         );
+        const geomPosition = subtractLocalOffset(geom.pos, linkFrameOffsetLocal);
 
-        if (geom.pos || hasMeaningfulRotation) {
+        if (geomPosition || hasMeaningfulRotation) {
             result.origin = {
                 xyz: {
-                    x: geom.pos?.x ?? 0,
-                    y: geom.pos?.y ?? 0,
-                    z: geom.pos?.z ?? 0,
+                    x: geomPosition?.x ?? 0,
+                    y: geomPosition?.y ?? 0,
+                    z: geomPosition?.z ?? 0,
                 },
                 rpy: geomRotation || { r: 0, p: 0, y: 0 }
             };
@@ -307,17 +729,27 @@ function mjcfToRobotState(
 
     function processBody(body: MJCFBody, parentLinkId: string | null): string {
         const mainLinkId = body.name || `link_${linkCounter++}`;
+        const bodyRotation = body.euler || toRPYObjectFromQuat(body.quat) || { r: 0, p: 0, y: 0 };
+        const mjcfJoint = body.joints[0];
+        const linkFrameOffsetLocal = isNonZeroPosition(mjcfJoint?.pos)
+            ? {
+                x: mjcfJoint!.pos!.x,
+                y: mjcfJoint!.pos!.y,
+                z: mjcfJoint!.pos!.z,
+            }
+            : null;
+        const jointFrameOffsetInParent = rotateLocalOffsetToParentFrame(linkFrameOffsetLocal, bodyRotation);
 
         // 1. Classify Geoms
         const visuals: MJCFGeom[] = [];
         const collisions: MJCFGeom[] = [];
+        const geomRoles = assignMJCFBodyGeomRoles(body.geoms);
 
-        body.geoms.forEach(geom => {
-            const hasVisualGroup = geom.group === 1 || geom.group === 2;
-            const hasContype0 = geom.contype === 0 && geom.conaffinity === 0;
-            if (hasContype0 || hasVisualGroup) {
+        geomRoles.forEach(({ geom, renderVisual, renderCollision }) => {
+            if (renderVisual) {
                 visuals.push(geom);
-            } else {
+            }
+            if (renderCollision) {
                 collisions.push(geom);
             }
         });
@@ -329,6 +761,15 @@ function mjcfToRobotState(
 
         // Pass 1: Match visuals to collisions (by mesh name match)
         for (const vis of visuals) {
+            // Plain MuJoCo geoms often act as both visual and collision. Once such a geom has
+            // already been consumed as the collision partner for an earlier visual geom, emitting
+            // it again as a standalone visual creates the exact regression seen on HighTorque:
+            // a base-link collision box gets duplicated into the visual tree.
+            const visClassification = classifyMJCFGeom(vis);
+            if (visClassification.isCollision && usedCollisions.has(vis)) {
+                continue;
+            }
+
             let matchIndex = -1;
             if (vis.mesh) {
                 matchIndex = collisions.findIndex(c => c.mesh === vis.mesh && !usedCollisions.has(c));
@@ -371,14 +812,15 @@ function mjcfToRobotState(
         
         let visual = { ...DEFAULT_LINK.visual };
         if (mainPair.visual) {
-            visual = processGeometry(mainPair.visual);
+            visual = processGeometry(mainPair.visual, linkFrameOffsetLocal);
+            assignLinkMaterial(mainLinkId, mainPair.visual);
         } else {
             visual.type = GeometryType.NONE;
         }
 
         let collision = { ...DEFAULT_LINK.collision };
         if (mainPair.collision) {
-            const colGeo = processGeometry(mainPair.collision);
+            const colGeo = processGeometry(mainPair.collision, linkFrameOffsetLocal);
             collision = {
                 ...collision,
                 type: colGeo.type,
@@ -386,24 +828,21 @@ function mjcfToRobotState(
                 origin: colGeo.origin,
                 meshPath: colGeo.meshPath
             };
-            if (mainPair.collision.rgba) {
+            if (colGeo.color) {
                 collision.color = colGeo.color;
             }
         } else {
             collision.type = GeometryType.NONE;
         }
 
-        let linkInertial = {
-            mass: 0,
-            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-            inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 }
-        };
+        let linkInertial = createEmptyLinkInertial();
 
         if (body.inertial) {
             const { mass, pos: inertialPos, quat: inertialQuat, diaginertia, fullinertia } = body.inertial;
+            const linkInertialPos = subtractLocalOffset(inertialPos, linkFrameOffsetLocal) || { x: 0, y: 0, z: 0 };
             linkInertial.mass = mass;
             linkInertial.origin = {
-                xyz: { x: inertialPos.x, y: inertialPos.y, z: inertialPos.z },
+                xyz: { x: linkInertialPos.x, y: linkInertialPos.y, z: linkInertialPos.z },
                 rpy: toRPYObjectFromQuat(inertialQuat) || { r: 0, p: 0, y: 0 }
             };
             if (fullinertia && fullinertia.length >= 6) {
@@ -421,6 +860,17 @@ function mjcfToRobotState(
                     izz: diaginertia.izz,
                 };
             }
+        } else {
+            const derivedGeomMassInertial = deriveGeomMassInertial(body.geoms);
+            if (derivedGeomMassInertial) {
+                if (linkFrameOffsetLocal) {
+                    derivedGeomMassInertial.origin.xyz = subtractLocalOffset(
+                        derivedGeomMassInertial.origin.xyz,
+                        linkFrameOffsetLocal,
+                    ) || { x: 0, y: 0, z: 0 };
+                }
+                linkInertial = derivedGeomMassInertial;
+            }
         }
 
         const mainLink: UrdfLink = {
@@ -435,44 +885,84 @@ function mjcfToRobotState(
 
         // Create Main Joint
         if (parentLinkId) {
-            const mjcfJoint = body.joints[0];
-            const jointId = mjcfJoint?.name || `joint_${jointCounter++}`;
+            const jointId = mjcfJoint?.name || `fixed_${mainLinkId}`;
+            const jointType = mjcfJoint
+                ? convertJointType(mjcfJoint.type, mjcfJoint.range, mjcfJoint.limited)
+                : JointType.FIXED;
+            const jointMechanicalRange = resolveJointMechanicalRange(mjcfJoint, jointType);
+            const jointEffort = resolveJointEffortLimit(mjcfJoint, actuatorMap.get(jointId));
+            const jointLimit = buildImportedJointLimit(jointType, jointMechanicalRange, jointEffort, 0);
+            const jointOrigin = {
+                xyz: {
+                    x: body.pos.x + (jointFrameOffsetInParent?.x ?? 0),
+                    y: body.pos.y + (jointFrameOffsetInParent?.y ?? 0),
+                    z: body.pos.z + (jointFrameOffsetInParent?.z ?? 0),
+                },
+                rpy: bodyRotation,
+            };
             const joint: UrdfJoint = {
                 ...DEFAULT_JOINT,
                 id: jointId,
                 name: jointId,
-                type: mjcfJoint ? convertJointType(mjcfJoint.type) : JointType.FIXED,
+                type: jointType,
                 parentLinkId: parentLinkId,
                 childLinkId: mainLinkId,
-                origin: {
-                    xyz: { x: body.pos.x, y: body.pos.y, z: body.pos.z },
-                    rpy: body.euler || { r: 0, p: 0, y: 0 }
+                origin: jointOrigin,
+                axis: mjcfJoint?.axis || { x: 0, y: 0, z: 1 },
+                limit: jointLimit as UrdfJoint['limit'],
+                dynamics: {
+                    ...DEFAULT_JOINT.dynamics,
+                    damping: mjcfJoint?.damping ?? DEFAULT_JOINT.dynamics.damping,
+                    friction: mjcfJoint?.frictionloss ?? DEFAULT_JOINT.dynamics.friction,
                 },
-                axis: mjcfJoint?.axis || { x: 0, y: 0, z: 1 }
+                hardware: {
+                    ...DEFAULT_JOINT.hardware,
+                    armature: mjcfJoint?.armature ?? DEFAULT_JOINT.hardware.armature,
+                },
             };
-            if (mjcfJoint?.range) {
-                joint.limit = {
-                    lower: mjcfJoint.range[0],
-                    upper: mjcfJoint.range[1],
-                    effort: 100,
-                    velocity: 1
-                };
-            }
             joints[jointId] = joint;
         } else {
             rootLinkId = mainLinkId;
         }
 
-        // Process Virtual Links (Pairs 1..N)
+        let virtualLinkIndex = 1;
+
+        // Process remaining pairs (Pairs 1..N)
         for (let i = 1; i < pairs.length; i++) {
             const pair = pairs[i];
-            const subLinkId = `${mainLinkId}_geom_${i}`;
+
+            // Preserve additional collision-only geoms on the same link. The rest of the stack
+            // already understands `collisionBodies`, so emitting synthetic links here only makes
+            // URDF exports drift away from the source MJCF topology.
+            if (!pair.visual && pair.collision) {
+                const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
+                const extraCollision: UrdfLink['collision'] = {
+                    ...DEFAULT_LINK.collision,
+                    type: colGeo.type,
+                    dimensions: colGeo.dimensions,
+                    origin: colGeo.origin,
+                    meshPath: colGeo.meshPath,
+                };
+
+                if (colGeo.color) {
+                    extraCollision.color = colGeo.color;
+                }
+
+                mainLink.collisionBodies = [
+                    ...(mainLink.collisionBodies || []),
+                    extraCollision,
+                ];
+                continue;
+            }
+
+            const subLinkId = `${mainLinkId}_geom_${virtualLinkIndex++}`;
             const subJointId = `fixed_${subLinkId}`;
 
             // Virtual Link Visual
             let subVisual = { ...DEFAULT_LINK.visual };
             if (pair.visual) {
-                subVisual = processGeometry(pair.visual);
+                subVisual = processGeometry(pair.visual, linkFrameOffsetLocal);
+                assignLinkMaterial(subLinkId, pair.visual);
             } else {
                 subVisual.type = GeometryType.NONE;
             }
@@ -480,7 +970,7 @@ function mjcfToRobotState(
             // Virtual Link Collision
             let subCollision = { ...DEFAULT_LINK.collision };
             if (pair.collision) {
-                const colGeo = processGeometry(pair.collision);
+                const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
                 subCollision = {
                     ...subCollision,
                     type: colGeo.type,
@@ -488,7 +978,7 @@ function mjcfToRobotState(
                     origin: colGeo.origin,
                     meshPath: colGeo.meshPath
                 };
-                if (pair.collision.rgba) {
+                if (colGeo.color) {
                     subCollision.color = colGeo.color;
                 }
             } else {
@@ -514,7 +1004,8 @@ function mjcfToRobotState(
                 parentLinkId: mainLinkId,
                 childLinkId: subLinkId,
                 origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                axis: { x: 0, y: 0, z: 1 }
+                axis: { x: 0, y: 0, z: 1 },
+                limit: undefined as UrdfJoint['limit'],
             };
             joints[subJointId] = subJoint;
         }
@@ -538,6 +1029,7 @@ function mjcfToRobotState(
         links,
         joints,
         rootLinkId,
+        ...(Object.keys(materials).length > 0 ? { materials } : {}),
         selection: { type: 'link', id: rootLinkId }
     };
 }
@@ -548,24 +1040,25 @@ export function parseMJCF(xmlContent: string): RobotState | null {
         return null;
     }
 
-    const worldBody = toParserBody(parsedModel.worldBody, parsedModel.compilerSettings);
+    const parserModelWorldBody = normalizeMultiJointBodies(parsedModel.worldBody);
+    const worldBody = toParserBody(parserModelWorldBody, parsedModel.compilerSettings);
     const rootBodies = shouldPreserveSyntheticWorldRoot(worldBody)
         ? [worldBody]
         : worldBody.children;
 
-    return mjcfToRobotState(
+    const robot = mjcfToRobotState(
         parsedModel.modelName,
         rootBodies,
         parsedModel.meshMap,
+        parsedModel.materialMap,
+        parsedModel.textureMap,
+        toParserActuatorMap(parsedModel.actuatorMap),
     );
+
+    robot.closedLoopConstraints = buildClosedLoopConstraints(robot, parsedModel.connectConstraints);
+    return robot;
 }
 
 export function isMJCF(xmlContent: string): boolean {
-    try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(xmlContent, 'text/xml');
-        return doc.querySelector('mujoco') !== null;
-    } catch {
-        return false;
-    }
+    return looksLikeMJCFDocument(xmlContent);
 }

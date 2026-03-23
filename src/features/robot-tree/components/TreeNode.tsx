@@ -1,30 +1,21 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
-import {
-  ArrowRightLeft,
-  Box,
-  ChevronDown,
-  ChevronRight,
-  Edit3,
-  Eye,
-  EyeOff,
-  Lock,
-  Move3D,
-  Plane,
-  Plus,
-  RefreshCw,
-  RotateCw,
-  Shapes,
-  Shield,
-  Trash2,
-} from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
-import {
-  getCollisionGeometryByObjectIndex,
-  removeCollisionGeometryByObjectIndex,
-} from '@/core/robot';
+import { getCollisionGeometryByObjectIndex, isTransparentDisplayLink } from '@/core/robot';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
-import { GeometryType, JointType, type AppMode, type RobotState } from '@/types';
+import { GeometryType, type AppMode, type RobotState } from '@/types';
 import { useShallow } from 'zustand/react/shallow';
+import { TreeNodeContextMenu } from './tree-node/TreeNodeContextMenu';
+import { TreeNodeGeometrySection } from './tree-node/TreeNodeGeometrySection';
+import { TreeNodeJointBranchList } from './tree-node/TreeNodeJointBranchList';
+import { TreeNodeLinkRow } from './tree-node/TreeNodeLinkRow';
+import { getTreeConnectorRailClass, scrollElementIntoView } from './tree-node/presentation';
+import { shouldAutoExpandTreeGeometryDetails } from './tree-node/treeGeometryDisclosure';
+import type {
+  TreeNodeContextMenuState,
+  TreeNodeEditingTarget,
+  VisibleCollisionBody,
+} from './tree-node/types';
+import { useTreeNodeActions } from './tree-node/useTreeNodeActions';
 
 export interface TreeNodeProps {
   linkId: string;
@@ -42,97 +33,7 @@ export interface TreeNodeProps {
   mode: AppMode;
   t: TranslationKeys;
   depth?: number;
-}
-
-function getJointTypeLabel(type: JointType, t: TranslationKeys): string {
-  switch (type) {
-    case JointType.FIXED:
-      return t.jointTypeFixed;
-    case JointType.REVOLUTE:
-      return t.jointTypeRevolute;
-    case JointType.CONTINUOUS:
-      return t.jointTypeContinuous;
-    case JointType.PRISMATIC:
-      return t.jointTypePrismatic;
-    case JointType.PLANAR:
-      return t.jointTypePlanar;
-    case JointType.FLOATING:
-      return t.jointTypeFloating;
-    default:
-      return type;
-  }
-}
-
-function getJointTypeIcon(type: JointType) {
-  switch (type) {
-    case JointType.FIXED:
-      return Lock;
-    case JointType.REVOLUTE:
-      return RotateCw;
-    case JointType.CONTINUOUS:
-      return RefreshCw;
-    case JointType.PRISMATIC:
-      return ArrowRightLeft;
-    case JointType.PLANAR:
-      return Plane;
-    case JointType.FLOATING:
-      return Move3D;
-    default:
-      return ArrowRightLeft;
-  }
-}
-
-function scrollElementIntoView(element: HTMLElement | null) {
-  if (!element) return;
-  window.requestAnimationFrame(() => {
-    element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  });
-}
-
-const treeRowHoverClass = 'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
-const treeRowHoveredClass = 'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15 dark:bg-system-blue/18 dark:ring-system-blue/25';
-const treeRowSelectedClass = 'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
-const treeRowAttentionClass = 'bg-system-blue/15 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/30 dark:bg-system-blue/25 dark:ring-system-blue/40';
-
-function resolveTreeRowStateClass(
-  baseClassName: string,
-  state: {
-    isHovered: boolean;
-    isSelected: boolean;
-    isAttentionHighlighted: boolean;
-  }
-) {
-  if (state.isAttentionHighlighted) {
-    return `${treeRowAttentionClass} ${baseClassName}`;
-  }
-  if (state.isSelected) {
-    return `${treeRowSelectedClass} ${baseClassName}`;
-  }
-  if (state.isHovered) {
-    return `${treeRowHoveredClass} ${baseClassName}`;
-  }
-  return `${treeRowHoverClass} ${baseClassName}`;
-}
-
-function getTreeConnectorRailClass(emphasized: boolean): string {
-  return emphasized
-    ? 'bg-system-blue/20 dark:bg-system-blue/30'
-    : 'bg-border-black/60 dark:bg-border-strong/55';
-}
-
-function getTreeConnectorElbowClass(emphasized: boolean): string {
-  return emphasized
-    ? 'absolute rounded-bl-md border-b-[1.5px] border-l-[1.5px] border-system-blue/55 dark:border-system-blue/65'
-    : 'absolute rounded-bl-md border-b-[1.5px] border-l-[1.5px] border-border-strong/80 dark:border-border-strong/70';
-}
-
-function getTreeConnectorElbowStyle(indentPx: number): React.CSSProperties {
-  return {
-    left: `${indentPx * -1}px`,
-    top: 'calc(50% - 10px)',
-    width: `${indentPx}px`,
-    height: '10px',
-  };
+  readOnly?: boolean;
 }
 
 export const TreeNode = memo(({
@@ -151,28 +52,20 @@ export const TreeNode = memo(({
   mode,
   t,
   depth = 0,
+  readOnly = false,
 }: TreeNodeProps) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isGeometryExpanded, setIsGeometryExpanded] = useState(showGeometryDetailsByDefault);
-  const [editingTarget, setEditingTarget] = useState<{
-    type: 'link' | 'joint';
-    id: string;
-    draft: string;
-  } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    target:
-      | { type: 'link'; id: string; name: string }
-      | { type: 'joint'; id: string; name: string }
-      | { type: 'geometry'; linkId: string; subType: 'visual' | 'collision'; objectIndex: number };
-  } | null>(null);
+  const [editingTarget, setEditingTarget] = useState<TreeNodeEditingTarget | null>(null);
+  const [contextMenu, setContextMenu] = useState<TreeNodeContextMenuState | null>(null);
+
   const renameInputRef = useRef<HTMLInputElement>(null);
   const linkRowRef = useRef<HTMLDivElement>(null);
   const visualRowRef = useRef<HTMLDivElement>(null);
   const primaryCollisionRowRef = useRef<HTMLDivElement>(null);
   const collisionBodyRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const jointRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
   const { hoveredSelection, attentionSelection, setHoveredSelection, clearHover, setSelection } = useSelectionStore(
     useShallow((state) => ({
       hoveredSelection: state.hoveredSelection,
@@ -180,7 +73,7 @@ export const TreeNode = memo(({
       setHoveredSelection: state.setHoveredSelection,
       clearHover: state.clearHover,
       setSelection: state.setSelection,
-    }))
+    })),
   );
 
   const link = robot.links[linkId];
@@ -221,21 +114,26 @@ export const TreeNode = memo(({
     return null;
   }
 
+  const effectiveHoveredSelection = readOnly ? { type: null, id: null } : hoveredSelection;
+  const effectiveAttentionSelection = readOnly ? { type: null, id: null } : attentionSelection;
+
+  const linkRowIndentPx = 8;
+  const jointRowIndentPx = 10;
+  const geometryRowIndentPx = 24;
   const childJoints = childJointsByParent?.[linkId] ?? [];
   const hasChildren = childJoints.length > 0;
-
-  const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
+  const hasExpandableContent = hasChildren;
+  const isTransparentLink = isTransparentDisplayLink(robot, linkId);
   const isSkeleton = mode === 'skeleton';
-
   const isVisible = link.visible !== false;
   const isVisualVisible = link.visual.visible !== false;
   const isPrimaryCollisionVisible = link.collision.visible !== false;
   const hasPrimaryCollision = Boolean(link.collision?.type && link.collision.type !== GeometryType.NONE);
+  const hasVisual = Boolean(link.visual?.type && link.visual.type !== GeometryType.NONE);
   const selectedObjectIndex = robot.selection.objectIndex ?? 0;
-  const hasVisual = link.visual?.type && link.visual.type !== 'none';
-  const collisionBodyCount = (link.collision?.type && link.collision.type !== 'none' ? 1 : 0)
+  const collisionBodyCount = (hasPrimaryCollision ? 1 : 0)
     + (link.collisionBodies || []).filter((body) => body.type !== GeometryType.NONE).length;
-  const visibleCollisionBodies = (link.collisionBodies || [])
+  const visibleCollisionBodies: VisibleCollisionBody[] = (link.collisionBodies || [])
     .map((body, bodyIndex) => ({ body, bodyIndex }))
     .filter(({ body }) => body.type !== GeometryType.NONE)
     .map((entry, visibleIndex) => ({
@@ -243,52 +141,45 @@ export const TreeNode = memo(({
       objectIndex: (hasPrimaryCollision ? 1 : 0) + visibleIndex,
     }));
   const hasCollision = collisionBodyCount > 0;
-  const hasGeometry = Boolean(hasVisual || hasCollision);
-  const hasExpandableContent = hasChildren;
+  const hasGeometry = hasVisual || hasCollision;
+  const isLinkSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const isEditingLink = editingTarget?.type === 'link' && editingTarget.id === linkId;
-  const isLinkHovered = hoveredSelection.type === 'link' && hoveredSelection.id === linkId;
-  const isLinkAttentionHighlighted = attentionSelection.type === 'link' && attentionSelection.id === linkId;
+  const isLinkHovered = effectiveHoveredSelection.type === 'link' && effectiveHoveredSelection.id === linkId;
+  const isLinkAttentionHighlighted = effectiveAttentionSelection.type === 'link' && effectiveAttentionSelection.id === linkId;
   const isVisualSelected = isLinkSelected
     && robot.selection.subType === 'visual'
     && (robot.selection.objectIndex === undefined || selectedObjectIndex === 0);
-  const isVisualHovered = matchesSelection(
-    hoveredSelection,
-    { type: 'link', id: linkId, subType: 'visual', objectIndex: 0 }
-  );
-  const isVisualAttentionHighlighted = matchesSelection(
-    attentionSelection,
-    { type: 'link', id: linkId, subType: 'visual', objectIndex: 0 }
-  );
   const isPrimaryCollisionSelected = isLinkSelected
     && robot.selection.subType === 'collision'
     && selectedObjectIndex === 0;
-  const isPrimaryCollisionHovered = matchesSelection(
-    hoveredSelection,
-    { type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }
-  );
-  const isPrimaryCollisionAttentionHighlighted = matchesSelection(
-    attentionSelection,
-    { type: 'link', id: linkId, subType: 'collision', objectIndex: 0 }
-  );
   const hasSelectedExtraCollision = visibleCollisionBodies.some(
-    ({ objectIndex }) => objectIndex === selectedObjectIndex
+    ({ objectIndex }) => objectIndex === selectedObjectIndex,
   );
+  const shouldAutoExpandGeometryDetails = shouldAutoExpandTreeGeometryDetails({
+    showGeometryDetailsByDefault,
+    selectionSubType: isLinkSelected ? robot.selection.subType : undefined,
+    hasSelectedExtraCollision: isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision,
+  });
   const selectionInBranch = selectionBranchLinkIds?.has(linkId) ?? false;
   const contextMenuLink = contextMenu?.target.type === 'link' ? robot.links[contextMenu.target.id] : null;
   const contextMenuHasVisual = Boolean(contextMenuLink?.visual?.type && contextMenuLink.visual.type !== GeometryType.NONE);
   const contextMenuHasCollision = Boolean(
     (contextMenuLink?.collision?.type && contextMenuLink.collision.type !== GeometryType.NONE)
-      || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE)
+      || (contextMenuLink?.collisionBodies || []).some((body) => body.type !== GeometryType.NONE),
   );
-  const contextMenuGeometry = contextMenu?.target.type === 'geometry'
+  const contextMenuGeometryType = contextMenu?.target.type === 'geometry'
     ? (() => {
       const targetLink = robot.links[contextMenu.target.linkId];
       if (!targetLink) return null;
       return contextMenu.target.subType === 'visual'
-        ? targetLink.visual
-        : getCollisionGeometryByObjectIndex(targetLink, contextMenu.target.objectIndex)?.geometry || null;
+        ? targetLink.visual?.type ?? null
+        : getCollisionGeometryByObjectIndex(targetLink, contextMenu.target.objectIndex)?.geometry?.type ?? null;
     })()
     : null;
+  const isLinkConnectorHighlighted = isLinkSelected
+    || isLinkHovered
+    || isLinkAttentionHighlighted
+    || selectionInBranch;
 
   useEffect(() => {
     if (selectionInBranch && hasExpandableContent) {
@@ -301,20 +192,10 @@ export const TreeNode = memo(({
   }, [showGeometryDetailsByDefault]);
 
   useEffect(() => {
-    if (
-      isVisualSelected
-      || isPrimaryCollisionSelected
-      || (isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)
-    ) {
+    if (shouldAutoExpandGeometryDetails) {
       setIsGeometryExpanded(true);
     }
-  }, [
-    isVisualSelected,
-    isPrimaryCollisionSelected,
-    isLinkSelected,
-    robot.selection.subType,
-    hasSelectedExtraCollision,
-  ]);
+  }, [shouldAutoExpandGeometryDetails]);
 
   useEffect(() => {
     if (isLinkSelected && !robot.selection.subType) {
@@ -335,7 +216,9 @@ export const TreeNode = memo(({
   }, [isGeometryExpanded, isPrimaryCollisionSelected]);
 
   useEffect(() => {
-    if (!(isGeometryExpanded && isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)) return;
+    if (!(isGeometryExpanded && isLinkSelected && robot.selection.subType === 'collision' && hasSelectedExtraCollision)) {
+      return;
+    }
     scrollElementIntoView(collisionBodyRowRefs.current[selectedObjectIndex]);
   }, [isGeometryExpanded, isLinkSelected, robot.selection.subType, selectedObjectIndex, hasSelectedExtraCollision]);
 
@@ -343,500 +226,145 @@ export const TreeNode = memo(({
     if (!isExpanded || robot.selection.type !== 'joint' || !robot.selection.id) return;
     scrollElementIntoView(jointRowRefs.current[robot.selection.id] || null);
   }, [isExpanded, robot.selection.type, robot.selection.id]);
+  const {
+    handleSelectVisual,
+    handleSelectPrimaryCollision,
+    handleSelectCollisionBody,
+    toggleVisualVisibility,
+    togglePrimaryCollisionVisibility,
+    toggleCollisionBodyVisibility,
+    commitRenaming,
+    cancelRenaming,
+    updateRenameDraft,
+    handleNameDoubleClick,
+    openContextMenu,
+    handleRenameMenuAction,
+    handleAddChildMenuAction,
+    handleDeleteMenuAction,
+    handleAddCollisionMenuAction,
+    handleDeleteGeometryMenuAction,
+    handleDeleteLinkGeometry,
+  } = useTreeNodeActions({
+    linkId,
+    link,
+    robot,
+    isSkeleton,
+    isVisualVisible,
+    isPrimaryCollisionVisible,
+    editingTarget,
+    contextMenu,
+    onSelect,
+    onSelectGeometry,
+    onAddChild,
+    onAddCollisionBody,
+    onDelete,
+    onUpdate,
+    setSelection,
+    setIsExpanded,
+    setIsGeometryExpanded,
+    setEditingTarget,
+    setContextMenu,
+  });
 
-  const handleSelectVisual = () => {
-    setIsGeometryExpanded(true);
-    if (onSelectGeometry) {
-      onSelectGeometry(linkId, 'visual', 0);
-      return;
-    }
-    onSelect('link', linkId, 'visual');
-  };
-
-  const handleSelectPrimaryCollision = () => {
-    setIsGeometryExpanded(true);
-    if (onSelectGeometry) {
-      onSelectGeometry(linkId, 'collision', 0);
-      return;
-    }
-    onSelect('link', linkId, 'collision');
-  };
-
-  const handleSelectCollisionBody = (objectIndex: number) => {
-    setIsGeometryExpanded(true);
-    if (onSelectGeometry) {
-      onSelectGeometry(linkId, 'collision', objectIndex);
-      return;
-    }
-    onSelect('link', linkId, 'collision');
-  };
-
-  const toggleVisualVisibility = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onUpdate('link', linkId, {
-      ...link,
-      visual: {
-        ...link.visual,
-        visible: !isVisualVisible,
-      },
-    });
-  };
-
-  const togglePrimaryCollisionVisibility = (event: React.MouseEvent) => {
-    event.stopPropagation();
-    onUpdate('link', linkId, {
-      ...link,
-      collision: {
-        ...link.collision,
-        visible: !isPrimaryCollisionVisible,
-      },
-    });
-  };
-
-  const toggleCollisionBodyVisibility = (event: React.MouseEvent, bodyIndex: number) => {
-    event.stopPropagation();
-    const nextBodies = [...(link.collisionBodies || [])];
-    const targetBody = nextBodies[bodyIndex];
-    if (!targetBody) return;
-
-    nextBodies[bodyIndex] = {
-      ...targetBody,
-      visible: targetBody.visible === false,
-    };
-
-    onUpdate('link', linkId, {
-      ...link,
-      collisionBodies: nextBodies,
-    });
-  };
-
-  const geometryVisibilityButtonClass = (active: boolean) => `p-1 rounded transition-colors ${
-    active
-      ? 'text-text-tertiary hover:text-text-primary hover:bg-element-hover'
-      : 'text-text-secondary hover:text-text-primary hover:bg-element-hover'
-  }`;
-  const linkRowIndentPx = 8;
-  const jointRowIndentPx = 10;
-  const geometryRowIndentPx = 24;
-  const selectedLinkActionClass = 'text-system-blue hover:bg-system-blue/15 hover:text-system-blue-hover dark:hover:bg-system-blue/25';
-  const isLinkConnectorHighlighted = isLinkSelected
-    || isLinkHovered
-    || isLinkAttentionHighlighted
-    || selectionInBranch;
-
-  const beginRenaming = (
-    type: 'link' | 'joint',
-    id: string,
-    currentName: string
-  ) => {
-    onSelect(type, id);
-    setEditingTarget({ type, id, draft: currentName });
-  };
-
-  const cancelRenaming = () => {
-    setEditingTarget(null);
-  };
-
-  const commitRenaming = () => {
-    if (!editingTarget) return;
-    const nextName = editingTarget.draft.trim();
-    if (!nextName) {
-      setEditingTarget(null);
-      return;
+  if (isTransparentLink) {
+    if (!hasChildren) {
+      return null;
     }
 
-    if (editingTarget.type === 'link') {
-      const targetLink = robot.links[editingTarget.id];
-      if (targetLink && targetLink.name !== nextName) {
-        onUpdate('link', editingTarget.id, { ...targetLink, name: nextName });
-      }
-    } else {
-      const targetJoint = robot.joints[editingTarget.id];
-      if (targetJoint && targetJoint.name !== nextName) {
-        onUpdate('joint', editingTarget.id, { ...targetJoint, name: nextName });
-      }
-    }
-
-    setEditingTarget(null);
-  };
-
-  const updateRenameDraft = (value: string) => {
-    setEditingTarget((prev) => (prev ? { ...prev, draft: value } : prev));
-  };
-
-  const handleNameDoubleClick = (
-    event: React.MouseEvent,
-    type: 'link' | 'joint',
-    id: string,
-    currentName: string
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    beginRenaming(type, id, currentName);
-  };
-
-  const openContextMenu = (
-    event: React.MouseEvent,
-    target:
-      | { type: 'link'; id: string; name: string }
-      | { type: 'joint'; id: string; name: string }
-      | { type: 'geometry'; linkId: string; subType: 'visual' | 'collision'; objectIndex: number }
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const menuWidth = 170;
-    const menuHeight = target.type === 'geometry'
-      ? 44
-      : target.type === 'link'
-        ? (isSkeleton ? 260 : 236)
-        : (isSkeleton ? 176 : 144);
-    const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
-    const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
-    setContextMenu({
-      target,
-      x: Math.min(event.clientX, maxX),
-      y: Math.min(event.clientY, maxY),
-    });
-  };
-
-  const handleRenameMenuAction = () => {
-    if (!contextMenu || (contextMenu.target.type !== 'link' && contextMenu.target.type !== 'joint')) return;
-    beginRenaming(contextMenu.target.type, contextMenu.target.id, contextMenu.target.name);
-    setContextMenu(null);
-  };
-
-  const resolveContextMenuTargetLinkId = (): string | null => {
-    if (!contextMenu) return null;
-    if (contextMenu.target.type === 'link') return contextMenu.target.id;
-    if (contextMenu.target.type === 'joint') {
-      return robot.joints[contextMenu.target.id]?.childLinkId || null;
-    }
-    return null;
-  };
-
-  const handleAddChildMenuAction = () => {
-    const targetLinkId = resolveContextMenuTargetLinkId();
-    if (!targetLinkId) {
-      setContextMenu(null);
-      return;
-    }
-    onAddChild(targetLinkId);
-    setIsExpanded(true);
-    setContextMenu(null);
-  };
-
-  const handleDeleteMenuAction = () => {
-    if (!contextMenu) return;
-    if (contextMenu.target.type === 'link') {
-      onDelete(contextMenu.target.id);
-      setContextMenu(null);
-      return;
-    }
-    if (contextMenu.target.type === 'joint') {
-      const targetJoint = robot.joints[contextMenu.target.id];
-      if (targetJoint) {
-        onDelete(targetJoint.childLinkId);
-      }
-      setContextMenu(null);
-    }
-  };
-
-  const handleAddCollisionMenuAction = () => {
-    const targetLinkId = resolveContextMenuTargetLinkId();
-    if (!targetLinkId) {
-      setContextMenu(null);
-      return;
-    }
-    onAddCollisionBody(targetLinkId);
-    setIsGeometryExpanded(true);
-    setContextMenu(null);
-  };
-
-  const handleDeleteGeometryMenuAction = () => {
-    if (!contextMenu || contextMenu.target.type !== 'geometry') return;
-    const { linkId: targetLinkId, subType, objectIndex } = contextMenu.target;
-    const targetLink = robot.links[targetLinkId];
-    if (!targetLink) {
-      setContextMenu(null);
-      return;
-    }
-
-    const deletedGeometrySelection = {
-      type: 'link' as const,
-      id: targetLinkId,
-      subType,
-      objectIndex,
-    };
-    const shouldSyncSelection = matchesSelection(robot.selection, deletedGeometrySelection);
-
-    if (subType === 'collision') {
-      const { link: nextLink, removed, nextObjectIndex } = removeCollisionGeometryByObjectIndex(
-        targetLink,
-        objectIndex,
-      );
-
-      if (!removed) {
-        setContextMenu(null);
-        return;
-      }
-
-      onUpdate('link', targetLinkId, nextLink);
-      if (shouldSyncSelection) {
-        if (nextObjectIndex === null) {
-          setSelection({ type: 'link', id: targetLinkId });
-        } else {
-          setSelection({
-            type: 'link',
-            id: targetLinkId,
-            subType: 'collision',
-            objectIndex: nextObjectIndex,
-          });
-        }
-      }
-
-      setContextMenu(null);
-      return;
-    }
-
-    const geometry = targetLink.visual;
-    if (geometry.type === GeometryType.NONE) {
-      setContextMenu(null);
-      return;
-    }
-
-    onUpdate('link', targetLinkId, {
-      ...targetLink,
-      visual: {
-        ...geometry,
-        type: GeometryType.NONE,
-        meshPath: undefined,
-      },
-    });
-
-    if (shouldSyncSelection) {
-      setSelection({ type: 'link', id: targetLinkId });
-    }
-
-    setContextMenu(null);
-  };
-
-  const handleDeleteLinkGeometry = (subType: 'visual' | 'collision') => {
-    if (!contextMenu || contextMenu.target.type !== 'link') return;
-    const targetLink = robot.links[contextMenu.target.id];
-    if (!targetLink) {
-      setContextMenu(null);
-      return;
-    }
-
-    if (subType === 'collision') {
-      const hasAnyCollision = targetLink.collision.type !== GeometryType.NONE
-        || (targetLink.collisionBodies || []).some((body) => body.type !== GeometryType.NONE);
-      if (!hasAnyCollision) {
-        setContextMenu(null);
-        return;
-      }
-
-      onUpdate('link', contextMenu.target.id, {
-        ...targetLink,
-        collision: {
-          ...targetLink.collision,
-          type: GeometryType.NONE,
-          meshPath: undefined,
-        },
-        collisionBodies: [],
-      });
-      if (
-        robot.selection.type === 'link'
-        && robot.selection.id === contextMenu.target.id
-        && robot.selection.subType === 'collision'
-      ) {
-        setSelection({ type: 'link', id: contextMenu.target.id });
-      }
-      setContextMenu(null);
-      return;
-    }
-
-    const geometry = targetLink[subType];
-    if (!geometry || geometry.type === GeometryType.NONE) {
-      setContextMenu(null);
-      return;
-    }
-
-    onUpdate('link', contextMenu.target.id, {
-      ...targetLink,
-      [subType]: {
-        ...geometry,
-        type: GeometryType.NONE,
-        meshPath: undefined,
-      },
-    });
-    if (
-      robot.selection.type === 'link'
-      && robot.selection.id === contextMenu.target.id
-      && robot.selection.subType === 'visual'
-    ) {
-      setSelection({ type: 'link', id: contextMenu.target.id });
-    }
-    setContextMenu(null);
-  };
+    return (
+      <TreeNodeJointBranchList
+        childJoints={childJoints}
+        robotSelection={robot.selection}
+        hoveredSelection={effectiveHoveredSelection}
+        attentionSelection={effectiveAttentionSelection}
+        selectionBranchLinkIds={selectionBranchLinkIds}
+        editingTarget={editingTarget}
+        renameInputRef={renameInputRef}
+        jointRowRefs={jointRowRefs}
+        jointRowIndentPx={jointRowIndentPx}
+        isSkeleton={isSkeleton}
+        t={t}
+        readOnly={readOnly}
+        onSelect={onSelect}
+        onDelete={onDelete}
+        onSetHoveredSelection={setHoveredSelection}
+        onClearHover={clearHover}
+        onOpenContextMenu={openContextMenu}
+        onUpdateRenameDraft={updateRenameDraft}
+        onCommitRenaming={commitRenaming}
+        onCancelRenaming={cancelRenaming}
+        onNameDoubleClick={handleNameDoubleClick}
+        renderChildNode={(childLinkId) => (
+          <TreeNode
+            linkId={childLinkId}
+            robot={robot}
+            showGeometryDetailsByDefault={showGeometryDetailsByDefault}
+            childJointsByParent={childJointsByParent}
+            selectionBranchLinkIds={selectionBranchLinkIds}
+            onSelect={onSelect}
+            onSelectGeometry={onSelectGeometry}
+            onFocus={onFocus}
+            onAddChild={onAddChild}
+            onAddCollisionBody={onAddCollisionBody}
+            onDelete={onDelete}
+            onUpdate={onUpdate}
+            mode={mode}
+            t={t}
+            depth={depth}
+            readOnly={readOnly}
+          />
+        )}
+      />
+    );
+  }
 
   return (
     <div className="relative">
-      <div
-        ref={linkRowRef}
-        className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-all duration-200 ${
-          resolveTreeRowStateClass('text-text-primary dark:text-text-secondary', {
-            isHovered: isLinkHovered,
-            isSelected: isLinkSelected,
-            isAttentionHighlighted: isLinkAttentionHighlighted,
-          })
-        }`}
-        onClick={() => onSelect('link', linkId)}
-        onDoubleClick={() => onFocus && onFocus(linkId)}
-        onContextMenu={(event) => openContextMenu(event, { type: 'link', id: linkId, name: link.name })}
-        onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId })}
-        onMouseLeave={clearHover}
-        title={link.name || linkId}
-        style={{ marginLeft: depth > 0 ? `${linkRowIndentPx}px` : '0' }}
-      >
-        {depth > 0 && (
-          <div
-            className={getTreeConnectorElbowClass(isLinkConnectorHighlighted)}
-            style={getTreeConnectorElbowStyle(linkRowIndentPx)}
-          />
-        )}
-
-        <button
-          type="button"
-          className={`w-6 h-6 flex items-center justify-center shrink-0 mr-0.5 rounded
-            ${hasExpandableContent
-              ? (isLinkSelected || isLinkHovered || isLinkAttentionHighlighted)
-                ? 'hover:bg-system-blue/15 dark:hover:bg-system-blue/25 cursor-pointer transition-colors'
-                : 'hover:bg-element-hover cursor-pointer transition-colors'
-              : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (hasExpandableContent) {
-              setIsExpanded(!isExpanded);
-            }
+      <div ref={linkRowRef}>
+        <TreeNodeLinkRow
+          linkId={linkId}
+          linkName={link.name}
+          depth={depth}
+          linkRowIndentPx={linkRowIndentPx}
+          hasExpandableContent={hasExpandableContent}
+          isExpanded={isExpanded}
+          isEditingLink={isEditingLink}
+          editingTarget={editingTarget}
+          renameInputRef={renameInputRef}
+          hasGeometry={hasGeometry}
+          hasVisual={hasVisual}
+          hasCollision={hasCollision}
+          geometryCount={Number(Boolean(hasVisual)) + collisionBodyCount}
+          isGeometryExpanded={isGeometryExpanded}
+          isVisible={isVisible}
+          isSkeleton={isSkeleton}
+          isSelected={isLinkSelected}
+          isHovered={isLinkHovered}
+          isAttentionHighlighted={isLinkAttentionHighlighted}
+          isConnectorHighlighted={isLinkConnectorHighlighted}
+          t={t}
+          readOnly={readOnly}
+          onSelect={() => onSelect('link', linkId)}
+          onFocus={readOnly ? undefined : (onFocus ? () => onFocus(linkId) : undefined)}
+          onToggleExpanded={() => setIsExpanded(!isExpanded)}
+          onOpenContextMenu={(event) => openContextMenu(event, { type: 'link', id: linkId, name: link.name })}
+          onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId })}
+          onMouseLeave={clearHover}
+          onUpdateRenameDraft={updateRenameDraft}
+          onCommitRenaming={commitRenaming}
+          onCancelRenaming={cancelRenaming}
+          onNameDoubleClick={(event) => handleNameDoubleClick(event, 'link', linkId, link.name)}
+          onToggleGeometryExpanded={() => setIsGeometryExpanded((prev) => !prev)}
+          onToggleVisibility={(event) => {
+            event.stopPropagation();
+            onUpdate('link', linkId, { ...link, visible: !isVisible });
           }}
-          aria-label={`${isExpanded ? t.hide : t.show} ${link.name || linkId}`}
-          title={`${isExpanded ? t.hide : t.show} ${link.name || linkId}`}
-          disabled={!hasExpandableContent}
-        >
-          {hasExpandableContent
-            && (isExpanded ? (
-              <ChevronDown size={12} className={isLinkSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
-            ) : (
-              <ChevronRight size={12} className={isLinkSelected ? 'text-text-secondary' : 'text-text-tertiary'} />
-            ))}
-        </button>
-
-        <div
-          className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
-            ${(isLinkSelected || isLinkHovered || isLinkAttentionHighlighted)
-              ? 'bg-system-blue/15 dark:bg-system-blue/20 border-system-blue/25 dark:border-system-blue/30'
-              : 'bg-system-blue/10 dark:bg-system-blue/12 border-transparent'}`}
-        >
-          <Box size={12} className="text-system-blue" />
-        </div>
-
-        {isEditingLink ? (
-          <input
-            ref={renameInputRef}
-            value={editingTarget?.draft ?? ''}
-            onChange={(event) => updateRenameDraft(event.target.value)}
-            onClick={(event) => event.stopPropagation()}
-            onBlur={commitRenaming}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                commitRenaming();
-              } else if (event.key === 'Escape') {
-                cancelRenaming();
-              }
-            }}
-            className={`text-xs font-medium flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors ${
-              isLinkSelected
-                ? 'bg-panel-bg border-border-strong text-text-primary focus:border-system-blue'
-                : 'bg-input-bg border-border-strong text-text-primary focus:border-system-blue'
-            }`}
-          />
-        ) : (
-          <div className="flex items-center gap-1 min-w-0">
-            <span
-              className="text-xs font-medium whitespace-nowrap select-none truncate"
-              onDoubleClick={(event) => handleNameDoubleClick(event, 'link', linkId, link.name)}
-              onDragStart={(event) => event.preventDefault()}
-              title={link.name}
-            >
-              {link.name}
-            </span>
-          </div>
-        )}
-
-        <div className="flex items-center gap-0.5 ml-1 shrink-0">
-          {hasGeometry && (
-            <button
-              type="button"
-              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${
-                isGeometryExpanded
-                  ? 'bg-element-hover text-text-primary ring-1 ring-inset ring-border-black/60'
-                  : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
-              }`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setIsGeometryExpanded((prev) => !prev);
-              }}
-              title={`${isGeometryExpanded ? t.collapse : t.expand} ${t.visualGeometry} / ${t.collisionGeometry}`}
-              aria-label={`${isGeometryExpanded ? t.collapse : t.expand} ${t.visualGeometry} / ${t.collisionGeometry}`}
-            >
-              {hasVisual && <Shapes size={10} className="text-emerald-500 dark:text-emerald-400" />}
-              {hasCollision && <Shield size={10} className="text-amber-500 dark:text-amber-400" />}
-              <span className="text-[9px] font-semibold tabular-nums text-text-secondary">
-                {Number(Boolean(hasVisual)) + collisionBodyCount}
-              </span>
-              {isGeometryExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-            </button>
-          )}
-
-          <button
-            type="button"
-            className={`p-1 rounded cursor-pointer transition-colors ${
-              isLinkSelected
-                ? selectedLinkActionClass
-                : 'text-text-tertiary hover:bg-system-blue/10 hover:text-text-primary dark:hover:bg-system-blue/20'
-            }`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onUpdate('link', linkId, { ...link, visible: !isVisible });
-            }}
-            title={isVisible ? t.hide : t.show}
-            aria-label={isVisible ? t.hide : t.show}
-          >
-            {isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-          </button>
-
-          {isSkeleton && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAddChild(linkId);
-                setIsExpanded(true);
-              }}
-              className={`p-1 rounded transition-all ${
-                isLinkSelected
-                  ? 'opacity-100 hover:bg-system-blue/15 dark:hover:bg-system-blue/25'
-                  : 'opacity-0 group-hover:opacity-100 hover:bg-system-blue/10 dark:hover:bg-system-blue/20'
-              }`}
-              title={t.addChildJoint}
-              aria-label={t.addChildJoint}
-            >
-              <Plus size={12} />
-            </button>
-          )}
-        </div>
+          onAddChild={(event) => {
+            event.stopPropagation();
+            onAddChild(linkId);
+            setIsExpanded(true);
+          }}
+        />
       </div>
 
       {(isExpanded || isGeometryExpanded) && (
@@ -845,382 +373,98 @@ export const TreeNode = memo(({
             className={`absolute left-0 top-0 bottom-2 w-[1.5px] rounded-full ${getTreeConnectorRailClass(isLinkConnectorHighlighted)}`}
           />
 
-          {isGeometryExpanded && hasVisual && (
-            <div
-              ref={visualRowRef}
-              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
-                resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
-                  isHovered: isVisualHovered,
-                  isSelected: isVisualSelected,
-                  isAttentionHighlighted: isVisualAttentionHighlighted,
-                })
-              }`}
-              onClick={handleSelectVisual}
-              onContextMenu={(event) => {
-                openContextMenu(event, { type: 'geometry', linkId, subType: 'visual', objectIndex: 0 });
-              }}
-              onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'visual', objectIndex: 0 })}
-              onMouseLeave={clearHover}
-              style={{ marginLeft: `${geometryRowIndentPx}px` }}
-              title={t.visualGeometry}
-            >
-              <div
-                className={getTreeConnectorElbowClass(
-                  isVisualSelected || isVisualHovered || isVisualAttentionHighlighted
-                )}
-                style={getTreeConnectorElbowStyle(geometryRowIndentPx)}
-              />
-              <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${(isVisualSelected || isVisualHovered || isVisualAttentionHighlighted) ? 'bg-emerald-500/15 dark:bg-emerald-400/15 border-emerald-500/20 dark:border-emerald-400/20' : 'bg-emerald-500/10 dark:bg-emerald-400/10 border-transparent'}`}>
-                <Shapes size={9} className={(isVisualSelected || isVisualHovered || isVisualAttentionHighlighted) ? 'text-emerald-700 dark:text-emerald-300' : 'text-emerald-500 dark:text-emerald-400'} />
-              </div>
-              <span className="text-[10px] font-medium truncate flex-1 min-w-0">
-                {t.visualGeometry}
-              </span>
-              <button
-                type="button"
-                className={geometryVisibilityButtonClass(isVisualVisible)}
-                onClick={toggleVisualVisibility}
-                title={isVisualVisible ? t.hide : t.show}
-                aria-label={isVisualVisible ? t.hide : t.show}
-              >
-                {isVisualVisible ? <Eye size={10} /> : <EyeOff size={10} />}
-              </button>
-            </div>
+          {isGeometryExpanded && hasGeometry && (
+            <TreeNodeGeometrySection
+              linkId={linkId}
+              link={link}
+              robotSelection={robot.selection}
+              hoveredSelection={effectiveHoveredSelection}
+              attentionSelection={effectiveAttentionSelection}
+              visualRowRef={visualRowRef}
+              primaryCollisionRowRef={primaryCollisionRowRef}
+              collisionBodyRowRefs={collisionBodyRowRefs}
+              geometryRowIndentPx={geometryRowIndentPx}
+              hasPrimaryCollision={hasPrimaryCollision}
+              visibleCollisionBodies={visibleCollisionBodies}
+              isLinkSelected={isLinkSelected}
+              selectedObjectIndex={selectedObjectIndex}
+              t={t}
+              onSetHoveredSelection={setHoveredSelection}
+              onClearHover={clearHover}
+              onOpenContextMenu={openContextMenu}
+              onSelectVisual={handleSelectVisual}
+              onSelectPrimaryCollision={handleSelectPrimaryCollision}
+              onSelectCollisionBody={handleSelectCollisionBody}
+              onToggleVisualVisibility={toggleVisualVisibility}
+              onTogglePrimaryCollisionVisibility={togglePrimaryCollisionVisibility}
+              onToggleCollisionBodyVisibility={toggleCollisionBodyVisibility}
+              readOnly={readOnly}
+            />
           )}
 
-          {isGeometryExpanded && link.collision?.type && link.collision.type !== GeometryType.NONE && (
-            <div
-              ref={primaryCollisionRowRef}
-              className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
-                resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
-                  isHovered: isPrimaryCollisionHovered,
-                  isSelected: isPrimaryCollisionSelected,
-                  isAttentionHighlighted: isPrimaryCollisionAttentionHighlighted,
-                })
-              }`}
-              onClick={handleSelectPrimaryCollision}
-              onContextMenu={(event) => {
-                openContextMenu(event, { type: 'geometry', linkId, subType: 'collision', objectIndex: 0 });
-              }}
-              onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex: 0 })}
-              onMouseLeave={clearHover}
-              style={{ marginLeft: `${geometryRowIndentPx}px` }}
-              title={t.collision}
-            >
-              <div
-                className={getTreeConnectorElbowClass(
-                  isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted
-                )}
-                style={getTreeConnectorElbowStyle(geometryRowIndentPx)}
-              />
-              <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${(isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted) ? 'bg-amber-500/15 dark:bg-amber-400/15 border-amber-500/20 dark:border-amber-400/20' : 'bg-amber-500/10 dark:bg-amber-400/10 border-transparent'}`}>
-                <Shield size={9} className={(isPrimaryCollisionSelected || isPrimaryCollisionHovered || isPrimaryCollisionAttentionHighlighted) ? 'text-amber-700 dark:text-amber-300' : 'text-amber-500 dark:text-amber-400'} />
-              </div>
-              <span className="text-[10px] font-medium truncate flex-1 min-w-0">
-                {t.collision}
-              </span>
-              <button
-                type="button"
-                className={geometryVisibilityButtonClass(isPrimaryCollisionVisible)}
-                onClick={togglePrimaryCollisionVisibility}
-                title={isPrimaryCollisionVisible ? t.hide : t.show}
-                aria-label={isPrimaryCollisionVisible ? t.hide : t.show}
-              >
-                {isPrimaryCollisionVisible ? <Eye size={10} /> : <EyeOff size={10} />}
-              </button>
-            </div>
-          )}
-
-          {isGeometryExpanded && visibleCollisionBodies.map(({ body, bodyIndex, objectIndex }, index) => {
-            const isCollisionBodyHovered = matchesSelection(
-              hoveredSelection,
-              { type: 'link', id: linkId, subType: 'collision', objectIndex }
-            );
-            const isCollisionBodyAttentionHighlighted = matchesSelection(
-              attentionSelection,
-              { type: 'link', id: linkId, subType: 'collision', objectIndex }
-            );
-            const isCollisionBodySelected = isLinkSelected
-              && robot.selection.subType === 'collision'
-              && selectedObjectIndex === objectIndex;
-
-            return (
-              <div
-                ref={(element) => {
-                  collisionBodyRowRefs.current[objectIndex] = element;
-                }}
-                key={`collision-extra-${bodyIndex}`}
-                className={`relative flex items-center py-0.5 px-2 mx-1 my-0.5 rounded-md cursor-pointer transition-all duration-200 ${
-                  resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
-                    isHovered: isCollisionBodyHovered,
-                    isSelected: isCollisionBodySelected,
-                    isAttentionHighlighted: isCollisionBodyAttentionHighlighted,
-                  })
-                }`}
-                onClick={() => handleSelectCollisionBody(objectIndex)}
-                onContextMenu={(event) => {
-                  openContextMenu(event, { type: 'geometry', linkId, subType: 'collision', objectIndex });
-                }}
-                onMouseEnter={() => setHoveredSelection({ type: 'link', id: linkId, subType: 'collision', objectIndex })}
-                onMouseLeave={clearHover}
-                style={{ marginLeft: `${geometryRowIndentPx}px` }}
-                title={`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
-              >
-                <div
-                  className={getTreeConnectorElbowClass(
-                    isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted
-                  )}
-                  style={getTreeConnectorElbowStyle(geometryRowIndentPx)}
+          {isExpanded && hasChildren && (
+            <TreeNodeJointBranchList
+              childJoints={childJoints}
+              robotSelection={robot.selection}
+              hoveredSelection={effectiveHoveredSelection}
+              attentionSelection={effectiveAttentionSelection}
+              selectionBranchLinkIds={selectionBranchLinkIds}
+              editingTarget={editingTarget}
+              renameInputRef={renameInputRef}
+              jointRowRefs={jointRowRefs}
+              jointRowIndentPx={jointRowIndentPx}
+              isSkeleton={isSkeleton}
+              t={t}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onSetHoveredSelection={setHoveredSelection}
+              onClearHover={clearHover}
+              onOpenContextMenu={openContextMenu}
+              onUpdateRenameDraft={updateRenameDraft}
+              onCommitRenaming={commitRenaming}
+              onCancelRenaming={cancelRenaming}
+              onNameDoubleClick={handleNameDoubleClick}
+              readOnly={readOnly}
+              renderChildNode={(childLinkId) => (
+                <TreeNode
+                  linkId={childLinkId}
+                  robot={robot}
+                  showGeometryDetailsByDefault={showGeometryDetailsByDefault}
+                  childJointsByParent={childJointsByParent}
+                  selectionBranchLinkIds={selectionBranchLinkIds}
+                  onSelect={onSelect}
+                  onSelectGeometry={onSelectGeometry}
+                  onFocus={onFocus}
+                  onAddChild={onAddChild}
+                  onAddCollisionBody={onAddCollisionBody}
+                  onDelete={onDelete}
+                  onUpdate={onUpdate}
+                  mode={mode}
+                  t={t}
+                  depth={depth + 1}
+                  readOnly={readOnly}
                 />
-                <div className={`w-3.5 h-3.5 rounded flex items-center justify-center mr-1 shrink-0 border transition-colors ${
-                  (isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted)
-                    ? 'bg-amber-500/15 dark:bg-amber-400/15 border-amber-500/20 dark:border-amber-400/20'
-                    : 'bg-amber-500/10 dark:bg-amber-400/10 border-transparent'
-                }`}>
-                  <Shield
-                    size={9}
-                    className={
-                      (isCollisionBodySelected || isCollisionBodyHovered || isCollisionBodyAttentionHighlighted)
-                        ? 'text-amber-700 dark:text-amber-300'
-                        : 'text-amber-500 dark:text-amber-400'
-                    }
-                  />
-                </div>
-                <span className="text-[10px] font-medium truncate flex-1 min-w-0">
-                  {`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
-                </span>
-                <button
-                  type="button"
-                  className={geometryVisibilityButtonClass(body.visible !== false)}
-                  onClick={(event) => toggleCollisionBodyVisibility(event, bodyIndex)}
-                  title={body.visible !== false ? t.hide : t.show}
-                  aria-label={body.visible !== false ? t.hide : t.show}
-                >
-                  {body.visible !== false ? <Eye size={10} /> : <EyeOff size={10} />}
-                </button>
-              </div>
-            );
-          })}
-
-          {isExpanded && childJoints.map((joint) => {
-            const isJointSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
-            const isJointHovered = matchesSelection(hoveredSelection, { type: 'joint', id: joint.id });
-            const isJointAttentionHighlighted = matchesSelection(attentionSelection, { type: 'joint', id: joint.id });
-            const isEditingJoint = editingTarget?.type === 'joint' && editingTarget.id === joint.id;
-            const jointTypeLabel = getJointTypeLabel(joint.type, t);
-            const JointTypeIcon = getJointTypeIcon(joint.type);
-            const isJointSubtreeHighlighted = isJointSelected
-              || isJointHovered
-              || isJointAttentionHighlighted
-              || (selectionBranchLinkIds?.has(joint.childLinkId) ?? false);
-
-            return (
-              <div key={joint.id} className="relative">
-                <div
-                  ref={(element) => {
-                    jointRowRefs.current[joint.id] = element;
-                  }}
-                  className={`relative flex items-center py-1 px-2 mx-1 my-0.5 rounded-md cursor-pointer group transition-all duration-200 ${
-                    resolveTreeRowStateClass('text-text-secondary dark:text-text-tertiary', {
-                      isHovered: isJointHovered,
-                      isSelected: isJointSelected,
-                      isAttentionHighlighted: isJointAttentionHighlighted,
-                    })
-                  }`}
-                  onClick={() => onSelect('joint', joint.id)}
-                  onContextMenu={(event) => openContextMenu(event, { type: 'joint', id: joint.id, name: joint.name })}
-                  onMouseEnter={() => setHoveredSelection({ type: 'joint', id: joint.id })}
-                  onMouseLeave={clearHover}
-                  title={`${joint.name || joint.id} · ${jointTypeLabel}`}
-                  style={{ marginLeft: `${jointRowIndentPx}px` }}
-                >
-                  <div
-                    className={getTreeConnectorElbowClass(
-                      isJointSelected || isJointHovered || isJointAttentionHighlighted
-                    )}
-                    style={getTreeConnectorElbowStyle(jointRowIndentPx)}
-                  />
-
-                  <div
-                    className={`w-5 h-5 rounded flex items-center justify-center mr-1.5 shrink-0 border transition-colors
-                      ${(isJointSelected || isJointHovered || isJointAttentionHighlighted) ? 'bg-orange-500/15 dark:bg-orange-400/15 border-orange-500/20 dark:border-orange-400/20' : 'bg-orange-500/10 dark:bg-orange-400/10 border-transparent'}`}
-                  >
-                    <JointTypeIcon
-                      size={10}
-                      className={(isJointSelected || isJointHovered || isJointAttentionHighlighted) ? 'text-orange-700 dark:text-orange-300' : 'text-orange-600 dark:text-orange-300'}
-                    />
-                  </div>
-
-                  {isEditingJoint ? (
-                    <input
-                      ref={renameInputRef}
-                      value={editingTarget?.draft ?? ''}
-                      onChange={(event) => updateRenameDraft(event.target.value)}
-                      onClick={(event) => event.stopPropagation()}
-                      onBlur={commitRenaming}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          commitRenaming();
-                        } else if (event.key === 'Escape') {
-                          cancelRenaming();
-                        }
-                      }}
-                      className={`text-[11px] font-medium flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors ${
-                        isJointSelected
-                          ? 'bg-panel-bg border-border-strong text-text-primary focus:border-system-blue'
-                          : 'bg-input-bg border-border-strong text-text-primary focus:border-system-blue'
-                      }`}
-                    />
-                  ) : (
-                    <div className="flex items-center gap-1 min-w-0 flex-1">
-                      <span
-                        className="text-[11px] font-medium whitespace-nowrap select-none truncate"
-                        onDoubleClick={(event) => handleNameDoubleClick(event, 'joint', joint.id, joint.name)}
-                        onDragStart={(event) => event.preventDefault()}
-                        title={joint.name}
-                      >
-                        {joint.name}
-                      </span>
-                    </div>
-                  )}
-
-                  {isSkeleton && (
-                    <div
-                      className={`flex items-center gap-0.5 ml-1 ${
-                        isJointSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(joint.childLinkId);
-                        }}
-                        className={`p-0.5 rounded transition-colors ${
-                          isJointSelected
-                            ? 'hover:bg-panel-bg'
-                            : 'hover:bg-element-hover'
-                        }`}
-                        title={t.deleteBranch}
-                        aria-label={t.deleteBranch}
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="relative" style={{ marginLeft: `${jointRowIndentPx}px` }}>
-                  <div
-                    className={`absolute left-0 top-0 bottom-2 w-[1.5px] rounded-full ${getTreeConnectorRailClass(isJointSubtreeHighlighted)}`}
-                  />
-                  <TreeNode
-                    linkId={joint.childLinkId}
-                    robot={robot}
-                    showGeometryDetailsByDefault={showGeometryDetailsByDefault}
-                    childJointsByParent={childJointsByParent}
-                    selectionBranchLinkIds={selectionBranchLinkIds}
-                    onSelect={onSelect}
-                    onSelectGeometry={onSelectGeometry}
-                    onFocus={onFocus}
-                    onAddChild={onAddChild}
-                    onAddCollisionBody={onAddCollisionBody}
-                    onDelete={onDelete}
-                    onUpdate={onUpdate}
-                    mode={mode}
-                    t={t}
-                    depth={depth + 1}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {contextMenu && (
-        <div
-          className="fixed z-[120] w-[170px] rounded-md border border-border-black bg-panel-bg shadow-xl p-1"
-          style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          {(contextMenu.target.type === 'link' || contextMenu.target.type === 'joint') && (
-            <>
-              <button
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-                onClick={handleRenameMenuAction}
-              >
-                <Edit3 size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-                <span>{t.rename}</span>
-              </button>
-
-              {isSkeleton && (
-                <button
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-                  onClick={handleAddChildMenuAction}
-                >
-                  <Plus size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-                  <span>{t.addChildLink}</span>
-                </button>
               )}
-
-              {contextMenu.target.type === 'link' && contextMenuHasVisual && (
-                <button
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-                  onClick={() => handleDeleteLinkGeometry('visual')}
-                >
-                  <Shapes size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-                  <span>{t.deleteVisualGeometry}</span>
-                </button>
-              )}
-
-              {contextMenu.target.type === 'link' && contextMenuHasCollision && (
-                <button
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-                  onClick={() => handleDeleteLinkGeometry('collision')}
-                >
-                  <Shield size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-                  <span>{t.deleteCollisionGeometry}</span>
-                </button>
-              )}
-
-              {(contextMenu.target.type === 'link' || contextMenu.target.type === 'joint') && (
-                <button
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-text-secondary hover:bg-system-blue/10 dark:hover:bg-system-blue/20 hover:text-system-blue transition-colors group/menu-item"
-                  onClick={handleAddCollisionMenuAction}
-                >
-                  <Shield size={12} className="text-system-blue transition-colors group-hover/menu-item:text-system-blue-hover" />
-                  <span>{t.addCollisionBody}</span>
-                </button>
-              )}
-
-              <button
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-                onClick={handleDeleteMenuAction}
-              >
-                <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-                <span>{t.deleteBranch}</span>
-              </button>
-            </>
-          )}
-
-          {contextMenu.target.type === 'geometry' && contextMenuGeometry && (
-            <button
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-xs text-left text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 transition-colors group/menu-item"
-              onClick={handleDeleteGeometryMenuAction}
-            >
-              <Trash2 size={12} className="transition-colors group-hover/menu-item:text-red-700 dark:group-hover/menu-item:text-red-300" />
-              <span>
-                {contextMenu.target.subType === 'visual' && contextMenuGeometry.type === GeometryType.MESH
-                  ? t.deleteMesh
-                  : contextMenu.target.subType === 'visual'
-                    ? t.deleteVisualGeometry
-                    : t.deleteCollisionGeometry}
-              </span>
-            </button>
+            />
           )}
         </div>
       )}
+
+      <TreeNodeContextMenu
+        contextMenu={contextMenu}
+        contextMenuHasVisual={contextMenuHasVisual}
+        contextMenuHasCollision={contextMenuHasCollision}
+        contextMenuGeometryType={contextMenuGeometryType}
+        isSkeleton={isSkeleton}
+        t={t}
+        readOnly={readOnly}
+        onRenameMenuAction={handleRenameMenuAction}
+        onAddChildMenuAction={handleAddChildMenuAction}
+        onDeleteMenuAction={handleDeleteMenuAction}
+        onAddCollisionMenuAction={handleAddCollisionMenuAction}
+        onDeleteGeometryMenuAction={handleDeleteGeometryMenuAction}
+        onDeleteLinkGeometry={handleDeleteLinkGeometry}
+      />
     </div>
   );
 });

@@ -28,6 +28,8 @@ export function useDraggablePanel(): DraggablePanelState {
     panelX: number;
     panelY: number;
   } | null>(null);
+  const bodyUserSelectRef = useRef('');
+  const bodyCursorRef = useRef('');
 
   const [isOptionsCollapsed, setIsOptionsCollapsed] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -60,6 +62,10 @@ export function useDraggablePanel(): DraggablePanelState {
       panelX: rect.left - containerRect.left,
       panelY: rect.top - containerRect.top,
     };
+    bodyUserSelectRef.current = document.body.style.userSelect;
+    bodyCursorRef.current = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'move';
     setDragging(true);
   }, []);
 
@@ -93,6 +99,8 @@ export function useDraggablePanel(): DraggablePanelState {
   );
 
   const handleMouseUp = useCallback(() => {
+    document.body.style.userSelect = bodyUserSelectRef.current;
+    document.body.style.cursor = bodyCursorRef.current;
     setDragging(false);
     dragStartRef.current = null;
   }, []);
@@ -122,7 +130,11 @@ export function useDraggablePanel(): DraggablePanelState {
     });
 
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    return () => {
+      document.body.style.userSelect = bodyUserSelectRef.current;
+      document.body.style.cursor = bodyCursorRef.current;
+      observer.disconnect();
+    };
   }, []);
 
   return {

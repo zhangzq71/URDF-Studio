@@ -10,6 +10,7 @@ import {
   SegmentedControl, 
   Switch, 
   Button, 
+  IconButton,
   Separator, 
   Label 
 } from '@/shared/components/ui';
@@ -40,6 +41,11 @@ export function SettingsModal() {
     const startY = e.clientY;
     const initialX = settingsPos.x;
     const initialY = settingsPos.y;
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'move';
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const dx = moveEvent.clientX - startX;
@@ -48,6 +54,8 @@ export function SettingsModal() {
     };
 
     const handleMouseUp = () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -76,12 +84,14 @@ export function SettingsModal() {
             {t.settings}
           </h2>
         </div>
-        <button
+        <IconButton
           onClick={closeSettings}
-          className="p-1 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
+          size="sm"
+          variant="close"
+          aria-label={t.close}
         >
           <X className="w-3.5 h-3.5" />
-        </button>
+        </IconButton>
       </div>
 
       {/* Content */}

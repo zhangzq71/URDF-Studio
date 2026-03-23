@@ -36,10 +36,16 @@ SPEC_LIST_KINDS = (
 ATTRS_BY_KIND = {
     "body": [
         "pos",
+        "euler",
         "quat",
         "mocap",
         "gravcomp",
         "mass",
+        "explicitinertial",
+        "ipos",
+        "iquat",
+        "inertia",
+        "fullinertia",
         "childclass",
         "user",
     ],
@@ -65,6 +71,7 @@ ATTRS_BY_KIND = {
         "type",
         "size",
         "pos",
+        "euler",
         "quat",
         "fromto",
         "mass",
@@ -446,6 +453,27 @@ def _spec_counts(elements: dict[str, list[Any]]) -> dict[str, int]:
     }
 
 
+def _compiler_export(spec: mj.MjSpec) -> dict[str, Any]:
+    compiler = _safe_getattr(spec, "compiler")
+    if compiler is None:
+        return {}
+
+    result: dict[str, Any] = {}
+    angle = _value_to_json(_safe_getattr(compiler, "angle"))
+    if angle is not None:
+        result["angle"] = angle
+
+    meshdir = _value_to_json(_safe_getattr(compiler, "meshdir"))
+    if meshdir is not None:
+        result["meshdir"] = meshdir
+
+    texturedir = _value_to_json(_safe_getattr(compiler, "texturedir"))
+    if texturedir is not None:
+        result["texturedir"] = texturedir
+
+    return result
+
+
 def summarize_loaded_mjcf(
     file_path: Path,
     spec: mj.MjSpec,
@@ -458,6 +486,7 @@ def summarize_loaded_mjcf(
         "schema": "urdf-studio.mjcf-inspector/summary-v1",
         "file": str(file_path),
         "model_name": spec.modelname or file_path.stem,
+        "compiler": _compiler_export(spec),
         "counts": _compiled_counts(model),
         "spec_counts": _spec_counts(elements),
         "samples": {
@@ -534,6 +563,7 @@ def build_tree_export(
         "schema": "urdf-studio.mjcf-inspector/tree-v1",
         "file": str(file_path),
         "model_name": spec.modelname or file_path.stem,
+        "compiler": _compiler_export(spec),
         "counts": _compiled_counts(model),
         "spec_counts": _spec_counts(elements),
         "samples": summarize_loaded_mjcf(file_path, spec, model, limit=limit)["samples"],
@@ -553,6 +583,7 @@ def build_full_export(
         "schema": "urdf-studio.mjcf-inspector/full-v1",
         "file": str(file_path),
         "model_name": spec.modelname or file_path.stem,
+        "compiler": _compiler_export(spec),
         "counts": _compiled_counts(model),
         "spec_counts": _spec_counts(elements),
         "samples": summarize_loaded_mjcf(file_path, spec, model, limit=limit)["samples"],

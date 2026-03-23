@@ -50,7 +50,9 @@ export function Providers({ children }: ProvidersProps) {
   // Update document title based on language
   useEffect(() => {
     document.title = t.documentTitle;
-  }, [t]);
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.documentElement.setAttribute('data-lang', lang);
+  }, [lang, t]);
 
   return <>{children}</>;
 }

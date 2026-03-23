@@ -30,6 +30,7 @@ export interface PropertyEditorProps {
   collapsed?: boolean;
   onToggle?: () => void;
   theme: Theme;
+  readOnlyMessage?: string;
 }
 
 export const PropertyEditor: React.FC<PropertyEditorProps> = ({
@@ -43,6 +44,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   lang,
   collapsed,
   onToggle,
+  readOnlyMessage,
 }) => {
   const { selection } = robot;
   const isLink = selection.type === 'link';
@@ -65,6 +67,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   const t = translations[lang];
 
   const { displayWidth, isDragging, handleResizeMouseDown } = useResizablePanel(collapsed);
+
+  const isReadOnlyPreview = Boolean(readOnlyMessage);
 
   return (
     <div
@@ -92,11 +96,16 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       <div className="h-full w-full flex flex-col overflow-hidden">
         <div style={{ width: `${displayWidth}px` }} className="h-full flex flex-col bg-element-bg dark:bg-panel-bg transition-all duration-200 ease-out">
           {/* Header */}
-          <div className="w-full flex items-center justify-between px-3 py-2 border-b border-border-black bg-panel-bg shrink-0 relative z-30">
+          <div className="w-full flex items-center justify-between px-2 py-1 border-b border-border-black bg-panel-bg shrink-0 relative z-30">
             <span className={PROPERTY_EDITOR_PANEL_EYEBROW_CLASS}>{t.properties}</span>
+            {isReadOnlyPreview && (
+              <span className="ml-1.5 rounded-md border border-system-blue/20 bg-system-blue/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.1em] text-system-blue">
+                {t.preview}
+              </span>
+            )}
             {data && (
-              <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
-                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-[0.12em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
+              <div className="ml-1.5 flex min-w-0 flex-1 items-center gap-1.5">
+                <span className={`rounded-md px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.1em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
                   {selection.type}
                 </span>
                 <h2 className={`${PROPERTY_EDITOR_PANEL_TITLE_CLASS} truncate`}>{data.name}</h2>
@@ -105,12 +114,12 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
           </div>
 
           {/* Content */}
-          {!data ? (
+          {!data || isReadOnlyPreview ? (
             <div className="w-full flex-1 flex items-center justify-center p-8 text-text-tertiary text-center">
-              <p className="text-[12px] leading-5">{t.selectLinkOrJoint}</p>
+              <p className="text-[11px] leading-5">{readOnlyMessage ?? t.selectLinkOrJoint}</p>
             </div>
           ) : (
-            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-2.5 space-y-3">
+            <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-1 space-y-1.5">
               {isLink ? (
                 <LinkProperties
                   data={data as UrdfLink}

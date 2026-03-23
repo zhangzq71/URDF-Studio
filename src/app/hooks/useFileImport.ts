@@ -4,14 +4,69 @@
  */
 import { useCallback } from 'react';
 import JSZip from 'jszip';
-import type { RobotFile, MotorSpec, RobotState } from '@/types';
-import { GeometryType } from '@/types';
-import { parseURDF, parseMJCF, isMJCF, parseUSDA, isUSDA, parseXacro, isXacro } from '@/core/parsers';
+import type { RobotData, RobotFile, MotorSpec } from '@/types';
+import { isMJCF, isUSDA, isXacro, parseMJCF, resolveRobotFileData } from '@/core/parsers';
+import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useSelectionStore, useUIStore } from '@/store';
-import { importProject, isMeshFile } from '@/features/file-io';
+import { createAssetUrls, importProject, isMeshFile } from '@/features/file-io';
+import {
+  createImportPathCollisionMap,
+  remapImportedPath,
+} from '@/features/file-io/utils/libraryImportPathCollisions';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { buildImportedRobotStoreState } from './projectRobotStateUtils';
+
+const USD_BINARY_MAGIC = new Uint8Array([80, 88, 82, 45, 85, 83, 68, 67]); // "PXR-USDC"
+const usdTextDecoder = new TextDecoder();
+
+function hasBinaryMagic(bytes: Uint8Array, magic: Uint8Array): boolean {
+  if (bytes.length < magic.length) return false;
+  for (let index = 0; index < magic.length; index += 1) {
+    if (bytes[index] !== magic[index]) return false;
+  }
+  return true;
+}
+
+function isLikelyTextBuffer(bytes: Uint8Array): boolean {
+  const sample = bytes.subarray(0, Math.min(bytes.length, 512));
+  if (sample.some((byte) => byte === 0)) return false;
+
+  const decoded = usdTextDecoder.decode(sample);
+  if (decoded.trimStart().startsWith('#usda')) return true;
+
+  let printableCount = 0;
+  for (const byte of sample) {
+    if (byte === 9 || byte === 10 || byte === 13 || (byte >= 32 && byte <= 126)) {
+      printableCount += 1;
+    }
+  }
+
+  return sample.length > 0 && printableCount / sample.length > 0.9;
+}
+
+function isUsdFamilyPath(path: string): boolean {
+  const lowerPath = path.toLowerCase();
+  return lowerPath.endsWith('.usd')
+    || lowerPath.endsWith('.usda')
+    || lowerPath.endsWith('.usdc')
+    || lowerPath.endsWith('.usdz');
+}
+
+function createImportedUsdFile(name: string, bytes: Uint8Array): RobotFile {
+  const lowerName = name.toLowerCase();
+  const isBinaryUsd = lowerName.endsWith('.usdc')
+    || lowerName.endsWith('.usdz')
+    || hasBinaryMagic(bytes, USD_BINARY_MAGIC);
+  const isTextUsd = !isBinaryUsd && (lowerName.endsWith('.usda') || isLikelyTextBuffer(bytes));
+
+  return {
+    name,
+    content: isTextUsd ? usdTextDecoder.decode(bytes) : '',
+    format: 'usd',
+  };
+}
 
 interface UseFileImportOptions {
   onLoadRobot?: (file: RobotFile) => void;
@@ -33,9 +88,11 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const setMotorLibrary = useAssetsStore((state) => state.setMotorLibrary);
   const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
+  const selectedFile = useAssetsStore((state) => state.selectedFile);
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const assets = useAssetsStore((state) => state.assets);
+  const getUsdPreparedExportCache = useAssetsStore((state) => state.getUsdPreparedExportCache);
   const showImportWarning = useUIStore((state) => state.showImportWarning);
   const t = translations[lang];
 
@@ -50,6 +107,71 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
   const addComponent = useAssemblyStore((state) => state.addComponent);
 
+  const pickPreferredFile = useCallback((files: RobotFile[], filePool: RobotFile[] = files) => {
+    const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
+    const preferredUrdf = robotDefinitionFiles.find((file) => file.format === 'urdf');
+    if (preferredUrdf) {
+      return preferredUrdf;
+    }
+
+    const mjcfFiles = robotDefinitionFiles.filter((file) => file.format === 'mjcf');
+    if (mjcfFiles.length > 0) {
+      const auxiliaryNamePattern = /(actuator|actuators|keyframe|position|velocity|motor|ctrl|filtered)/i;
+
+      const sortedMjcfCandidates = [...mjcfFiles].sort((left, right) => {
+        const leftBase = left.name.split('/').pop() ?? left.name;
+        const rightBase = right.name.split('/').pop() ?? right.name;
+        const leftDir = left.name.split('/').slice(-2, -1)[0] ?? '';
+        const rightDir = right.name.split('/').slice(-2, -1)[0] ?? '';
+        const leftIsScene = /scene/i.test(leftBase);
+        const rightIsScene = /scene/i.test(rightBase);
+        if (leftIsScene !== rightIsScene) {
+          return leftIsScene ? 1 : -1;
+        }
+
+        const leftIsAuxiliary = auxiliaryNamePattern.test(leftBase);
+        const rightIsAuxiliary = auxiliaryNamePattern.test(rightBase);
+        if (leftIsAuxiliary !== rightIsAuxiliary) {
+          return leftIsAuxiliary ? 1 : -1;
+        }
+
+        const leftMatchesDir = leftBase.toLowerCase() === `${leftDir.toLowerCase()}.xml`
+          || leftBase.toLowerCase() === `${leftDir.toLowerCase()}.mjcf`;
+        const rightMatchesDir = rightBase.toLowerCase() === `${rightDir.toLowerCase()}.xml`
+          || rightBase.toLowerCase() === `${rightDir.toLowerCase()}.mjcf`;
+        if (leftMatchesDir !== rightMatchesDir) {
+          return leftMatchesDir ? -1 : 1;
+        }
+
+        if (leftBase.length !== rightBase.length) {
+          return leftBase.length - rightBase.length;
+        }
+
+        return leftBase.localeCompare(rightBase);
+      });
+
+      for (const candidate of sortedMjcfCandidates) {
+        try {
+          const resolved = resolveMJCFSource(candidate, filePool);
+          if (parseMJCF(resolved.content) !== null) {
+            return candidate;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return sortedMjcfCandidates[0] ?? null;
+    }
+
+    const preferredUsd = pickPreferredUsdRootFile(robotDefinitionFiles);
+    if (preferredUsd) {
+      return preferredUsd;
+    }
+
+    return robotDefinitionFiles[0] || files[0] || null;
+  }, []);
+
   // Detect file format from content
   const detectFormat = useCallback((content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | 'xacro' | null => {
     const lowerName = filename.toLowerCase();
@@ -57,7 +179,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     // Check by extension first
     if (lowerName.endsWith('.xacro') || lowerName.endsWith('.urdf.xacro')) return 'xacro';
     if (lowerName.endsWith('.urdf')) return 'urdf';
-    if (lowerName.endsWith('.usda') || lowerName.endsWith('.usdc') || lowerName.endsWith('.usd')) return 'usd';
+    if (lowerName.endsWith('.usda') || lowerName.endsWith('.usdc') || lowerName.endsWith('.usdz') || lowerName.endsWith('.usd')) return 'usd';
 
     // For XML files, check content
     if (lowerName.endsWith('.xml')) {
@@ -77,80 +199,18 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
   // Load a robot file
   const loadRobot = useCallback((file: RobotFile, availableFiles: RobotFile[] = [], currentAssets: Record<string, string> = {}) => {
-    let newState: RobotState | null = null;
+    const importResult = resolveRobotFileData(file, {
+      availableFiles,
+      assets: currentAssets,
+      usdRobotData: getUsdPreparedExportCache(file.name)?.robotData ?? null,
+    });
 
-    switch (file.format) {
-      case 'urdf':
-        newState = parseURDF(file.content);
-        break;
-      case 'mjcf': {
-        const resolved = resolveMJCFSource(file, availableFiles);
-        newState = parseMJCF(resolved.content);
-        break;
-      }
-      case 'usd':
-        newState = parseUSDA(file.content);
-        break;
-      case 'xacro':
-        // Build file map for xacro includes
-        const fileMap: { [path: string]: string } = {};
-        availableFiles.forEach(f => {
-          fileMap[f.name] = f.content;
-        });
-        Object.entries(currentAssets).forEach(([path, content]) => {
-          if (typeof content === 'string') {
-            fileMap[path] = content;
-          }
-        });
-        const pathParts = file.name.split('/');
-        pathParts.pop();
-        const basePath = pathParts.join('/');
-        newState = parseXacro(file.content, {}, fileMap, basePath);
-        break;
-      case 'mesh': {
-        const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
-        const linkId = 'base_link';
-        newState = {
-          name: meshName,
-          links: {
-            [linkId]: {
-              id: linkId,
-              name: 'base_link',
-              visible: true,
-              visual: {
-                type: GeometryType.MESH,
-                dimensions: { x: 1, y: 1, z: 1 },
-                color: '#808080',
-                meshPath: file.name,
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-              },
-              collision: {
-                type: GeometryType.NONE,
-                dimensions: { x: 0, y: 0, z: 0 },
-                color: '#ef4444',
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-              },
-              inertial: {
-                mass: 1.0,
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                inertia: { ixx: 0.1, ixy: 0, ixz: 0, iyy: 0.1, iyz: 0, izz: 0.1 },
-              },
-            },
-          },
-          joints: {},
-          rootLinkId: linkId,
-          selection: { type: null, id: null },
-        };
-        break;
-      }
-    }
-
-    if (newState && onLoadRobot) {
+    if ((importResult.status === 'ready' || importResult.status === 'needs_hydration') && onLoadRobot) {
       onLoadRobot(file);
     }
 
-    return newState;
-  }, [onLoadRobot]);
+    return importResult;
+  }, [getUsdPreparedExportCache, onLoadRobot]);
 
   // Handle file import
   const handleImport = useCallback(async (files: FileList | null) => {
@@ -178,6 +238,10 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         setMotorLibrary(result.motorLibrary);
         setOriginalUrdfContent(result.originalUrdfContent);
         setOriginalFileFormat(result.originalFileFormat);
+        useAssetsStore.setState({
+          usdSceneSnapshots: {},
+          usdPreparedExportCaches: result.usdPreparedExportCaches,
+        });
         setSelection({ type: null, id: null });
 
         const restoredSelectedFile = result.selectedFileName
@@ -185,22 +249,13 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           : null;
         setSelectedFile(restoredSelectedFile);
 
-        if (result.robotState) {
-          useRobotStore.setState({
-            name: result.robotState.name,
-            links: result.robotState.links,
-            joints: result.robotState.joints,
-            rootLinkId: result.robotState.rootLinkId,
-            materials: result.robotState.materials,
-            _history: result.robotHistory,
-            _activity: result.robotActivity,
-          });
-        } else {
-          useRobotStore.setState({
-            _history: result.robotHistory,
-            _activity: result.robotActivity,
-          });
-        }
+        useRobotStore.setState(
+          buildImportedRobotStoreState(
+            result.robotState,
+            result.robotHistory,
+            result.robotActivity,
+          ),
+        );
 
         useAssemblyStore.setState({
           assemblyState: result.assemblyState,
@@ -217,6 +272,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       }
 
       const newRobotFiles: RobotFile[] = [];
+      const usdSourceFiles: { name: string; blob: Blob }[] = [];
       const assetFiles: { name: string; blob: Blob }[] = [];
       const libraryFiles: { path: string; content: string }[] = [];
 
@@ -234,9 +290,12 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
           const lowerPath = relativePath.toLowerCase();
           const p = (async () => {
-            if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') ||
-                lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.usda') ||
-                lowerPath.endsWith('.usd') || lowerPath.endsWith('.xacro')) {
+            if (isUsdFamilyPath(relativePath)) {
+              const bytes = await fileEntry.async('uint8array');
+              newRobotFiles.push(createImportedUsdFile(relativePath, bytes));
+              usdSourceFiles.push({ name: relativePath, blob: new Blob([bytes]) });
+            } else if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') ||
+                lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.xacro')) {
               const content = await fileEntry.async("string");
               const format = detectFormat(content, relativePath);
               if (format) {
@@ -269,9 +328,12 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           const pathParts = path.split('/');
           if (pathParts.some(part => part.startsWith('.'))) return;
 
-          if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') ||
-              lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.usda') ||
-              lowerPath.endsWith('.usd') || lowerPath.endsWith('.xacro')) {
+          if (isUsdFamilyPath(path)) {
+            const bytes = new Uint8Array(await f.arrayBuffer());
+            newRobotFiles.push(createImportedUsdFile(path, bytes));
+            usdSourceFiles.push({ name: path, blob: f });
+          } else if (lowerPath.endsWith('.urdf') || lowerPath.endsWith('.xml') ||
+              lowerPath.endsWith('.mjcf') || lowerPath.endsWith('.xacro')) {
             const content = await f.text();
             const format = detectFormat(content, f.name);
             if (format) {
@@ -290,10 +352,45 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         await Promise.all(promises);
       }
 
+      const importedPaths = [
+        ...newRobotFiles.map((file) => file.name),
+        ...assetFiles.map((file) => file.name),
+        ...libraryFiles.map((file) => file.path),
+      ];
+      const existingPaths = [
+        ...availableFiles.map((file) => file.name),
+        ...Object.keys(assets),
+      ];
+      const pathCollisionMap = createImportPathCollisionMap(importedPaths, existingPaths);
+      const renamedRobotFiles = newRobotFiles.map((file) => ({
+        ...file,
+        name: remapImportedPath(file.name, pathCollisionMap),
+      }));
+      const renamedAssetFiles = assetFiles.map((file) => ({
+        ...file,
+        name: remapImportedPath(file.name, pathCollisionMap),
+      }));
+      const renamedUsdSourceFiles = usdSourceFiles.map((file) => ({
+        ...file,
+        name: remapImportedPath(file.name, pathCollisionMap),
+      }));
+      const renamedLibraryFiles = libraryFiles.map((file) => ({
+        ...file,
+        path: remapImportedPath(file.path, pathCollisionMap),
+      }));
+      const usdSourceBlobUrls = Object.fromEntries(
+        renamedUsdSourceFiles.map((file) => [file.name, URL.createObjectURL(file.blob)]),
+      );
+      const renamedRobotFilesWithSources = renamedRobotFiles.map((file) => (
+        file.format === 'usd' && usdSourceBlobUrls[file.name]
+          ? { ...file, blobUrl: usdSourceBlobUrls[file.name] }
+          : file
+      ));
+
       // 1. Process Motor Library
-      if (libraryFiles.length > 0) {
+      if (renamedLibraryFiles.length > 0) {
         const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-        libraryFiles.forEach(f => {
+        renamedLibraryFiles.forEach(f => {
           try {
             const parts = f.path.split('/');
             if (parts.length >= 2) {
@@ -312,65 +409,70 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       }
 
       // 2. Load Assets
-      const newAssets: Record<string, string> = {};
-      const assetPromises = assetFiles.map(async f => {
-        const ext = f.name.split('.').pop()?.toLowerCase();
-        if (['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp', 'hdr'].includes(ext || '')) {
-          const url = URL.createObjectURL(f.blob);
-          newAssets[f.name] = url;
-          const filename = f.name.split('/').pop()!;
-          newAssets[filename] = url;
-          if (f.name.includes('/meshes/')) {
-            newAssets['/meshes/' + filename] = url;
-          }
-          // Store various path patterns
-          const parts = f.name.split('/');
-          for (let i = 0; i < parts.length; i++) {
-            const subPath = parts.slice(i).join('/');
-            if (!newAssets[subPath]) newAssets[subPath] = url;
-            if (!newAssets['/' + subPath]) newAssets['/' + subPath] = url;
-          }
-        }
-      });
-      await Promise.all(assetPromises);
+      const newAssets = createAssetUrls(renamedAssetFiles);
+      const sourceAssets = {
+        ...newAssets,
+        ...usdSourceBlobUrls,
+      };
 
       // Add new assets (merge with existing)
-      addAssets(newAssets);
+      addAssets(sourceAssets);
 
       // 3. Set Available Files (merge with existing)
       const existingNames = new Set(availableFiles.map(f => f.name));
-      const uniqueNewFiles = newRobotFiles.filter(f => !existingNames.has(f.name));
+      const uniqueNewFiles = renamedRobotFilesWithSources.filter(f => !existingNames.has(f.name));
       const mergedFiles = [...availableFiles, ...uniqueNewFiles];
       setAvailableFiles(mergedFiles);
 
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       // Filter to get only real robot definition files (exclude mesh)
-      const robotDefinitionFiles = newRobotFiles.filter(f => f.format !== 'mesh');
-      if (newRobotFiles.length > 0) {
-        if (availableFiles.length === 0) {
+      if (renamedRobotFilesWithSources.length > 0) {
+        const preferredFile = pickPreferredFile(renamedRobotFilesWithSources, mergedFiles);
+
+        if (!preferredFile) {
+          // No loadable file after import; fall through to generic completion handling.
+        } else if (availableFiles.length === 0) {
           // First import: initialize assembly and load robot
-          initAssembly(robotName || 'my_project');
-          const preferredFile = robotDefinitionFiles.find(f => f.format === 'urdf')
-            || robotDefinitionFiles.find(f => f.format === 'mjcf')
-            || robotDefinitionFiles.find(f => f.format === 'usd')
-            || robotDefinitionFiles[0]
-            || newRobotFiles[0];
-          addComponent(preferredFile, { availableFiles: mergedFiles, assets: { ...assets, ...newAssets } });
+          const preResolvedRobotData: RobotData | null = preferredFile.format === 'usd'
+            ? getUsdPreparedExportCache(preferredFile.name)?.robotData ?? null
+            : null;
+          const canSeedAssembly = preferredFile.format !== 'mesh'
+            && (preferredFile.format !== 'usd' || Boolean(preResolvedRobotData));
+          if (canSeedAssembly) {
+            initAssembly(robotName || 'my_project');
+            addComponent(preferredFile, {
+              availableFiles: mergedFiles,
+              assets: { ...assets, ...sourceAssets },
+              preResolvedRobotData,
+            });
+          }
           setSidebarTab('structure');
-          loadRobot(preferredFile, mergedFiles, { ...assets, ...newAssets });
+          loadRobot(preferredFile, mergedFiles, { ...assets, ...sourceAssets });
           setAppMode('detail');
+        } else if (!selectedFile) {
+          // If the current preview was cleared by a library delete, reload the newly imported robot
+          // instead of leaving the workspace on the placeholder base_link state.
+          setSidebarTab('structure');
+          loadRobot(preferredFile, mergedFiles, { ...assets, ...sourceAssets });
+          setAppMode('detail');
+          if (onShowToast) {
+            onShowToast(
+              t.addedFilesToAssetLibrary.replace('{count}', String(renamedRobotFilesWithSources.length)),
+              'success',
+            );
+          }
         } else {
           // Subsequent import: notify user
           if (onShowToast) {
             onShowToast(
-              t.addedFilesToAssetLibrary.replace('{count}', String(newRobotFiles.length)),
+              t.addedFilesToAssetLibrary.replace('{count}', String(renamedRobotFilesWithSources.length)),
               'success',
             );
           }
         }
-      } else if (libraryFiles.length > 0) {
+      } else if (renamedLibraryFiles.length > 0) {
         alert(t.libraryImportSuccessful);
-      } else if (assetFiles.length === 0 && newRobotFiles.length === 0) {
+      } else if (renamedAssetFiles.length === 0 && renamedRobotFiles.length === 0) {
         alert(t.noDefinitionFilesFound);
       }
 
@@ -397,9 +499,12 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     setAppMode,
     setSidebarTab,
     setSelection,
+    selectedFile,
     setRobot,
+    getUsdPreparedExportCache,
     initAssembly,
     addComponent,
+    pickPreferredFile,
     showImportWarning,
     t,
   ]);

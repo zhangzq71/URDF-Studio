@@ -6,6 +6,7 @@ export const PROJECT_ASSET_MANIFEST_FILE = 'assets/manifest.json';
 export const PROJECT_ALL_FILE_CONTENTS_FILE = 'library/all-file-contents.json';
 export const PROJECT_MOTOR_LIBRARY_FILE = 'library/motor-library.json';
 export const PROJECT_ORIGINAL_URDF_FILE = 'workspace/original-urdf.txt';
+export const PROJECT_USD_PREPARED_EXPORT_CACHES_FILE = 'workspace/usd-prepared-export-caches.json';
 export const PROJECT_ROBOT_HISTORY_FILE = 'history/robot.json';
 export const PROJECT_ASSEMBLY_HISTORY_FILE = 'history/assembly.json';
 

@@ -38,3 +38,13 @@ export interface PdfExportOptions {
   includeScore?: boolean;
   includeDetails?: boolean;
 }
+
+/** UI state for staged export progress feedback */
+export interface ExportProgressState {
+  stepLabel: string;
+  detail: string;
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  indeterminate?: boolean;
+}

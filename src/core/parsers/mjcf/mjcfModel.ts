@@ -4,25 +4,32 @@ import {
     parseMaterialAssets,
     parseMeshAssets,
     parseMJCFDefaults,
+    parseOrientationAsQuat,
+    parseTextureAssets,
     parseNumbers,
     parsePosAsTuple,
-    parseQuatAsTuple,
+    resolveCompilerSettingsForElement,
     resolveDefaultClassQName,
     resolveElementAttributes,
     type MJCFCompilerSettings,
     type MJCFDefaultsRegistry,
     type MJCFMaterial,
     type MJCFMesh,
+    type MJCFTexture,
 } from './mjcfUtils';
 
 export interface MJCFModelGeom {
     name?: string;
     sourceName?: string;
+    className?: string;
+    classQName?: string;
     type: string;
     size?: number[];
+    mass?: number;
     mesh?: string;
     material?: string;
     rgba?: [number, number, number, number];
+    hasExplicitRgba?: boolean;
     pos?: [number, number, number];
     quat?: [number, number, number, number];
     fromto?: number[];
@@ -38,6 +45,21 @@ export interface MJCFModelJoint {
     axis?: [number, number, number];
     range?: [number, number];
     pos?: [number, number, number];
+    limited?: boolean;
+    damping?: number;
+    frictionloss?: number;
+    armature?: number;
+    actuatorForceRange?: [number, number];
+    actuatorForceLimited?: boolean;
+}
+
+export interface MJCFModelActuator {
+    name: string;
+    type: string;
+    joint?: string;
+    ctrlrange?: [number, number];
+    forcerange?: [number, number];
+    gear?: number[];
 }
 
 export interface MJCFModelInertial {
@@ -46,6 +68,13 @@ export interface MJCFModelInertial {
     quat?: [number, number, number, number];
     diaginertia?: [number, number, number];
     fullinertia?: [number, number, number, number, number, number];
+}
+
+export interface MJCFModelConnectConstraint {
+    name?: string;
+    body1: string;
+    body2: string;
+    anchor: [number, number, number];
 }
 
 export interface MJCFModelBody {
@@ -66,7 +95,25 @@ export interface ParsedMJCFModel {
     defaults: MJCFDefaultsRegistry;
     meshMap: Map<string, MJCFMesh>;
     materialMap: Map<string, MJCFMaterial>;
+    textureMap: Map<string, MJCFTexture>;
+    actuatorMap: Map<string, MJCFModelActuator[]>;
+    connectConstraints: MJCFModelConnectConstraint[];
     worldBody: MJCFModelBody;
+}
+
+const PARSED_MODEL_CACHE_LIMIT = 24;
+const parsedModelCache = new Map<string, ParsedMJCFModel | null>();
+
+function rememberParsedModel(xmlContent: string, parsedModel: ParsedMJCFModel | null): ParsedMJCFModel | null {
+    if (!parsedModelCache.has(xmlContent) && parsedModelCache.size >= PARSED_MODEL_CACHE_LIMIT) {
+        const oldestKey = parsedModelCache.keys().next().value;
+        if (oldestKey !== undefined) {
+            parsedModelCache.delete(oldestKey);
+        }
+    }
+
+    parsedModelCache.set(xmlContent, parsedModel);
+    return parsedModel;
 }
 
 function directChildren(element: Element, tagName: string): Element[] {
@@ -96,29 +143,196 @@ function parseEulerAsTuple(str: string | null): [number, number, number] | undef
     ];
 }
 
-interface MJCFLocalTransform {
-    position: THREE.Vector3;
-    quaternion: THREE.Quaternion;
-}
-
-function convertAngle(value: number, angleUnit: 'radian' | 'degree'): number {
-    return angleUnit === 'degree' ? THREE.MathUtils.degToRad(value) : value;
-}
-
-function eulerToQuatTuple(
-    euler: [number, number, number] | undefined,
-    angleUnit: 'radian' | 'degree',
-): [number, number, number, number] | undefined {
-    if (!euler) {
+function parseBooleanAttribute(value: string | undefined): boolean | undefined {
+    if (value == null) {
         return undefined;
     }
 
-    const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-        convertAngle(euler[0] ?? 0, angleUnit),
-        convertAngle(euler[1] ?? 0, angleUnit),
-        convertAngle(euler[2] ?? 0, angleUnit),
-    ));
-    return [quaternion.w, quaternion.x, quaternion.y, quaternion.z];
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') {
+        return true;
+    }
+    if (normalized === 'false') {
+        return false;
+    }
+
+    return undefined;
+}
+
+function toOptionalRangeTuple(values: number[]): [number, number] | undefined {
+    if (values.length < 2) {
+        return undefined;
+    }
+
+    return [
+        values[0] ?? 0,
+        values[1] ?? 0,
+    ];
+}
+
+function convertAngularValue(value: number, settings: MJCFCompilerSettings): number {
+    return settings.angleUnit === 'degree' ? THREE.MathUtils.degToRad(value) : value;
+}
+
+function normalizeJointRange(
+    range: [number, number] | undefined,
+    jointType: string,
+    settings: MJCFCompilerSettings,
+): [number, number] | undefined {
+    if (!range) {
+        return undefined;
+    }
+
+    if (jointType.toLowerCase() === 'slide') {
+        return range;
+    }
+
+    return [
+        convertAngularValue(range[0] ?? 0, settings),
+        convertAngularValue(range[1] ?? 0, settings),
+    ];
+}
+
+function parseJointElement(
+    jointElement: Element,
+    defaults: MJCFDefaultsRegistry,
+    activeClassQName: string | undefined,
+    compilerSettings: MJCFCompilerSettings,
+    jointIndexRef: { value: number },
+): MJCFModelJoint {
+    const isFreeJoint = jointElement.tagName.toLowerCase() === 'freejoint';
+    const jointAttrs = isFreeJoint
+        ? { ...resolveElementAttributes(defaults, 'joint', jointElement, activeClassQName), type: 'free' }
+        : resolveElementAttributes(defaults, 'joint', jointElement, activeClassQName);
+    const sourceJointName = jointElement.getAttribute('name') || jointAttrs.name || undefined;
+    const generatedJointName = buildGeneratedJointName(jointIndexRef.value++);
+    const axisNums = !isFreeJoint && jointAttrs.axis ? parseNumbers(jointAttrs.axis) : [];
+    const rangeNums = jointAttrs.range ? parseNumbers(jointAttrs.range) : [];
+    const actuatorForceRange = jointAttrs.actuatorfrcrange ? parseNumbers(jointAttrs.actuatorfrcrange) : [];
+
+    const joint: MJCFModelJoint = {
+        // Match MuJoCo's anonymous joint fallback naming (`joint_<global-index>`).
+        name: sourceJointName || generatedJointName,
+        sourceName: sourceJointName,
+        type: jointAttrs.type || 'hinge',
+        axis: axisNums.length > 0
+            ? [axisNums[0] ?? 0, axisNums[1] ?? 0, axisNums[2] ?? 1]
+            : [0, 0, 1],
+        limited: parseBooleanAttribute(jointAttrs.limited),
+        actuatorForceLimited: parseBooleanAttribute(jointAttrs.actuatorfrclimited),
+    };
+
+    if (jointAttrs.damping != null && jointAttrs.damping !== '') {
+        const parsedDamping = parseFloat(jointAttrs.damping);
+        if (Number.isFinite(parsedDamping)) {
+            joint.damping = parsedDamping;
+        }
+    }
+
+    if (jointAttrs.frictionloss != null && jointAttrs.frictionloss !== '') {
+        const parsedFriction = parseFloat(jointAttrs.frictionloss);
+        if (Number.isFinite(parsedFriction)) {
+            joint.frictionloss = parsedFriction;
+        }
+    }
+
+    if (jointAttrs.armature != null && jointAttrs.armature !== '') {
+        const parsedArmature = parseFloat(jointAttrs.armature);
+        if (Number.isFinite(parsedArmature)) {
+            joint.armature = parsedArmature;
+        }
+    }
+
+    if (isFreeJoint) {
+        joint.range = [0, 0];
+    } else {
+        const parsedRange = toOptionalRangeTuple(rangeNums);
+        if (parsedRange) {
+            joint.range = normalizeJointRange(parsedRange, joint.type, compilerSettings);
+        }
+    }
+
+    const parsedActuatorForceRange = toOptionalRangeTuple(actuatorForceRange);
+    if (parsedActuatorForceRange) {
+        joint.actuatorForceRange = parsedActuatorForceRange;
+    }
+
+    if (jointAttrs.pos) {
+        joint.pos = parsePosAsTuple(jointAttrs.pos);
+    } else if (isFreeJoint || joint.type === 'free') {
+        joint.pos = [0, 0, 0];
+    }
+
+    return joint;
+}
+
+function parseActuatorMap(mujocoElement: Element): Map<string, MJCFModelActuator[]> {
+    const actuatorMap = new Map<string, MJCFModelActuator[]>();
+    const actuatorElement = directChild(mujocoElement, 'actuator');
+    if (!actuatorElement) {
+        return actuatorMap;
+    }
+
+    const actuatorTags = new Set(['motor', 'position', 'velocity', 'intvelocity', 'general']);
+    Array.from(actuatorElement.children).forEach((child) => {
+        const actuatorType = child.tagName.toLowerCase();
+        if (!actuatorTags.has(actuatorType)) {
+            return;
+        }
+
+        const jointName = child.getAttribute('joint') || undefined;
+        if (!jointName) {
+            return;
+        }
+
+        const ctrlrange = toOptionalRangeTuple(parseNumbers(child.getAttribute('ctrlrange')));
+        const forcerange = toOptionalRangeTuple(parseNumbers(child.getAttribute('forcerange')));
+        const gear = parseNumbers(child.getAttribute('gear'));
+        const actuator: MJCFModelActuator = {
+            name: child.getAttribute('name') || jointName,
+            type: actuatorType,
+            joint: jointName,
+            ctrlrange,
+            forcerange,
+            gear: gear.length > 0 ? gear : undefined,
+        };
+
+        const existing = actuatorMap.get(jointName) || [];
+        existing.push(actuator);
+        actuatorMap.set(jointName, existing);
+    });
+
+    return actuatorMap;
+}
+
+function parseConnectConstraints(mujocoElement: Element): MJCFModelConnectConstraint[] {
+    const constraints: MJCFModelConnectConstraint[] = [];
+
+    directChildren(mujocoElement, 'equality').forEach((equalityElement) => {
+        directChildren(equalityElement, 'connect').forEach((connectElement) => {
+            const body1 = connectElement.getAttribute('body1')?.trim() || '';
+            const body2 = connectElement.getAttribute('body2')?.trim() || '';
+            const anchor = parsePosAsTuple(connectElement.getAttribute('anchor'));
+
+            if (!body1 || !body2 || anchor.length < 3) {
+                return;
+            }
+
+            constraints.push({
+                name: connectElement.getAttribute('name') || undefined,
+                body1,
+                body2,
+                anchor: [anchor[0] ?? 0, anchor[1] ?? 0, anchor[2] ?? 0],
+            });
+        });
+    });
+
+    return constraints;
+}
+
+interface MJCFLocalTransform {
+    position: THREE.Vector3;
+    quaternion: THREE.Quaternion;
 }
 
 function mjcfQuatToThreeQuat(quat?: [number, number, number, number]): THREE.Quaternion {
@@ -190,11 +404,18 @@ function parseGeomElement(
     inheritedTransform?: MJCFLocalTransform,
 ): MJCFModelGeom {
     const geomAttrs = resolveElementAttributes(defaults, 'geom', geomElement, activeClassQName);
+    const geomCompilerSettings = resolveCompilerSettingsForElement(geomElement, compilerSettings);
+    const geomClassQName = resolveDefaultClassQName(defaults, geomElement.getAttribute('class'), activeClassQName);
     const size = parseNumbers(geomAttrs.size || null);
     const sourceGeomName = geomElement.getAttribute('name') || geomAttrs.name || undefined;
     const meshName = geomAttrs.mesh || undefined;
-    const geomEuler = parseEulerAsTuple(geomAttrs.euler || null);
-    const geomQuat = parseQuatAsTuple(geomAttrs.quat || null) || eulerToQuatTuple(geomEuler, compilerSettings.angleUnit);
+    const geomQuat = parseOrientationAsQuat({
+        quat: geomAttrs.quat,
+        axisangle: geomAttrs.axisangle,
+        xyaxes: geomAttrs.xyaxes,
+        zaxis: geomAttrs.zaxis,
+        euler: geomAttrs.euler,
+    }, geomCompilerSettings);
     const geomPos = geomAttrs.pos ? parsePosAsTuple(geomAttrs.pos) : undefined;
     const rawFromTo = parseNumbers(geomAttrs.fromto || null);
     const hasInheritedTransform = !isIdentityTransform(inheritedTransform);
@@ -218,15 +439,25 @@ function parseGeomElement(
     const geom: MJCFModelGeom = {
         name: sourceGeomName || `${bodyPath}::geom[${geomIndex}]`,
         sourceName: sourceGeomName,
+        className: geomClassQName?.split('/').pop() || geomElement.getAttribute('class') || undefined,
+        classQName: geomClassQName,
         type: inferGeomType(geomAttrs.type, meshName, resolvedFromTo),
         size,
         mesh: meshName,
         material: geomAttrs.material || undefined,
         rgba: toRgbaTuple(geomAttrs.rgba),
+        hasExplicitRgba: geomElement.hasAttribute('rgba'),
         pos: resolvedPos,
         quat: resolvedQuat,
         fromto: resolvedFromTo,
     };
+
+    if (geomAttrs.mass != null && geomAttrs.mass !== '') {
+        const parsedMass = parseFloat(geomAttrs.mass);
+        if (Number.isFinite(parsedMass)) {
+            geom.mass = parsedMass;
+        }
+    }
 
     if (geomAttrs.contype != null && geomAttrs.contype !== '') {
         geom.contype = parseInt(geomAttrs.contype, 10);
@@ -251,8 +482,9 @@ function collectGeomsInBodyOrder(
     inheritedTransform?: MJCFLocalTransform,
 ): MJCFModelGeom[] {
     const geoms: MJCFModelGeom[] = [];
+    const children = Array.from(container.children);
 
-    Array.from(container.children).forEach((child) => {
+    children.forEach((child) => {
         const tagName = child.tagName.toLowerCase();
         if (tagName === 'geom') {
             geoms.push(parseGeomElement(
@@ -265,16 +497,24 @@ function collectGeomsInBodyOrder(
                 inheritedTransform,
             ));
             geomIndexRef.value += 1;
-            return;
         }
+    });
 
+    children.forEach((child) => {
+        const tagName = child.tagName.toLowerCase();
         if (tagName !== 'frame') {
             return;
         }
 
         const framePos = child.getAttribute('pos') ? parsePosAsTuple(child.getAttribute('pos')) : undefined;
-        const frameQuat = parseQuatAsTuple(child.getAttribute('quat'))
-            || eulerToQuatTuple(parseEulerAsTuple(child.getAttribute('euler')), compilerSettings.angleUnit);
+        const frameCompilerSettings = resolveCompilerSettingsForElement(child, compilerSettings);
+        const frameQuat = parseOrientationAsQuat({
+            quat: child.getAttribute('quat'),
+            axisangle: child.getAttribute('axisangle'),
+            xyaxes: child.getAttribute('xyaxes'),
+            zaxis: child.getAttribute('zaxis'),
+            euler: child.getAttribute('euler'),
+        }, frameCompilerSettings);
         const frameTransform = inheritedTransform
             ? composeTransforms(inheritedTransform, createLocalTransform(framePos, frameQuat))
             : createLocalTransform(framePos, frameQuat);
@@ -331,8 +571,54 @@ function buildStableBodyName(parentPath: string, siblingIndex: number): string {
     return `${parentPath}/body[${siblingIndex}]`;
 }
 
-function buildStableJointName(bodyPath: string, siblingIndex: number): string {
-    return `${bodyPath}::joint[${siblingIndex}]`;
+function buildGeneratedJointName(jointIndex: number): string {
+    return `joint_${jointIndex}`;
+}
+
+function createZeroPosition(): [number, number, number] {
+    return [0, 0, 0];
+}
+
+function buildSyntheticJointStageName(bodyName: string, stageIndex: number): string {
+    return `${bodyName}__joint_stage_${stageIndex}`;
+}
+
+export function normalizeMultiJointBodies(body: MJCFModelBody): MJCFModelBody {
+    const normalizedChildren = body.children.map(normalizeMultiJointBodies);
+    const normalizedBody: MJCFModelBody = {
+        ...body,
+        children: normalizedChildren,
+    };
+
+    if (normalizedBody.joints.length <= 1) {
+        return normalizedBody;
+    }
+
+    const bodyJoints = normalizedBody.joints;
+    let chainedBody: MJCFModelBody = {
+        ...normalizedBody,
+        pos: createZeroPosition(),
+        euler: undefined,
+        quat: undefined,
+        joints: [bodyJoints[bodyJoints.length - 1]],
+        children: normalizedChildren,
+    };
+
+    for (let jointIndex = bodyJoints.length - 2; jointIndex >= 0; jointIndex -= 1) {
+        chainedBody = {
+            name: buildSyntheticJointStageName(normalizedBody.name, jointIndex),
+            sourceName: undefined,
+            pos: jointIndex === 0 ? normalizedBody.pos : createZeroPosition(),
+            euler: jointIndex === 0 ? normalizedBody.euler : undefined,
+            quat: jointIndex === 0 ? normalizedBody.quat : undefined,
+            geoms: [],
+            joints: [bodyJoints[jointIndex]],
+            inertial: undefined,
+            children: [chainedBody],
+        };
+    }
+
+    return chainedBody;
 }
 
 function parseBody(
@@ -341,9 +627,11 @@ function parseBody(
     compilerSettings: MJCFCompilerSettings,
     parentPath: string,
     siblingIndex: number,
+    jointIndexRef: { value: number },
     activeClassQName?: string,
 ): MJCFModelBody {
     const bodyAttrs = resolveElementAttributes(defaults, 'body', bodyElement, activeClassQName);
+    const bodyCompilerSettings = resolveCompilerSettingsForElement(bodyElement, compilerSettings);
     const sourceName = bodyElement.getAttribute('name') || bodyAttrs.name || undefined;
     const bodyPath = sourceName || buildStableBodyName(parentPath, siblingIndex);
     const childDefaultsClassQName = resolveDefaultClassQName(defaults, bodyElement.getAttribute('childclass'), activeClassQName) || activeClassQName;
@@ -357,41 +645,9 @@ function parseBody(
         { value: 0 },
     );
 
-    const joints = directChildrenByTagNames(bodyElement, ['joint', 'freejoint']).map((jointElement, jointIndex) => {
-        const isFreeJoint = jointElement.tagName.toLowerCase() === 'freejoint';
-        const jointAttrs = isFreeJoint
-            ? { ...resolveElementAttributes(defaults, 'joint', jointElement, childDefaultsClassQName), type: 'free' }
-            : resolveElementAttributes(defaults, 'joint', jointElement, childDefaultsClassQName);
-        const sourceJointName = jointElement.getAttribute('name') || jointAttrs.name || undefined;
-        const axisNums = !isFreeJoint && jointAttrs.axis ? parseNumbers(jointAttrs.axis) : [];
-        const rangeNums = jointAttrs.range ? parseNumbers(jointAttrs.range) : [];
-
-        const joint: MJCFModelJoint = {
-            name: sourceJointName || buildStableJointName(bodyPath, jointIndex),
-            sourceName: sourceJointName,
-            type: jointAttrs.type || 'hinge',
-            axis: axisNums.length > 0
-                ? [axisNums[0] ?? 0, axisNums[1] ?? 0, axisNums[2] ?? 1]
-                : [0, 0, 1],
-        };
-
-        if (isFreeJoint) {
-            joint.range = [0, 0];
-        } else if (rangeNums.length > 0) {
-            joint.range = [
-                rangeNums[0] ?? -Math.PI,
-                rangeNums[1] ?? Math.PI,
-            ];
-        }
-
-        if (jointAttrs.pos) {
-            joint.pos = parsePosAsTuple(jointAttrs.pos);
-        } else if (isFreeJoint || joint.type === 'free') {
-            joint.pos = [0, 0, 0];
-        }
-
-        return joint;
-    });
+    const joints = directChildrenByTagNames(bodyElement, ['joint', 'freejoint']).map((jointElement) => (
+        parseJointElement(jointElement, defaults, childDefaultsClassQName, bodyCompilerSettings, jointIndexRef)
+    ));
 
     let inertial: MJCFModelInertial | undefined;
     const inertialElement = directChild(bodyElement, 'inertial');
@@ -403,7 +659,13 @@ function parseBody(
         inertial = {
             mass: parseFloat(inertialAttrs.mass || '0'),
             pos: parsePosAsTuple(inertialAttrs.pos || null),
-            quat: parseQuatAsTuple(inertialAttrs.quat || null),
+            quat: parseOrientationAsQuat({
+                quat: inertialAttrs.quat,
+                axisangle: inertialAttrs.axisangle,
+                xyaxes: inertialAttrs.xyaxes,
+                zaxis: inertialAttrs.zaxis,
+                euler: inertialAttrs.euler,
+            }, resolveCompilerSettingsForElement(inertialElement, bodyCompilerSettings)),
             diaginertia: diaginertia.length >= 3
                 ? [diaginertia[0], diaginertia[1], diaginertia[2]]
                 : undefined,
@@ -414,7 +676,7 @@ function parseBody(
     }
 
     const children = directChildren(bodyElement, 'body').map((childBodyElement, childIndex) => (
-        parseBody(childBodyElement, defaults, compilerSettings, bodyPath, childIndex, childDefaultsClassQName)
+        parseBody(childBodyElement, defaults, compilerSettings, bodyPath, childIndex, jointIndexRef, childDefaultsClassQName)
     ));
 
     return {
@@ -422,7 +684,13 @@ function parseBody(
         sourceName,
         pos: parsePosAsTuple(bodyAttrs.pos || null),
         euler: parseEulerAsTuple(bodyAttrs.euler || null),
-        quat: parseQuatAsTuple(bodyAttrs.quat || null),
+        quat: parseOrientationAsQuat({
+            quat: bodyAttrs.quat,
+            axisangle: bodyAttrs.axisangle,
+            xyaxes: bodyAttrs.xyaxes,
+            zaxis: bodyAttrs.zaxis,
+            euler: bodyAttrs.euler,
+        }, bodyCompilerSettings),
         geoms,
         joints,
         inertial,
@@ -431,30 +699,37 @@ function parseBody(
 }
 
 export function parseMJCFModel(xmlContent: string): ParsedMJCFModel | null {
+    if (parsedModelCache.has(xmlContent)) {
+        return parsedModelCache.get(xmlContent) ?? null;
+    }
+
     try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(xmlContent, 'text/xml');
         const parseError = doc.querySelector('parsererror');
         if (parseError) {
             console.error('[MJCF] XML parsing error:', parseError.textContent);
-            return null;
+            return rememberParsedModel(xmlContent, null);
         }
 
         const mujocoElement = doc.querySelector('mujoco');
         if (!mujocoElement) {
             console.error('[MJCF] No <mujoco> root element found');
-            return null;
+            return rememberParsedModel(xmlContent, null);
         }
 
         const compilerSettings = parseCompilerSettings(doc);
         const defaults = parseMJCFDefaults(doc);
         const meshMap = parseMeshAssets(doc, compilerSettings, defaults);
-        const materialMap = parseMaterialAssets(doc);
+        const materialMap = parseMaterialAssets(doc, defaults);
+        const textureMap = parseTextureAssets(doc, compilerSettings, defaults);
+        const connectConstraints = parseConnectConstraints(mujocoElement);
         const worldbodyElements = directChildren(mujocoElement, 'worldbody');
         if (worldbodyElements.length === 0) {
             console.error('[MJCF] No <worldbody> element found');
             return null;
         }
+        const jointIndexRef = { value: 0 };
 
         const worldBody: MJCFModelBody = {
             name: 'world',
@@ -464,6 +739,7 @@ export function parseMJCFModel(xmlContent: string): ParsedMJCFModel | null {
             joints: [],
             children: [],
         };
+        const actuatorMap = parseActuatorMap(mujocoElement);
 
         worldbodyElements.forEach((worldbodyElement) => {
             worldBody.geoms.push(...collectGeomsInBodyOrder(
@@ -475,50 +751,34 @@ export function parseMJCFModel(xmlContent: string): ParsedMJCFModel | null {
                 { value: worldBody.geoms.length },
             ));
 
-            worldBody.joints.push(...directChildren(worldbodyElement, 'joint').map((jointElement, jointIndex) => {
-                const jointAttrs = resolveElementAttributes(defaults, 'joint', jointElement);
-                const sourceJointName = jointElement.getAttribute('name') || jointAttrs.name || undefined;
-                const axisNums = jointAttrs.axis ? parseNumbers(jointAttrs.axis) : [];
-                const rangeNums = jointAttrs.range ? parseNumbers(jointAttrs.range) : [];
-
-                const joint: MJCFModelJoint = {
-                    name: sourceJointName || buildStableJointName('world', jointIndex),
-                    sourceName: sourceJointName,
-                    type: jointAttrs.type || 'hinge',
-                    axis: axisNums.length > 0
-                        ? [axisNums[0] ?? 0, axisNums[1] ?? 0, axisNums[2] ?? 1]
-                        : [0, 0, 1],
-                };
-
-                if (rangeNums.length > 0) {
-                    joint.range = [
-                        rangeNums[0] ?? -Math.PI,
-                        rangeNums[1] ?? Math.PI,
-                    ];
-                }
-
-                if (jointAttrs.pos) {
-                    joint.pos = parsePosAsTuple(jointAttrs.pos);
-                }
-
-                return joint;
-            }));
+            worldBody.joints.push(...directChildrenByTagNames(worldbodyElement, ['joint', 'freejoint']).map((jointElement) => (
+                parseJointElement(
+                    jointElement,
+                    defaults,
+                    undefined,
+                    resolveCompilerSettingsForElement(jointElement, compilerSettings),
+                    jointIndexRef,
+                )
+            )));
 
             worldBody.children.push(...directChildren(worldbodyElement, 'body').map((bodyElement, bodyIndex) => (
-                parseBody(bodyElement, defaults, compilerSettings, 'world', bodyIndex)
+                parseBody(bodyElement, defaults, compilerSettings, 'world', bodyIndex, jointIndexRef)
             )));
         });
 
-        return {
+        return rememberParsedModel(xmlContent, {
             modelName: mujocoElement.getAttribute('model') || 'mjcf_robot',
             compilerSettings,
             defaults,
             meshMap,
             materialMap,
+            textureMap,
+            actuatorMap,
+            connectConstraints,
             worldBody,
-        };
+        });
     } catch (error) {
         console.error('[MJCF] Failed to parse MJCF model:', error);
-        return null;
+        return rememberParsedModel(xmlContent, null);
     }
 }

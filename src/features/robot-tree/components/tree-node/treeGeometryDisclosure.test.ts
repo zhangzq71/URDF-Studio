@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { shouldAutoExpandTreeGeometryDetails } from './treeGeometryDisclosure.ts';
+
+test('does not auto-expand geometry rows from visual selection when default disclosure is off', () => {
+  assert.equal(
+    shouldAutoExpandTreeGeometryDetails({
+      showGeometryDetailsByDefault: false,
+      selectionSubType: 'visual',
+      hasSelectedExtraCollision: false,
+    }),
+    false,
+  );
+});
+
+test('does not auto-expand geometry rows from collision selection when default disclosure is off', () => {
+  assert.equal(
+    shouldAutoExpandTreeGeometryDetails({
+      showGeometryDetailsByDefault: false,
+      selectionSubType: 'collision',
+      hasSelectedExtraCollision: true,
+    }),
+    false,
+  );
+});
+
+test('keeps geometry rows expandable when default disclosure is on', () => {
+  assert.equal(
+    shouldAutoExpandTreeGeometryDetails({
+      showGeometryDetailsByDefault: true,
+      selectionSubType: 'visual',
+      hasSelectedExtraCollision: false,
+    }),
+    true,
+  );
+});

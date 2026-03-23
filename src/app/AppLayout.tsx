@@ -2,72 +2,63 @@
  * App Layout Component
  * Main application layout with Header and workspace area
  */
-import React, { lazy, Suspense, useRef, useMemo, useCallback, useEffect, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
+import { AppLayoutOverlays } from './components/AppLayoutOverlays';
+import { FileDropOverlay } from './components/FileDropOverlay';
 import { UnifiedViewer } from './components/UnifiedViewer';
-import { LazyOverlayFallback } from './components/LazyOverlayFallback';
+import {
+  loadBridgeCreateModalModule,
+  loadCollisionOptimizationDialogModule,
+} from './utils/overlayLoaders';
+import type { HeaderQuickAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
-import { useActiveHistory, useViewerOrchestration, useWorkspaceSourceSync } from './hooks';
+import type { ToolMode } from '@/features/urdf-viewer';
+import {
+  getCurrentUsdViewerSceneSnapshot,
+  prepareUsdExportCacheFromSnapshot,
+} from '@/features/urdf-viewer/utils/usdExportBundle';
+import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
+import {
+  useAppLayoutEffects,
+  useCollisionOptimizationWorkflow,
+  useLibraryFileActions,
+  useViewerOrchestration,
+  useWorkspaceMutations,
+  useWorkspaceSourceSync,
+} from './hooks';
+import { shouldUseEmptyRobotForUsdHydration } from './hooks/workspaceSourceSyncUtils';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { parseMJCF, parseURDF } from '@/core/parsers';
-import { getDroppedFiles, exportLibraryRobotFile } from '@/features/file-io';
-import { GeometryType, type AssemblyState, type RobotData, type UrdfLink, type UrdfJoint, type RobotFile } from '@/types';
-import {
-  appendCollisionBody,
-  getCollisionGeometryEntries,
-  resolveJointKey,
-  resolveLinkKey,
-  updateCollisionGeometryByObjectIndex,
-} from '@/core/robot';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
+import type { RobotData, RobotFile, UsdSceneSnapshot } from '@/types';
 import { translations } from '@/shared/i18n';
-import type {
-  CollisionOptimizationOperation,
-  CollisionOptimizationSource,
-  CollisionTargetRef,
-} from '@/features/property-editor/utils';
-import { applyCollisionOptimizationOperationsToLinks } from '@/features/property-editor/utils';
+import { createRobotSemanticSnapshot } from '@/shared/utils/robot/semanticSnapshot';
 import { processMJCFIncludes } from '@/core/parsers/mjcf/mjcfSourceResolver';
-import { registerPendingHistoryFlusher } from './utils/pendingHistory';
+import { registerPendingUsdCacheFlusher } from './utils/pendingUsdCache';
+import { shouldApplyUsdStageHydration } from './utils/usdStageHydration';
+import { buildUsdHydrationPersistencePlan } from './utils/usdHydrationPersistence';
 
-const loadSourceCodeEditorModule = () => import('@/features/code-editor/components/SourceCodeEditor');
-const loadCollisionOptimizationDialogModule = () => import('@/features/property-editor/components/CollisionOptimizationDialog');
-const loadBridgeCreateModalModule = () => import('@/features/assembly/components/BridgeCreateModal');
-
-const SourceCodeEditor = lazy(() =>
-  loadSourceCodeEditorModule().then((module) => ({ default: module.SourceCodeEditor }))
-);
-
-const CollisionOptimizationDialog = lazy(() =>
-  loadCollisionOptimizationDialogModule().then((module) => ({ default: module.CollisionOptimizationDialog }))
-);
-
-const BridgeCreateModal = lazy(() =>
-  loadBridgeCreateModalModule().then((module) => ({ default: module.BridgeCreateModal }))
-);
-
-const preloadSourceCodeEditor = async () => {
-  const module = await loadSourceCodeEditorModule();
-  return module.preloadSourceCodeEditor();
-};
-
-const PROPERTY_HISTORY_COMMIT_DELAY_MS = 220;
-
-type UpdateCommitMode = 'debounced' | 'immediate' | 'manual';
-
-interface UpdateCommitOptions {
-  historyKey?: string;
-  historyLabel?: string;
-  commitMode?: UpdateCommitMode;
-  debounceMs?: number;
+interface UsdPersistenceBaseline {
+  fileName: string | null;
+  robotSnapshot: string | null;
+  fallbackSceneSnapshot: UsdSceneSnapshot | null;
+  hadPreparedExportCache: boolean;
+  hadSceneSnapshot: boolean;
 }
 
-interface PendingHistoryEntry<T> {
-  key: string;
-  label: string;
-  snapshot: T;
-  timeoutId: number | null;
+const EMPTY_USD_PERSISTENCE_BASELINE: UsdPersistenceBaseline = {
+  fileName: null,
+  robotSnapshot: null,
+  fallbackSceneSnapshot: null,
+  hadPreparedExportCache: false,
+  hadSceneSnapshot: false,
+};
+
+function normalizeUsdPersistenceFileName(path: string | null | undefined): string {
+  return String(path || '').trim().replace(/^\/+/, '').split('?')[0];
 }
 
 interface AppLayoutProps {
@@ -76,6 +67,7 @@ interface AppLayoutProps {
   importFolderInputRef: React.RefObject<HTMLInputElement>;
   onFileDrop: (files: File[]) => void;
   onOpenExport: () => void;
+  onOpenLibraryExport: (file: RobotFile) => void;
   onExportProject: () => void;
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
@@ -85,7 +77,8 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFGallery: () => void;
+  onOpenUser?: () => void;
+  headerQuickAction?: HeaderQuickAction;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -101,6 +94,7 @@ interface AppLayoutProps {
   }>>;
   // Robot file handling
   onLoadRobot: (file: RobotFile) => void;
+  viewerReloadKey: number;
 }
 
 export function AppLayout({
@@ -108,6 +102,7 @@ export function AppLayout({
   importFolderInputRef,
   onFileDrop,
   onOpenExport,
+  onOpenLibraryExport,
   onExportProject,
   showToast,
   onOpenAI,
@@ -115,13 +110,15 @@ export function AppLayout({
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFGallery,
+  onOpenUser,
+  headerQuickAction,
   viewConfig,
   setViewConfig,
   onLoadRobot,
+  viewerReloadKey,
 }: AppLayoutProps) {
   // UI Store (grouped with useShallow to reduce subscriptions)
-  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab } = useUIStore(
+  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab, setAppMode } = useUIStore(
     useShallow((state) => ({
       appMode: state.appMode,
       lang: state.lang,
@@ -129,6 +126,7 @@ export function AppLayout({
       sidebar: state.sidebar,
       toggleSidebar: state.toggleSidebar,
       sidebarTab: state.sidebarTab,
+      setAppMode: state.setAppMode,
     }))
   );
   const t = translations[lang];
@@ -149,7 +147,8 @@ export function AppLayout({
   const {
     assets, motorLibrary, availableFiles, selectedFile, allFileContents,
     setAvailableFiles, setSelectedFile, setAllFileContents, originalUrdfContent, setOriginalUrdfContent,
-    uploadAsset, removeRobotFile, removeRobotFolder, clearRobotLibrary,
+    uploadAsset, removeRobotFile, removeRobotFolder, renameRobotFolder, clearRobotLibrary,
+    getUsdPreparedExportCache, documentLoadState, setDocumentLoadState,
   } = useAssetsStore(
     useShallow((state) => ({
       assets: state.assets,
@@ -165,13 +164,17 @@ export function AppLayout({
       uploadAsset: state.uploadAsset,
       removeRobotFile: state.removeRobotFile,
       removeRobotFolder: state.removeRobotFolder,
+      renameRobotFolder: state.renameRobotFolder,
       clearRobotLibrary: state.clearRobotLibrary,
+      getUsdPreparedExportCache: state.getUsdPreparedExportCache,
+      documentLoadState: state.documentLoadState,
+      setDocumentLoadState: state.setDocumentLoadState,
     }))
   );
 
   // Robot Store
   const {
-    robotName, robotLinks, robotJoints, rootLinkId, robotMaterials,
+    robotName, robotLinks, robotJoints, rootLinkId, robotMaterials, closedLoopConstraints,
     setName, setRobot, resetRobot, addChild, deleteSubtree,
     updateLink, updateJoint, setAllLinksVisibility, setJointAngle,
   } = useRobotStore(
@@ -181,6 +184,7 @@ export function AppLayout({
       robotJoints: state.joints,
       rootLinkId: state.rootLinkId,
       robotMaterials: state.materials,
+      closedLoopConstraints: state.closedLoopConstraints,
       setName: state.setName,
       setRobot: state.setRobot,
       resetRobot: state.resetRobot,
@@ -192,13 +196,11 @@ export function AppLayout({
       setJointAngle: state.setJointAngle,
     }))
   );
-  const { undo, redo, canUndo, canRedo } = useActiveHistory();
-
   // Assembly Store
   const {
     assemblyState, addComponent, removeComponent,
     addBridge, removeBridge, getMergedRobotData,
-    updateComponentName, updateComponentRobot,
+    updateComponentName, updateComponentRobot, renameComponentSourceFolder,
   } = useAssemblyStore(
     useShallow((state) => ({
       assemblyState: state.assemblyState,
@@ -209,148 +211,234 @@ export function AppLayout({
       getMergedRobotData: state.getMergedRobotData,
       updateComponentName: state.updateComponentName,
       updateComponentRobot: state.updateComponentRobot,
+      renameComponentSourceFolder: state.renameComponentSourceFolder,
     }))
   );
 
-  // Snapshot ref
   const snapshotActionRef = useRef<(() => void) | null>(null);
   const transformPendingRef = useRef(false);
-  const pendingRobotHistoryRef = useRef<PendingHistoryEntry<RobotData> | null>(null);
-  const pendingAssemblyHistoryRef = useRef<PendingHistoryEntry<AssemblyState | null> | null>(null);
+  const pendingUsdAssemblyFileRef = useRef<RobotFile | null>(null);
+  const pendingUsdHydrationFileRef = useRef<string | null>(null);
+  const usdPersistenceBaselineRef = useRef<UsdPersistenceBaseline>(EMPTY_USD_PERSISTENCE_BASELINE);
+  const [pendingViewerToolMode, setPendingViewerToolMode] = useState<ToolMode | null>(null);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
+  const clearSelection = useCallback(() => {
+    setSelection({ type: null, id: null });
+  }, [setSelection]);
 
-  const clearPendingHistoryTimer = useCallback((entry: PendingHistoryEntry<unknown> | null) => {
-    if (!entry || entry.timeoutId === null) return;
-    window.clearTimeout(entry.timeoutId);
-    entry.timeoutId = null;
-  }, []);
+  const isSelectedUsdHydrating = shouldUseEmptyRobotForUsdHydration({
+    selectedFileFormat: selectedFile?.format ?? null,
+    selectedFileName: selectedFile?.name ?? null,
+    documentLoadStatus: documentLoadState.status,
+    documentLoadFileName: documentLoadState.fileName,
+  });
 
-  const createRobotSnapshot = useCallback((): RobotData => {
-    const state = useRobotStore.getState();
-    return structuredClone({
-      name: state.name,
-      links: state.links,
-      joints: state.joints,
-      rootLinkId: state.rootLinkId,
-      materials: state.materials,
+  useEffect(() => {
+    if (!isSelectedUsdHydrating || selectedFile?.format !== 'usd') {
+      pendingUsdHydrationFileRef.current = null;
+      return;
+    }
+
+    pendingUsdHydrationFileRef.current = selectedFile.name;
+  }, [isSelectedUsdHydrating, selectedFile]);
+
+  const flushPendingUsdCache = useCallback(() => {
+    const liveAssetsState = useAssetsStore.getState();
+    const currentSelectedFile = liveAssetsState.selectedFile;
+    if (!currentSelectedFile || currentSelectedFile.format !== 'usd') {
+      return;
+    }
+
+    const normalizedSelectedFileName = normalizeUsdPersistenceFileName(currentSelectedFile.name);
+    const baseline = usdPersistenceBaselineRef.current;
+    if (!baseline.fileName || baseline.fileName !== normalizedSelectedFileName || !baseline.robotSnapshot) {
+      return;
+    }
+
+    const liveRobotState = useRobotStore.getState();
+    const currentRobotData: RobotData = {
+      name: liveRobotState.name,
+      links: liveRobotState.links,
+      joints: liveRobotState.joints,
+      rootLinkId: liveRobotState.rootLinkId,
+      materials: liveRobotState.materials,
+      closedLoopConstraints: liveRobotState.closedLoopConstraints,
+    };
+    const currentRobotSnapshot = createRobotSemanticSnapshot(currentRobotData);
+    const hasSemanticEdits = currentRobotSnapshot !== baseline.robotSnapshot;
+
+    if (!hasSemanticEdits) {
+      if (!baseline.hadSceneSnapshot) {
+        liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, null);
+      }
+      if (!baseline.hadPreparedExportCache) {
+        liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, null);
+      }
+      return;
+    }
+
+    const sceneSnapshot = getCurrentUsdViewerSceneSnapshot({
+      stageSourcePath: currentSelectedFile.name,
+    }) ?? baseline.fallbackSceneSnapshot;
+
+    if (!sceneSnapshot) {
+      return;
+    }
+
+    const preparedCache = prepareUsdExportCacheFromSnapshot(sceneSnapshot, {
+      fileName: currentSelectedFile.name,
     });
-  }, []);
 
-  const createAssemblySnapshot = useCallback((): AssemblyState | null => {
-    return structuredClone(useAssemblyStore.getState().assemblyState);
-  }, []);
-
-  const snapshotsMatch = useCallback((before: unknown, after: unknown) => {
-    return JSON.stringify(before) === JSON.stringify(after);
-  }, []);
-
-  const commitPendingRobotHistory = useCallback((expectedKey?: string) => {
-    const pending = pendingRobotHistoryRef.current;
-    if (!pending || (expectedKey && pending.key !== expectedKey)) return;
-
-    clearPendingHistoryTimer(pending);
-    pendingRobotHistoryRef.current = null;
-
-    const currentSnapshot = createRobotSnapshot();
-    if (snapshotsMatch(pending.snapshot, currentSnapshot)) return;
-
-    useRobotStore.getState().pushHistorySnapshot(pending.snapshot, pending.label);
-  }, [clearPendingHistoryTimer, createRobotSnapshot, snapshotsMatch]);
-
-  const commitPendingAssemblyHistory = useCallback((expectedKey?: string) => {
-    const pending = pendingAssemblyHistoryRef.current;
-    if (!pending || (expectedKey && pending.key !== expectedKey)) return;
-
-    clearPendingHistoryTimer(pending);
-    pendingAssemblyHistoryRef.current = null;
-
-    const currentSnapshot = createAssemblySnapshot();
-    if (snapshotsMatch(pending.snapshot, currentSnapshot)) return;
-
-    useAssemblyStore.getState().pushHistorySnapshot(pending.snapshot, pending.label);
-  }, [clearPendingHistoryTimer, createAssemblySnapshot, snapshotsMatch]);
-
-  const ensurePendingRobotHistory = useCallback((key: string, label: string) => {
-    const pending = pendingRobotHistoryRef.current;
-    if (pending?.key === key) {
-      pending.label = label;
-      clearPendingHistoryTimer(pending);
-      return;
-    }
-
-    commitPendingRobotHistory();
-    pendingRobotHistoryRef.current = {
-      key,
-      label,
-      snapshot: createRobotSnapshot(),
-      timeoutId: null,
+    liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, sceneSnapshot);
+    liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, preparedCache);
+    usdPersistenceBaselineRef.current = {
+      fileName: normalizedSelectedFileName,
+      robotSnapshot: currentRobotSnapshot,
+      fallbackSceneSnapshot: sceneSnapshot,
+      hadPreparedExportCache: Boolean(preparedCache),
+      hadSceneSnapshot: true,
     };
-  }, [clearPendingHistoryTimer, commitPendingRobotHistory, createRobotSnapshot]);
-
-  const ensurePendingAssemblyHistory = useCallback((key: string, label: string) => {
-    const pending = pendingAssemblyHistoryRef.current;
-    if (pending?.key === key) {
-      pending.label = label;
-      clearPendingHistoryTimer(pending);
-      return;
-    }
-
-    commitPendingAssemblyHistory();
-    pendingAssemblyHistoryRef.current = {
-      key,
-      label,
-      snapshot: createAssemblySnapshot(),
-      timeoutId: null,
-    };
-  }, [clearPendingHistoryTimer, commitPendingAssemblyHistory, createAssemblySnapshot]);
-
-  const schedulePendingRobotHistoryCommit = useCallback((key: string, delayMs = PROPERTY_HISTORY_COMMIT_DELAY_MS) => {
-    const pending = pendingRobotHistoryRef.current;
-    if (!pending || pending.key !== key) return;
-
-    clearPendingHistoryTimer(pending);
-    pending.timeoutId = window.setTimeout(() => {
-      commitPendingRobotHistory(key);
-    }, delayMs);
-  }, [clearPendingHistoryTimer, commitPendingRobotHistory]);
-
-  const schedulePendingAssemblyHistoryCommit = useCallback((key: string, delayMs = PROPERTY_HISTORY_COMMIT_DELAY_MS) => {
-    const pending = pendingAssemblyHistoryRef.current;
-    if (!pending || pending.key !== key) return;
-
-    clearPendingHistoryTimer(pending);
-    pending.timeoutId = window.setTimeout(() => {
-      commitPendingAssemblyHistory(key);
-    }, delayMs);
-  }, [clearPendingHistoryTimer, commitPendingAssemblyHistory]);
+  }, []);
 
   useEffect(() => {
-    const flushPendingHistory = () => {
-      commitPendingRobotHistory();
-      commitPendingAssemblyHistory();
-    };
-
-    registerPendingHistoryFlusher(flushPendingHistory);
+    registerPendingUsdCacheFlusher(flushPendingUsdCache);
     return () => {
-      flushPendingHistory();
-      registerPendingHistoryFlusher(null);
+      registerPendingUsdCacheFlusher(null);
     };
-  }, [commitPendingAssemblyHistory, commitPendingRobotHistory]);
+  }, [flushPendingUsdCache]);
 
   useEffect(() => {
-    commitPendingRobotHistory();
-    commitPendingAssemblyHistory();
-  }, [sidebarTab, commitPendingAssemblyHistory, commitPendingRobotHistory]);
+    if (selectedFile?.format === 'usd') {
+      return;
+    }
+
+    usdPersistenceBaselineRef.current = EMPTY_USD_PERSISTENCE_BASELINE;
+  }, [selectedFile?.format]);
+
+  const handleRobotDataResolved = useCallback((result: ViewerRobotDataResolution) => {
+    const liveAssetsState = useAssetsStore.getState();
+    const normalizedStageSourcePath = String(result.stageSourcePath || '').replace(/^\/+/, '');
+    const resolvedSelectedFile = liveAssetsState.selectedFile
+      ?? (
+        normalizedStageSourcePath
+          ? liveAssetsState.availableFiles.find((file) => (
+              file.format === 'usd'
+              && String(file.name || '').replace(/^\/+/, '') === normalizedStageSourcePath
+            )) ?? null
+          : null
+      )
+      ?? selectedFile;
+
+    if (!resolvedSelectedFile) {
+      return;
+    }
+
+    const normalizedSelectedFileName = String(resolvedSelectedFile.name || '').replace(/^\/+/, '');
+    if (normalizedSelectedFileName && normalizedStageSourcePath && normalizedSelectedFileName !== normalizedStageSourcePath) {
+      return;
+    }
+
+    if (resolvedSelectedFile.format === 'usd') {
+      const existingSceneSnapshot = liveAssetsState.getUsdSceneSnapshot(resolvedSelectedFile.name);
+      const existingPreparedExportCache = liveAssetsState.getUsdPreparedExportCache(resolvedSelectedFile.name);
+      const hydrationPersistencePlan = buildUsdHydrationPersistencePlan({
+        resolution: result,
+        existingSceneSnapshot,
+        existingPreparedExportCache,
+      });
+      const preparedHydrationExportCache = hydrationPersistencePlan.shouldSeedPreparedExportCache
+        && hydrationPersistencePlan.sceneSnapshot
+        ? prepareUsdExportCacheFromSnapshot(hydrationPersistencePlan.sceneSnapshot, {
+            fileName: resolvedSelectedFile.name,
+            resolution: result,
+          })
+        : existingPreparedExportCache;
+
+      if (hydrationPersistencePlan.shouldSeedSceneSnapshot && hydrationPersistencePlan.sceneSnapshot) {
+        liveAssetsState.setUsdSceneSnapshot(resolvedSelectedFile.name, hydrationPersistencePlan.sceneSnapshot);
+      }
+      if (hydrationPersistencePlan.shouldSeedPreparedExportCache && preparedHydrationExportCache) {
+        liveAssetsState.setUsdPreparedExportCache(resolvedSelectedFile.name, preparedHydrationExportCache);
+      }
+
+      usdPersistenceBaselineRef.current = {
+        fileName: normalizedSelectedFileName,
+        robotSnapshot: createRobotSemanticSnapshot(result.robotData),
+        fallbackSceneSnapshot: hydrationPersistencePlan.sceneSnapshot as UsdSceneSnapshot | null,
+        hadPreparedExportCache: Boolean(preparedHydrationExportCache),
+        hadSceneSnapshot: Boolean(hydrationPersistencePlan.sceneSnapshot),
+      };
+    }
+
+    const pendingHydrationFileName = pendingUsdHydrationFileRef.current
+      ?? (
+        liveAssetsState.documentLoadState.status === 'hydrating'
+          ? liveAssetsState.documentLoadState.fileName
+          : null
+      );
+
+    const shouldApplyResolvedRobotData = resolvedSelectedFile.format !== 'usd'
+      || shouldApplyUsdStageHydration({
+        pendingFileName: pendingHydrationFileName,
+        selectedFileName: resolvedSelectedFile.name,
+        stageSourcePath: result.stageSourcePath,
+      });
+
+    if (shouldApplyResolvedRobotData) {
+      const isColdUsdHydration = resolvedSelectedFile.format === 'usd'
+        && pendingHydrationFileName === resolvedSelectedFile.name;
+      setRobot(
+        result.robotData,
+        resolvedSelectedFile.format === 'usd'
+          ? isColdUsdHydration
+            ? { resetHistory: true, label: 'Hydrate USD stage' }
+            : { skipHistory: true, label: 'Hydrate USD stage' }
+          : undefined,
+      );
+      setDocumentLoadState({
+        status: 'ready',
+        fileName: resolvedSelectedFile.name,
+        format: resolvedSelectedFile.format,
+        error: null,
+      });
+      setSelection({ type: null, id: null });
+      if (resolvedSelectedFile.format === 'usd') {
+        pendingUsdHydrationFileRef.current = null;
+      }
+    }
+
+    const pendingUsdAssemblyFile = pendingUsdAssemblyFileRef.current;
+    if (
+      pendingUsdAssemblyFile
+      && resolvedSelectedFile.format === 'usd'
+      && pendingUsdAssemblyFile.name === resolvedSelectedFile.name
+    ) {
+      const component = addComponent(pendingUsdAssemblyFile, {
+        availableFiles: liveAssetsState.availableFiles,
+        assets: liveAssetsState.assets,
+        preResolvedRobotData: result.robotData,
+      });
+      if (component) {
+        showToast(t.addedComponent.replace('{name}', component.name), 'success');
+      }
+      pendingUsdAssemblyFileRef.current = null;
+    }
+  }, [addComponent, selectedFile, setDocumentLoadState, setRobot, setSelection, showToast, t]);
+
   const {
     emptyRobot,
     robot,
     jointAngleState,
+    jointMotionState,
     showVisual,
     urdfContentForViewer,
+    viewerSourceFilePath,
     sourceCodeContent,
+    sourceCodeDocumentFlavor,
     filePreview,
+    previewRobot,
     previewFileName,
     handlePreviewFile,
     handleClosePreview,
@@ -363,6 +451,8 @@ export function AppLayout({
     robotLinks,
     robotJoints,
     rootLinkId,
+    robotMaterials,
+    closedLoopConstraints,
     isCodeViewerOpen,
     selectedFile,
     setSelectedFile,
@@ -371,8 +461,14 @@ export function AppLayout({
     setAvailableFiles,
     setAllFileContents,
     originalUrdfContent,
+    isSelectedUsdHydrating,
+    assets,
+    getUsdPreparedExportCache,
     setOriginalUrdfContent,
   });
+
+  const previewContextRobot = previewRobot ?? robot;
+  const isPreviewingWorkspaceSource = Boolean(previewRobot);
 
   const {
     handleSelect,
@@ -389,322 +485,89 @@ export function AppLayout({
     setHoveredSelection,
     focusOn,
   });
+
   const setPendingCollisionTransform = useCollisionTransformStore((state) => state.setPendingCollisionTransform);
   const clearPendingCollisionTransform = useCollisionTransformStore((state) => state.clearPendingCollisionTransform);
 
-  const handleNameChange = useCallback((name: string) => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      useAssemblyStore.getState().setAssembly({ ...assemblyState, name });
-    } else {
-      setName(name);
-    }
-  }, [setName, assemblyState, sidebarTab]);
-
-  const renameComponentRootWithDefaults = useCallback((
-    componentId: string,
-    nextRootNameRaw: string,
-    options?: { skipHistory?: boolean; label?: string }
-  ) => {
-    const nextRootName = nextRootNameRaw.trim();
-    if (!nextRootName) return;
-
-    const latestAssembly = useAssemblyStore.getState().assemblyState;
-    if (!latestAssembly) return;
-    const component = latestAssembly.components[componentId];
-    if (!component) return;
-
-    const rootId = component.robot.rootLinkId;
-    const rootLink = component.robot.links[rootId];
-    if (!rootLink) return;
-
-    const oldRootName = rootLink.name;
-    const oldPrefix = `${oldRootName}_`;
-
-    const nextLinks: Record<string, UrdfLink> = { ...component.robot.links };
-    nextLinks[rootId] = { ...rootLink, name: nextRootName };
-
-    Object.entries(component.robot.links).forEach(([id, link]) => {
-      if (id === rootId) return;
-      if (!link.name.startsWith(oldPrefix)) return;
-      nextLinks[id] = {
-        ...link,
-        name: `${nextRootName}_${link.name.slice(oldPrefix.length)}`,
-      };
-    });
-
-    const nextJoints: Record<string, UrdfJoint> = { ...component.robot.joints };
-    Object.entries(component.robot.joints).forEach(([id, joint]) => {
-      if (!joint.name.startsWith(oldPrefix)) return;
-      nextJoints[id] = {
-        ...joint,
-        name: `${nextRootName}_${joint.name.slice(oldPrefix.length)}`,
-      };
-    });
-
-    updateComponentRobot(componentId, { links: nextLinks, joints: nextJoints }, options);
-    updateComponentName(componentId, nextRootName, options);
-  }, [updateComponentName, updateComponentRobot]);
-
-  const applyUpdate = useCallback((
-    type: 'link' | 'joint',
-    id: string,
-    data: UrdfLink | UrdfJoint,
-    options: UpdateCommitOptions = {},
-  ) => {
-    const commitMode = options.commitMode ?? 'debounced';
-    const latestAssemblyState = sidebarTab === 'workspace'
-      ? useAssemblyStore.getState().assemblyState
-      : null;
-
-    if (latestAssemblyState) {
-      for (const comp of Object.values(latestAssemblyState.components)) {
-        const resolvedLinkId = type === 'link' ? resolveLinkKey(comp.robot.links, id) : null;
-        if (type === 'link' && resolvedLinkId) {
-          const nextLink = data as UrdfLink;
-          const historyKey = options.historyKey ?? `assembly:component:${comp.id}:link:${resolvedLinkId}`;
-          const historyLabel = options.historyLabel ?? 'Update assembly component';
-          const isRootLink = resolvedLinkId === comp.robot.rootLinkId;
-
-          if (isRootLink && comp.robot.links[resolvedLinkId].name !== nextLink.name) {
-            ensurePendingAssemblyHistory(historyKey, historyLabel);
-            renameComponentRootWithDefaults(comp.id, nextLink.name, {
-              skipHistory: true,
-              label: historyLabel,
-            });
-
-            const latestAssembly = useAssemblyStore.getState().assemblyState;
-            const latestComp = latestAssembly?.components[comp.id];
-            const latestRoot = latestComp?.robot.links[resolvedLinkId];
-            if (latestComp && latestRoot) {
-              updateComponentRobot(comp.id, {
-                links: {
-                  ...latestComp.robot.links,
-                  [resolvedLinkId]: { ...latestRoot, ...nextLink, name: nextLink.name.trim() || latestRoot.name },
-                },
-              }, {
-                skipHistory: true,
-                label: historyLabel,
-              });
-            }
-
-            if (commitMode === 'immediate') {
-              commitPendingAssemblyHistory(historyKey);
-            } else if (commitMode !== 'manual') {
-              schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-            }
-            return;
-          }
-
-          ensurePendingAssemblyHistory(historyKey, historyLabel);
-          updateComponentRobot(comp.id, {
-            links: { ...comp.robot.links, [resolvedLinkId]: nextLink },
-          }, {
-            skipHistory: true,
-            label: historyLabel,
-          });
-
-          if (commitMode === 'immediate') {
-            commitPendingAssemblyHistory(historyKey);
-          } else if (commitMode !== 'manual') {
-            schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-          }
-          return;
-        }
-
-        const resolvedJointId = type === 'joint' ? resolveJointKey(comp.robot.joints, id) : null;
-        if (type === 'joint' && resolvedJointId) {
-          const historyKey = options.historyKey ?? `assembly:component:${comp.id}:joint:${resolvedJointId}`;
-          const historyLabel = options.historyLabel ?? 'Update assembly component';
-
-          ensurePendingAssemblyHistory(historyKey, historyLabel);
-          updateComponentRobot(comp.id, {
-            joints: { ...comp.robot.joints, [resolvedJointId]: data as UrdfJoint },
-          }, {
-            skipHistory: true,
-            label: historyLabel,
-          });
-
-          if (commitMode === 'immediate') {
-            commitPendingAssemblyHistory(historyKey);
-          } else if (commitMode !== 'manual') {
-            schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-          }
-          return;
-        }
-      }
-
-      if (type === 'joint' && latestAssemblyState.bridges[id]) {
-        const historyKey = options.historyKey ?? `assembly:bridge:${id}`;
-        const historyLabel = options.historyLabel ?? 'Update bridge joint';
-
-        ensurePendingAssemblyHistory(historyKey, historyLabel);
-        useAssemblyStore.getState().updateBridge(id, { joint: data as UrdfJoint }, {
-          skipHistory: true,
-          label: historyLabel,
-        });
-
-        if (commitMode === 'immediate') {
-          commitPendingAssemblyHistory(historyKey);
-        } else if (commitMode !== 'manual') {
-          schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-        }
-        return;
-      }
-    }
-
-    if (type === 'link') {
-      const resolvedLinkId = resolveLinkKey(useRobotStore.getState().links, id);
-      if (resolvedLinkId) {
-        const historyKey = options.historyKey ?? `robot:link:${resolvedLinkId}`;
-        const historyLabel = options.historyLabel ?? 'Update link';
-
-        ensurePendingRobotHistory(historyKey, historyLabel);
-        updateLink(resolvedLinkId, data as Partial<UrdfLink>, {
-          skipHistory: true,
-          label: historyLabel,
-        });
-
-        if (commitMode === 'immediate') {
-          commitPendingRobotHistory(historyKey);
-        } else if (commitMode !== 'manual') {
-          schedulePendingRobotHistoryCommit(historyKey, options.debounceMs);
-        }
-      }
-    } else {
-      const resolvedJointId = resolveJointKey(useRobotStore.getState().joints, id);
-      if (resolvedJointId) {
-        const historyKey = options.historyKey ?? `robot:joint:${resolvedJointId}`;
-        const historyLabel = options.historyLabel ?? 'Update joint';
-
-        ensurePendingRobotHistory(historyKey, historyLabel);
-        updateJoint(resolvedJointId, data as Partial<UrdfJoint>, {
-          skipHistory: true,
-          label: historyLabel,
-        });
-
-        if (commitMode === 'immediate') {
-          commitPendingRobotHistory(historyKey);
-        } else if (commitMode !== 'manual') {
-          schedulePendingRobotHistoryCommit(historyKey, options.debounceMs);
-        }
-      }
-    }
-  }, [
-    commitPendingAssemblyHistory,
-    commitPendingRobotHistory,
-    ensurePendingAssemblyHistory,
-    ensurePendingRobotHistory,
-    schedulePendingAssemblyHistoryCommit,
-    schedulePendingRobotHistoryCommit,
+  const {
+    handleNameChange,
+    handleUpdate,
+    handleCollisionTransform,
+    handleAddChild,
+    handleAddCollisionBody,
+    handleDelete,
+    handleRenameComponent,
+    handleSetShowVisual,
+    handleJointChange,
+  } = useWorkspaceMutations({
+    sidebarTab,
+    assemblyState,
+    robotLinks,
+    rootLinkId,
+    setName,
+    addChild,
+    deleteSubtree,
     updateLink,
     updateJoint,
-    sidebarTab,
+    setAllLinksVisibility,
+    setJointAngle,
+    updateComponentName,
     updateComponentRobot,
-    renameComponentRootWithDefaults,
-    resolveLinkKey,
-    resolveJointKey,
-  ]);
+    removeComponent,
+    removeBridge,
+    focusOn,
+    setSelection,
+    setPendingCollisionTransform,
+    clearPendingCollisionTransform,
+    handleTransformPendingChange,
+  });
 
-  const handleUpdate = useCallback((type: 'link' | 'joint', id: string, data: UrdfLink | UrdfJoint) => {
-    applyUpdate(type, id, data, { commitMode: 'debounced' });
-  }, [applyUpdate]);
+  const {
+    handleUploadAsset,
+    handleDeleteLibraryFile,
+    handleDeleteLibraryFolder,
+    handleRenameLibraryFolder,
+    handleDeleteAllLibraryFiles,
+    handleExportLibraryFile,
+  } = useLibraryFileActions({
+    availableFiles,
+    selectedFile,
+    assemblyState,
+    emptyRobot,
+    removeComponent,
+    removeRobotFile,
+    removeRobotFolder,
+    renameRobotFolder,
+    renameComponentSourceFolder,
+    clearRobotLibrary,
+    resetRobot,
+    clearSelection,
+    uploadAsset,
+    openLibraryExportDialog: onOpenLibraryExport,
+    showToast,
+    t,
+  });
 
-  const applyCollisionTransformUpdate = useCallback((
-    linkId: string,
-    position: { x: number; y: number; z: number },
-    rotation: { r: number; p: number; y: number },
-    commitMode: UpdateCommitMode,
-    objectIndex?: number,
-  ) => {
-    const latestAssemblyState = sidebarTab === 'workspace'
-      ? useAssemblyStore.getState().assemblyState
+  const handleAddComponent = useCallback((file: RobotFile) => {
+    const preResolvedRobotData = file.format === 'usd'
+      ? getUsdPreparedExportCache(file.name)?.robotData ?? null
       : null;
 
-    if (latestAssemblyState) {
-      for (const comp of Object.values(latestAssemblyState.components)) {
-        const resolvedLinkId = resolveLinkKey(comp.robot.links, linkId);
-        if (!resolvedLinkId) continue;
-
-        const link = comp.robot.links[resolvedLinkId];
-        if (!link) return;
-
-        const updatedLink = updateCollisionGeometryByObjectIndex(link, objectIndex ?? 0, {
-          origin: {
-            xyz: position,
-            rpy: rotation,
-          },
-        });
-
-        applyUpdate('link', resolvedLinkId, updatedLink, {
-          historyKey: `collision-transform:${comp.id}:${resolvedLinkId}:${objectIndex ?? 0}`,
-          historyLabel: 'Transform collision body',
-          commitMode,
-        });
-        return;
-      }
-
+    if (file.format === 'usd' && !preResolvedRobotData) {
+      pendingUsdAssemblyFileRef.current = file;
+      onLoadRobot(file);
       return;
     }
 
-    const latestLinks = useRobotStore.getState().links;
-    const resolvedLinkId = resolveLinkKey(latestLinks, linkId);
-    if (!resolvedLinkId) return;
-
-    const link = latestLinks[resolvedLinkId];
-    if (!link) return;
-
-    const updatedLink = updateCollisionGeometryByObjectIndex(link, objectIndex ?? 0, {
-      origin: {
-        xyz: position,
-        rpy: rotation,
-      },
+    const component = addComponent(file, {
+      availableFiles,
+      assets,
+      preResolvedRobotData,
     });
-
-    applyUpdate('link', resolvedLinkId, updatedLink, {
-      historyKey: `collision-transform:${resolvedLinkId}:${objectIndex ?? 0}`,
-      historyLabel: 'Transform collision body',
-      commitMode,
-    });
-  }, [applyUpdate, resolveLinkKey, sidebarTab]);
-
-  const handleCollisionTransformPreview = useCallback((
-    linkId: string,
-    position: { x: number; y: number; z: number },
-    rotation: { r: number; p: number; y: number },
-    objectIndex?: number,
-  ) => {
-    const resolvedLinkId = resolveLinkKey(robot.links, linkId) ?? linkId;
-    setPendingCollisionTransform({
-      linkId: resolvedLinkId,
-      objectIndex: objectIndex ?? 0,
-      position,
-      rotation,
-    });
-  }, [resolveLinkKey, robot.links, setPendingCollisionTransform]);
-
-  const handleCollisionTransform = useCallback((
-    linkId: string,
-    position: { x: number; y: number; z: number },
-    rotation: { r: number; p: number; y: number },
-    objectIndex?: number,
-  ) => {
-    clearPendingCollisionTransform();
-    applyCollisionTransformUpdate(linkId, position, rotation, 'immediate', objectIndex);
-  }, [applyCollisionTransformUpdate, clearPendingCollisionTransform]);
-
-  const handleCollisionTransformPendingChange = useCallback((pending: boolean) => {
-    handleTransformPendingChange(pending);
-    if (!pending) {
-      clearPendingCollisionTransform();
-    }
-  }, [clearPendingCollisionTransform, handleTransformPendingChange]);
-
-  const handleAddComponent = useCallback((file: RobotFile) => {
-    const component = addComponent(file, { availableFiles, assets });
     if (component) {
       showToast(t.addedComponent.replace('{name}', component.name), 'success');
     }
-  }, [addComponent, availableFiles, assets, showToast, t]);
+  }, [addComponent, assets, availableFiles, getUsdPreparedExportCache, onLoadRobot, showToast, t]);
 
   const handleCreateBridge = useCallback(() => {
     setShouldRenderBridgeModal(true);
@@ -717,388 +580,58 @@ export function AppLayout({
     setIsCollisionOptimizerOpen(true);
   }, []);
 
-  const handleAddChild = useCallback((parentId: string) => {
-    const { jointId } = addChild(parentId);
-    setSelection({ type: 'joint', id: jointId });
-  }, [addChild, setSelection]);
-
-  const handleAddCollisionBody = useCallback((parentId: string) => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      for (const component of Object.values(assemblyState.components)) {
-        const parentLink = component.robot.links[parentId];
-        if (!parentLink) continue;
-        const updatedParentLink = appendCollisionBody(parentLink);
-        const nextCollisionEntries = getCollisionGeometryEntries(updatedParentLink);
-        const nextObjectIndex = Math.max(0, nextCollisionEntries.length - 1);
-
-        updateComponentRobot(component.id, {
-          links: {
-            ...component.robot.links,
-            [parentId]: updatedParentLink,
-          },
-        });
-
-        setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
-        focusOn(parentId);
-        return;
-      }
-      return;
+  const handleOpenMeasureTool = useCallback(() => {
+    setViewConfig((prev) => ({ ...prev, showToolbar: true }));
+    if (appMode === 'skeleton') {
+      setAppMode('detail');
     }
+    setPendingViewerToolMode('measure');
+  }, [appMode, setAppMode, setViewConfig]);
 
-    const parentLink = robot.links[parentId];
-    if (!parentLink) return;
-    const updatedParentLink = appendCollisionBody(parentLink);
-    const nextCollisionEntries = getCollisionGeometryEntries(updatedParentLink);
-    const nextObjectIndex = Math.max(0, nextCollisionEntries.length - 1);
-    updateLink(parentId, updatedParentLink);
-    setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
-    focusOn(parentId);
-  }, [
-    assemblyState,
-    focusOn,
-    robot.links,
-    setSelection,
-    sidebarTab,
-    updateComponentRobot,
-    updateLink,
-  ]);
-
-  const handleDelete = useCallback((linkId: string) => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      for (const component of Object.values(assemblyState.components)) {
-        if (!component.robot.links[linkId]) continue;
-
-        if (linkId === component.robot.rootLinkId) {
-          removeComponent(component.id);
-          setSelection({ type: null, id: null });
-          return;
-        }
-
-        const toDeleteLinks = new Set<string>();
-        const toDeleteJoints = new Set<string>();
-        const collect = (currentLinkId: string) => {
-          if (toDeleteLinks.has(currentLinkId)) return;
-          toDeleteLinks.add(currentLinkId);
-
-          Object.values(component.robot.joints).forEach((joint) => {
-            if (joint.parentLinkId === currentLinkId) {
-              toDeleteJoints.add(joint.id);
-              collect(joint.childLinkId);
-            }
-            if (joint.childLinkId === currentLinkId) {
-              toDeleteJoints.add(joint.id);
-            }
-          });
-        };
-        collect(linkId);
-
-        const nextLinks: Record<string, UrdfLink> = {};
-        Object.entries(component.robot.links).forEach(([id, link]) => {
-          if (!toDeleteLinks.has(id)) {
-            nextLinks[id] = link;
-          }
-        });
-
-        const nextJoints: Record<string, UrdfJoint> = {};
-        Object.entries(component.robot.joints).forEach(([id, joint]) => {
-          if (!toDeleteJoints.has(id)) {
-            nextJoints[id] = joint;
-          }
-        });
-
-        updateComponentRobot(component.id, {
-          links: nextLinks,
-          joints: nextJoints,
-        });
-
-        Object.values(assemblyState.bridges).forEach((bridge) => {
-          const isAffectedParent = bridge.parentComponentId === component.id && toDeleteLinks.has(bridge.parentLinkId);
-          const isAffectedChild = bridge.childComponentId === component.id && toDeleteLinks.has(bridge.childLinkId);
-          if (isAffectedParent || isAffectedChild) {
-            removeBridge(bridge.id);
-          }
-        });
-
-        setSelection({ type: null, id: null });
-        return;
-      }
-      return;
-    }
-
-    if (linkId === robot.rootLinkId) return;
-    deleteSubtree(linkId);
-    setSelection({ type: null, id: null });
-  }, [
+  const {
+    collisionOptimizationSource,
+    handlePreviewCollisionOptimizationTarget,
+    handleApplyCollisionOptimization,
+  } = useCollisionOptimizationWorkflow({
     assemblyState,
     sidebarTab,
-    robot.rootLinkId,
-    deleteSubtree,
-    removeBridge,
-    removeComponent,
-    setSelection,
-    updateComponentRobot,
-  ]);
-
-  const handleRenameComponent = useCallback((componentId: string, name: string) => {
-    if (!(assemblyState && sidebarTab === 'workspace')) return;
-    renameComponentRootWithDefaults(componentId, name);
-  }, [assemblyState, sidebarTab, renameComponentRootWithDefaults]);
-
-  const handleSetShowVisual = useCallback((target: boolean) => {
-    setAllLinksVisibility(target);
-  }, [setAllLinksVisibility]);
-
-  const collisionOptimizationSource = useMemo<CollisionOptimizationSource>(() => {
-    if (assemblyState && sidebarTab === 'workspace') {
-      return {
-        kind: 'assembly',
-        assembly: assemblyState,
-      };
-    }
-
-    return {
-      kind: 'robot',
-      robot: {
-        name: robotName,
-        links: robotLinks,
-        joints: robotJoints,
-        rootLinkId,
-        materials: robotMaterials,
-      },
-    };
-  }, [assemblyState, robotJoints, robotLinks, robotMaterials, robotName, rootLinkId, sidebarTab]);
-
-  const handlePreviewCollisionOptimizationTarget = useCallback((target: CollisionTargetRef) => {
-    const nextSelection = {
-      type: 'link' as const,
-      id: target.linkId,
-      subType: 'collision' as const,
-      objectIndex: target.objectIndex,
-    };
-
-    setSelection(nextSelection);
-    pulseSelection(nextSelection);
-    focusOn(target.linkId);
-  }, [focusOn, pulseSelection, setSelection]);
-
-  const handleApplyCollisionOptimization = useCallback((operations: CollisionOptimizationOperation[]) => {
-    if (operations.length === 0) {
-      showToast(t.noCollisionOptimizationApplied, 'info');
-      return;
-    }
-
-    if (assemblyState && sidebarTab === 'workspace') {
-      const operationsByComponent = new Map<string, CollisionOptimizationOperation[]>();
-      operations.forEach((operation) => {
-        if (!operation.componentId) return;
-        const bucket = operationsByComponent.get(operation.componentId) ?? [];
-        bucket.push(operation);
-        operationsByComponent.set(operation.componentId, bucket);
-      });
-
-      operationsByComponent.forEach((componentOperations, componentId) => {
-        const component = assemblyState.components[componentId];
-        if (!component) return;
-
-        updateComponentRobot(componentId, {
-          links: applyCollisionOptimizationOperationsToLinks(component.robot.links, componentOperations),
-        });
-      });
-    } else {
-      setRobot({
-        name: robotName,
-        links: applyCollisionOptimizationOperationsToLinks(robotLinks, operations),
-        joints: robotJoints,
-        rootLinkId,
-        materials: robotMaterials,
-      });
-    }
-
-    const meshConvertedCount = operations.filter((operation) => operation.fromType === GeometryType.MESH).length;
-    const primitiveConvertedCount = operations.length - meshConvertedCount;
-
-    const message = t.collisionOptimizationApplied
-      .replace('{count}', String(operations.length))
-      .replace('{meshCount}', String(meshConvertedCount))
-      .replace('{primitiveCount}', String(primitiveConvertedCount));
-
-    showToast(message, 'success');
-  }, [
-    assemblyState,
-    robotJoints,
-    robotMaterials,
     robotName,
-    rootLinkId,
-    setRobot,
-    showToast,
-    sidebarTab,
     robotLinks,
+    robotJoints,
+    rootLinkId,
+    robotMaterials,
+    setRobot,
     updateComponentRobot,
-    t,
-  ]);
-
-  const handleUploadAsset = useCallback((file: File) => {
-    uploadAsset(file);
-  }, [uploadAsset]);
-
-  const clearLoadedModel = useCallback(() => {
-    resetRobot({
-      name: '',
-      links: emptyRobot.links,
-      joints: emptyRobot.joints,
-      rootLinkId: emptyRobot.rootLinkId,
-    });
-    setSelection({ type: null, id: null });
-  }, [resetRobot, emptyRobot, setSelection]);
-
-  const isPathInFolder = useCallback((path: string, folderPath: string) => {
-    const normalized = folderPath.replace(/\/+$/, '');
-    return path === normalized || path.startsWith(`${normalized}/`);
-  }, []);
-
-  const handleDeleteLibraryFile = useCallback((file: RobotFile) => {
-    const isCurrentModel = selectedFile?.name === file.name;
-    const relatedComponentIds = assemblyState
-      ? Object.values(assemblyState.components)
-          .filter((component) => component.sourceFile === file.name)
-          .map((component) => component.id)
-      : [];
-
-    removeRobotFile(file.name);
-    relatedComponentIds.forEach((componentId) => removeComponent(componentId));
-    if (isCurrentModel) {
-      clearLoadedModel();
-    }
-
-    const fileLabel = file.name.split('/').pop() ?? file.name;
-    showToast(
-      t.removedFromAssetLibrary.replace('{name}', fileLabel),
-      'success',
-    );
-  }, [
-    assemblyState,
-    clearLoadedModel,
-    removeComponent,
-    removeRobotFile,
-    selectedFile?.name,
+    focusOn,
+    pulseSelection,
+    setSelection,
     showToast,
     t,
-  ]);
-
-  const handleDeleteLibraryFolder = useCallback((folderPath: string) => {
-    const normalizedFolder = folderPath.replace(/\/+$/, '');
-    if (!normalizedFolder) return;
-
-    const isCurrentModel = selectedFile?.name
-      ? isPathInFolder(selectedFile.name, normalizedFolder)
-      : false;
-    const relatedComponentIds = assemblyState
-      ? Object.values(assemblyState.components)
-          .filter((component) => isPathInFolder(component.sourceFile, normalizedFolder))
-          .map((component) => component.id)
-      : [];
-
-    removeRobotFolder(normalizedFolder);
-    relatedComponentIds.forEach((componentId) => removeComponent(componentId));
-    if (isCurrentModel) {
-      clearLoadedModel();
-    }
-
-    showToast(
-      t.removedFolder.replace('{path}', normalizedFolder),
-      'success',
-    );
-  }, [
-    assemblyState,
-    clearLoadedModel,
-    isPathInFolder,
-    removeComponent,
-    removeRobotFolder,
-    selectedFile?.name,
-    showToast,
-    t,
-  ]);
-
-  const handleDeleteAllLibraryFiles = useCallback(() => {
-    if (availableFiles.length === 0) return;
-
-    const availableFileNames = new Set(availableFiles.map((file) => file.name));
-    const shouldClearCurrentModel = selectedFile?.name
-      ? availableFileNames.has(selectedFile.name)
-      : false;
-    const relatedComponentIds = assemblyState
-      ? Object.values(assemblyState.components)
-          .filter((component) => availableFileNames.has(component.sourceFile))
-          .map((component) => component.id)
-      : [];
-
-    relatedComponentIds.forEach((componentId) => removeComponent(componentId));
-
-    if (shouldClearCurrentModel) {
-      clearLoadedModel();
-    }
-
-    clearRobotLibrary();
-
-    showToast(
-      t.deletedAllLibraryFiles.replace('{count}', String(availableFiles.length)),
-      'success',
-    );
-  }, [
-    assemblyState,
-    availableFiles,
-    clearLoadedModel,
-    clearRobotLibrary,
-    removeComponent,
-    selectedFile?.name,
-    showToast,
-    t,
-  ]);
-
-  const handleExportLibraryFile = useCallback(async (file: RobotFile, format: 'urdf' | 'mjcf') => {
-    const result = await exportLibraryRobotFile({
-      file,
-      targetFormat: format,
-      assets,
-    });
-
-    if (!result.success) {
-      if (result.reason === 'unsupported-file-format') {
-        showToast(t.onlyUrdfMjcfExport, 'info');
-        return;
-      }
-
-      showToast(t.exportFailedParse, 'info');
-      return;
-    }
-
-    if (result.missingMeshPaths.length > 0) {
-      showToast(
-        t.exportedWithMissingMeshes.replace('{count}', String(result.missingMeshPaths.length)),
-        'info',
-      );
-      return;
-    }
-
-    showToast(
-      t.exportedSuccess.replace('{name}', result.zipFileName ?? ''),
-      'success',
-    );
-  }, [assets, showToast, t]);
-
-  const handleJointChange = useCallback((jointName: string, angle: number) => {
-    setJointAngle(jointName, angle);
-  }, [setJointAngle]);
+  });
 
   const handleCodeChange = useCallback((newCode: string) => {
+    if (selectedFile?.format === 'usd') {
+      return;
+    }
+
     const mjcfBasePath = selectedFile?.name
       ? selectedFile.name.split('/').slice(0, -1).join('/')
       : '';
-    const newState = selectedFile?.format === 'mjcf'
+    const parsedState = selectedFile?.format === 'mjcf'
       ? parseMJCF(processMJCFIncludes(newCode, availableFiles, mjcfBasePath))
       : parseURDF(newCode);
+    const newState = parsedState
+      ? rewriteRobotMeshPathsForSource(parsedState, selectedFile?.name)
+      : null;
+
     if (newState) {
-      const { selection: _, ...newData } = newState;
+      const newData = {
+        name: newState.name,
+        links: newState.links,
+        joints: newState.joints,
+        rootLinkId: newState.rootLinkId,
+        materials: newState.materials,
+      };
       setRobot(newData);
     }
   }, [availableFiles, selectedFile?.format, selectedFile?.name, setRobot]);
@@ -1115,102 +648,52 @@ export function AppLayout({
     }
   }, [showToast, t]);
 
+  const {
+    isFileDragActive,
+    handleDragEnter,
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+    prefetchSourceCodeEditor,
+  } = useAppLayoutEffects({
+    robot,
+    selection,
+    clearSelection,
+    onFileDrop,
+    onDropError: () => showToast(t.failedToProcessFiles, 'info'),
+  });
+
   const handleOpenCodeViewer = useCallback(() => {
-    void preloadSourceCodeEditor();
+    if (isSelectedUsdHydrating) {
+      showToast(t.usdLoadInProgress, 'info');
+      return;
+    }
+    prefetchSourceCodeEditor();
     setIsCodeViewerOpen(true);
-  }, [setIsCodeViewerOpen]);
+  }, [isSelectedUsdHydrating, prefetchSourceCodeEditor, setIsCodeViewerOpen, showToast, t.usdLoadInProgress]);
 
   const handlePrefetchCodeViewer = useCallback(() => {
-    void preloadSourceCodeEditor();
-  }, []);
-
-  // Keyboard shortcuts for undo/redo
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        if (canUndo) {
-          undo();
-          e.preventDefault();
-        }
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
-        if (canRedo) {
-          redo();
-          e.preventDefault();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, canUndo, canRedo]);
-
-  // Warm up Monaco in the background so the first Source Code open is faster.
-  useEffect(() => {
-    const warmup = () => {
-      void preloadSourceCodeEditor();
-    };
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: typeof window.requestIdleCallback;
-      cancelIdleCallback?: typeof window.cancelIdleCallback;
-    };
-
-    if (typeof idleWindow.requestIdleCallback === 'function') {
-      const idleId = idleWindow.requestIdleCallback(warmup, { timeout: 1800 });
-      return () => idleWindow.cancelIdleCallback?.(idleId);
-    }
-
-    const timer = window.setTimeout(warmup, 800);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  // Clean up selection if selected item no longer exists
-  // Use robot.links/joints (which includes merged assembly data in workspace mode)
-  useEffect(() => {
-    if (selection.id && selection.type) {
-      const exists = selection.type === 'link'
-        ? robot.links[selection.id]
-        : robot.joints[selection.id];
-      if (!exists) {
-        setSelection({ type: null, id: null });
-      }
-    }
-  }, [robot.links, robot.joints, selection, setSelection]);
-
-  // Drag and Drop handlers
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-  }, []);
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (e.dataTransfer.items) {
-      try {
-        const files = await getDroppedFiles(e.dataTransfer.items);
-        if (files.length > 0) {
-          onFileDrop(files);
-        }
-      } catch (err) {
-        console.error('Failed to process dropped files:', err);
-        showToast(t.failedToProcessFiles, 'info');
-      }
-    }
-  }, [onFileDrop, showToast, t]);
+    prefetchSourceCodeEditor();
+  }, [prefetchSourceCodeEditor]);
 
   return (
     <div
       className="flex flex-col h-screen font-sans bg-google-light-bg dark:bg-app-bg text-slate-800 dark:text-slate-200"
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      <FileDropOverlay
+        visible={isFileDragActive}
+        title={t.dropFilesToImport}
+        hint={t.dropFilesToImportHint}
+      />
+
       {/* Hidden file inputs */}
       <input
         type="file"
-        accept=".zip,.urdf,.xml,.usda,.usd,.xacro,.usp"
+        accept=".zip,.urdf,.xml,.usda,.usdc,.usdz,.usd,.xacro,.usp"
         ref={importInputRef}
         className="hidden"
       />
@@ -1228,11 +711,13 @@ export function AppLayout({
         onOpenExport={onOpenExport}
         onExportProject={onExportProject}
         onOpenAI={onOpenAI}
+        onOpenMeasureTool={handleOpenMeasureTool}
         onOpenCodeViewer={handleOpenCodeViewer}
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenURDFGallery={onOpenURDFGallery}
+        onOpenUser={onOpenUser}
+        quickAction={headerQuickAction}
         onSnapshot={handleSnapshot}
         onOpenCollisionOptimizer={handleOpenCollisionOptimizer}
         viewConfig={viewConfig}
@@ -1242,7 +727,7 @@ export function AppLayout({
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
         <TreeEditor
-          robot={robot}
+          robot={previewContextRobot}
           onSelect={handleSelect}
           onSelectGeometry={handleSelectGeometry}
           onFocus={handleFocus}
@@ -1260,11 +745,12 @@ export function AppLayout({
           onToggle={() => toggleSidebar('left')}
           availableFiles={availableFiles}
           onLoadRobot={onLoadRobot}
-          currentFileName={selectedFile?.name}
+          currentFileName={previewFileName ?? selectedFile?.name}
           assemblyState={assemblyState}
           onAddComponent={handleAddComponent}
           onDeleteLibraryFile={handleDeleteLibraryFile}
           onDeleteLibraryFolder={handleDeleteLibraryFolder}
+          onRenameLibraryFolder={handleRenameLibraryFolder}
           onDeleteAllLibraryFiles={handleDeleteAllLibraryFiles}
           onExportLibraryFile={handleExportLibraryFile}
           onCreateBridge={handleCreateBridge}
@@ -1273,6 +759,7 @@ export function AppLayout({
           onRenameComponent={handleRenameComponent}
           onPreviewFile={handlePreviewFile}
           previewFileName={previewFileName}
+          isReadOnly={isPreviewingWorkspaceSource}
         />
 
         {/* Viewer Container */}
@@ -1298,8 +785,13 @@ export function AppLayout({
             setShowSkeletonOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: show }))}
             showJointPanel={viewConfig.showJointPanel}
             setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
+            availableFiles={availableFiles}
             urdfContent={urdfContentForViewer}
+            sourceFilePath={viewerSourceFilePath}
+            sourceFile={selectedFile}
+            onRobotDataResolved={handleRobotDataResolved}
             jointAngleState={jointAngleState}
+            jointMotionState={jointMotionState}
             onJointChange={handleJointChange}
             selection={robot.selection}
             focusTarget={focusTarget}
@@ -1307,11 +799,14 @@ export function AppLayout({
             onCollisionTransform={handleCollisionTransform}
             filePreview={filePreview}
             onClosePreview={handleClosePreview}
+            pendingViewerToolMode={pendingViewerToolMode}
+            onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
+            viewerReloadKey={viewerReloadKey}
           />
         </div>
 
         <PropertyEditor
-          robot={robot}
+          robot={previewContextRobot}
           onUpdate={handleUpdate}
           onSelect={handleSelect}
           onHover={handleHover}
@@ -1323,49 +818,36 @@ export function AppLayout({
           theme={theme}
           collapsed={sidebar.rightCollapsed}
           onToggle={() => toggleSidebar('right')}
+          readOnlyMessage={isPreviewingWorkspaceSource ? t.previewReadOnlyHint : undefined}
         />
       </div>
 
-      {/* Source Code Editor */}
-      {isCodeViewerOpen && (
-        <Suspense fallback={<LazyOverlayFallback label={t.loadingEditor} />}>
-          <SourceCodeEditor
-            code={sourceCodeContent}
-            onCodeChange={handleCodeChange}
-            onClose={() => setIsCodeViewerOpen(false)}
-            theme={theme}
-            fileName={selectedFile ? selectedFile.name.split('/').pop() || `${robot.name}.urdf` : `${robot.name}.urdf`}
-            lang={lang}
-          />
-        </Suspense>
-      )}
-
-      {isCollisionOptimizerOpen && (
-        <Suspense fallback={<LazyOverlayFallback label={t.loadingOptimizer} />}>
-          <CollisionOptimizationDialog
-            source={collisionOptimizationSource}
-            lang={lang}
-            assets={assets}
-            selection={selection}
-            onClose={() => setIsCollisionOptimizerOpen(false)}
-            onSelectTarget={handlePreviewCollisionOptimizationTarget}
-            onApply={handleApplyCollisionOptimization}
-          />
-        </Suspense>
-      )}
-
-      {/* Bridge Create Modal */}
-      {assemblyState && shouldRenderBridgeModal && (
-        <Suspense fallback={<LazyOverlayFallback label={t.loadingBridgeDialog} />}>
-          <BridgeCreateModal
-            isOpen={isBridgeModalOpen}
-            onClose={() => setIsBridgeModalOpen(false)}
-            onCreate={addBridge}
-            assemblyState={assemblyState}
-            lang={lang}
-          />
-        </Suspense>
-      )}
+      <AppLayoutOverlays
+        isCodeViewerOpen={isCodeViewerOpen}
+        sourceCodeContent={sourceCodeContent}
+        sourceCodeDocumentFlavor={sourceCodeDocumentFlavor}
+        onCodeChange={handleCodeChange}
+        onCloseCodeViewer={() => setIsCodeViewerOpen(false)}
+        theme={theme}
+        selectedFileName={selectedFile?.name}
+        robotName={robot.name}
+        lang={lang}
+        loadingEditorLabel={t.loadingEditor}
+        isCollisionOptimizerOpen={isCollisionOptimizerOpen}
+        loadingOptimizerLabel={t.loadingOptimizer}
+        collisionOptimizationSource={collisionOptimizationSource}
+        assets={assets}
+        selection={selection}
+        onCloseCollisionOptimizer={() => setIsCollisionOptimizerOpen(false)}
+        onSelectCollisionTarget={handlePreviewCollisionOptimizationTarget}
+        onApplyCollisionOptimization={handleApplyCollisionOptimization}
+        assemblyState={assemblyState}
+        shouldRenderBridgeModal={shouldRenderBridgeModal}
+        loadingBridgeDialogLabel={t.loadingBridgeDialog}
+        isBridgeModalOpen={isBridgeModalOpen}
+        onCloseBridgeModal={() => setIsBridgeModalOpen(false)}
+        onCreateBridge={addBridge}
+      />
     </div>
   );
 }

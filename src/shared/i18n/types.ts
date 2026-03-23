@@ -5,38 +5,6 @@
 export type Language = 'en' | 'zh';
 
 export interface TranslationKeys {
-  // URDF Gallery
-  urdfGallery: string;
-  gallery: string;
-  searchModels: string;
-  featuredModels: string;
-  findNextProject: string;
-  importNow: string;
-  noModelsFound: string;
-  changeSearchKeywords: string;
-  categories: string;
-  allModels: string;
-  quadruped: string;
-  manipulators: string;
-  humanoids: string;
-  mobileBases: string;
-  unitreeTech: string;
-  fullRobots: string;
-  endEffectors: string;
-  sensors: string;
-  articulatedObjects: string;
-  dataAssets: string;
-  tags: string;
-  fetchingResources: string;
-  minimize: string;
-  maximize: string;
-  restore: string;
-  downloadComplete: string;
-  loadFromLocal: string;
-  clickImport: string;
-  loadFailed: string;
-  manifestNotFound: string;
-
   // Header
   appName: string;
   skeleton: string;
@@ -112,17 +80,31 @@ export interface TranslationKeys {
   // Property Editor
   properties: string;
   selectLinkOrJoint: string;
+  previewReadOnlyHint: string;
   name: string;
   visualGeometry: string;
   collisionGeometry: string;
   type: string;
   jointTypeFixed: string;
+  jointTypeFixedDescription: string;
   jointTypeRevolute: string;
+  jointTypeRevoluteDescription: string;
   jointTypeContinuous: string;
+  jointTypeContinuousDescription: string;
   jointTypePrismatic: string;
+  jointTypePrismaticDescription: string;
   jointTypePlanar: string;
+  jointTypePlanarDescription: string;
   jointTypeFloating: string;
+  jointTypeFloatingDescription: string;
   dimensions: string;
+  meshScale: string;
+  visible: string;
+  hidden: string;
+  materialSource: string;
+  materialSourceInline: string;
+  materialSourceNamed: string;
+  materialSourceGazebo: string;
   originReferenceFrame: string;
   originRelativeLink: string;
   originRelativeParent: string;
@@ -147,9 +129,13 @@ export interface TranslationKeys {
   applyMesh: string;
   meshHint: string;
   inertial: string;
+  derivedValues: string;
   mass: string;
+  density: string;
   centerOfMass: string;
   inertiaTensor: string;
+  diagonalInertia: string;
+  principalAxes: string;
   kinematics: string;
   axisRotation: string;
   hardwareConfig: string;
@@ -206,6 +192,8 @@ export interface TranslationKeys {
   instructionMac: string;
   instructionLinux: string;
   instructionOther: string;
+  hideUsageGuide: string;
+  showUsageGuide: string;
   clickToSelect: string;
   enableLabels: string;
   clickLabels: string;
@@ -240,11 +228,13 @@ export interface TranslationKeys {
   checking: string;
   inspectionCompleted: string;
   generatingReport: string;
+  minimize: string;
+  maximize: string;
+  restore: string;
 
   // Additional UI
   collapseSidebar: string;
   switchUnit: string;
-  showJointControls: string;
   showVisual: string;
   showCenterOfMass: string;
   showInertia: string;
@@ -252,6 +242,14 @@ export interface TranslationKeys {
   joints: string;
   viewOptions: string;
   loadingRobot: string;
+  loadingRobotPreparing: string;
+  loadingRobotCheckingPath: string;
+  loadingRobotPreloadingDependencies: string;
+  loadingRobotInitializingRenderer: string;
+  loadingRobotStreamingMeshes: string;
+  loadingRobotApplyingStageFixes: string;
+  loadingRobotResolvingMetadata: string;
+  loadingRobotFinalizingScene: string;
   enterRobotName: string;
   enterMotorType: string;
   modeLabel: string;
@@ -275,6 +273,7 @@ export interface TranslationKeys {
 
   // Toolbox Descriptions
   aiAssistantDesc: string;
+  measureToolboxDesc: string;
   motionTrackingDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
@@ -310,6 +309,8 @@ export interface TranslationKeys {
   copied: string;
   fileBrowser: string;
   dropOrImport: string;
+  dropFilesToImport: string;
+  dropFilesToImportHint: string;
   simpleMode: string;
   proMode: string;
   structureTree: string;
@@ -348,6 +349,7 @@ export interface TranslationKeys {
   language: string;
   theme: string;
   about: string;
+  user: string;
   more: string;
   importUspZipFile: string;
   skeletonHardwareOptions: string;
@@ -379,11 +381,17 @@ export interface TranslationKeys {
   addedComponent: string;
   noCollisionOptimizationApplied: string;
   collisionOptimizationApplied: string;
+  renamedFolder: string;
+  assetLibraryRenameInvalid: string;
+  assetLibraryRenameConflict: string;
   removedFromAssetLibrary: string;
   removedFolder: string;
   deletedAllLibraryFiles: string;
   onlyUrdfMjcfExport: string;
   exportFailedParse: string;
+  usdExportRequiresLoadedStage: string;
+  usdExportUnavailable: string;
+  usdLoadInProgress: string;
   exportedWithMissingMeshes: string;
   exportedSuccess: string;
   generatingSnapshot: string;
@@ -409,7 +417,29 @@ export interface TranslationKeys {
   measureInstruction2: string;
   measureInstruction3: string;
   measuredCount: string;
+  measureSlotFirst: string;
+  measureSlotSecond: string;
+  measureSlotEmpty: string;
+  measureSlotSelecting: string;
+  measureSlotSelected: string;
+  measureClearSelection: string;
+  measureAnchorMode: string;
+  measureAnchorFrame: string;
+  measureAnchorCenterOfMass: string;
+  measureAnchorGeometry: string;
+  measureGroups: string;
+  measureGroupLabel: string;
+  measureAddGroup: string;
+  measureRemoveGroup: string;
+  measureShowDecomposition: string;
+  measureResult: string;
+  measureTotalDistance: string;
+  measureDeltaX: string;
+  measureDeltaY: string;
+  measureDeltaZ: string;
+  measureNoMeasurement: string;
   undo: string;
+  redo: string;
   clearAll: string;
 
   // Performance
@@ -424,6 +454,8 @@ export interface TranslationKeys {
   exportFormatURDF: string;
   exportFormatUSD: string;
   exportComingSoon: string;
+  exportCompressMeshes: string;
+  exportCompressMeshesDesc: string;
   simulatorPreset: string;
   presetCustom: string;
   exportMeshdir: string;
@@ -442,18 +474,41 @@ export interface TranslationKeys {
   exportIncludeExtendedDesc: string;
   exportIncludeBOM: string;
   exportIncludeBOMDesc: string;
+  exportIncludeSkeleton: string;
+  exportIncludeSkeletonDesc: string;
   exportOutputSection: string;
   exportOptionsSection: string;
   exportDoExport: string;
+  exportProgressTitle: string;
+  exportProgressKeepWindowOpen: string;
+  exportProgressStepCounter: string;
+  exportProgressPreparing: string;
+  exportProgressPreparingDetail: string;
+  exportProgressGeneratingFiles: string;
+  exportProgressGeneratingUrdfDetail: string;
+  exportProgressGeneratingMjcfDetail: string;
+  exportProgressGeneratingXacroDetail: string;
+  exportProgressPreparingSimulationMeshes: string;
+  exportProgressPreparingSimulationMeshesDetail: string;
+  exportProgressCollectingAssets: string;
+  exportProgressCollectingAssetsPreparingDetail: string;
+  exportProgressCollectingAssetsDetail: string;
+  exportProgressBuildingUsdScene: string;
+  exportProgressUsdScenePreparingDetail: string;
+  exportProgressUsdSceneDetail: string;
+  exportProgressConvertingUsdLayers: string;
+  exportProgressConvertingUsdLayersPreparingDetail: string;
+  exportProgressConvertingUsdLayersDetail: string;
+  exportProgressPackaging: string;
+  exportProgressPackagingDetail: string;
+  exportProgressPackagingDetailFile: string;
+  exportProgressArchiveFallbackFile: string;
   
   // Feature Convergence
   modelOpacity: string;
   coordinateAxes: string;
   alwaysOnTop: string;
   baseLabelSuffix: string;
-  galleryFileSystemAccessUnsupported: string;
-  galleryGithubApiRequestFailed: string;
-  galleryDownloadFailed: string;
   aiNoValidResponse: string;
   aiNoServiceResponseRetry: string;
   aiGenerationFailed: string;
@@ -518,10 +573,19 @@ export interface TranslationKeys {
   projectImportMissingProjectJson: string;
   stlMeshQuality: string;
   stlMeshQualityDesc: string;
+  usdMeshQuality: string;
+  usdMeshQualityDesc: string;
   stlQualityOriginal: string;
   stlQualityLight: string;
   stlQualityMedium: string;
   stlQualityHigh: string;
+  compressionLevelAggressive: string;
+  compressionLevelCompact: string;
+  compressionLevelBalanced: string;
+  compressionLevelDetailed: string;
+  compressionLevelPreserve: string;
+  compressionSmallerFile: string;
+  compressionMoreDetail: string;
   rosVersion: string;
   hardwareInterface: string;
   hardwareInterfaceEffort: string;
@@ -542,6 +606,8 @@ export interface TranslationKeys {
   collisionOptimizerCylinderStrategyDesc: string;
   collisionOptimizerRodBoxStrategyLabel: string;
   collisionOptimizerRodBoxStrategyDesc: string;
+  collisionOptimizerCoaxialMergeStrategyLabel: string;
+  collisionOptimizerCoaxialMergeStrategyDesc: string;
   collisionOptimizerRules: string;
   collisionOptimizerAvoidSiblingOverlap: string;
   collisionOptimizerAvoidSiblingOverlapDesc: string;
@@ -563,10 +629,26 @@ export interface TranslationKeys {
   collisionOptimizerReasonCylinder: string;
   collisionOptimizerReasonRodBox: string;
   collisionOptimizerReasonRodBoxCylinder: string;
+  collisionOptimizerReasonCoaxialCapsule: string;
+  collisionOptimizerReasonCoaxialCylinder: string;
   collisionOptimizerClickToLocate: string;
   collisionOptimizerCollisionIndex: string;
   collisionOptimizerPrimary: string;
   collisionOptimizerComponent: string;
+  collisionOptimizerJointPair: string;
+  collisionOptimizerViewList: string;
+  collisionOptimizerViewGraph: string;
+  collisionOptimizerFrontView: string;
+  collisionOptimizerGraphHint: string;
+  collisionOptimizerClearManualPairs: string;
+  collisionOptimizerManualPair: string;
+  collisionOptimizerAutoPair: string;
+  collisionOptimizerMergeTo: string;
+  collisionOptimizerMergedInto: string;
+  collisionOptimizerConnectTargets: string;
+  collisionOptimizerZoomIn: string;
+  collisionOptimizerZoomOut: string;
+  collisionOptimizerResetView: string;
   collisionOptimizerApplySummary: string;
 }
 

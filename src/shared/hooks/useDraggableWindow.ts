@@ -125,6 +125,8 @@ export const useDraggableWindow = ({
   const dragFrameRef = useRef<number | null>(null);
   const centeredOnceRef = useRef(false);
   const preMaximizeRef = useRef<{ position: Position; size: WindowSize } | null>(null);
+  const bodyUserSelectRef = useRef('');
+  const bodyCursorRef = useRef('');
 
   useEffect(() => {
     positionRef.current = position;
@@ -158,6 +160,16 @@ export const useDraggableWindow = ({
 
     containerRef.current.style.setProperty(DRAG_TRANSLATE_X_VAR, '0px');
     containerRef.current.style.setProperty(DRAG_TRANSLATE_Y_VAR, '0px');
+  }, []);
+
+  const captureBodyInteractionStyles = useCallback(() => {
+    bodyUserSelectRef.current = document.body.style.userSelect;
+    bodyCursorRef.current = document.body.style.cursor;
+  }, []);
+
+  const restoreBodyInteractionStyles = useCallback(() => {
+    document.body.style.userSelect = bodyUserSelectRef.current;
+    document.body.style.cursor = bodyCursorRef.current;
   }, []);
 
   const getDragLimits = useCallback(
@@ -223,20 +235,20 @@ export const useDraggableWindow = ({
 
       dragTransformRef.current = { x: 0, y: 0 };
       resetDragTransform();
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
+      restoreBodyInteractionStyles();
       setIsDragging(false);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
+      window.removeEventListener('blur', handleMouseUp);
+      restoreBodyInteractionStyles();
     };
-  }, [getDragLimits, isDragging, resetDragTransform, scheduleDragTransform]);
+  }, [getDragLimits, isDragging, resetDragTransform, restoreBodyInteractionStyles, scheduleDragTransform]);
 
   useEffect(() => {
     if (!isResizing || !resizeDirection) return;
@@ -285,26 +297,29 @@ export const useDraggableWindow = ({
     };
 
     const handleMouseUp = () => {
+      restoreBodyInteractionStyles();
       setIsResizing(false);
       setResizeDirection(null);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleMouseUp);
+      restoreBodyInteractionStyles();
     };
-  }, [clampResizeToViewport, isResizing, minSize.height, minSize.width, resizeDirection]);
+  }, [clampResizeToViewport, isResizing, minSize.height, minSize.width, resizeDirection, restoreBodyInteractionStyles]);
 
   useEffect(() => {
     resetDragTransform();
     return () => {
       resetDragTransform();
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
+      restoreBodyInteractionStyles();
     };
-  }, [resetDragTransform]);
+  }, [resetDragTransform, restoreBodyInteractionStyles]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !clampResizeToViewport) return;
@@ -353,11 +368,12 @@ export const useDraggableWindow = ({
       };
       dragTransformRef.current = { x: 0, y: 0 };
       resetDragTransform();
+      captureBodyInteractionStyles();
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'grabbing';
       setIsDragging(true);
     },
-    [isMaximized, resetDragTransform],
+    [captureBodyInteractionStyles, isMaximized, resetDragTransform],
   );
 
   const handleResizeStart = useCallback(
@@ -366,6 +382,13 @@ export const useDraggableWindow = ({
 
       e.preventDefault();
       e.stopPropagation();
+      captureBodyInteractionStyles();
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = direction === 'left' || direction === 'w'
+        ? 'ew-resize'
+        : direction === 'bottom' || direction === 's'
+          ? 'ns-resize'
+          : 'nwse-resize';
       setIsResizing(true);
       setResizeDirection(normalizeResizeDirection(direction));
       resizeStartRef.current = {
@@ -376,7 +399,7 @@ export const useDraggableWindow = ({
         posX: positionRef.current.x,
       };
     },
-    [isMaximized, isMinimized],
+    [captureBodyInteractionStyles, isMaximized, isMinimized],
   );
 
   const toggleMaximize = useCallback(() => {

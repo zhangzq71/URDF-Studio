@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { disposeMaterial } from './dispose';
+export { disposeMaterial } from './dispose';
 
 // Re-export shared material factory so existing consumers keep working
 export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
@@ -94,12 +95,56 @@ export const collisionHighlightMaterial = new THREE.MeshStandardMaterial({
     depthTest: false,
     depthWrite: false,
 });
+export const measureFirstHighlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0x60a5fa, // Blue-400
+    roughness: 0.45,
+    metalness: 0.0,
+    emissive: 0x60a5fa,
+    emissiveIntensity: 0.35,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.42,
+    depthTest: false,
+    depthWrite: false,
+});
+
+export const measureSecondHighlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24, // Amber-400
+    roughness: 0.45,
+    metalness: 0.0,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 0.38,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.42,
+    depthTest: false,
+    depthWrite: false,
+});
+
+export const measureHoverHighlightMaterial = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0, // Slate-200
+    roughness: 0.5,
+    metalness: 0.0,
+    emissive: 0x93c5fd,
+    emissiveIntensity: 0.22,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.18,
+    depthTest: false,
+    depthWrite: false,
+});
 highlightMaterial.userData.isSharedMaterial = true;
 highlightMaterial.userData.isHighlightMaterial = true;
 highlightFaceMaterial.userData.isSharedMaterial = true;
 highlightFaceMaterial.userData.isHighlightMaterial = true;
 collisionHighlightMaterial.userData.isSharedMaterial = true;
 collisionHighlightMaterial.userData.isHighlightMaterial = true;
+measureFirstHighlightMaterial.userData.isSharedMaterial = true;
+measureFirstHighlightMaterial.userData.isHighlightMaterial = true;
+measureSecondHighlightMaterial.userData.isSharedMaterial = true;
+measureSecondHighlightMaterial.userData.isHighlightMaterial = true;
+measureHoverHighlightMaterial.userData.isSharedMaterial = true;
+measureHoverHighlightMaterial.userData.isHighlightMaterial = true;
 
 export const collisionBaseMaterial = new THREE.MeshStandardMaterial({
     color: 0xa855f7, // Purple-500
@@ -203,30 +248,22 @@ export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.T
         color = new THREE.Color(0x888888);
     }
 
-    // Reduce very bright/white colors to prevent overexposure
-    // But skip this for URDF colors to preserve exact values
-    if (!material.userData.urdfColorApplied &&
-        color.r > 0.95 && color.g > 0.95 && color.b > 0.95) {
-        color.multiplyScalar(MATERIAL_CONFIG.whiteColorMultiplier);
-    }
-
     // Extract existing properties
     const existingMap = (material as any).map || null;
     const existingOpacity = material.opacity !== undefined ? material.opacity : 1.0;
     const existingTransparent = material.transparent || existingOpacity < 1.0;
     const existingSide = material.side !== undefined ? material.side : THREE.DoubleSide;
 
-    // Create unified MeshStandardMaterial for PBR rendering with IBL
-    const newMat = new THREE.MeshStandardMaterial({
-        color: color,
-        roughness: MATERIAL_CONFIG.roughness,
-        metalness: MATERIAL_CONFIG.metalness,
-        envMapIntensity: MATERIAL_CONFIG.envMapIntensity,
-        map: existingMap,
-        transparent: existingTransparent,
+    // Route all final visual materials through the shared matte material factory so
+    // USD and URDF/MJCF land on the same shading defaults and color normalization.
+    const newMat = createMatteMaterial({
+        color,
         opacity: existingOpacity,
+        transparent: existingTransparent,
         side: existingSide,
-        depthWrite: existingOpacity >= 1.0,
+        map: existingMap,
+        name: material.name,
+        preserveExactColor: Boolean(material.userData.urdfColorApplied),
     });
 
     // Apply environment map if provided
@@ -240,17 +277,11 @@ export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.T
         newMat.map.needsUpdate = true;
     }
 
-    // Store original values for potential restoration
-    newMat.userData.originalColor = color.clone();
-    newMat.userData.originalRoughness = MATERIAL_CONFIG.roughness;
-    newMat.userData.originalMetalness = MATERIAL_CONFIG.metalness;
-    newMat.userData.originalEnvMapIntensity = MATERIAL_CONFIG.envMapIntensity;
     // Preserve URDF color flag for future material operations
     if (material.userData.urdfColorApplied) {
         newMat.userData.urdfColorApplied = true;
         newMat.userData.urdfColor = color.clone();
     }
-    newMat.name = material.name;
 
     newMat.needsUpdate = true;
     return newMat;

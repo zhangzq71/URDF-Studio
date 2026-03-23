@@ -1,12 +1,22 @@
+import * as THREE from 'three';
+import {
+    MJCF_COMPILER_ANGLE_SCOPE_ATTR,
+    MJCF_COMPILER_EULERSEQ_SCOPE_ATTR,
+} from './mjcfCompilerScope';
+
 export interface MJCFCompilerSettings {
     angleUnit: 'radian' | 'degree';
     meshdir: string;
+    texturedir: string;
+    eulerSequence: string;
 }
 
 export interface MJCFMesh {
     name: string;
     file: string;
     scale?: number[];
+    refpos?: [number, number, number];
+    refquat?: [number, number, number, number];
 }
 
 export interface MJCFMaterial {
@@ -14,6 +24,18 @@ export interface MJCFMaterial {
     rgba?: number[];
     shininess?: number;
     specular?: number;
+    reflectance?: number;
+    emission?: number;
+    texture?: string;
+    texrepeat?: number[];
+    texuniform?: boolean;
+}
+
+export interface MJCFTexture {
+    name: string;
+    file?: string;
+    type?: string;
+    builtin?: string;
 }
 
 export interface MJCFPosition {
@@ -29,7 +51,7 @@ export interface MJCFQuaternion {
     z: number;
 }
 
-type MJCFElementType = 'body' | 'geom' | 'joint' | 'inertial' | 'mesh';
+type MJCFElementType = 'body' | 'geom' | 'joint' | 'inertial' | 'mesh' | 'material' | 'texture';
 
 type MJCFAttributeMap = Record<string, string>;
 
@@ -39,6 +61,8 @@ interface MJCFElementDefaults {
     joint: MJCFAttributeMap;
     inertial: MJCFAttributeMap;
     mesh: MJCFAttributeMap;
+    material: MJCFAttributeMap;
+    texture: MJCFAttributeMap;
 }
 
 interface MJCFDefaultClassEntry {
@@ -55,6 +79,16 @@ export interface MJCFDefaultsRegistry {
     qnamesByClassName: Map<string, string[]>;
 }
 
+const MJCF_ROOT_PATTERN = /^\s*(?:<\?xml[\s\S]*?\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[\s\S]*?>\s*)*<mujoco\b/i;
+
+export function looksLikeMJCFDocument(content: string): boolean {
+    if (!content) {
+        return false;
+    }
+
+    return MJCF_ROOT_PATTERN.test(content.slice(0, 2048));
+}
+
 export function parseNumbers(str: string | null): number[] {
     if (!str) return [];
 
@@ -65,14 +99,237 @@ export function parseNumbers(str: string | null): number[] {
 }
 
 export function parseCompilerSettings(doc: Document): MJCFCompilerSettings {
-    const compiler = doc.querySelector('compiler');
-    const angleAttr = compiler?.getAttribute('angle')?.toLowerCase() || 'radian';
-    const meshdir = compiler?.getAttribute('meshdir') || '';
+    // MuJoCo accepts multiple <compiler> blocks (common with <include> files) and
+    // merges them in document order: later blocks override only attributes they set.
+    const compilers = Array.from(doc.querySelectorAll('compiler'));
+
+    // MuJoCo default when not explicitly set.
+    let angleAttr = 'degree';
+    let meshdir = '';
+    let texturedir = '';
+    let eulerSequence = 'xyz';
+
+    for (const compiler of compilers) {
+        const rawAngle = compiler.getAttribute('angle');
+        if (rawAngle) {
+            angleAttr = rawAngle.toLowerCase();
+        }
+
+        const rawMeshdir = compiler.getAttribute('meshdir');
+        if (rawMeshdir !== null) {
+            meshdir = rawMeshdir;
+        }
+
+        const rawTexturedir = compiler.getAttribute('texturedir');
+        if (rawTexturedir !== null) {
+            texturedir = rawTexturedir;
+        }
+
+        const rawEulerSequence = compiler.getAttribute('eulerseq');
+        if (rawEulerSequence) {
+            eulerSequence = rawEulerSequence;
+        }
+    }
 
     return {
         angleUnit: angleAttr === 'degree' ? 'degree' : 'radian',
-        meshdir
+        meshdir,
+        texturedir,
+        eulerSequence,
     };
+}
+
+function normalizeAngleUnit(value: string | null | undefined): 'radian' | 'degree' | null {
+    if (!value) {
+        return null;
+    }
+
+    return value.trim().toLowerCase() === 'degree' ? 'degree' : 'radian';
+}
+
+export function resolveCompilerSettingsForElement(
+    element: Element | null | undefined,
+    fallback: MJCFCompilerSettings,
+): MJCFCompilerSettings {
+    if (!element) {
+        return fallback;
+    }
+
+    let current: Element | null = element;
+    while (current) {
+        const scopedAngleUnit = normalizeAngleUnit(current.getAttribute(MJCF_COMPILER_ANGLE_SCOPE_ATTR));
+        const scopedEulerSequence = current.getAttribute(MJCF_COMPILER_EULERSEQ_SCOPE_ATTR)?.trim();
+        if (scopedAngleUnit || scopedEulerSequence) {
+            return {
+                ...fallback,
+                angleUnit: scopedAngleUnit || fallback.angleUnit,
+                eulerSequence: scopedEulerSequence || fallback.eulerSequence,
+            };
+        }
+
+        current = current.parentElement;
+    }
+
+    return fallback;
+}
+
+function normalizeEulerSequence(sequence: string | undefined): string {
+    const normalized = (sequence || 'xyz').trim();
+    if (normalized.length !== 3) {
+        return 'xyz';
+    }
+
+    if ([...normalized].map((axis) => axis.toLowerCase()).sort().join('') !== 'xyz') {
+        return 'xyz';
+    }
+
+    return normalized;
+}
+
+function pickOrthogonalUnitVector(input: THREE.Vector3): THREE.Vector3 {
+    const absolute = {
+        x: Math.abs(input.x),
+        y: Math.abs(input.y),
+        z: Math.abs(input.z),
+    };
+
+    const basis = absolute.x <= absolute.y && absolute.x <= absolute.z
+        ? new THREE.Vector3(1, 0, 0)
+        : absolute.y <= absolute.z
+            ? new THREE.Vector3(0, 1, 0)
+            : new THREE.Vector3(0, 0, 1);
+
+    return basis.sub(input.clone().multiplyScalar(basis.dot(input))).normalize();
+}
+
+function convertAngle(value: number, angleUnit: 'radian' | 'degree'): number {
+    return angleUnit === 'degree' ? (value * Math.PI) / 180 : value;
+}
+
+function makeQuaternionFromBasis(
+    xAxis: { x: number; y: number; z: number },
+    yAxis: { x: number; y: number; z: number },
+    zAxis: { x: number; y: number; z: number },
+): [number, number, number, number] {
+    const basis = new THREE.Matrix4().makeBasis(
+        new THREE.Vector3(xAxis.x, xAxis.y, xAxis.z),
+        new THREE.Vector3(yAxis.x, yAxis.y, yAxis.z),
+        new THREE.Vector3(zAxis.x, zAxis.y, zAxis.z),
+    );
+    const quaternion = new THREE.Quaternion().setFromRotationMatrix(basis).normalize();
+    return [quaternion.w, quaternion.x, quaternion.y, quaternion.z];
+}
+
+function normalizeVector3OrNull(values: number[] | null): THREE.Vector3 | null {
+    if (!values || values.length < 3) {
+        return null;
+    }
+
+    const vector = new THREE.Vector3(values[0] ?? 0, values[1] ?? 0, values[2] ?? 0);
+    if (vector.lengthSq() <= 1e-12) {
+        return null;
+    }
+
+    return vector.normalize();
+}
+
+function quaternionFromAxisAngle(
+    values: number[] | null,
+    angleUnit: 'radian' | 'degree',
+): [number, number, number, number] | undefined {
+    if (!values || values.length < 4) {
+        return undefined;
+    }
+
+    const axis = normalizeVector3OrNull(values);
+    if (!axis) {
+        return [1, 0, 0, 0];
+    }
+
+    const quaternion = new THREE.Quaternion().setFromAxisAngle(axis, convertAngle(values[3] ?? 0, angleUnit));
+    return [quaternion.w, quaternion.x, quaternion.y, quaternion.z];
+}
+
+function quaternionFromEuler(
+    values: number[] | null,
+    settings: MJCFCompilerSettings,
+): [number, number, number, number] | undefined {
+    if (!values || values.length < 3) {
+        return undefined;
+    }
+
+    const rawSequence = normalizeEulerSequence(settings.eulerSequence);
+    const isExtrinsic = rawSequence === rawSequence.toUpperCase();
+    const sequence = isExtrinsic
+        ? rawSequence.toLowerCase().split('').reverse().join('')
+        : rawSequence.toLowerCase();
+    const orderedValues = isExtrinsic ? [...values].slice(0, 3).reverse() : values;
+    const angleByAxis = { x: 0, y: 0, z: 0 };
+    for (let index = 0; index < 3; index += 1) {
+        const axis = sequence[index]?.toLowerCase() as 'x' | 'y' | 'z';
+        angleByAxis[axis] = convertAngle(orderedValues[index] ?? 0, settings.angleUnit);
+    }
+
+    const euler = new THREE.Euler(
+        angleByAxis.x,
+        angleByAxis.y,
+        angleByAxis.z,
+        sequence.toUpperCase() as THREE.EulerOrder,
+    );
+    const quaternion = new THREE.Quaternion().setFromEuler(euler).normalize();
+    return [quaternion.w, quaternion.x, quaternion.y, quaternion.z];
+}
+
+function quaternionFromXYAxes(values: number[] | null): [number, number, number, number] | undefined {
+    if (!values || values.length < 6) {
+        return undefined;
+    }
+
+    const xAxis = normalizeVector3OrNull(values.slice(0, 3));
+    if (!xAxis) {
+        return undefined;
+    }
+
+    const ySeed = new THREE.Vector3(values[3] ?? 0, values[4] ?? 0, values[5] ?? 0);
+    const orthogonalY = ySeed.sub(xAxis.clone().multiplyScalar(ySeed.dot(xAxis)));
+    const yAxis = orthogonalY.lengthSq() > 1e-12
+        ? orthogonalY.normalize()
+        : pickOrthogonalUnitVector(xAxis);
+    const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+    const correctedY = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+
+    return makeQuaternionFromBasis(xAxis, correctedY, zAxis);
+}
+
+function quaternionFromZAxis(values: number[] | null): [number, number, number, number] | undefined {
+    const zAxis = normalizeVector3OrNull(values);
+    if (!zAxis) {
+        return undefined;
+    }
+
+    const helper = Math.abs(zAxis.z) < 0.999
+        ? new THREE.Vector3(0, 0, 1)
+        : new THREE.Vector3(0, 1, 0);
+    const xAxis = new THREE.Vector3().crossVectors(helper, zAxis).normalize();
+    const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+    return makeQuaternionFromBasis(xAxis, yAxis, zAxis);
+}
+
+export function parseOrientationAsQuat(
+    attributes: {
+        quat?: string | null;
+        axisangle?: string | null;
+        xyaxes?: string | null;
+        zaxis?: string | null;
+        euler?: string | null;
+    },
+    settings: MJCFCompilerSettings,
+): [number, number, number, number] | undefined {
+    return parseQuatAsTuple(attributes.quat || null)
+        || quaternionFromAxisAngle(parseNumbers(attributes.axisangle || null), settings.angleUnit)
+        || quaternionFromXYAxes(parseNumbers(attributes.xyaxes || null))
+        || quaternionFromZAxis(parseNumbers(attributes.zaxis || null))
+        || quaternionFromEuler(parseNumbers(attributes.euler || null), settings);
 }
 
 export function parsePosAsTuple(str: string | null): [number, number, number] {
@@ -122,6 +379,8 @@ function createEmptyDefaults(): MJCFElementDefaults {
         joint: {},
         inertial: {},
         mesh: {},
+        material: {},
+        texture: {},
     };
 }
 
@@ -132,6 +391,8 @@ function cloneDefaults(defaults: MJCFElementDefaults): MJCFElementDefaults {
         joint: { ...defaults.joint },
         inertial: { ...defaults.inertial },
         mesh: { ...defaults.mesh },
+        material: { ...defaults.material },
+        texture: { ...defaults.texture },
     };
 }
 
@@ -142,6 +403,8 @@ function mergeDefaults(base: MJCFElementDefaults, override: Partial<MJCFElementD
         joint: { ...base.joint, ...(override.joint || {}) },
         inertial: { ...base.inertial, ...(override.inertial || {}) },
         mesh: { ...base.mesh, ...(override.mesh || {}) },
+        material: { ...base.material, ...(override.material || {}) },
+        texture: { ...base.texture, ...(override.texture || {}) },
     };
 }
 
@@ -166,6 +429,8 @@ function collectDefaultAttributes(defaultEl: Element): Partial<MJCFElementDefaul
         joint: collectDirectAttributes(defaultEl, 'joint'),
         inertial: collectDirectAttributes(defaultEl, 'inertial'),
         mesh: collectDirectAttributes(defaultEl, 'mesh'),
+        material: collectDirectAttributes(defaultEl, 'material'),
+        texture: collectDirectAttributes(defaultEl, 'texture'),
     };
 }
 
@@ -237,7 +502,13 @@ export function parseMJCFDefaults(doc: Document): MJCFDefaultsRegistry {
     const topLevelDefaults = mujocoEl.querySelectorAll(':scope > default');
     topLevelDefaults.forEach((defaultEl) => {
         const mergedDefaults = visitDefaultElement(defaultEl, registry, registry.root, undefined);
-        if (!defaultEl.getAttribute('class')) {
+        const className = defaultEl.getAttribute('class')?.trim();
+
+        // MuJoCo's implicit global defaults class is `main`. Some menagerie models
+        // express the active root defaults via `<default class="main">` instead of
+        // an unnamed top-level `<default>`, so we need to seed `registry.root`
+        // from both representations.
+        if (!className || className === 'main') {
             registry.root = mergeDefaults(registry.root, mergedDefaults);
         }
     });
@@ -310,18 +581,16 @@ export function resolveElementAttributes(
         ...registry.root[elementType],
     };
 
-    if (activeClassQName) {
-        const activeEntry = registry.classesByQName.get(activeClassQName);
-        if (activeEntry) {
-            Object.assign(resolvedAttributes, activeEntry.defaults[elementType]);
-        }
-    }
+    const explicitClassName = element.getAttribute('class')?.trim();
+    const explicitClassQName = explicitClassName
+        ? resolveDefaultClassQName(registry, explicitClassName, activeClassQName)
+        : undefined;
+    const classQNameToApply = explicitClassQName || activeClassQName;
 
-    const explicitClassQName = resolveDefaultClassQName(registry, element.getAttribute('class'), activeClassQName);
-    if (explicitClassQName) {
-        const explicitEntry = registry.classesByQName.get(explicitClassQName);
-        if (explicitEntry) {
-            Object.assign(resolvedAttributes, explicitEntry.defaults[elementType]);
+    if (classQNameToApply) {
+        const classEntry = registry.classesByQName.get(classQNameToApply);
+        if (classEntry) {
+            Object.assign(resolvedAttributes, classEntry.defaults[elementType]);
         }
     }
 
@@ -386,10 +655,16 @@ export function parseMeshAssets(doc: Document, settings?: MJCFCompilerSettings, 
             }
 
             const scale = parseNumbers(meshAttrs.scale || null);
+            const refpos = parseNumbers(meshAttrs.refpos || null);
+            const refquat = parseQuatAsTuple(meshAttrs.refquat || null);
             meshMap.set(name, {
                 name,
                 file,
                 scale: scale.length >= 3 ? scale : undefined,
+                refpos: refpos.length >= 3
+                    ? [refpos[0] ?? 0, refpos[1] ?? 0, refpos[2] ?? 0]
+                    : undefined,
+                refquat,
             });
 
             meshIndex += 1;
@@ -399,9 +674,66 @@ export function parseMeshAssets(doc: Document, settings?: MJCFCompilerSettings, 
     return meshMap;
 }
 
+function deriveAssetName(filePath: string, fallbackPrefix: string, assetIndex: number): string {
+    const fileName = filePath.split('/').pop()?.split('\\').pop() || '';
+    const lastDotIndex = fileName.lastIndexOf('.');
+    return (lastDotIndex > 0 ? fileName.slice(0, lastDotIndex) : fileName) || `${fallbackPrefix}_${assetIndex}`;
+}
 
-export function parseMaterialAssets(doc: Document): Map<string, MJCFMaterial> {
+export function parseTextureAssets(
+    doc: Document,
+    settings?: MJCFCompilerSettings,
+    defaultsRegistry?: MJCFDefaultsRegistry,
+): Map<string, MJCFTexture> {
+    const textureMap = new Map<string, MJCFTexture>();
+    const defaults = defaultsRegistry || parseMJCFDefaults(doc);
+    const mujocoEl = doc.querySelector('mujoco');
+    if (!mujocoEl) {
+        return textureMap;
+    }
+
+    let textureIndex = 0;
+    const assetSections = mujocoEl.querySelectorAll(':scope > asset');
+    assetSections.forEach((assetEl) => {
+        const textures = assetEl.querySelectorAll(':scope > texture');
+        textures.forEach((textureEl) => {
+            const textureAttrs = resolveElementAttributes(defaults, 'texture', textureEl);
+            let file = textureEl.getAttribute('file') || textureAttrs.file;
+            const builtin = textureEl.getAttribute('builtin') || textureAttrs.builtin || undefined;
+            const type = textureEl.getAttribute('type') || textureAttrs.type || undefined;
+            const explicitName = textureEl.getAttribute('name') || textureAttrs.name || undefined;
+
+            if (file && settings?.texturedir && !file.startsWith('/') && !file.includes(':')) {
+                const prefix = settings.texturedir.endsWith('/') ? settings.texturedir : `${settings.texturedir}/`;
+                file = `${prefix}${file}`;
+            }
+
+            const name = explicitName || (file ? deriveAssetName(file, 'texture', textureIndex) : undefined);
+            if (!name) {
+                textureIndex += 1;
+                return;
+            }
+
+            textureMap.set(name, {
+                name,
+                file: file || undefined,
+                type,
+                builtin,
+            });
+
+            textureIndex += 1;
+        });
+    });
+
+    return textureMap;
+}
+
+export function parseMaterialAssets(
+    doc: Document,
+    defaultsRegistry?: MJCFDefaultsRegistry,
+): Map<string, MJCFMaterial> {
     const materialMap = new Map<string, MJCFMaterial>();
+    const defaults = defaultsRegistry || parseMJCFDefaults(doc);
     const mujocoEl = doc.querySelector('mujoco');
     if (!mujocoEl) {
         return materialMap;
@@ -411,18 +743,29 @@ export function parseMaterialAssets(doc: Document): Map<string, MJCFMaterial> {
     assetSections.forEach((assetEl) => {
         const materials = assetEl.querySelectorAll(':scope > material');
         materials.forEach((materialEl) => {
-            const name = materialEl.getAttribute('name');
+            const materialAttrs = resolveElementAttributes(defaults, 'material', materialEl);
+            const name = materialEl.getAttribute('name') || materialAttrs.name;
             if (!name) return;
 
-            const rgba = parseNumbers(materialEl.getAttribute('rgba'));
-            const shininess = materialEl.getAttribute('shininess');
-            const specular = materialEl.getAttribute('specular');
+            const rgba = parseNumbers(materialEl.getAttribute('rgba') || materialAttrs.rgba || null);
+            const shininess = materialEl.getAttribute('shininess') || materialAttrs.shininess;
+            const specular = materialEl.getAttribute('specular') || materialAttrs.specular;
+            const reflectance = materialEl.getAttribute('reflectance') || materialAttrs.reflectance;
+            const emission = materialEl.getAttribute('emission') || materialAttrs.emission;
+            const texrepeat = parseNumbers(materialEl.getAttribute('texrepeat') || materialAttrs.texrepeat || null);
+            const texuniform = materialEl.getAttribute('texuniform') || materialAttrs.texuniform;
+            const texture = materialEl.getAttribute('texture') || materialAttrs.texture;
 
             materialMap.set(name, {
                 name,
                 rgba: rgba.length >= 3 ? rgba : undefined,
                 shininess: shininess != null ? parseFloat(shininess) : undefined,
                 specular: specular != null ? parseFloat(specular) : undefined,
+                reflectance: reflectance != null ? parseFloat(reflectance) : undefined,
+                emission: emission != null ? parseFloat(emission) : undefined,
+                texture: texture || undefined,
+                texrepeat: texrepeat.length >= 2 ? texrepeat : undefined,
+                texuniform: texuniform != null ? ['true', '1'].includes(texuniform.toLowerCase()) : undefined,
             });
         });
     });

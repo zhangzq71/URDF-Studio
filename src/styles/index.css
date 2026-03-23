@@ -37,6 +37,8 @@ code, pre, kbd, samp {
 /* URDF Studio style semantic tokens */
 :root {
   --font-scale: 1;
+  --font-language-scale: 1;
+  --font-effective-scale: calc(var(--font-scale) * var(--font-language-scale));
 
   /* Surfaces (light) */
   --ui-bg: #f8f9fa;
@@ -60,6 +62,16 @@ code, pre, kbd, samp {
   --ui-accent-solid-hover: #006ee6;
   --ui-accent-solid-active: #005fd1;
   --ui-on-accent-hover: rgba(0, 122, 255, 0.18);
+  --ui-danger: #dc2626;
+  --ui-danger-hover: #b91c1c;
+  --ui-danger-active: #991b1b;
+  --ui-danger-soft: #fef2f2;
+  --ui-danger-border: #fecaca;
+  --ui-success: #16a34a;
+  --ui-success-hover: #15803d;
+  --ui-success-active: #166534;
+  --ui-success-soft: #f0fdf4;
+  --ui-success-border: #bbf7d0;
 
   /* Segmented controls */
   --ui-segmented-bg: #f1f5f9;
@@ -74,6 +86,16 @@ code, pre, kbd, samp {
   --ui-slider-thumb-shadow-active: 0 3px 8px rgba(15, 23, 42, 0.14), 0 8px 18px rgba(15, 23, 42, 0.16);
 
   color-scheme: light;
+}
+
+html:lang(en),
+html[data-lang='en'] {
+  --font-language-scale: 1;
+}
+
+html:lang(zh),
+html[data-lang='zh'] {
+  --font-language-scale: 1;
 }
 
 .dark {
@@ -99,6 +121,16 @@ code, pre, kbd, samp {
   --ui-accent-solid-hover: #3697ff;
   --ui-accent-solid-active: #0074eb;
   --ui-on-accent-hover: rgba(10, 132, 255, 0.22);
+  --ui-danger: #f87171;
+  --ui-danger-hover: #ef4444;
+  --ui-danger-active: #dc2626;
+  --ui-danger-soft: rgba(127, 29, 29, 0.28);
+  --ui-danger-border: rgba(248, 113, 113, 0.32);
+  --ui-success: #4ade80;
+  --ui-success-hover: #22c55e;
+  --ui-success-active: #16a34a;
+  --ui-success-soft: rgba(20, 83, 45, 0.32);
+  --ui-success-border: rgba(74, 222, 128, 0.32);
 
   /* Segmented controls */
   --ui-segmented-bg: #151518;
@@ -126,6 +158,16 @@ code, pre, kbd, samp {
     --ui-accent-solid-hover: #00458f;
     --ui-accent-solid-active: #003a78;
     --ui-on-accent-hover: rgba(15, 23, 42, 0.24);
+    --ui-danger: #b91c1c;
+    --ui-danger-hover: #991b1b;
+    --ui-danger-active: #7f1d1d;
+    --ui-danger-soft: #fee2e2;
+    --ui-danger-border: #fca5a5;
+    --ui-success: #15803d;
+    --ui-success-hover: #166534;
+    --ui-success-active: #14532d;
+    --ui-success-soft: #dcfce7;
+    --ui-success-border: #86efac;
     --ui-slider-accent: #0050a8;
     --ui-slider-track: #7d8896;
     --ui-slider-thumb-border: rgba(15, 23, 42, 0.2);
@@ -143,6 +185,16 @@ code, pre, kbd, samp {
     --ui-accent-solid-hover: #005bb8;
     --ui-accent-solid-active: #004c99;
     --ui-on-accent-hover: rgba(255, 255, 255, 0.28);
+    --ui-danger: #fca5a5;
+    --ui-danger-hover: #f87171;
+    --ui-danger-active: #ef4444;
+    --ui-danger-soft: rgba(127, 29, 29, 0.36);
+    --ui-danger-border: rgba(252, 165, 165, 0.4);
+    --ui-success: #86efac;
+    --ui-success-hover: #4ade80;
+    --ui-success-active: #22c55e;
+    --ui-success-soft: rgba(20, 83, 45, 0.42);
+    --ui-success-border: rgba(134, 239, 172, 0.42);
     --ui-segmented-bg: #0f0f11;
     --ui-slider-accent: #0068d1;
     --ui-slider-track: #6a6a6c;
@@ -165,6 +217,16 @@ code, pre, kbd, samp {
   --color-system-blue-hover: var(--ui-accent-solid-hover);
   --color-system-blue-active: var(--ui-accent-solid-active);
   --color-on-accent-hover: var(--ui-on-accent-hover);
+  --color-danger: var(--ui-danger);
+  --color-danger-hover: var(--ui-danger-hover);
+  --color-danger-active: var(--ui-danger-active);
+  --color-danger-soft: var(--ui-danger-soft);
+  --color-danger-border: var(--ui-danger-border);
+  --color-success: var(--ui-success);
+  --color-success-hover: var(--ui-success-hover);
+  --color-success-active: var(--ui-success-active);
+  --color-success-soft: var(--ui-success-soft);
+  --color-success-border: var(--ui-success-border);
   --color-segmented-active: var(--ui-segmented-active);
   --color-border-black: var(--ui-border);
   --color-border-strong: var(--ui-border-strong);
@@ -198,25 +260,27 @@ body {
 
 /* Apply font scale to body base size */
 body {
-  font-size: calc(1rem * var(--font-scale));
+  font-size: calc(1rem * var(--font-effective-scale));
 }
 
 /* Override Tailwind text utilities to scale */
-.text-xs { font-size: calc(0.75rem * var(--font-scale)) !important; }
-.text-sm { font-size: calc(0.875rem * var(--font-scale)) !important; }
-.text-base { font-size: calc(1rem * var(--font-scale)) !important; }
-.text-lg { font-size: calc(1.125rem * var(--font-scale)) !important; }
-.text-xl { font-size: calc(1.25rem * var(--font-scale)) !important; }
-.text-2xl { font-size: calc(1.5rem * var(--font-scale)) !important; }
-.text-3xl { font-size: calc(1.875rem * var(--font-scale)) !important; }
-.text-4xl { font-size: calc(2.25rem * var(--font-scale)) !important; }
+.text-xs { font-size: calc(0.75rem * var(--font-effective-scale)) !important; }
+.text-sm { font-size: calc(0.875rem * var(--font-effective-scale)) !important; }
+.text-base { font-size: calc(1rem * var(--font-effective-scale)) !important; }
+.text-lg { font-size: calc(1.125rem * var(--font-effective-scale)) !important; }
+.text-xl { font-size: calc(1.25rem * var(--font-effective-scale)) !important; }
+.text-2xl { font-size: calc(1.5rem * var(--font-effective-scale)) !important; }
+.text-3xl { font-size: calc(1.875rem * var(--font-effective-scale)) !important; }
+.text-4xl { font-size: calc(2.25rem * var(--font-effective-scale)) !important; }
 
 /* Override arbitrary pixel font sizes commonly used in the app */
-.text-\[10px\] { font-size: calc(10px * var(--font-scale)) !important; }
-.text-\[11px\] { font-size: calc(11px * var(--font-scale)) !important; }
-.text-\[12px\] { font-size: calc(12px * var(--font-scale)) !important; }
-.text-\[13px\] { font-size: calc(13px * var(--font-scale)) !important; }
-.text-\[14px\] { font-size: calc(14px * var(--font-scale)) !important; }
+.text-\[8px\] { font-size: calc(8px * var(--font-effective-scale)) !important; }
+.text-\[9px\] { font-size: calc(9px * var(--font-effective-scale)) !important; }
+.text-\[10px\] { font-size: calc(10px * var(--font-effective-scale)) !important; }
+.text-\[11px\] { font-size: calc(11px * var(--font-effective-scale)) !important; }
+.text-\[12px\] { font-size: calc(12px * var(--font-effective-scale)) !important; }
+.text-\[13px\] { font-size: calc(13px * var(--font-effective-scale)) !important; }
+.text-\[14px\] { font-size: calc(14px * var(--font-effective-scale)) !important; }
 
 /* Custom scrollbar for panels */
 ::-webkit-scrollbar {
@@ -231,6 +295,10 @@ body {
 ::-webkit-scrollbar-thumb {
   background: #94a3b8; /* slate-400 */
   border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 56px;
 }
 
 .dark ::-webkit-scrollbar-thumb {

@@ -1,16 +1,21 @@
 import * as THREE from 'three';
+import { findAssetByPath } from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { URDFCollider, URDFVisual } from '../urdf/loader/URDFClasses';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
+import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
-import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial } from './mjcfUtils';
+import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial, MJCFTexture } from './mjcfUtils';
 
 export interface MJCFHierarchyGeom {
     name?: string;
+    className?: string;
+    classQName?: string;
     type: string;
     size?: number[];
     mesh?: string;
     rgba?: [number, number, number, number];
+    hasExplicitRgba?: boolean;
     pos?: [number, number, number];
     quat?: [number, number, number, number];
     fromto?: number[];
@@ -46,6 +51,8 @@ interface BuildMJCFHierarchyOptions {
     meshCache: MJCFMeshCache;
     compilerSettings: MJCFCompilerSettings;
     materialMap: Map<string, MJCFMaterial>;
+    textureMap: Map<string, MJCFTexture>;
+    sourceFileDir?: string;
 }
 
 export interface MJCFHierarchyResult {
@@ -64,12 +71,128 @@ function convertAngle(value: number, settings: MJCFCompilerSettings): number {
     return value;
 }
 
-function applyMaterialAssetToMesh(mesh: THREE.Object3D, materialDef: MJCFMaterial, materialName?: string): void {
+function convertJointLimitValue(value: number, _jointType: string, _settings: MJCFCompilerSettings): number {
+    return value;
+}
+
+function resolveRuntimeJointType(joint: MJCFHierarchyJoint): 'revolute' | 'continuous' | 'prismatic' | 'ball' | 'floating' {
+    if (joint.type === 'hinge') {
+        return joint.range ? 'revolute' : 'continuous';
+    }
+
+    if (joint.type === 'slide') {
+        return 'prismatic';
+    }
+
+    if (joint.type === 'ball') {
+        return 'ball';
+    }
+
+    if (joint.type === 'free') {
+        return 'floating';
+    }
+
+    return 'continuous';
+}
+
+const textureLoader = new THREE.TextureLoader();
+const texturePromiseCache = new Map<string, Promise<THREE.Texture | null>>();
+
+function getTexturePromise(assetUrl: string): Promise<THREE.Texture | null> {
+    const cached = texturePromiseCache.get(assetUrl);
+    if (cached) {
+        return cached;
+    }
+
+    const promise = textureLoader.loadAsync(assetUrl)
+        .then((texture) => {
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.needsUpdate = true;
+            return texture;
+        })
+        .catch((error) => {
+            console.warn(`[MJCFLoader] Failed to load texture asset: ${assetUrl}`, error);
+            return null;
+        });
+
+    texturePromiseCache.set(assetUrl, promise);
+    return promise;
+}
+
+function cloneTextureWithMaterialSettings(
+    baseTexture: THREE.Texture,
+    materialDef: MJCFMaterial,
+): THREE.Texture {
+    const texture = baseTexture.clone();
+    texture.source = baseTexture.source;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    if (materialDef.texrepeat && materialDef.texrepeat.length >= 2) {
+        texture.repeat.set(materialDef.texrepeat[0] ?? 1, materialDef.texrepeat[1] ?? 1);
+    } else {
+        texture.repeat.set(1, 1);
+    }
+
+    texture.needsUpdate = true;
+    return texture;
+}
+
+async function loadMaterialTexture(
+    materialDef: MJCFMaterial,
+    textureMap: Map<string, MJCFTexture>,
+    assets: Record<string, string>,
+    sourceFileDir: string,
+): Promise<THREE.Texture | null> {
+    if (!materialDef.texture) {
+        return null;
+    }
+
+    const textureDef = textureMap.get(materialDef.texture);
+    if (!textureDef?.file) {
+        return null;
+    }
+
+    const assetUrl = findAssetByPath(textureDef.file, assets, sourceFileDir);
+    if (!assetUrl) {
+        console.warn(`[MJCFLoader] Texture asset not found: ${textureDef.file}`);
+        return null;
+    }
+
+    const texture = await getTexturePromise(assetUrl);
+    if (!texture) {
+        return null;
+    }
+
+    return cloneTextureWithMaterialSettings(texture, materialDef);
+}
+
+async function applyMaterialAssetToMesh(
+    mesh: THREE.Object3D,
+    materialDef: MJCFMaterial,
+    textureMap: Map<string, MJCFTexture>,
+    assets: Record<string, string>,
+    sourceFileDir: string,
+    materialName?: string,
+): Promise<void> {
     const rgba = materialDef.rgba || [0.8, 0.8, 0.8, 1];
     const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
     const g = Math.max(0, Math.min(1, rgba[1] ?? 0.8));
     const b = Math.max(0, Math.min(1, rgba[2] ?? 0.8));
     const alpha = Math.max(0, Math.min(1, rgba[3] ?? 1));
+    const texture = await loadMaterialTexture(materialDef, textureMap, assets, sourceFileDir);
+    const roughness = materialDef.shininess != null
+        ? Math.max(0, Math.min(1, 1 - materialDef.shininess))
+        : undefined;
+    const metalness = materialDef.reflectance != null
+        ? Math.max(0, Math.min(1, materialDef.reflectance))
+        : undefined;
+    const emission = materialDef.emission != null
+        ? Math.max(0, Math.min(1, materialDef.emission))
+        : undefined;
 
     mesh.traverse((child: any) => {
         if (!child.isMesh) return;
@@ -78,14 +201,26 @@ function applyMaterialAssetToMesh(mesh: THREE.Object3D, materialDef: MJCFMateria
             opacity: alpha,
             transparent: alpha < 1,
             side: THREE.DoubleSide,
+            map: texture,
             name: materialName || materialDef.name || 'mjcf_material_asset',
         });
+        if (roughness != null) {
+            child.material.roughness = roughness;
+        }
+        if (metalness != null) {
+            child.material.metalness = metalness;
+        }
+        if (emission != null) {
+            child.material.emissive = new THREE.Color(r, g, b);
+            child.material.emissiveIntensity = emission;
+        }
+        child.material.needsUpdate = true;
         child.castShadow = true;
         child.receiveShadow = true;
-      });
+    });
 }
 export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Promise<MJCFHierarchyResult> {
-    const { bodies, rootGroup, meshMap, assets, meshCache, compilerSettings, materialMap } = options;
+    const { bodies, rootGroup, meshMap, assets, meshCache, compilerSettings, materialMap, textureMap, sourceFileDir = '' } = options;
     const linksMap: Record<string, THREE.Object3D> = {};
     const jointsMap: Record<string, THREE.Object3D> = {};
 
@@ -93,29 +228,32 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         geoms: MJCFHierarchyGeom[],
         targetGroup: THREE.Group
     ): Promise<void> {
-        for (const geom of geoms) {
-            const hasVisualGroup = geom.group === 1 || geom.group === 2;
-            const hasContype0 = geom.contype === 0 && geom.conaffinity === 0;
+        const geomRoles = assignMJCFBodyGeomRoles(geoms);
 
-            // Visual geoms in common MJCF models often use group=1 or group=2,
-            // and/or explicitly disable contacts with contype=0 + conaffinity=0.
-            const isVisualGeom = hasContype0 || hasVisualGroup;
+        for (const { geom, renderVisual: isVisualGeom, renderCollision: isCollisionGeom } of geomRoles) {
 
-            // Collision: no group attribute, OR primitives without group
-            // In MJCF, geoms without group are typically collision duplicates
-            const isCollisionGeom = !isVisualGeom || geom.group === 3;
-
-            const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache);
+            const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache, sourceFileDir);
             if (!mesh) continue;
 
-            if (geom.material) {
-                const materialDef = materialMap.get(geom.material);
-                if (materialDef) {
-                    applyMaterialAssetToMesh(mesh, materialDef, geom.material);
-                }
+            const materialDef = geom.material
+                ? materialMap.get(geom.material)
+                : undefined;
+            if (materialDef) {
+                await applyMaterialAssetToMesh(
+                    mesh,
+                    materialDef,
+                    textureMap,
+                    assets,
+                    sourceFileDir,
+                    geom.material,
+                );
             }
 
-            if (geom.rgba) {
+            const shouldApplyGeomRgba = Boolean(
+                geom.rgba
+                && (geom.hasExplicitRgba || !materialDef),
+            );
+            if (shouldApplyGeomRgba) {
                 applyRgbaToMesh(mesh, geom.rgba);
             }
 
@@ -166,12 +304,16 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
                 collisionMesh.userData.isCollisionMesh = true;
                 collisionMesh.userData.isCollision = true;
+                collisionMesh.userData.isVisual = false;
+                collisionMesh.userData.isVisualMesh = false;
 
                 // Apply semi-transparent material for collision visualization
                 collisionMesh.traverse((child: any) => {
                     if (child.isMesh) {
                         child.userData.isCollisionMesh = true;
                         child.userData.isCollision = true;
+                        child.userData.isVisual = false;
+                        child.userData.isVisualMesh = false;
                         const collisionMat = createMatteMaterial({
                             color: 0xa855f7,
                             opacity: 0.35,
@@ -206,162 +348,74 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         }
     }
 
-    async function buildBody(body: MJCFHierarchyBody, parentGroup: THREE.Group, isRootBody: boolean = false): Promise<void> {
-        // Create the link group (represents the body/link) - meshes go here
+    function applyBodyTransform(target: THREE.Group, body: MJCFHierarchyBody): void {
+        target.position.set(body.pos[0], body.pos[1], body.pos[2]);
+
+        if (body.quat) {
+            target.quaternion.copy(mjcfQuatToThreeQuat(body.quat));
+            return;
+        }
+
+        if (body.euler) {
+            const ex = convertAngle(body.euler[0], compilerSettings);
+            const ey = convertAngle(body.euler[1], compilerSettings);
+            const ez = convertAngle(body.euler[2], compilerSettings);
+            target.rotation.set(ex, ey, ez);
+        }
+    }
+
+    function createLinkGroup(bodyName: string): THREE.Group {
         const linkGroup = new THREE.Group();
-        linkGroup.name = body.name;
+        linkGroup.name = bodyName;
         (linkGroup as any).isURDFLink = true;
         (linkGroup as any).type = 'URDFLink';
-        linksMap[body.name] = linkGroup;
+        linksMap[bodyName] = linkGroup;
 
-        // Add meshes directly to linkGroup (at geom.pos)
-        await addGeomsToGroup(body.geoms, linkGroup);
-
-        // Add link coordinate axes (hidden by default, controlled by showOrigins)
         const linkAxes = createLinkAxesHelper(0.1);
         linkAxes.visible = false;
         linkGroup.add(linkAxes);
 
-        if (isRootBody) {
-            // Root body: apply body transform directly to linkGroup
-            linkGroup.position.set(body.pos[0], body.pos[1], body.pos[2]);
-
-            if (body.quat) {
-                // MuJoCo quat [W,X,Y,Z] -> Three.js Quaternion(x,y,z,w)
-                linkGroup.quaternion.copy(mjcfQuatToThreeQuat(body.quat));
-            } else if (body.euler) {
-                linkGroup.rotation.set(body.euler[0], body.euler[1], body.euler[2]);
-            }
-
-            // Add root link directly to parent
-            parentGroup.add(linkGroup);
-
-            // Process child bodies - they will create their own jointGroups
-            for (const childBody of body.children) {
-                await buildBodyWithJoint(childBody, linkGroup);
-            }
-        } else {
-            // Non-root body: this should be called via buildBodyWithJoint
-            // Just add to parent (jointGroup) - position is handled by jointGroup
-            parentGroup.add(linkGroup);
-
-            // Process child bodies
-            for (const childBody of body.children) {
-                await buildBodyWithJoint(childBody, linkGroup);
-            }
-        }
+        return linkGroup;
     }
 
-    async function buildBodyWithJoint(childBody: MJCFHierarchyBody, parentLinkGroup: THREE.Group): Promise<void> {
-        const joint = childBody.joints[0];
-        const jointPos: [number, number, number] = joint?.pos || [0, 0, 0];
-        const hasActiveJoint = joint && joint.type !== 'fixed';
-
-        if (!hasActiveJoint) {
-            // No active joint - create a fixed connection group (BodyOffsetGroup only)
-            const bodyOffsetGroup = new THREE.Group();
-            bodyOffsetGroup.name = `body_offset_${childBody.name}`;
-            bodyOffsetGroup.position.set(childBody.pos[0], childBody.pos[1], childBody.pos[2]);
-
-            if (childBody.quat) {
-                // MuJoCo quat [W,X,Y,Z] -> Three.js Quaternion(x,y,z,w)
-                bodyOffsetGroup.quaternion.copy(mjcfQuatToThreeQuat(childBody.quat));
-            } else if (childBody.euler) {
-                // Convert euler angles if in degrees
-                const ex = convertAngle(childBody.euler[0], compilerSettings);
-                const ey = convertAngle(childBody.euler[1], compilerSettings);
-                const ez = convertAngle(childBody.euler[2], compilerSettings);
-                bodyOffsetGroup.rotation.set(ex, ey, ez);
-            }
-
-            // Create link group for meshes (no joint offset needed for fixed)
-            const linkGroup = new THREE.Group();
-            linkGroup.name = childBody.name;
-            (linkGroup as any).isURDFLink = true;
-            (linkGroup as any).type = 'URDFLink';
-            linksMap[childBody.name] = linkGroup;
-
-            // Add geoms directly to link group
-            await addGeomsToGroup(childBody.geoms, linkGroup);
-
-            // Add link coordinate axes (hidden by default)
-            const linkAxes = createLinkAxesHelper(0.1);
-            linkAxes.visible = false;
-            linkGroup.add(linkAxes);
-
-            bodyOffsetGroup.add(linkGroup);
-            parentLinkGroup.add(bodyOffsetGroup);
-
-            // Process child bodies recursively
-            for (const grandChild of childBody.children) {
-                await buildBodyWithJoint(grandChild, linkGroup);
-            }
-            return;
-        }
-
-        // === LAYER 1: BodyOffsetGroup (BodyContainer) ===
-        // Position and rotate according to childBody's transform
-        const bodyOffsetGroup = new THREE.Group();
-        bodyOffsetGroup.name = `body_offset_${childBody.name}`;
-        bodyOffsetGroup.position.set(childBody.pos[0], childBody.pos[1], childBody.pos[2]);
-
-        if (childBody.quat) {
-            // MuJoCo quat [W,X,Y,Z] -> Three.js Quaternion(x,y,z,w)
-            bodyOffsetGroup.quaternion.copy(mjcfQuatToThreeQuat(childBody.quat));
-        } else if (childBody.euler) {
-            // Convert euler angles if in degrees
-            const ex = convertAngle(childBody.euler[0], compilerSettings);
-            const ey = convertAngle(childBody.euler[1], compilerSettings);
-            const ez = convertAngle(childBody.euler[2], compilerSettings);
-            bodyOffsetGroup.rotation.set(ex, ey, ez);
-        }
-
-        // === LAYER 2: JointNode ===
-        // This is the pivot point - all rotations happen here
+    function createJointNode(
+        joint: MJCFHierarchyJoint,
+        bodyName: string,
+        bodyOffsetGroup: THREE.Group,
+        jointIndex: number,
+    ): { jointNode: THREE.Group; attachmentGroup: THREE.Group } {
+        const jointPos: [number, number, number] = joint.pos || [0, 0, 0];
         const jointNode = new THREE.Group();
-        jointNode.name = joint.name || `joint_${childBody.name}`;
+        jointNode.name = joint.name || `joint_${bodyName}_${jointIndex}`;
         (jointNode as any).isURDFJoint = true;
         (jointNode as any).type = 'URDFJoint';
-        (jointNode as any).jointType = joint.type === 'hinge' ? 'revolute' :
-            joint.type === 'slide' ? 'prismatic' :
-            joint.type === 'ball' ? 'ball' :
-            joint.type === 'free' ? 'floating' : 'continuous';
-
-        // Position joint at joint.pos (relative to body origin)
+        (jointNode as any).jointType = resolveRuntimeJointType(joint);
         jointNode.position.set(jointPos[0], jointPos[1], jointPos[2]);
-
-        // Store reference to parent BodyOffsetGroup for axis calculation
         (jointNode as any).bodyOffsetGroup = bodyOffsetGroup;
 
-        // Joint axis: defined in Body local space (MJCF convention)
-        // Default axis is Z (0, 0, 1) in MJCF
         const axisVec = joint.axis
             ? new THREE.Vector3(joint.axis[0], joint.axis[1], joint.axis[2]).normalize()
             : new THREE.Vector3(0, 0, 1);
         (jointNode as any).axis = axisVec;
 
-        // Joint limits (convert if in degrees)
-        if (joint.range) {
-            const lowerLimit = convertAngle(joint.range[0], compilerSettings);
-            const upperLimit = convertAngle(joint.range[1], compilerSettings);
+        if (joint.range && joint.type !== 'free') {
+            const lowerLimit = convertJointLimitValue(joint.range[0], joint.type, compilerSettings);
+            const upperLimit = convertJointLimitValue(joint.range[1], joint.type, compilerSettings);
             (jointNode as any).limit = { lower: lowerLimit, upper: upperLimit };
         }
 
-        // Joint angle tracking and setJointValue
-        // Rotation is applied directly to JointNode's quaternion
         (jointNode as any).angle = 0;
+        (jointNode as any).jointQuaternion = new THREE.Quaternion();
         (jointNode as any).setJointValue = function(value: number) {
             this.angle = value;
             const axis = this.axis ? this.axis.clone().normalize() : new THREE.Vector3(0, 0, 1);
 
             if (this.jointType === 'revolute' || this.jointType === 'continuous') {
-                // Store initial quaternion (should be identity for JointNode)
                 if (!this.userData) this.userData = {};
                 if (!this.userData.initialQuaternion) {
                     this.userData.initialQuaternion = this.quaternion.clone();
                 }
 
-                // Apply rotation around axis
                 const rotationQuat = new THREE.Quaternion();
                 rotationQuat.setFromAxisAngle(axis, value);
 
@@ -378,13 +432,23 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                 this.updateMatrixWorld(true);
             }
         };
+        (jointNode as any).setJointQuaternion = function(value: { x: number; y: number; z: number; w: number }) {
+            if (!this.userData) this.userData = {};
+            if (!this.userData.initialQuaternion) {
+                this.userData.initialQuaternion = this.quaternion.clone();
+            }
 
-        // Add joint axis visualization helper (hidden by default, toggled via showJointAxes)
+            const rotationQuat = new THREE.Quaternion(value.x, value.y, value.z, value.w).normalize();
+            this.jointQuaternion.copy(rotationQuat);
+            this.quaternion.copy(this.userData.initialQuaternion);
+            this.quaternion.multiply(rotationQuat);
+            this.updateMatrixWorld(true);
+        };
+
         const axisHelper = createJointAxisHelper(axisVec);
         axisHelper.visible = false;
         jointNode.add(axisHelper);
 
-        // Add debug AxesHelper for joint pivot (hidden by default)
         const debugAxes = new THREE.AxesHelper(0.1);
         debugAxes.name = '__debug_joint_axes__';
         debugAxes.visible = false;
@@ -393,43 +457,41 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
         jointsMap[jointNode.name] = jointNode;
 
-        // === LAYER 3: GeomCompensationGroup ===
-        // Position = -joint.pos to pull coordinates back to Body origin
-        // This ensures geoms are placed at their correct geom.pos relative to body
-        const geomCompensationGroup = new THREE.Group();
-        geomCompensationGroup.name = `geom_compensation_${childBody.name}`;
-        geomCompensationGroup.position.set(-jointPos[0], -jointPos[1], -jointPos[2]);
+        const attachmentGroup = new THREE.Group();
+        attachmentGroup.name = `geom_compensation_${bodyName}_${jointIndex}`;
+        attachmentGroup.position.set(-jointPos[0], -jointPos[1], -jointPos[2]);
+        jointNode.add(attachmentGroup);
 
-        // === LAYER 4: LinkGroup (contains meshes) ===
-        const linkGroup = new THREE.Group();
-        linkGroup.name = childBody.name;
-        (linkGroup as any).isURDFLink = true;
-        (linkGroup as any).type = 'URDFLink';
-        linksMap[childBody.name] = linkGroup;
+        return { jointNode, attachmentGroup };
+    }
 
-        // Add geoms to link group (they will be positioned at geom.pos)
-        await addGeomsToGroup(childBody.geoms, linkGroup);
+    async function buildBody(body: MJCFHierarchyBody, parentGroup: THREE.Group): Promise<void> {
+        const bodyOffsetGroup = new THREE.Group();
+        bodyOffsetGroup.name = `body_offset_${body.name}`;
+        applyBodyTransform(bodyOffsetGroup, body);
+        parentGroup.add(bodyOffsetGroup);
 
-        // Add link coordinate axes (hidden by default)
-        const linkAxes = createLinkAxesHelper(0.1);
-        linkAxes.visible = false;
-        linkGroup.add(linkAxes);
+        let attachmentGroup: THREE.Group = bodyOffsetGroup;
+        body.joints
+            .filter((joint) => joint.type !== 'fixed')
+            .forEach((joint, jointIndex) => {
+                const jointLayer = createJointNode(joint, body.name, bodyOffsetGroup, jointIndex);
+                attachmentGroup.add(jointLayer.jointNode);
+                attachmentGroup = jointLayer.attachmentGroup;
+            });
 
-        // === Assemble the hierarchy ===
-        geomCompensationGroup.add(linkGroup);
-        jointNode.add(geomCompensationGroup);
-        bodyOffsetGroup.add(jointNode);
-        parentLinkGroup.add(bodyOffsetGroup);
+        const linkGroup = createLinkGroup(body.name);
+        await addGeomsToGroup(body.geoms, linkGroup);
+        attachmentGroup.add(linkGroup);
 
-        // Process child bodies - they attach to the linkGroup
-        for (const grandChild of childBody.children) {
-            await buildBodyWithJoint(grandChild, linkGroup);
+        for (const childBody of body.children) {
+            await buildBody(childBody, linkGroup);
         }
     }
 
     // Build all top-level bodies
     for (const body of bodies) {
-        await buildBody(body, rootGroup, true);
+        await buildBody(body, rootGroup);
     }
 
     return { linksMap, jointsMap };

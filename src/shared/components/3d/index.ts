@@ -18,9 +18,14 @@ export {
   SnapshotManager,
   NeutralStudioEnvironment,
   SceneLighting,
+  GroundShadowPlane,
   ReferenceGrid,
+  WorkspaceOrbitControls,
   LIGHTING_CONFIG,
-  WORKSPACE_CANVAS_BACKGROUND
+  WORKSPACE_CANVAS_BACKGROUND,
+  WORKSPACE_DEFAULT_CAMERA_FOV,
+  WORKSPACE_DEFAULT_CAMERA_POSITION,
+  WORKSPACE_DEFAULT_CAMERA_UP,
 } from './SceneUtilities';
 export { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from './UnifiedTransformControls';
 
@@ -28,3 +33,5 @@ export { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from './Unifi
 export * from './helpers';
 
 export { UsageGuide } from './UsageGuide';
+export { ViewModeBadge } from './ViewModeBadge';
+export { TransformConfirmOverlay } from './TransformConfirmOverlay';

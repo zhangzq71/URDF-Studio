@@ -42,7 +42,7 @@ export const Select: React.FC<SelectProps> = ({
             focus:outline-none focus:ring-2 focus:ring-system-blue/30 focus:border-system-blue
             transition-all duration-200
             disabled:opacity-50 disabled:cursor-not-allowed
-            ${error ? 'border-red-500 focus:border-red-500 focus:ring-red-500/30' : ''}
+            ${error ? 'border-danger focus:border-danger focus:ring-danger/30' : ''}
             ${className}
           `}
           {...props}
@@ -59,7 +59,7 @@ export const Select: React.FC<SelectProps> = ({
           </svg>
         </div>
       </div>
-      {error && <p className="mt-1 text-xs text-red-500 ml-0.5">{error}</p>}
+      {error && <p className="mt-1 ml-0.5 text-xs text-danger">{error}</p>}
     </div>
   );
 };

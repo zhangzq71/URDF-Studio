@@ -3,12 +3,13 @@ import { Move, ArrowUpRight, Crosshair } from 'lucide-react';
 import { useUIStore } from '@/store';
 import {
     CheckboxOption,
+    GroundPlaneControls,
     SliderOption,
     OptionsPanelContainer,
     OptionsPanelHeader,
     OptionsPanelContent,
     SegmentedControl,
-    CollapsibleSection
+    ToggleSliderOption
 } from '@/shared/components/Panel/OptionsPanel';
 
 interface ViewerOptionsPanelProps {
@@ -25,8 +26,6 @@ interface ViewerOptionsPanelProps {
     lang: string;
     highlightMode: 'link' | 'collision';
     setHighlightMode: (mode: 'link' | 'collision') => void;
-    showJointControls: boolean;
-    setShowJointControls: (show: boolean) => void;
     showVisual: boolean;
     setShowVisual: (show: boolean) => void;
     showCollision: boolean;
@@ -58,6 +57,92 @@ interface ViewerOptionsPanelProps {
     onAutoFitGround?: () => void;
 }
 
+interface OverlayToggleButtonProps {
+    active: boolean;
+    label: string;
+    onClick: () => void;
+}
+
+function OverlayToggleButton({ active, label, onClick }: OverlayToggleButtonProps) {
+    return (
+        <button
+            type="button"
+            className={`rounded p-0.5 transition-colors ${active ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
+            onClick={onClick}
+            title={label}
+            aria-label={label}
+            aria-pressed={active}
+        >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            </svg>
+        </button>
+    );
+}
+
+interface OverlayToggleOptionProps {
+    checked: boolean;
+    className?: string;
+    icon: React.ReactNode;
+    label: string;
+    onChange: (checked: boolean) => void;
+    onToggleOverlay: () => void;
+    overlayActive: boolean;
+    overlayLabel: string;
+    sliderConfig?: {
+        decimals?: number;
+        label: string;
+        max: number;
+        min: number;
+        onChange: (value: number) => void;
+        step: number;
+        value: number;
+    };
+}
+
+function OverlayToggleOption({
+    checked,
+    className,
+    icon,
+    label,
+    onChange,
+    onToggleOverlay,
+    overlayActive,
+    overlayLabel,
+    sliderConfig,
+}: OverlayToggleOptionProps) {
+    return (
+        <ToggleSliderOption
+            checked={checked}
+            onChange={onChange}
+            label={label}
+            icon={icon}
+            className={className}
+            rowClassName="pr-1"
+            trailingControl={
+                checked ? (
+                    <OverlayToggleButton
+                        active={overlayActive}
+                        label={overlayLabel}
+                        onClick={onToggleOverlay}
+                    />
+                ) : undefined
+            }
+            sliderConfig={sliderConfig ? {
+                label: sliderConfig.label,
+                value: sliderConfig.value,
+                onChange: sliderConfig.onChange,
+                min: sliderConfig.min,
+                max: sliderConfig.max,
+                step: sliderConfig.step,
+                decimals: sliderConfig.decimals,
+                compact: true,
+                indent: true,
+            } : undefined}
+        />
+    );
+}
+
 export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     showOptionsPanel,
     optionsPanelRef,
@@ -71,8 +156,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     setShowOptionsPanel,
     highlightMode,
     setHighlightMode,
-    showJointControls,
-    setShowJointControls,
     showVisual,
     setShowVisual,
     showCollision,
@@ -103,8 +186,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     setShowInertiaOverlay,
     onAutoFitGround,
 }) => {
-    const panelSections = useUIStore((state) => state.panelSections);
-    const setPanelSection = useUIStore((state) => state.setPanelSection);
     const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
     const setGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
 
@@ -132,7 +213,13 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
             onPointerDown={stopPanelEventPropagation}
             onWheel={stopPanelEventPropagation}
         >
-            <OptionsPanelContainer resizable={true} isCollapsed={isOptionsCollapsed} resizeTitle={t.resize}>
+            <OptionsPanelContainer
+                width="11rem"
+                minWidth={168}
+                resizable={true}
+                isCollapsed={isOptionsCollapsed}
+                resizeTitle={t.resize}
+            >
                 <OptionsPanelHeader
                     title={mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
                     isCollapsed={isOptionsCollapsed}
@@ -142,7 +229,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 />
 
                 <OptionsPanelContent isCollapsed={isOptionsCollapsed}>
-                        <div className="p-2 pb-0">
+                        <div className="px-2 py-2 pb-1">
                             <SegmentedControl
                                 options={[
                                     { value: 'link', label: t.linkMode },
@@ -154,18 +241,12 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                             />
                         </div>
 
-                        {/* General Visuals */}
-                        <CollapsibleSection
-                            title={t.visuals}
-                            isCollapsed={panelSections['viewer_visuals'] ?? false}
-                            onToggle={() => setPanelSection('viewer_visuals', !(panelSections['viewer_visuals'] ?? false))}
-                        >
-                            <CheckboxOption checked={showJointControls} onChange={setShowJointControls} label={t.showJointControls} />
+                        <div className="px-2 py-2 space-y-2">
                             <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
                             <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} />
                             
                             {/* Model Transparency */}
-                            <div className="pt-2">
+                            <div className="pt-1">
                                 <SliderOption
                                     label={t.modelOpacity}
                                     value={modelOpacity}
@@ -177,147 +258,86 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                     compact
                                 />
                             </div>
-                        </CollapsibleSection>
 
-                        {/* Coordinate Axes Section */}
-                        <CollapsibleSection
-                            title={t.coordinateAxes}
-                            isCollapsed={panelSections['viewer_coords'] ?? true}
-                            onToggle={() => setPanelSection('viewer_coords', !(panelSections['viewer_coords'] ?? true))}
-                        >
-                            <div className="flex items-center justify-between pr-1">
-                                <CheckboxOption
-                                    checked={showOrigins}
-                                    onChange={setShowOrigins}
-                                    label={t.showOrigin}
-                                    icon={<Move className="w-3 h-3 text-slate-500" />}
-                                />
-                                {showOrigins && (
-                                    <button
-                                        className={`rounded p-0.5 transition-colors ${showOriginsOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
-                                        onClick={() => setShowOriginsOverlay(!showOriginsOverlay)}
-                                        title={t.alwaysOnTop}
-                                    >
-                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                                        </svg>
-                                    </button>
-                                )}
-                            </div>
-
-                            {showOrigins && (
-                                <SliderOption label={t.size} value={originSize} onChange={setOriginSize} min={0.01} max={0.5} step={0.01} compact indent />
-                            )}
-
-                            <div className="flex items-center justify-between pr-1 mt-1">
-                                <CheckboxOption
-                                    checked={showJointAxes}
-                                    onChange={setShowJointAxes}
-                                    label={t.showJointAxes}
-                                    icon={<ArrowUpRight className="w-3 h-3 text-red-500" />}
-                                />
-                                {showJointAxes && (
-                                    <button
-                                        className={`rounded p-0.5 transition-colors ${showJointAxesOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
-                                        onClick={() => setShowJointAxesOverlay(!showJointAxesOverlay)}
-                                        title={t.alwaysOnTop}
-                                    >
-                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                                        </svg>
-                                    </button>
-                                )}
-                            </div>
-
-                            {showJointAxes && (
-                                <SliderOption label={t.size} value={jointAxisSize} onChange={setJointAxisSize} min={0.01} max={2.0} step={0.01} compact indent />
-                            )}
-                        </CollapsibleSection>
-
-                        {/* Physics Visualization Section */}
-                        <CollapsibleSection
-                            title={t.physics}
-                            isCollapsed={panelSections['viewer_physics'] ?? true}
-                            onToggle={() => setPanelSection('viewer_physics', !(panelSections['viewer_physics'] ?? true))}
-                        >
-                            <div className="flex items-center justify-between pr-1">
-                                <CheckboxOption
-                                    checked={showCenterOfMass}
-                                    onChange={setShowCenterOfMass}
-                                    label={t.showCenterOfMass}
-                                    icon={<div className="w-3 h-3 rounded-full border border-slate-500 flex items-center justify-center"><div className="w-1 h-1 bg-slate-500 rounded-full"></div></div>}
-                                />
-                                {showCenterOfMass && (
-                                    <button
-                                        className={`rounded p-0.5 transition-colors ${showCoMOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
-                                        onClick={() => setShowCoMOverlay(!showCoMOverlay)}
-                                        title={t.alwaysOnTop}
-                                    >
-                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                                        </svg>
-                                    </button>
-                                )}
-                            </div>
-                            {showCenterOfMass && (
-                                <SliderOption label={t.size} value={centerOfMassSize} onChange={setCenterOfMassSize} min={0.005} max={0.1} step={0.005} decimals={3} compact indent />
-                            )}
-
-                            <div className="flex items-center justify-between pr-1 mt-1">
-                                <CheckboxOption
-                                    checked={showInertia}
-                                    onChange={setShowInertia}
-                                    label={t.showInertia}
-                                    icon={<div className="w-3 h-3 border border-dashed border-slate-500"></div>}
-                                />
-                                {showInertia && (
-                                    <button
-                                        className={`rounded p-0.5 transition-colors ${showInertiaOverlay ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
-                                        onClick={() => setShowInertiaOverlay(!showInertiaOverlay)}
-                                        title={t.alwaysOnTop}
-                                    >
-                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                                        </svg>
-                                    </button>
-                                )}
-                            </div>
-                        </CollapsibleSection>
-
-                        {/* Ground Plane */}
-                        <CollapsibleSection
-                            title={t.groundPlane}
-                            isCollapsed={panelSections['viewer_ground'] ?? true}
-                            onToggle={() => setPanelSection('viewer_ground', !(panelSections['viewer_ground'] ?? false))}
-                        >
-                            <SliderOption
-                                label={t.groundPlaneOffset}
-                                value={groundPlaneOffset}
-                                onChange={setGroundPlaneOffset}
-                                min={-2}
-                                max={2}
-                                step={0.01}
-                                compact
-                                indent={false}
+                            <OverlayToggleOption
+                                checked={showOrigins}
+                                icon={<Move className="w-3 h-3 text-slate-500" />}
+                                label={t.showOrigin}
+                                onChange={setShowOrigins}
+                                onToggleOverlay={() => setShowOriginsOverlay(!showOriginsOverlay)}
+                                overlayActive={showOriginsOverlay}
+                                overlayLabel={t.alwaysOnTop}
+                                sliderConfig={{
+                                    label: t.size,
+                                    value: originSize,
+                                    onChange: setOriginSize,
+                                    min: 0.01,
+                                    max: 0.5,
+                                    step: 0.01,
+                                }}
                             />
-                            <div className="flex gap-1.5 px-3 pb-2">
-                                {onAutoFitGround && (
-                                    <button
-                                        onClick={onAutoFitGround}
-                                        className="flex-1 flex items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25"
-                                    >
-                                        <Crosshair size={11} />
-                                        {t.autoFitGround}
-                                    </button>
-                                )}
-                                <button
-                                    onClick={handleResetGround}
-                                    className="flex items-center justify-center gap-1 px-2 py-1 text-[10px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                                >
-                                    {t.reset}
-                                </button>
-                            </div>
-                        </CollapsibleSection>
+
+                            <OverlayToggleOption
+                                checked={showJointAxes}
+                                className="mt-1"
+                                icon={<ArrowUpRight className="w-3 h-3 text-red-500" />}
+                                label={t.showJointAxes}
+                                onChange={setShowJointAxes}
+                                onToggleOverlay={() => setShowJointAxesOverlay(!showJointAxesOverlay)}
+                                overlayActive={showJointAxesOverlay}
+                                overlayLabel={t.alwaysOnTop}
+                                sliderConfig={{
+                                    label: t.size,
+                                    value: jointAxisSize,
+                                    onChange: setJointAxisSize,
+                                    min: 0.01,
+                                    max: 2.0,
+                                    step: 0.01,
+                                }}
+                            />
+
+                            <OverlayToggleOption
+                                checked={showCenterOfMass}
+                                icon={<div className="flex h-3 w-3 items-center justify-center rounded-full border border-slate-500"><div className="h-1 w-1 rounded-full bg-slate-500"></div></div>}
+                                label={t.showCenterOfMass}
+                                onChange={setShowCenterOfMass}
+                                onToggleOverlay={() => setShowCoMOverlay(!showCoMOverlay)}
+                                overlayActive={showCoMOverlay}
+                                overlayLabel={t.alwaysOnTop}
+                                sliderConfig={{
+                                    label: t.size,
+                                    value: centerOfMassSize,
+                                    onChange: setCenterOfMassSize,
+                                    min: 0.005,
+                                    max: 0.1,
+                                    step: 0.005,
+                                    decimals: 3,
+                                }}
+                            />
+
+                            <OverlayToggleOption
+                                checked={showInertia}
+                                className="mt-1"
+                                icon={<div className="h-3 w-3 border border-dashed border-slate-500"></div>}
+                                label={t.showInertia}
+                                onChange={setShowInertia}
+                                onToggleOverlay={() => setShowInertiaOverlay(!showInertiaOverlay)}
+                                overlayActive={showInertiaOverlay}
+                                overlayLabel={t.alwaysOnTop}
+                            />
+
+                            <GroundPlaneControls
+                                autoFitIcon={<Crosshair size={11} />}
+                                autoFitLabel={t.autoFitGround}
+                                offsetLabel={t.groundPlaneOffset}
+                                offsetValue={groundPlaneOffset}
+                                onAutoFit={onAutoFitGround}
+                                onOffsetChange={setGroundPlaneOffset}
+                                onReset={handleResetGround}
+                                resetLabel={t.reset}
+                                sliderIndent={false}
+                            />
+                        </div>
                 </OptionsPanelContent>
             </OptionsPanelContainer>
         </div>

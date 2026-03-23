@@ -5,6 +5,7 @@ import { highlightFaceMaterial } from '../utils/materials';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import { collectPickTargets, findPickIntersections, type PickTargetMode } from '../utils/pickTargets';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
+import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 import type { ToolMode, URDFViewerProps } from '../types';
 
 export interface UseHoverDetectionOptions {
@@ -277,9 +278,13 @@ export function useHoverDetection({
         // Skip raycast if no update needed
         if (!needsRaycastRef.current) return;
 
-        const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal'].includes(toolMode || 'select');
-        const isCollisionMode = highlightMode === 'collision';
-        const selectionSubType: 'visual' | 'collision' = selection?.subType ?? (isCollisionMode ? 'collision' : 'visual');
+        const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal', 'measure'].includes(toolMode || 'select');
+        const { subType: activeInteractionSubType } = resolveEffectiveInteractionSubType(
+            highlightMode,
+            showVisual,
+            showCollision
+        );
+        const selectionSubType = selection?.subType ?? activeInteractionSubType ?? undefined;
 
         const restoreSelectionHighlight = () => {
             if (useExternalHover) return;
@@ -291,10 +296,11 @@ export function useHoverDetection({
         const clearHoverHighlight = () => {
             if (!hoveredLinkRef.current) return;
             if (!useExternalHover) {
+                const hoveredSubType = ((hoveredLinkRef as any).currentSubType as 'visual' | 'collision' | null) ?? undefined;
                 highlightGeometry(
                     hoveredLinkRef.current,
                     true,
-                    isCollisionMode ? 'collision' : 'visual',
+                    hoveredSubType,
                     (hoveredLinkRef as any).currentMesh || (hoveredLinkRef as any).currentObjectIndex
                 );
             }
@@ -323,9 +329,16 @@ export function useHoverDetection({
 
         // Handle Face Selection Mode
         if (toolMode === 'face') {
+            if (!activeInteractionSubType) {
+                if (highlightedFace) setHighlightedFace(null);
+                if (hoveredLinkRef.current) clearHoverHighlight();
+                emitHoverSelection(null, null);
+                return;
+            }
+
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
             const gizmoTargets = getGizmoTargets();
-            const pickTargets = getPickTargets(isCollisionMode ? 'collision' : 'visual');
+            const pickTargets = getPickTargets(activeInteractionSubType);
             const nearestSceneHit = gizmoTargets.length > 0
                 ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
                 : undefined;
@@ -347,7 +360,7 @@ export function useHoverDetection({
                 robot,
                 raycasterRef.current,
                 pickTargets,
-                isCollisionMode ? 'collision' : 'visual'
+                activeInteractionSubType
             );
 
             if (intersects.length > 0) {
@@ -381,7 +394,7 @@ export function useHoverDetection({
         }
 
         // CRITICAL: Skip hover detection if the corresponding display option is not enabled
-        if ((isCollisionMode && !showCollision) || (!isCollisionMode && !showVisual)) {
+        if (!activeInteractionSubType) {
             // Clear any current hover since display is disabled
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
                 clearHoverHighlight();
@@ -392,7 +405,7 @@ export function useHoverDetection({
 
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
         const gizmoTargets = getGizmoTargets();
-        const pickTargets = getPickTargets(isCollisionMode ? 'collision' : 'visual');
+        const pickTargets = getPickTargets(activeInteractionSubType);
         const nearestSceneHit = gizmoTargets.length > 0
             ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
             : undefined;
@@ -417,7 +430,7 @@ export function useHoverDetection({
             robot,
             raycasterRef.current,
             pickTargets,
-            isCollisionMode ? 'collision' : 'visual'
+            activeInteractionSubType
         );
 
         let newHoveredLink: string | null = null;
@@ -472,17 +485,17 @@ export function useHoverDetection({
             }
 
             if (!useExternalHover && newHoveredLink && newHoveredLink !== selection?.id) {
-                highlightGeometry(newHoveredLink, false, isCollisionMode ? 'collision' : 'visual', newHoveredMesh);
+                highlightGeometry(newHoveredLink, false, activeInteractionSubType, newHoveredMesh);
             }
 
             hoveredLinkRef.current = newHoveredLink;
             (hoveredLinkRef as any).currentMesh = newHoveredMesh;
             (hoveredLinkRef as any).currentObjectIndex = newHoveredObjectIndex ?? null;
-            (hoveredLinkRef as any).currentSubType = newHoveredLink ? (isCollisionMode ? 'collision' : 'visual') : null;
+            (hoveredLinkRef as any).currentSubType = newHoveredLink ? activeInteractionSubType : null;
             emitHoverSelection(
                 newHoveredLink ? 'link' : null,
                 newHoveredLink,
-                newHoveredLink ? (isCollisionMode ? 'collision' : 'visual') : undefined,
+                newHoveredLink ? activeInteractionSubType : undefined,
                 newHoveredObjectIndex
             );
         }

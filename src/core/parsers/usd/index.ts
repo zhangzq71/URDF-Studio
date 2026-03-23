@@ -1,8 +1,6 @@
 /**
- * USD Parser Module
- * Provides parsing and loading of USD/USDA/USDC/USDZ formats
+ * USD parser/runtime module.
+ * Runtime scene parsing/metadata comes from usd-viewer WASM.
  */
 
-export { parseUSDA, isUSDA, isUSDCBinary } from './usdParser';
-export { loadUSD, loadUSDZ, parseUSDAToThreeJS, isUSDContent, isUSDFile } from './usdLoader';
-export type { USDGeometry, USDVisual, USDLink, USDModel } from './usdLoader';
+export { isUSDA, isUSDCBinary } from './usdFormatUtils';

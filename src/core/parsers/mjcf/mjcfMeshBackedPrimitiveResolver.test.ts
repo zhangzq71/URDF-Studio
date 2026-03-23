@@ -1,0 +1,201 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+
+import {
+  fitPrimitiveFromPoints,
+  resolveMJCFMeshBackedPrimitiveGeoms,
+} from './mjcfMeshBackedPrimitiveResolver.ts';
+
+function createBasis(axis: THREE.Vector3): { u: THREE.Vector3; v: THREE.Vector3 } {
+  const reference = Math.abs(axis.z) < 0.9
+    ? new THREE.Vector3(0, 0, 1)
+    : new THREE.Vector3(1, 0, 0);
+  const u = new THREE.Vector3().crossVectors(reference, axis).normalize();
+  const v = new THREE.Vector3().crossVectors(axis, u).normalize();
+  return { u, v };
+}
+
+function pushPoint(points: Array<{ x: number; y: number; z: number }>, point: THREE.Vector3): void {
+  points.push({ x: point.x, y: point.y, z: point.z });
+}
+
+function generateCylinderPoints(
+  center: THREE.Vector3,
+  axis: THREE.Vector3,
+  radius: number,
+  segmentLength: number,
+): Array<{ x: number; y: number; z: number }> {
+  const normalizedAxis = axis.clone().normalize();
+  const { u, v } = createBasis(normalizedAxis);
+  const points: Array<{ x: number; y: number; z: number }> = [];
+
+  for (let ring = 0; ring <= 8; ring += 1) {
+    const t = -segmentLength / 2 + (segmentLength * ring) / 8;
+    for (let segment = 0; segment < 24; segment += 1) {
+      const angle = (segment / 24) * Math.PI * 2;
+      const point = center.clone()
+        .addScaledVector(normalizedAxis, t)
+        .addScaledVector(u, Math.cos(angle) * radius)
+        .addScaledVector(v, Math.sin(angle) * radius);
+      pushPoint(points, point);
+    }
+  }
+
+  return points;
+}
+
+function generateCapsulePoints(
+  center: THREE.Vector3,
+  axis: THREE.Vector3,
+  radius: number,
+  segmentLength: number,
+): Array<{ x: number; y: number; z: number }> {
+  const normalizedAxis = axis.clone().normalize();
+  const { u, v } = createBasis(normalizedAxis);
+  const points = generateCylinderPoints(center, normalizedAxis, radius, segmentLength);
+  const capCenters = [
+    center.clone().addScaledVector(normalizedAxis, -segmentLength / 2),
+    center.clone().addScaledVector(normalizedAxis, segmentLength / 2),
+  ];
+
+  capCenters.forEach((capCenter, capIndex) => {
+    for (let lat = 0; lat <= 5; lat += 1) {
+      const polar = (lat / 5) * (Math.PI / 2);
+      const axisOffset = Math.sin(polar) * radius * (capIndex === 0 ? -1 : 1);
+      const radial = Math.cos(polar) * radius;
+
+      for (let segment = 0; segment < 24; segment += 1) {
+        const angle = (segment / 24) * Math.PI * 2;
+        const point = capCenter.clone()
+          .addScaledVector(normalizedAxis, axisOffset)
+          .addScaledVector(u, Math.cos(angle) * radial)
+          .addScaledVector(v, Math.sin(angle) * radial);
+        pushPoint(points, point);
+      }
+    }
+  });
+
+  return points;
+}
+
+function assertVectorClose(actual: readonly number[], expected: readonly number[], tolerance: number): void {
+  assert.equal(actual.length, expected.length);
+  actual.forEach((value, index) => {
+    assert.ok(Math.abs(value - expected[index]!) <= tolerance, `index ${index}: expected ${expected[index]}, got ${value}`);
+  });
+}
+
+test('fits a mesh-backed cylinder point cloud with stable radius and centerline length', () => {
+  const center = new THREE.Vector3(0.25, -0.4, 0.8);
+  const axis = new THREE.Vector3(0.4, 0.9, -0.15).normalize();
+  const radius = 0.12;
+  const segmentLength = 1.4;
+  const fit = fitPrimitiveFromPoints(
+    generateCylinderPoints(center, axis, radius, segmentLength),
+    'cylinder',
+  );
+
+  assert.ok(fit);
+  assert.ok(Math.abs(fit.radius - radius) <= 1e-3, `expected radius ${radius}, got ${fit.radius}`);
+  assert.ok(Math.abs(fit.segmentLength - segmentLength) <= 2e-3, `expected length ${segmentLength}, got ${fit.segmentLength}`);
+  assertVectorClose(fit.center, [center.x, center.y, center.z], 2e-3);
+
+  const actualAxis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
+  assert.ok(Math.abs(actualAxis.dot(axis)) >= 0.999, `expected axis ${axis.toArray()}, got ${actualAxis.toArray()}`);
+});
+
+test('fits a mesh-backed capsule point cloud and converts total length into MuJoCo segment length', () => {
+  const center = new THREE.Vector3(-0.3, 0.6, 0.2);
+  const axis = new THREE.Vector3(0.2, -0.5, 0.84).normalize();
+  const radius = 0.08;
+  const segmentLength = 0.36;
+  const fit = fitPrimitiveFromPoints(
+    generateCapsulePoints(center, axis, radius, segmentLength),
+    'capsule',
+  );
+
+  assert.ok(fit);
+  assert.ok(Math.abs(fit.radius - radius) <= 5e-3, `expected radius ${radius}, got ${fit.radius}`);
+  assert.ok(Math.abs(fit.segmentLength - segmentLength) <= 1.5e-2, `expected length ${segmentLength}, got ${fit.segmentLength}`);
+  assertVectorClose(fit.center, [center.x, center.y, center.z], 5e-3);
+
+  const actualAxis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
+  assert.ok(Math.abs(actualAxis.dot(axis)) >= 0.995, `expected axis ${axis.toArray()}, got ${actualAxis.toArray()}`);
+});
+
+test('resolves mesh-backed primitive geoms into fromto capsules in body space', async () => {
+  const parsedModel: any = {
+    modelName: 'mesh-backed-capsule',
+    compilerSettings: {
+      angleUnit: 'radian',
+      meshdir: '',
+      texturedir: '',
+      eulerSequence: 'xyz',
+    },
+    defaults: {
+      root: {
+        body: {},
+        geom: {},
+        joint: {},
+        inertial: {},
+        mesh: {},
+        material: {},
+        texture: {},
+      },
+      classesByQName: new Map(),
+      qnamesByClassName: new Map(),
+    },
+    meshMap: new Map([
+      ['link1', { name: 'link1', file: 'link1.obj' }],
+    ]),
+    materialMap: new Map(),
+    textureMap: new Map(),
+    actuatorMap: new Map(),
+    connectConstraints: [],
+    worldBody: {
+      name: 'world',
+      pos: [0, 0, 0],
+      geoms: [],
+      joints: [],
+      children: [
+        {
+          name: 'link1',
+          pos: [0, 0, 0],
+          geoms: [
+            {
+              name: 'link1::geom[0]',
+              sourceName: null,
+              type: 'capsule',
+              mesh: 'link1',
+              pos: [1, 2, 3],
+              quat: [0, 0, 1, 0],
+            },
+          ],
+          joints: [],
+          children: [],
+        },
+      ],
+    },
+  };
+  const resolvedCount = await resolveMJCFMeshBackedPrimitiveGeoms(parsedModel, {
+    assets: {},
+    fitPrimitiveFromMeshAsset: async () => ({
+      center: [0.5, 0, 0],
+      axis: [0, 0, 1],
+      radius: 0.2,
+      segmentLength: 1,
+    }),
+  });
+
+  assert.equal(resolvedCount, 1);
+
+  const geom = parsedModel.worldBody.children[0]?.geoms[0];
+  assert.ok(geom);
+  assert.equal(geom.mesh, undefined);
+  assert.equal(geom.pos, undefined);
+  assert.equal(geom.quat, undefined);
+  assert.deepEqual(geom.size, [0.2]);
+  assert.ok(geom.fromto);
+  assertVectorClose(geom.fromto!, [0.5, 2, 3.5, 0.5, 2, 2.5], 1e-6);
+});

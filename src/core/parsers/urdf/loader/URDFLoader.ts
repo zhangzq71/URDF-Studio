@@ -18,6 +18,50 @@ function applyRotation(obj: THREE.Object3D, rpy: number[], additive = false) {
     obj.quaternion.copy(tempQuaternion);
 }
 
+function applyMaterialToLoadedObject(obj: THREE.Object3D, material: THREE.Material) {
+    if ((obj as THREE.Mesh).isMesh) {
+        (obj as THREE.Mesh).material = material;
+        return;
+    }
+
+    obj.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+            (child as THREE.Mesh).material = material;
+        }
+    });
+}
+
+function loadedObjectShouldPreserveEmbeddedMaterials(obj: THREE.Object3D): boolean {
+    const materialNames = new Set<string>();
+    let hasMaterialTexture = false;
+    let hasMultiMaterialMesh = false;
+
+    obj.traverse((child) => {
+        if (!(child as THREE.Mesh).isMesh) {
+            return;
+        }
+
+        const material = (child as THREE.Mesh).material;
+        const materials = Array.isArray(material) ? material : [material];
+        if (materials.length > 1) {
+            hasMultiMaterialMesh = true;
+        }
+
+        materials.forEach((entry) => {
+            const materialName = entry?.name?.trim();
+            if (materialName) {
+                materialNames.add(materialName);
+            }
+
+            if ('map' in (entry || {}) && (entry as THREE.MeshPhongMaterial).map) {
+                hasMaterialTexture = true;
+            }
+        });
+    });
+
+    return hasMaterialTexture || hasMultiMaterialMesh || materialNames.size > 1;
+}
+
 export interface MeshLoadDoneFunc {
     (mesh: THREE.Object3D, err?: Error): void;
 }
@@ -201,12 +245,14 @@ export class URDFLoader {
                                 if (err) {
                                     console.error('URDFLoader: Error loading mesh.', err);
                                 } else if (obj) {
-                                    if (obj instanceof THREE.Mesh) {
+                                    if (materialNode) {
+                                        if (!loadedObjectShouldPreserveEmbeddedMaterials(obj)) {
+                                            applyMaterialToLoadedObject(obj, material);
+                                        }
+                                    } else if (obj instanceof THREE.Mesh) {
                                         obj.material = material;
                                     }
 
-                                    obj.position.set(0, 0, 0);
-                                    obj.quaternion.identity();
                                     group.add(obj);
                                 }
                             });

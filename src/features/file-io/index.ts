@@ -11,12 +11,15 @@ export type {
   ImportResult,
   ExportOptions,
   PdfExportOptions,
+  ExportProgressState,
 } from './types';
 export type {
   ExportDialogConfig,
   ExportFormat,
   MjcfExportConfig,
   UrdfExportConfig,
+  XacroExportConfig,
+  UsdExportConfig,
 } from './components/ExportDialog';
 
 // Utilities
@@ -32,6 +35,8 @@ export {
   collectReferencedMeshes,
   fetchMeshBlobs,
   downloadBlob,
+  prepareMjcfMeshExportAssets,
+  exportRobotToUsd,
   exportLibraryRobotFile,
   getDroppedFiles,
   exportProject,

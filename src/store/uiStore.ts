@@ -87,10 +87,6 @@ interface UIState {
   closeSettings: () => void;
   setSettingsPos: (pos: { x: number; y: number }) => void;
 
-  // Menu state
-  activeMenu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
-  setActiveMenu: (menu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null) => void;
-
   // OS detection
   os: 'mac' | 'win';
   setOs: (os: 'mac' | 'win') => void;
@@ -330,10 +326,6 @@ export const useUIStore = create<UIState>()(
         }),
       closeSettings: () => set({ isSettingsOpen: false }),
       setSettingsPos: (pos) => set({ settingsPos: pos }),
-
-      // Menu state
-      activeMenu: null,
-      setActiveMenu: (menu) => set({ activeMenu: menu }),
 
       // OS detection
       os: detectOs(),

@@ -1,14 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
   Boxes,
   CheckSquare2,
-  Loader2,
-  MousePointerClick,
   RefreshCw,
   ShieldAlert,
   Sparkles,
-  Square,
   Wand2,
 } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
@@ -18,8 +14,10 @@ import { GeometryType } from '@/types';
 import type {
   CollisionOptimizationAnalysis,
   CollisionOptimizationBaseAnalysis,
+  CollisionOptimizationManualMergePair,
   CollisionOptimizationSource,
   CollisionOptimizationScope,
+  CoaxialJointMergeStrategy,
   CylinderOptimizationStrategy,
   MeshOptimizationStrategy,
   RodBoxOptimizationStrategy,
@@ -33,6 +31,11 @@ import {
   type CollisionOptimizationOperation,
   type CollisionTargetRef,
 } from '../utils/collisionOptimization';
+import {
+  CollisionOptimizationCandidatesPanel,
+  type CollisionOptimizationCandidatesViewMode,
+} from './CollisionOptimizationCandidatesPanel';
+import type { CollisionOptimizationPlanarGraphConnectionState } from './CollisionOptimizationPlanarGraph';
 
 interface CollisionOptimizationDialogProps {
   source: CollisionOptimizationSource;
@@ -76,6 +79,14 @@ function afterNextPaint(callback: () => void): () => void {
     window.cancelAnimationFrame(frameA);
     window.cancelAnimationFrame(frameB);
   };
+}
+
+function createRelationKey(componentId: string | undefined, sourceLinkId: string, targetLinkId: string): string {
+  return `${componentId ?? 'robot'}::${sourceLinkId}::${targetLinkId}`;
+}
+
+function createManualMergePairKey(primaryTargetId: string, secondaryTargetId: string): string {
+  return `${primaryTargetId}::${secondaryTargetId}`;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -257,6 +268,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     meshStrategyLabel: t.collisionOptimizerMeshStrategyLabel,
     cylinderStrategyLabel: t.collisionOptimizerCylinderStrategyLabel,
     rodBoxStrategyLabel: t.collisionOptimizerRodBoxStrategyLabel,
+    coaxialMergeStrategyLabel: t.collisionOptimizerCoaxialMergeStrategyLabel,
+    coaxialMergeStrategyDesc: t.collisionOptimizerCoaxialMergeStrategyDesc,
     rules: t.collisionOptimizerRules,
     avoidSiblingOverlap: t.collisionOptimizerAvoidSiblingOverlap,
     avoidSiblingOverlapDesc: t.collisionOptimizerAvoidSiblingOverlapDesc,
@@ -283,12 +296,27 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     collisionIndex: t.collisionOptimizerCollisionIndex,
     primary: t.collisionOptimizerPrimary,
     component: t.collisionOptimizerComponent,
+    jointPair: t.collisionOptimizerJointPair,
+    viewList: t.collisionOptimizerViewList,
+    viewGraph: t.collisionOptimizerViewGraph,
+    frontView: t.collisionOptimizerFrontView,
+    graphHint: t.collisionOptimizerGraphHint,
+    clearManualPairs: t.collisionOptimizerClearManualPairs,
+    manualPair: t.collisionOptimizerManualPair,
+    autoPair: t.collisionOptimizerAutoPair,
+    mergeTo: t.collisionOptimizerMergeTo,
+    mergedInto: t.collisionOptimizerMergedInto,
+    connectTargets: t.collisionOptimizerConnectTargets,
+    zoomIn: t.collisionOptimizerZoomIn,
+    zoomOut: t.collisionOptimizerZoomOut,
+    resetView: t.collisionOptimizerResetView,
   };
 
   const [scope, setScope] = useState<CollisionOptimizationScope>('all');
   const [meshStrategy, setMeshStrategy] = useState<MeshOptimizationStrategy>('capsule');
   const [cylinderStrategy, setCylinderStrategy] = useState<CylinderOptimizationStrategy>('capsule');
   const [rodBoxStrategy, setRodBoxStrategy] = useState<RodBoxOptimizationStrategy>('capsule');
+  const [coaxialJointMergeStrategy, setCoaxialJointMergeStrategy] = useState<CoaxialJointMergeStrategy>('capsule');
   const [avoidSiblingOverlap, setAvoidSiblingOverlap] = useState(false);
   const [isPreparingBaseAnalysis, setIsPreparingBaseAnalysis] = useState(true);
   const [isComputingCandidates, setIsComputingCandidates] = useState(false);
@@ -296,6 +324,10 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const [analysis, setAnalysis] = useState<CollisionOptimizationAnalysis | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [stackedPanel, setStackedPanel] = useState<'candidates' | 'settings'>('candidates');
+  const [candidatesViewMode, setCandidatesViewMode] = useState<CollisionOptimizationCandidatesViewMode>('list');
+  const [manualMergePairs, setManualMergePairs] = useState<CollisionOptimizationManualMergePair[]>([]);
+  const [manualConnection, setManualConnection] = useState<CollisionOptimizationPlanarGraphConnectionState | null>(null);
+  const [hasRequestedPrimitiveFits, setHasRequestedPrimitiveFits] = useState(false);
   const hasCustomCheckedSelectionRef = useRef(false);
   const isAnalyzing = isPreparingBaseAnalysis || isComputingCandidates;
 
@@ -321,7 +353,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const isStackedLayout = dialogWidth < 960;
   const isCompactLayout = dialogWidth < 840;
   const isDenseLayout = dialogWidth < 720;
-  const isInlineCandidateMetaLayout = dialogWidth >= 860;
   const isWideLayout = dialogWidth >= 1180;
   const isUltraWideLayout = dialogWidth >= 1400;
 
@@ -337,7 +368,61 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     return matches.length === 1 ? matches[0].id : null;
   }, [baseAnalysis, selection]);
 
+  const targetById = useMemo(
+    () => new Map((baseAnalysis?.targets ?? []).map((target) => [target.id, target] as const)),
+    [baseAnalysis?.targets],
+  );
+
+  const linkRelationByDirection = useMemo(() => {
+    const relationMap = new Map<string, { componentId?: string; parentLinkId: string; childLinkId: string }>();
+
+    if (source.kind === 'robot') {
+      Object.values(source.robot.joints).forEach((joint) => {
+        if (joint.type !== 'fixed' && joint.type !== 'revolute' && joint.type !== 'continuous') {
+          return;
+        }
+
+        const relation = {
+          componentId: undefined,
+          parentLinkId: joint.parentLinkId,
+          childLinkId: joint.childLinkId,
+        };
+        relationMap.set(createRelationKey(undefined, joint.parentLinkId, joint.childLinkId), relation);
+        relationMap.set(createRelationKey(undefined, joint.childLinkId, joint.parentLinkId), relation);
+      });
+      return relationMap;
+    }
+
+    Object.values(source.assembly.components).forEach((component) => {
+      Object.values(component.robot.joints).forEach((joint) => {
+        if (joint.type !== 'fixed' && joint.type !== 'revolute' && joint.type !== 'continuous') {
+          return;
+        }
+
+        const relation = {
+          componentId: component.id,
+          parentLinkId: joint.parentLinkId,
+          childLinkId: joint.childLinkId,
+        };
+        relationMap.set(createRelationKey(component.id, joint.parentLinkId, joint.childLinkId), relation);
+        relationMap.set(createRelationKey(component.id, joint.childLinkId, joint.parentLinkId), relation);
+      });
+    });
+
+    return relationMap;
+  }, [source]);
+
   const effectiveSelectedTargetId = scope === 'selected' ? selectedTargetId : null;
+
+  useEffect(() => {
+    if (hasRequestedPrimitiveFits) {
+      return;
+    }
+
+    if (candidatesViewMode === 'graph' || manualMergePairs.length > 0) {
+      setHasRequestedPrimitiveFits(true);
+    }
+  }, [candidatesViewMode, hasRequestedPrimitiveFits, manualMergePairs.length]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -347,11 +432,14 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     setAnalysis(null);
     hasCustomCheckedSelectionRef.current = false;
     setCheckedIds(new Set());
+    setManualMergePairs([]);
+    setManualConnection(null);
 
     const cancelScheduledStart = afterNextPaint(() => {
       void prepareCollisionOptimizationBaseAnalysis(source, assets, {
         signal: controller.signal,
         includeClearanceData: avoidSiblingOverlap,
+        includePrimitiveFits: hasRequestedPrimitiveFits,
       })
         .then((result) => {
           if (controller.signal.aborted) return;
@@ -373,7 +461,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       cancelScheduledStart();
       controller.abort();
     };
-  }, [assets, avoidSiblingOverlap, source]);
+  }, [assets, avoidSiblingOverlap, hasRequestedPrimitiveFits, source]);
 
   useEffect(() => {
     if (!baseAnalysis) {
@@ -391,6 +479,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       meshStrategy,
       cylinderStrategy,
       rodBoxStrategy,
+      coaxialJointMergeStrategy,
+      manualMergePairs,
       avoidSiblingOverlap,
       selectedTargetId: effectiveSelectedTargetId,
     }, {
@@ -417,8 +507,10 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   }, [
     avoidSiblingOverlap,
     baseAnalysis,
+    coaxialJointMergeStrategy,
     cylinderStrategy,
     effectiveSelectedTargetId,
+    manualMergePairs,
     meshStrategy,
     rodBoxStrategy,
     scope,
@@ -429,7 +521,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       return;
     }
 
-    setCheckedIds(new Set(analysis.candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id)));
+    setCheckedIds(new Set(
+      analysis.candidates
+        .filter((candidate) => candidate.eligible && candidate.autoSelect !== false)
+        .map((candidate) => candidate.target.id),
+    ));
   }, [analysis]);
 
   const activeOperations = useMemo(
@@ -460,9 +556,37 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     () => analysis?.targets.filter((target) => target.geometry.type === GeometryType.MESH).length ?? 0,
     [analysis?.targets],
   );
+  const manualPairKeySet = useMemo(
+    () => new Set(manualMergePairs.map((pair) => createManualMergePairKey(pair.primaryTargetId, pair.secondaryTargetId))),
+    [manualMergePairs],
+  );
+  const displayCandidates = useMemo(() => {
+    if (!analysis) {
+      return [];
+    }
+
+    const singles: CollisionOptimizationCandidate[] = [];
+    const pairCandidatesByKey = new Map<string, CollisionOptimizationCandidate>();
+
+    analysis.candidates.forEach((candidate) => {
+      if (!candidate.secondaryTarget) {
+        singles.push(candidate);
+        return;
+      }
+
+      const pairKey = createManualMergePairKey(candidate.target.id, candidate.secondaryTarget.id);
+      const existing = pairCandidatesByKey.get(pairKey);
+      const isManualPair = manualPairKeySet.has(pairKey);
+      if (!existing || isManualPair) {
+        pairCandidatesByKey.set(pairKey, candidate);
+      }
+    });
+
+    return [...singles, ...pairCandidatesByKey.values()];
+  }, [analysis, manualPairKeySet]);
   const eligibleCount = useMemo(
-    () => analysis?.candidates.filter((candidate) => candidate.eligible).length ?? 0,
-    [analysis?.candidates],
+    () => displayCandidates.filter((candidate) => candidate.eligible).length,
+    [displayCandidates],
   );
 
   const toggleCandidate = useCallback((targetId: string) => {
@@ -480,20 +604,124 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
 
   const handleSelectAll = useCallback(() => {
     hasCustomCheckedSelectionRef.current = true;
-    setCheckedIds(new Set(analysis?.candidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id) ?? []));
-  }, [analysis?.candidates]);
+    setCheckedIds(new Set(displayCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id)));
+  }, [displayCandidates]);
 
   const handleClearAll = useCallback(() => {
     hasCustomCheckedSelectionRef.current = true;
     setCheckedIds(new Set());
   }, []);
 
+  const canCreateManualPair = useCallback((sourceTargetId: string, targetTargetId: string) => {
+    if (sourceTargetId === targetTargetId) {
+      return false;
+    }
+
+    const sourceTarget = targetById.get(sourceTargetId);
+    const target = targetById.get(targetTargetId);
+    if (!sourceTarget || !target) {
+      return false;
+    }
+
+    if ((sourceTarget.componentId ?? 'robot') !== (target.componentId ?? 'robot')) {
+      return false;
+    }
+
+    return linkRelationByDirection.has(
+      createRelationKey(sourceTarget.componentId, sourceTarget.linkId, target.linkId),
+    );
+  }, [linkRelationByDirection, targetById]);
+
+  const handleClearManualPairs = useCallback(() => {
+    setManualConnection(null);
+    setManualMergePairs([]);
+  }, []);
+
+  const handleManualConnectionStart = useCallback((target: CollisionTargetRef) => {
+    setManualConnection({
+      sourceTargetId: target.id,
+      pointer: null,
+    });
+  }, []);
+
+  const handleManualConnectionMove = useCallback((pointer: { x: number; y: number }) => {
+    setManualConnection((previous) => previous ? { ...previous, pointer } : previous);
+  }, []);
+
+  const handleManualConnectionCancel = useCallback(() => {
+    setManualConnection(null);
+  }, []);
+
+  const handleManualConnectionEnd = useCallback((target: CollisionTargetRef | null) => {
+    if (!manualConnection) {
+      return;
+    }
+
+    const sourceTarget = targetById.get(manualConnection.sourceTargetId);
+    setManualConnection(null);
+
+    if (!sourceTarget || !target || !canCreateManualPair(sourceTarget.id, target.id)) {
+      return;
+    }
+
+    const relation = linkRelationByDirection.get(
+      createRelationKey(sourceTarget.componentId, sourceTarget.linkId, target.linkId),
+    );
+    if (!relation) {
+      return;
+    }
+
+    const primaryTarget = relation.parentLinkId === sourceTarget.linkId ? sourceTarget : target;
+    const secondaryTarget = primaryTarget.id === sourceTarget.id ? target : sourceTarget;
+    const nextPairKey = createManualMergePairKey(primaryTarget.id, secondaryTarget.id);
+    const nextStrategy = coaxialJointMergeStrategy === 'keep' ? 'capsule' : coaxialJointMergeStrategy;
+
+    setManualMergePairs((previous) => {
+      const existingIndex = previous.findIndex((pair) =>
+        createManualMergePairKey(pair.primaryTargetId, pair.secondaryTargetId) === nextPairKey
+      );
+
+      if (existingIndex >= 0) {
+        const nextPairs = [...previous];
+        nextPairs[existingIndex] = {
+          ...nextPairs[existingIndex],
+          strategy: nextStrategy,
+        };
+        return nextPairs;
+      }
+
+      return [
+        ...previous,
+        {
+          primaryTargetId: primaryTarget.id,
+          secondaryTargetId: secondaryTarget.id,
+          strategy: nextStrategy,
+        },
+      ];
+    });
+
+    hasCustomCheckedSelectionRef.current = true;
+    setCheckedIds((previous) => {
+      const next = new Set(previous);
+      next.add(primaryTarget.id);
+      return next;
+    });
+    onSelectTarget?.(primaryTarget);
+  }, [
+    canCreateManualPair,
+    coaxialJointMergeStrategy,
+    linkRelationByDirection,
+    manualConnection,
+    onSelectTarget,
+    targetById,
+  ]);
+
   const handleApply = useCallback(() => {
     if (activeOperations.length === 0) return;
     onApply(activeOperations);
   }, [activeOperations, onApply]);
 
-  const formatGeometryType = useCallback((type: GeometryType) => {
+  const formatGeometryType = useCallback((type: GeometryType | null | undefined) => {
     switch (type) {
       case GeometryType.BOX:
         return t.box;
@@ -535,12 +763,61 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const hasOverlapWarnings = warningBefore > 0 || warningAfter > 0;
   const showCandidatesPanel = !isStackedLayout || stackedPanel === 'candidates';
   const showSettingsPanel = !isStackedLayout || stackedPanel === 'settings';
+  const candidatePanelLabels = useMemo(() => ({
+    analyzing: copy.analyzing,
+    clearAll: copy.clearAll,
+    clearManualPairs: copy.clearManualPairs,
+    eligible: copy.eligible,
+    noCandidates: copy.noCandidates,
+    noSelectedCollision: copy.noSelectedCollision,
+    scopeAll: copy.scopeAll,
+    scopeMesh: copy.scopeMesh,
+    scopePrimitive: copy.scopePrimitive,
+    scopeSelected: copy.scopeSelected,
+    selectAll: copy.selectAll,
+    selectedCount: copy.selectedCount,
+    title: copy.candidates,
+    viewGraph: copy.viewGraph,
+    viewList: copy.viewList,
+  }), [copy]);
+  const candidateListLabels = useMemo(() => ({
+    clearAll: copy.clearAll,
+    collisionIndex: copy.collisionIndex,
+    component: copy.component,
+    jointPair: copy.jointPair,
+    noCandidates: copy.noCandidates,
+    primary: copy.primary,
+    selectedCount: copy.selectedCount,
+  }), [copy]);
+  const graphLabels = useMemo(() => ({
+    autoPair: copy.autoPair,
+    collisionIndex: copy.collisionIndex,
+    component: copy.component,
+    connectionHandle: copy.connectTargets,
+    dragHint: copy.graphHint,
+    empty: copy.noCandidates,
+    frontView: copy.frontView,
+    manualPair: copy.manualPair,
+    mergeTo: copy.mergeTo,
+    mergedInto: copy.mergedInto,
+    primary: copy.primary,
+    selectCandidate: copy.selectAll,
+    resetView: copy.resetView,
+    unselectCandidate: copy.clearAll,
+    zoomIn: copy.zoomIn,
+    zoomOut: copy.zoomOut,
+  }), [copy]);
   const statsGridClass = isWideLayout ? 'grid-cols-4' : isCompactLayout ? 'grid-cols-1' : 'grid-cols-2';
+  const isGraphView = candidatesViewMode === 'graph';
   const mainPanelsGridClass = isStackedLayout
     ? 'grid-cols-1'
-    : isUltraWideLayout
-      ? 'grid-cols-[minmax(360px,0.85fr)_minmax(720px,1.4fr)]'
-      : 'grid-cols-[minmax(320px,0.95fr)_minmax(0,1.15fr)]';
+    : isGraphView
+      ? isUltraWideLayout
+        ? 'grid-cols-[minmax(0,1.7fr)_minmax(300px,360px)]'
+        : 'grid-cols-[minmax(0,1.45fr)_minmax(280px,340px)]'
+      : isUltraWideLayout
+        ? 'grid-cols-[minmax(360px,0.85fr)_minmax(720px,1.4fr)]'
+        : 'grid-cols-[minmax(320px,0.95fr)_minmax(0,1.15fr)]';
   const settingsLayoutClass = isWideLayout
     ? 'grid grid-cols-[minmax(0,1.35fr)_minmax(280px,0.95fr)] items-start gap-2.5'
     : 'space-y-2.5';
@@ -561,6 +838,12 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   ];
 
   const rodBoxStrategyOptions: Array<{ value: RodBoxOptimizationStrategy; label: string }> = [
+    { value: 'capsule', label: copy.strategyCapsule },
+    { value: 'cylinder', label: copy.strategyCylinder },
+    { value: 'keep', label: copy.strategyKeep },
+  ];
+
+  const coaxialMergeStrategyOptions: Array<{ value: CoaxialJointMergeStrategy; label: string }> = [
     { value: 'capsule', label: copy.strategyCapsule },
     { value: 'cylinder', label: copy.strategyCylinder },
     { value: 'keep', label: copy.strategyKeep },
@@ -608,7 +891,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                   onClick={() => setStackedPanel('candidates')}
                   icon={<Boxes className="h-3.5 w-3.5 shrink-0" />}
                   label={copy.panelCandidates}
-                  badge={analysis?.candidates.length ?? 0}
+                  badge={displayCandidates.length}
                 />
                 <PanelSwitchButton
                   active={stackedPanel === 'settings'}
@@ -622,165 +905,38 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
 
           <div className={`grid flex-1 min-h-0 gap-2.5 ${mainPanelsGridClass}`}>
             {showCandidatesPanel && (
-              <div className="min-h-0 flex flex-col overflow-hidden rounded-xl border border-border-black bg-element-bg">
-                <div className="shrink-0 border-b border-border-black bg-panel-bg px-2 py-1.5">
-                  <div className={`gap-1.5 ${isDenseLayout ? 'space-y-1.5' : 'flex items-center justify-between'}`}>
-                    <div className="min-w-0 flex flex-wrap items-center gap-1.5">
-                      <div className="text-[11px] font-semibold text-text-primary">{copy.candidates}</div>
-                      <span className="inline-flex items-center rounded-full border border-border-black bg-element-bg px-1.5 py-0.5 text-[9px] text-text-tertiary">
-                        {copy.eligible} {eligibleCount}
-                      </span>
-                      <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] ${
-                        activeOperations.length > 0
-                          ? 'border-system-blue/20 bg-system-blue/10 text-system-blue'
-                          : 'border-border-black bg-element-bg text-text-tertiary'
-                      }`}>
-                        {copy.selectedCount} {activeOperations.length}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={handleSelectAll}
-                        className="rounded-md px-1.5 py-0.5 text-[9px] font-medium text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary"
-                      >
-                        {copy.selectAll}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleClearAll}
-                        className="rounded-md px-1.5 py-0.5 text-[9px] font-medium text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary"
-                      >
-                        {copy.clearAll}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    <div className="flex flex-wrap gap-1 rounded-md border border-border-black bg-segmented-bg p-0.5">
-                      {([
-                        ['all', copy.scopeAll],
-                        ['mesh', copy.scopeMesh],
-                        ['primitive', copy.scopePrimitive],
-                        ['selected', copy.scopeSelected],
-                      ] as const).map(([value, label]) => (
-                        <OptionButton
-                          key={value}
-                          active={scope === value}
-                          onClick={() => setScope(value)}
-                        >
-                          {label}
-                        </OptionButton>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto p-1 space-y-1">
-                  {isAnalyzing && (
-                    <div className="flex h-full flex-col items-center justify-center gap-1.5 text-[10px] text-text-tertiary">
-                      <Loader2 className="h-4.5 w-4.5 animate-spin" />
-                      <span>{copy.analyzing}</span>
-                    </div>
-                  )}
-
-                  {!isAnalyzing && isSelectedScopeWithoutSelection && (
-                    <div className="rounded-lg border border-dashed border-border-black bg-panel-bg px-2.5 py-4 text-center text-[10px] leading-relaxed text-text-secondary">
-                      <MousePointerClick className="mx-auto mb-1.5 h-4.5 w-4.5 text-text-tertiary" />
-                      {copy.noSelectedCollision}
-                    </div>
-                  )}
-
-                  {!isAnalyzing && !isSelectedScopeWithoutSelection && (analysis?.candidates.length ?? 0) === 0 && (
-                    <div className="rounded-lg border border-dashed border-border-black bg-panel-bg px-2.5 py-4 text-center text-[10px] leading-relaxed text-text-secondary">
-                      {copy.noCandidates}
-                    </div>
-                  )}
-
-                  {!isAnalyzing && analysis?.candidates.map((candidate) => {
-                    const isChecked = checkedIds.has(candidate.target.id);
-                    const isFocused = selection?.type === 'link'
-                      && selection.id === candidate.target.linkId
-                      && selection.subType === 'collision'
-                      && (selection.objectIndex ?? 0) === candidate.target.objectIndex;
-                    const candidateMeta = (
-                      <div className={`flex min-w-0 flex-wrap items-center gap-1 text-[9px] text-text-secondary ${isInlineCandidateMetaLayout ? 'justify-end' : ''}`}>
-                        {candidate.target.componentName && (
-                          <span className={`inline-flex items-center rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 ${isInlineCandidateMetaLayout ? 'max-w-[18rem]' : 'max-w-[14rem]'}`}>
-                            <span className="truncate">{candidate.target.componentName}</span>
-                          </span>
-                        )}
-                        <span className="inline-flex items-center gap-1 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 font-medium text-text-secondary">
-                          <span>{formatGeometryType(candidate.currentType)}</span>
-                          <ArrowRight className="h-2.5 w-2.5 text-text-tertiary" />
-                          <span className="text-text-primary">{candidate.suggestedType ? formatGeometryType(candidate.suggestedType) : '—'}</span>
-                        </span>
-                      </div>
-                    );
-
-                    return (
-                      <div
-                        key={candidate.target.id}
-                        className={`rounded-md border transition-colors ${
-                          isFocused
-                            ? 'border-system-blue/40 bg-system-blue/10'
-                            : 'border-border-black bg-panel-bg hover:bg-element-hover'
-                        }`}
-                      >
-                        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 px-2 py-1.5">
-                          <button
-                            type="button"
-                            aria-label={isChecked ? copy.clearAll : copy.selectAll}
-                            disabled={!candidate.eligible}
-                            onClick={() => {
-                              if (!candidate.eligible) return;
-                              toggleCandidate(candidate.target.id);
-                            }}
-                            className={`mt-0.5 shrink-0 ${candidate.eligible ? 'text-system-blue' : 'cursor-not-allowed text-text-tertiary/60'}`}
-                          >
-                            {isChecked ? <CheckSquare2 className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => onSelectTarget?.(candidate.target)}
-                            className="min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
-                          >
-                            <div className={`min-w-0 ${isInlineCandidateMetaLayout ? 'flex items-center gap-2.5' : ''}`}>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="truncate text-[11px] font-semibold text-text-primary">{candidate.target.linkName}</span>
-                                  <span className="inline-flex items-center rounded-full border border-system-blue/20 bg-system-blue/10 px-1.5 py-0.5 text-[9px] text-system-blue">
-                                    {candidate.target.isPrimary
-                                      ? copy.primary
-                                      : `${copy.collisionIndex} ${candidate.target.sequenceIndex + 1}`}
-                                  </span>
-                                </div>
-
-                                {!isInlineCandidateMetaLayout && (
-                                  <div className="mt-0.5">{candidateMeta}</div>
-                                )}
-                              </div>
-
-                              {isInlineCandidateMetaLayout && (
-                                <div className="shrink-0">{candidateMeta}</div>
-                              )}
-                            </div>
-                          </button>
-
-                          {!candidate.eligible ? (
-                            <div className="pt-0.5 text-[9px]">
-                              <span className="inline-flex items-center rounded-full border border-border-black bg-element-bg px-1.5 py-0.5 text-text-tertiary">
-                                {getStatusLabel(candidate)}
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              <CollisionOptimizationCandidatesPanel
+                source={source}
+                analysis={analysis}
+                candidates={displayCandidates}
+                selection={selection}
+                scope={scope}
+                viewMode={candidatesViewMode}
+                checkedTargetIds={checkedIds}
+                eligibleCount={eligibleCount}
+                activeSelectionCount={activeOperations.length}
+                isAnalyzing={isAnalyzing}
+                isSelectedScopeWithoutSelection={isSelectedScopeWithoutSelection}
+                manualMergePairs={manualMergePairs}
+                manualConnection={manualConnection}
+                labels={candidatePanelLabels}
+                listLabels={candidateListLabels}
+                graphLabels={graphLabels}
+                formatGeometryType={formatGeometryType}
+                getStatusLabel={getStatusLabel}
+                canCreateManualPair={canCreateManualPair}
+                onScopeChange={setScope}
+                onViewModeChange={setCandidatesViewMode}
+                onSelectAll={handleSelectAll}
+                onClearAll={handleClearAll}
+                onClearManualPairs={handleClearManualPairs}
+                onToggleCandidate={toggleCandidate}
+                onSelectTarget={onSelectTarget}
+                onManualConnectionStart={handleManualConnectionStart}
+                onManualConnectionMove={handleManualConnectionMove}
+                onManualConnectionEnd={handleManualConnectionEnd}
+                onManualConnectionCancel={handleManualConnectionCancel}
+              />
             )}
 
             {showSettingsPanel && (
@@ -826,6 +982,20 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                                 key={option.value}
                                 active={rodBoxStrategy === option.value}
                                 onClick={() => setRodBoxStrategy(option.value)}
+                              >
+                                {option.label}
+                              </OptionButton>
+                            ))}
+                          </StrategyField>
+                        </div>
+
+                        <div className={isWideLayout ? 'col-span-2' : ''}>
+                          <StrategyField label={copy.coaxialMergeStrategyLabel} desc={copy.coaxialMergeStrategyDesc}>
+                            {coaxialMergeStrategyOptions.map((option) => (
+                              <OptionButton
+                                key={option.value}
+                                active={coaxialJointMergeStrategy === option.value}
+                                onClick={() => setCoaxialJointMergeStrategy(option.value)}
                               >
                                 {option.label}
                               </OptionButton>

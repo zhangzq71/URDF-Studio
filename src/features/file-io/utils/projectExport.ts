@@ -6,10 +6,13 @@ import {
   JointType,
   RobotData,
   RobotFile,
+  UsdPreparedExportCache,
   UrdfLink,
 } from '@/types';
 import { generateMujocoXML, generateURDF } from '@/core/parsers';
+import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { generateBOM } from './bomGenerator';
+import { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
 import {
   buildAssetArchivePath,
   buildLibraryArchivePath,
@@ -23,6 +26,11 @@ import {
   PROJECT_ROBOT_HISTORY_FILE,
   PROJECT_VERSION,
 } from './projectArchive';
+import { writeUsdPreparedExportCaches } from './projectUsdPreparedExportCaches';
+import {
+  stripTransientJointMotionFromJoint,
+  stripTransientJointMotionFromRobotData,
+} from '@/shared/utils/robot/semanticSnapshot';
 
 const AXIS_EXPORT_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -172,12 +180,12 @@ const generateBridgeXml = (bridges: Record<string, BridgeJoint>): string => {
     xml += `      <origin xyz="${joint.origin.xyz.x} ${joint.origin.xyz.y} ${joint.origin.xyz.z}" `;
     xml += `rpy="${joint.origin.rpy.r} ${joint.origin.rpy.p} ${joint.origin.rpy.y}" />\n`;
 
-    if (AXIS_EXPORT_TYPES.has(joint.type)) {
+    if (AXIS_EXPORT_TYPES.has(joint.type) && joint.axis) {
       xml += `      <axis xyz="${joint.axis.x} ${joint.axis.y} ${joint.axis.z}" />\n`;
 
-      if (FULL_LIMIT_EXPORT_TYPES.has(joint.type)) {
+      if (FULL_LIMIT_EXPORT_TYPES.has(joint.type) && joint.limit) {
         xml += `      <limit lower="${joint.limit.lower}" upper="${joint.limit.upper}" effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
-      } else if (EFFORT_VELOCITY_LIMIT_EXPORT_TYPES.has(joint.type)) {
+      } else if (EFFORT_VELOCITY_LIMIT_EXPORT_TYPES.has(joint.type) && joint.limit) {
         xml += `      <limit effort="${joint.limit.effort}" velocity="${joint.limit.velocity}" />\n`;
       }
     }
@@ -188,6 +196,17 @@ const generateBridgeXml = (bridges: Record<string, BridgeJoint>): string => {
       && (joint.dynamics.damping !== 0 || joint.dynamics.friction !== 0)
     ) {
       xml += `      <dynamics damping="${joint.dynamics.damping}" friction="${joint.dynamics.friction}" />\n`;
+    }
+
+    if (joint.mimic?.joint) {
+      const mimicAttributes = [`joint="${joint.mimic.joint}"`];
+      if (typeof joint.mimic.multiplier === 'number' && Number.isFinite(joint.mimic.multiplier)) {
+        mimicAttributes.push(`multiplier="${joint.mimic.multiplier}"`);
+      }
+      if (typeof joint.mimic.offset === 'number' && Number.isFinite(joint.mimic.offset)) {
+        mimicAttributes.push(`offset="${joint.mimic.offset}"`);
+      }
+      xml += `      <mimic ${mimicAttributes.join(' ')} />\n`;
     }
 
     xml += '    </joint>\n';
@@ -218,22 +237,44 @@ const getReferencedMeshes = (robot: RobotData): Set<string> => {
   return referencedFiles;
 };
 
-const stripTransientJointState = (data: RobotData): RobotData => {
-  const clone = structuredClone(data);
-  Object.values(clone.joints).forEach((joint) => {
-    delete joint.angle;
-  });
-  return clone;
+const writeReferencedMeshesToFolder = async (
+  folder: JSZip,
+  robot: RobotData,
+  assets: Record<string, string>,
+  skipMeshPaths?: ReadonlySet<string>,
+): Promise<void> => {
+  const writtenPaths = new Set<string>();
+
+  await Promise.all(
+    Array.from(getReferencedMeshes(robot)).map(async (meshPath) => {
+      if (skipMeshPaths?.has(meshPath)) return;
+
+      const exportPath = normalizeMeshPathForExport(meshPath);
+      if (!exportPath || writtenPaths.has(exportPath)) return;
+      writtenPaths.add(exportPath);
+
+      const blobUrl = resolveMeshAssetUrl(meshPath, assets);
+      if (!blobUrl) return;
+
+      try {
+        const response = await fetch(blobUrl);
+        const blob = await response.blob();
+        folder.file(exportPath, new Uint8Array(await blob.arrayBuffer()));
+      } catch (error) {
+        console.warn(`[ProjectExport] Failed to package mesh "${meshPath}"`, error);
+      }
+    }),
+  );
 };
 
 const stripTransientAssemblyState = (state: AssemblyState | null): AssemblyState | null => {
   if (!state) return null;
   const clone = structuredClone(state);
   Object.values(clone.components).forEach((component) => {
-    component.robot = stripTransientJointState(component.robot);
+    component.robot = stripTransientJointMotionFromRobotData(component.robot);
   });
   Object.values(clone.bridges).forEach((bridge) => {
-    delete bridge.joint.angle;
+    bridge.joint = stripTransientJointMotionFromJoint(bridge.joint) as BridgeJoint['joint'];
   });
   return clone;
 };
@@ -272,7 +313,7 @@ const writePackedAssets = async (
         const archivePath = buildAssetArchivePath(logicalPath);
         const response = await fetch(url);
         const blob = await response.blob();
-        zip.file(archivePath, blob);
+        zip.file(archivePath, new Uint8Array(await blob.arrayBuffer()));
         assetEntries.push({ logicalPath, archivePath });
       } catch (error) {
         console.warn('[ProjectExport] Failed to pack asset', keys[0] ?? url, error);
@@ -299,6 +340,7 @@ export async function exportProject(params: {
     selectedFileName: string | null;
     originalUrdfContent: string;
     originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
+    usdPreparedExportCaches: Record<string, UsdPreparedExportCache>;
   };
   robotState: {
     present: RobotData;
@@ -323,9 +365,10 @@ export async function exportProject(params: {
 
   const zip = new JSZip();
   const currentAssembly = stripTransientAssemblyState(assemblyState.present);
-  const currentRobot = stripTransientJointState(robotState.present);
+  const currentRobot = stripTransientJointMotionFromRobotData(robotState.present);
   const assetEntries = await writePackedAssets(zip, assetsState.assets);
   writeTextLibraryFiles(zip, assetsState.availableFiles);
+  await writeUsdPreparedExportCaches(zip, assetsState.usdPreparedExportCaches);
 
   zip.file(PROJECT_ALL_FILE_CONTENTS_FILE, JSON.stringify(assetsState.allFileContents, null, 2));
   zip.file(PROJECT_MOTOR_LIBRARY_FILE, JSON.stringify(assetsState.motorLibrary, null, 2));
@@ -336,8 +379,8 @@ export async function exportProject(params: {
 
   const serializedRobotHistory: ProjectHistorySnapshot<RobotData> = {
     present: currentRobot,
-    past: clampHistoryEntries(robotState.history.past).map((snapshot) => stripTransientJointState(snapshot)),
-    future: clampFutureEntries(robotState.history.future).map((snapshot) => stripTransientJointState(snapshot)),
+    past: clampHistoryEntries(robotState.history.past).map((snapshot) => stripTransientJointMotionFromRobotData(snapshot)),
+    future: clampFutureEntries(robotState.history.future).map((snapshot) => stripTransientJointMotionFromRobotData(snapshot)),
     activity: normalizeActivityLog(robotState.activity),
   };
   zip.file(PROJECT_ROBOT_HISTORY_FILE, JSON.stringify(serializedRobotHistory, null, 2));
@@ -428,8 +471,11 @@ export async function exportProject(params: {
           if (!blobUrl) return;
           const task = fetch(blobUrl)
             .then((response) => response.blob())
-            .then((blob) => {
-              componentMeshesFolder.file(meshPath.split('/').pop() || meshPath, blob);
+            .then(async (blob) => {
+              componentMeshesFolder.file(
+                meshPath.split('/').pop() || meshPath,
+                new Uint8Array(await blob.arrayBuffer()),
+              );
             })
             .catch((error) => {
               console.warn(
@@ -451,23 +497,10 @@ export async function exportProject(params: {
         mainRobotFolder.file('README.md', COMPONENT_README_EN);
         mainRobotFolder.file('README_ZH.md', COMPONENT_README_ZH);
 
-        const referencedMeshes = getReferencedMeshes(mergedRobot);
         const componentMeshesFolder = mainRobotFolder.folder('meshes');
 
         if (componentMeshesFolder) {
-          await Promise.all(
-            Array.from(referencedMeshes).map(async (meshPath) => {
-              const blobUrl = assetsState.assets[meshPath];
-              if (!blobUrl) return;
-              try {
-                const response = await fetch(blobUrl);
-                const blob = await response.blob();
-                componentMeshesFolder.file(meshPath.split('/').pop() || meshPath, blob);
-              } catch (error) {
-                console.warn(`[ProjectExport] Failed to package mesh "${meshPath}"`, error);
-              }
-            }),
-          );
+          await writeReferencedMeshesToFolder(componentMeshesFolder, mergedRobot, assetsState.assets);
         }
 
         assetsState.availableFiles.forEach((file) => {
@@ -491,11 +524,34 @@ export async function exportProject(params: {
         ...mergedRobot,
         selection: { type: null, id: null },
       } as RobotData & { selection: { type: null; id: null } };
+      const mjcfMeshExport = await prepareMjcfMeshExportAssets({
+        robot: robotForExport,
+        assets: assetsState.assets,
+      });
 
       outputFolder.file(`${mergedRobot.name}.urdf`, generateURDF(robotForExport, false));
       outputFolder.file(`${mergedRobot.name}_extended.urdf`, generateURDF(robotForExport, true));
-      outputFolder.file(`${mergedRobot.name}.xml`, generateMujocoXML(robotForExport));
+      outputFolder.file(`${mergedRobot.name}.xml`, generateMujocoXML(robotForExport, {
+        meshdir: 'meshes/',
+        meshPathOverrides: mjcfMeshExport.meshPathOverrides,
+        visualMeshVariants: mjcfMeshExport.visualMeshVariants,
+      }));
       outputFolder.file('bom.csv', generateBOM(robotForExport, uiState.lang as 'en' | 'zh'));
+
+      const outputMeshesFolder = outputFolder.folder('meshes');
+      if (outputMeshesFolder) {
+        await writeReferencedMeshesToFolder(
+          outputMeshesFolder,
+          mergedRobot,
+          assetsState.assets,
+          mjcfMeshExport.convertedSourceMeshPaths,
+        );
+        await Promise.all(
+          Array.from(mjcfMeshExport.archiveFiles.entries()).map(async ([relativePath, blob]) => {
+            outputMeshesFolder.file(relativePath, new Uint8Array(await blob.arrayBuffer()));
+          }),
+        );
+      }
     }
   }
 

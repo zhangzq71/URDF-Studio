@@ -19,7 +19,7 @@ export const Label: React.FC<LabelProps> = ({
       className={`block text-xs font-semibold text-text-secondary mb-1.5 ml-0.5 ${className}`}
     >
       {children}
-      {required && <span className="text-red-500 ml-0.5">*</span>}
+      {required && <span className="ml-0.5 text-danger">*</span>}
     </label>
   );
 };

@@ -7,40 +7,34 @@
  */
 import React from 'react';
 import {
-  ArrowRightLeft,
   ExternalLink,
-  Lock,
-  Move3D,
-  Plane,
-  RefreshCw,
-  RotateCw,
 } from 'lucide-react';
 import { JointType, type AppMode, type MotorSpec } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
 import {
+  getDefaultJointLimit,
+  getJointEffortUnitLabel,
+  getJointValueUnitLabel,
+  getJointVelocityUnitLabel,
+} from '@/shared/utils/jointUnits';
+import {
   MAX_TRANSFORM_DECIMALS,
   TRANSFORM_STEP,
 } from '@/core/utils/numberPrecision';
 import {
-  PROPERTY_EDITOR_POSITION_STEP,
-  PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS,
-} from '../constants';
-import {
   InputGroup,
+  InlineInputGroup,
   CollapsibleSection,
   NumberInput,
   Vec3Input,
-  Vec3InlineInput,
-  IconSegmentedControl,
-  PROPERTY_EDITOR_SUBLABEL_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
   PROPERTY_EDITOR_LINK_CLASS,
   PROPERTY_EDITOR_SELECT_CLASS,
   type Vec3Value,
 } from './FormControls';
 import { useMotorConfig } from '../hooks/useMotorConfig';
-import { RotationValueInput } from './RotationValueInput';
+import { TransformFields } from './TransformFields';
 
 const AXIS_BASED_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -60,13 +54,13 @@ const JOINT_TYPE_OPTIONS: JointType[] = [
   JointType.FIXED,
   JointType.REVOLUTE,
   JointType.CONTINUOUS,
+  JointType.BALL,
   JointType.PRISMATIC,
   JointType.PLANAR,
   JointType.FLOATING,
 ];
 
 const DEFAULT_AXIS = { x: 0, y: 0, z: 1 };
-const DEFAULT_LIMIT = { lower: -1.57, upper: 1.57, effort: 100, velocity: 10 };
 const DEFAULT_ORIGIN = {
   xyz: { x: 0, y: 0, z: 0 },
   rpy: { r: 0, p: 0, y: 0 },
@@ -92,6 +86,8 @@ const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): 
       return t.jointTypeRevolute;
     case JointType.CONTINUOUS:
       return t.jointTypeContinuous;
+    case JointType.BALL:
+      return 'Ball';
     case JointType.PRISMATIC:
       return t.jointTypePrismatic;
     case JointType.PLANAR:
@@ -100,25 +96,6 @@ const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): 
       return t.jointTypeFloating;
     default:
       return jointType;
-  }
-};
-
-const getJointTypeIcon = (jointType: JointType) => {
-  switch (jointType) {
-    case JointType.FIXED:
-      return Lock;
-    case JointType.REVOLUTE:
-      return RotateCw;
-    case JointType.CONTINUOUS:
-      return RefreshCw;
-    case JointType.PRISMATIC:
-      return ArrowRightLeft;
-    case JointType.PLANAR:
-      return Plane;
-    case JointType.FLOATING:
-      return Move3D;
-    default:
-      return RotateCw;
   }
 };
 
@@ -150,7 +127,14 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
   const supportsAxis = AXIS_BASED_TYPES.has(jointType);
   const supportsFullLimit = LIMITED_TYPES.has(jointType);
   const supportsEffortVelocityLimit = EFFORT_VELOCITY_ONLY_TYPES.has(jointType);
-  const supportsMotorSection = jointType !== JointType.FIXED && jointType !== JointType.FLOATING && jointType !== JointType.PLANAR;
+  const supportsMotorSection = jointType !== JointType.FIXED
+    && jointType !== JointType.FLOATING
+    && jointType !== JointType.PLANAR
+    && jointType !== JointType.BALL;
+  const defaultLimit = getDefaultJointLimit(jointType);
+  const limitUnit = getJointValueUnitLabel(jointType, 'rad');
+  const velocityUnit = getJointVelocityUnitLabel(jointType);
+  const effortUnit = getJointEffortUnitLabel(jointType);
 
   const updateJoint = (updates: Partial<JointData>) => {
     onUpdate('joint', selection.id!, { ...data, ...updates });
@@ -164,11 +148,11 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
       nextData.axis = axisLen > 0 ? axis : DEFAULT_AXIS;
     }
     if (LIMITED_TYPES.has(nextType) && !nextData.limit) {
-      nextData.limit = DEFAULT_LIMIT;
+      nextData.limit = getDefaultJointLimit(nextType);
     }
     if (EFFORT_VELOCITY_ONLY_TYPES.has(nextType)) {
       nextData.limit = {
-        ...DEFAULT_LIMIT,
+        ...getDefaultJointLimit(nextType),
         ...nextData.limit,
       };
     }
@@ -190,76 +174,58 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
     onUpdate
   });
 
-  const jointTypeOptions = JOINT_TYPE_OPTIONS.map((option) => ({
-    value: option,
-    label: getJointTypeLabel(option, t),
-    icon: getJointTypeIcon(option),
-  }));
+  const renderJointTypeField = () => (
+    <InlineInputGroup label={t.type} labelWidthClassName="w-11">
+      <select
+        value={jointType}
+        onChange={(event) => handleJointTypeChange(event.target.value as JointType)}
+        className={PROPERTY_EDITOR_SELECT_CLASS}
+        aria-label={t.type}
+      >
+        {JOINT_TYPE_OPTIONS.map((option) => (
+          <option key={option} value={option}>
+            {getJointTypeLabel(option, t)}
+          </option>
+        ))}
+      </select>
+    </InlineInputGroup>
+  );
 
   return (
     <>
       {/* Detail Mode: Name Only */}
       {mode === 'detail' && (
         <>
-          <InputGroup label={t.name}>
+          <InlineInputGroup label={t.name} labelWidthClassName="w-11">
             <input
               type="text"
               value={data.name}
               onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
               className={PROPERTY_EDITOR_INPUT_CLASS}
             />
-          </InputGroup>
-          <InputGroup label={t.type}>
-            <IconSegmentedControl
-              value={jointType}
-              onChange={handleJointTypeChange}
-              options={jointTypeOptions}
-              ariaLabel={t.type}
-            />
-          </InputGroup>
+          </InlineInputGroup>
+          {renderJointTypeField()}
         </>
       )}
 
       {/* Skeleton Mode: Kinematics Only */}
       {mode === 'skeleton' && (
         <>
-          <InputGroup label={t.type}>
-            <IconSegmentedControl
-              value={jointType}
-              onChange={handleJointTypeChange}
-              options={jointTypeOptions}
-              ariaLabel={t.type}
-            />
-          </InputGroup>
+          {renderJointTypeField()}
 
           <CollapsibleSection title={t.kinematics} storageKey="kinematics">
             <InputGroup label={t.originRelativeParent}>
-              <div className="space-y-2.5">
-                <div className="space-y-1.5">
-                  <span className={PROPERTY_EDITOR_SUBLABEL_CLASS}>{t.position}</span>
-                  <Vec3InlineInput
-                    value={origin.xyz}
-                    onChange={(v) => updateJoint({
-                      origin: { ...origin, xyz: toXYZ(v, origin.xyz) }
-                    })}
-                    labels={['X', 'Y', 'Z']}
-                    compact
-                    step={PROPERTY_EDITOR_POSITION_STEP}
-                    precision={MAX_TRANSFORM_DECIMALS}
-                    repeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                  />
-                </div>
-                <RotationValueInput
-                  value={origin.rpy}
-                  onChange={(rpy) => updateJoint({
-                    origin: { ...origin, rpy: toRPY(rpy, origin.rpy) }
-                  })}
-                  lang={lang}
-                  label={t.rotation}
-                  compact
-                  holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
-                />
-              </div>
+              <TransformFields
+                lang={lang}
+                positionValue={origin.xyz}
+                rotationValue={origin.rpy}
+                onPositionChange={(v) => updateJoint({
+                  origin: { ...origin, xyz: toXYZ(v, origin.xyz) },
+                })}
+                onRotationChange={(rpy) => updateJoint({
+                  origin: { ...origin, rpy: toRPY(rpy, origin.rpy) },
+                })}
+              />
             </InputGroup>
 
             {supportsAxis && (
@@ -279,15 +245,8 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
 
       {/* Hardware Mode: Limits, Dynamics, Motor */}
       {mode === 'hardware' && (
-        <div className="space-y-3">
-          <InputGroup label={t.type}>
-            <IconSegmentedControl
-              value={jointType}
-              onChange={handleJointTypeChange}
-              options={jointTypeOptions}
-              ariaLabel={t.type}
-            />
-          </InputGroup>
+        <div className="space-y-2.5">
+          {renderJointTypeField()}
 
           {/* 1. Hardware Section */}
           {supportsMotorSection && (
@@ -305,7 +264,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
               </InputGroup>
 
               {motorSource === 'Library' && (
-                <div className="space-y-3 pl-2 border-l-2 border-border-black mb-3">
+                <div className="space-y-2.5 pl-2 border-l-2 border-border-black mb-2.5">
                   <InputGroup label={t.brand}>
                     <select
                       value={motorBrand}
@@ -389,6 +348,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   <InputGroup label={t.armature}>
                     <NumberInput
                       value={data.hardware?.armature || 0}
+                      min={0}
                       onChange={(v: number) => updateJoint({
                         hardware: { ...data.hardware, armature: v }
                       })}
@@ -407,36 +367,42 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   <>
                     <InputGroup label={t.lower}>
                       <NumberInput
-                        value={data.limit?.lower ?? DEFAULT_LIMIT.lower}
+                        value={data.limit?.lower ?? defaultLimit.lower}
                         onChange={(v: number) => updateJoint({
-                          limit: { ...DEFAULT_LIMIT, ...data.limit, lower: v }
+                          limit: { ...defaultLimit, ...data.limit, lower: v }
                         })}
+                        suffix={limitUnit}
                       />
                     </InputGroup>
                     <InputGroup label={t.upper}>
                       <NumberInput
-                        value={data.limit?.upper ?? DEFAULT_LIMIT.upper}
+                        value={data.limit?.upper ?? defaultLimit.upper}
                         onChange={(v: number) => updateJoint({
-                          limit: { ...DEFAULT_LIMIT, ...data.limit, upper: v }
+                          limit: { ...defaultLimit, ...data.limit, upper: v }
                         })}
+                        suffix={limitUnit}
                       />
                     </InputGroup>
                   </>
                 )}
                 <InputGroup label={t.velocity}>
                   <NumberInput
-                    value={data.limit?.velocity ?? DEFAULT_LIMIT.velocity}
+                    value={data.limit?.velocity ?? defaultLimit.velocity}
+                    min={0}
                     onChange={(v: number) => updateJoint({
-                      limit: { ...DEFAULT_LIMIT, ...data.limit, velocity: v }
+                      limit: { ...defaultLimit, ...data.limit, velocity: v }
                     })}
+                    suffix={velocityUnit}
                   />
                 </InputGroup>
                 <InputGroup label={t.effort}>
                   <NumberInput
-                    value={data.limit?.effort ?? DEFAULT_LIMIT.effort}
+                    value={data.limit?.effort ?? defaultLimit.effort}
+                    min={0}
                     onChange={(v: number) => updateJoint({
-                      limit: { ...DEFAULT_LIMIT, ...data.limit, effort: v }
+                      limit: { ...defaultLimit, ...data.limit, effort: v }
                     })}
+                    suffix={effortUnit}
                   />
                 </InputGroup>
               </div>
@@ -450,6 +416,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                 <InputGroup label={t.friction}>
                   <NumberInput
                     value={data.dynamics?.friction || 0}
+                    min={0}
                     onChange={(v: number) => updateJoint({
                       dynamics: { ...data.dynamics, friction: v }
                     })}
@@ -458,6 +425,7 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                 <InputGroup label={t.damping}>
                   <NumberInput
                     value={data.dynamics?.damping || 0}
+                    min={0}
                     onChange={(v: number) => updateJoint({
                       dynamics: { ...data.dynamics, damping: v }
                     })}

@@ -5,13 +5,13 @@
  * All functions are pure and have no React/UI dependencies.
  */
 
-export type { STLMeshData, BoundingBox, CompressOptions, CompressResult } from './types';
-export { parseSTL, serializeToBinarySTL } from './stlParser';
-export { compressMesh } from './meshCompressor';
+export type { STLMeshData, BoundingBox, CompressOptions, CompressResult } from './types.ts';
+export { parseSTL, serializeToBinarySTL } from './stlParser.ts';
+export { compressMesh } from './meshCompressor.ts';
 
-import { parseSTL, serializeToBinarySTL } from './stlParser';
-import { compressMesh } from './meshCompressor';
-import type { CompressOptions, CompressResult } from './types';
+import { parseSTL, serializeToBinarySTL } from './stlParser.ts';
+import { compressMesh } from './meshCompressor.ts';
+import type { CompressOptions, CompressResult } from './types.ts';
 
 /**
  * High-level helper: take an STL Blob, compress it, and return a new Blob

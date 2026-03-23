@@ -1,0 +1,881 @@
+import * as THREE from 'three';
+import type { MJCFModelBody, MJCFModelGeom, ParsedMJCFModel } from './mjcfModel';
+import type { MJCFMesh } from './mjcfUtils';
+
+const MAX_FIT_POINTS = 4096;
+
+interface PrimitivePoint {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface ProjectedPoint {
+  t: number;
+  u: number;
+  v: number;
+  radial: number;
+}
+
+interface Circle2D {
+  cx: number;
+  cy: number;
+  r: number;
+}
+
+interface PrimitiveFitCandidate {
+  axis: PrimitivePoint;
+  center: PrimitivePoint;
+  radius: number;
+  length: number;
+  volume: number;
+}
+
+export interface MJCFFittedPrimitive {
+  axis: [number, number, number];
+  center: [number, number, number];
+  radius: number;
+  segmentLength: number;
+}
+
+interface FitPrimitiveFromMeshAssetParams {
+  geomType: 'capsule' | 'cylinder';
+  meshDef: MJCFMesh;
+}
+
+interface ResolveMJCFMeshBackedPrimitiveOptions {
+  assets: Record<string, string>;
+  sourceFileDir?: string;
+  fitPrimitiveFromMeshAsset?: (
+    params: FitPrimitiveFromMeshAssetParams,
+  ) => Promise<MJCFFittedPrimitive | null>;
+}
+
+function canonicalizeAxis(axis: PrimitivePoint): PrimitivePoint | null {
+  const length = Math.hypot(axis.x, axis.y, axis.z);
+  if (!Number.isFinite(length) || length <= 1e-8) {
+    return null;
+  }
+
+  let normalized = {
+    x: axis.x / length,
+    y: axis.y / length,
+    z: axis.z / length,
+  };
+
+  if (
+    normalized.x < -1e-8 ||
+    (Math.abs(normalized.x) <= 1e-8 && normalized.y < -1e-8) ||
+    (Math.abs(normalized.x) <= 1e-8 && Math.abs(normalized.y) <= 1e-8 && normalized.z < 0)
+  ) {
+    normalized = {
+      x: -normalized.x,
+      y: -normalized.y,
+      z: -normalized.z,
+    };
+  }
+
+  return normalized;
+}
+
+function addCandidateAxis(axes: PrimitivePoint[], axis: PrimitivePoint): void {
+  const normalized = canonicalizeAxis(axis);
+  if (!normalized) {
+    return;
+  }
+
+  const isDuplicate = axes.some((existing) =>
+    Math.abs(existing.x * normalized.x + existing.y * normalized.y + existing.z * normalized.z) > 0.999,
+  );
+
+  if (!isDuplicate) {
+    axes.push(normalized);
+  }
+}
+
+function computePrincipalAxes(points: PrimitivePoint[]): PrimitivePoint[] {
+  if (points.length === 0) {
+    return [];
+  }
+
+  let meanX = 0;
+  let meanY = 0;
+  let meanZ = 0;
+
+  for (const point of points) {
+    meanX += point.x;
+    meanY += point.y;
+    meanZ += point.z;
+  }
+
+  meanX /= points.length;
+  meanY /= points.length;
+  meanZ /= points.length;
+
+  let xx = 0;
+  let xy = 0;
+  let xz = 0;
+  let yy = 0;
+  let yz = 0;
+  let zz = 0;
+
+  for (const point of points) {
+    const dx = point.x - meanX;
+    const dy = point.y - meanY;
+    const dz = point.z - meanZ;
+    xx += dx * dx;
+    xy += dx * dy;
+    xz += dx * dz;
+    yy += dy * dy;
+    yz += dy * dz;
+    zz += dz * dz;
+  }
+
+  const invCount = 1 / Math.max(points.length, 1);
+  const matrix = [
+    [xx * invCount, xy * invCount, xz * invCount],
+    [xy * invCount, yy * invCount, yz * invCount],
+    [xz * invCount, yz * invCount, zz * invCount],
+  ];
+  const eigenvectors = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+
+  for (let iteration = 0; iteration < 16; iteration += 1) {
+    const candidates: Array<[number, number]> = [[0, 1], [0, 2], [1, 2]];
+    let pivot: [number, number] = [0, 1];
+    let maxValue = 0;
+
+    for (const [row, col] of candidates) {
+      const value = Math.abs(matrix[row][col]);
+      if (value > maxValue) {
+        maxValue = value;
+        pivot = [row, col];
+      }
+    }
+
+    if (maxValue <= 1e-12) {
+      break;
+    }
+
+    const [row, col] = pivot;
+    const diff = matrix[col][col] - matrix[row][row];
+    const angle = 0.5 * Math.atan2(2 * matrix[row][col], diff);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const rowRow = matrix[row][row];
+    const colCol = matrix[col][col];
+    const rowCol = matrix[row][col];
+
+    matrix[row][row] = cos * cos * rowRow - 2 * sin * cos * rowCol + sin * sin * colCol;
+    matrix[col][col] = sin * sin * rowRow + 2 * sin * cos * rowCol + cos * cos * colCol;
+    matrix[row][col] = 0;
+    matrix[col][row] = 0;
+
+    for (let index = 0; index < 3; index += 1) {
+      if (index === row || index === col) {
+        continue;
+      }
+      const rowValue = matrix[index][row];
+      const colValue = matrix[index][col];
+      matrix[index][row] = cos * rowValue - sin * colValue;
+      matrix[row][index] = matrix[index][row];
+      matrix[index][col] = sin * rowValue + cos * colValue;
+      matrix[col][index] = matrix[index][col];
+    }
+
+    for (let index = 0; index < 3; index += 1) {
+      const rowValue = eigenvectors[index][row];
+      const colValue = eigenvectors[index][col];
+      eigenvectors[index][row] = cos * rowValue - sin * colValue;
+      eigenvectors[index][col] = sin * rowValue + cos * colValue;
+    }
+  }
+
+  return [0, 1, 2]
+    .map((index) => ({
+      value: matrix[index][index],
+      axis: {
+        x: eigenvectors[0][index],
+        y: eigenvectors[1][index],
+        z: eigenvectors[2][index],
+      },
+    }))
+    .sort((left, right) => right.value - left.value)
+    .map((entry) => canonicalizeAxis(entry.axis))
+    .filter((axis): axis is PrimitivePoint => axis !== null);
+}
+
+function createDeterministicRandom(seed: number): () => number {
+  let current = seed >>> 0;
+  return () => {
+    current = (current + 0x6D2B79F5) >>> 0;
+    let value = Math.imul(current ^ (current >>> 15), 1 | current);
+    value ^= value + Math.imul(value ^ (value >>> 7), 61 | value);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleDeterministically<T>(values: T[], seed: number): T[] {
+  const shuffled = [...values];
+  const random = createDeterministicRandom(seed);
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+
+  return shuffled;
+}
+
+function isPointInsideCircle(point: { x: number; y: number }, circle: Circle2D): boolean {
+  const dx = point.x - circle.cx;
+  const dy = point.y - circle.cy;
+  return dx * dx + dy * dy <= (circle.r + 1e-8) * (circle.r + 1e-8);
+}
+
+function createCircleFromDiameter(pointA: { x: number; y: number }, pointB: { x: number; y: number }): Circle2D {
+  const centerX = (pointA.x + pointB.x) / 2;
+  const centerY = (pointA.y + pointB.y) / 2;
+  return {
+    cx: centerX,
+    cy: centerY,
+    r: Math.hypot(pointA.x - centerX, pointA.y - centerY),
+  };
+}
+
+function createCircleFromThreePoints(
+  pointA: { x: number; y: number },
+  pointB: { x: number; y: number },
+  pointC: { x: number; y: number },
+): Circle2D | null {
+  const determinant = 2 * (
+    pointA.x * (pointB.y - pointC.y) +
+    pointB.x * (pointC.y - pointA.y) +
+    pointC.x * (pointA.y - pointB.y)
+  );
+
+  if (Math.abs(determinant) <= 1e-10) {
+    return null;
+  }
+
+  const pointASquared = pointA.x * pointA.x + pointA.y * pointA.y;
+  const pointBSquared = pointB.x * pointB.x + pointB.y * pointB.y;
+  const pointCSquared = pointC.x * pointC.x + pointC.y * pointC.y;
+
+  const centerX = (
+    pointASquared * (pointB.y - pointC.y) +
+    pointBSquared * (pointC.y - pointA.y) +
+    pointCSquared * (pointA.y - pointB.y)
+  ) / determinant;
+  const centerY = (
+    pointASquared * (pointC.x - pointB.x) +
+    pointBSquared * (pointA.x - pointC.x) +
+    pointCSquared * (pointB.x - pointA.x)
+  ) / determinant;
+
+  return {
+    cx: centerX,
+    cy: centerY,
+    r: Math.hypot(pointA.x - centerX, pointA.y - centerY),
+  };
+}
+
+function computeMinimumEnclosingCircle(points: Array<{ x: number; y: number }>): Circle2D {
+  if (points.length === 0) {
+    return { cx: 0, cy: 0, r: 0 };
+  }
+
+  const shuffled = shuffleDeterministically(points, 0x9E3779B9);
+  let circle: Circle2D = { cx: shuffled[0].x, cy: shuffled[0].y, r: 0 };
+
+  for (let i = 0; i < shuffled.length; i += 1) {
+    const pointI = shuffled[i];
+    if (isPointInsideCircle(pointI, circle)) {
+      continue;
+    }
+
+    circle = { cx: pointI.x, cy: pointI.y, r: 0 };
+
+    for (let j = 0; j < i; j += 1) {
+      const pointJ = shuffled[j];
+      if (isPointInsideCircle(pointJ, circle)) {
+        continue;
+      }
+
+      circle = createCircleFromDiameter(pointI, pointJ);
+
+      for (let k = 0; k < j; k += 1) {
+        const pointK = shuffled[k];
+        if (isPointInsideCircle(pointK, circle)) {
+          continue;
+        }
+
+        const circumcircle = createCircleFromThreePoints(pointI, pointJ, pointK);
+        circle = circumcircle ?? circle;
+      }
+    }
+  }
+
+  return circle;
+}
+
+function createPerpendicularBasis(axis: PrimitivePoint): {
+  axis: THREE.Vector3;
+  basisU: THREE.Vector3;
+  basisV: THREE.Vector3;
+} {
+  const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
+  const reference = Math.abs(axisVector.z) < 0.9
+    ? new THREE.Vector3(0, 0, 1)
+    : new THREE.Vector3(1, 0, 0);
+  const basisU = new THREE.Vector3().crossVectors(reference, axisVector).normalize();
+  const basisV = new THREE.Vector3().crossVectors(axisVector, basisU).normalize();
+  return { axis: axisVector, basisU, basisV };
+}
+
+function computeCapsuleVolume(totalLength: number, radius: number): number {
+  if (totalLength <= 0 || radius <= 0) {
+    return 0;
+  }
+  const clampedRadius = Math.min(radius, totalLength / 2);
+  return Math.PI * clampedRadius * clampedRadius * totalLength
+    - (2 / 3) * Math.PI * clampedRadius * clampedRadius * clampedRadius;
+}
+
+function evaluateCapsuleRadius(points: ProjectedPoint[], radius: number) {
+  let maxStart = -Infinity;
+  let minEnd = Infinity;
+
+  for (const point of points) {
+    if (point.radial > radius + 1e-8) {
+      return null;
+    }
+
+    const slack = Math.sqrt(Math.max(radius * radius - point.radial * point.radial, 0));
+    maxStart = Math.max(maxStart, point.t - slack);
+    minEnd = Math.min(minEnd, point.t + slack);
+  }
+
+  const segmentLength = Math.max(0, maxStart - minEnd);
+  const centerT = (maxStart + minEnd) / 2;
+  const totalLength = segmentLength + 2 * radius;
+
+  return {
+    centerT,
+    totalLength,
+    volume: computeCapsuleVolume(totalLength, radius),
+  };
+}
+
+function computeBestCapsuleFit(
+  points: ProjectedPoint[],
+  axis: THREE.Vector3,
+  lineCenter: THREE.Vector3,
+  minRadius: number,
+): PrimitiveFitCandidate {
+  let midpoint = 0;
+
+  if (points.length > 0) {
+    let minT = Infinity;
+    let maxT = -Infinity;
+    for (const point of points) {
+      minT = Math.min(minT, point.t);
+      maxT = Math.max(maxT, point.t);
+    }
+    midpoint = (minT + maxT) / 2;
+  }
+
+  let upperRadius = minRadius;
+  for (const point of points) {
+    upperRadius = Math.max(upperRadius, Math.hypot(point.radial, point.t - midpoint));
+  }
+  upperRadius = Math.max(upperRadius, minRadius + 1e-6);
+
+  let bestRadius = minRadius;
+  let bestResult = evaluateCapsuleRadius(points, minRadius);
+
+  if (!bestResult) {
+    bestResult = evaluateCapsuleRadius(points, upperRadius);
+    bestRadius = upperRadius;
+  }
+
+  if (!bestResult) {
+    const fallbackRadius = Math.max(minRadius, 0.05);
+    return {
+      axis: { x: axis.x, y: axis.y, z: axis.z },
+      center: { x: lineCenter.x, y: lineCenter.y, z: lineCenter.z },
+      radius: fallbackRadius,
+      length: Math.max(fallbackRadius * 2, 0.1),
+      volume: computeCapsuleVolume(Math.max(fallbackRadius * 2, 0.1), fallbackRadius),
+    };
+  }
+
+  let searchMin = minRadius;
+  let searchMax = upperRadius;
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    const samples = pass === 0 ? 24 : 18;
+    const span = searchMax - searchMin;
+    if (span <= 1e-6) {
+      break;
+    }
+
+    for (let index = 0; index <= samples; index += 1) {
+      const radius = searchMin + (span * index) / samples;
+      const result = evaluateCapsuleRadius(points, radius);
+      if (!result) {
+        continue;
+      }
+      if (!bestResult || result.volume < bestResult.volume) {
+        bestResult = result;
+        bestRadius = radius;
+      }
+    }
+
+    const refineSpan = span / Math.max(samples, 1);
+    searchMin = Math.max(minRadius, bestRadius - refineSpan * 1.5);
+    searchMax = Math.min(upperRadius, bestRadius + refineSpan * 1.5);
+  }
+
+  const center = lineCenter.clone().addScaledVector(axis, bestResult.centerT);
+
+  return {
+    axis: { x: axis.x, y: axis.y, z: axis.z },
+    center: { x: center.x, y: center.y, z: center.z },
+    radius: bestRadius,
+    length: bestResult.totalLength,
+    volume: bestResult.volume,
+  };
+}
+
+function computePrimitiveFitsForAxis(
+  points: PrimitivePoint[],
+  axis: PrimitivePoint,
+): { cylinder: PrimitiveFitCandidate; capsule: PrimitiveFitCandidate } | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  const { axis: axisVector, basisU, basisV } = createPerpendicularBasis(axis);
+  const projected = points.map((point) => ({
+    t: point.x * axisVector.x + point.y * axisVector.y + point.z * axisVector.z,
+    u: point.x * basisU.x + point.y * basisU.y + point.z * basisU.z,
+    v: point.x * basisV.x + point.y * basisV.y + point.z * basisV.z,
+    radial: 0,
+  }));
+
+  const circle = computeMinimumEnclosingCircle(projected.map((point) => ({ x: point.u, y: point.v })));
+  const lineCenter = new THREE.Vector3()
+    .copy(basisU)
+    .multiplyScalar(circle.cx)
+    .addScaledVector(basisV, circle.cy);
+
+  for (const point of projected) {
+    point.radial = Math.hypot(point.u - circle.cx, point.v - circle.cy);
+  }
+
+  let minT = Infinity;
+  let maxT = -Infinity;
+  for (const point of projected) {
+    minT = Math.min(minT, point.t);
+    maxT = Math.max(maxT, point.t);
+  }
+
+  const cylinderLength = Math.max(0, maxT - minT);
+  const cylinderCenter = lineCenter.clone().addScaledVector(axisVector, (minT + maxT) / 2);
+  const cylinderRadius = Math.max(circle.r, 1e-8);
+
+  return {
+    cylinder: {
+      axis: { x: axisVector.x, y: axisVector.y, z: axisVector.z },
+      center: { x: cylinderCenter.x, y: cylinderCenter.y, z: cylinderCenter.z },
+      radius: cylinderRadius,
+      length: cylinderLength,
+      volume: Math.PI * cylinderRadius * cylinderRadius * cylinderLength,
+    },
+    capsule: computeBestCapsuleFit(projected, axisVector, lineCenter, cylinderRadius),
+  };
+}
+
+function computeBestPrimitiveFits(points: PrimitivePoint[]) {
+  if (points.length === 0) {
+    return undefined;
+  }
+
+  const candidateAxes: PrimitivePoint[] = [];
+  addCandidateAxis(candidateAxes, { x: 1, y: 0, z: 0 });
+  addCandidateAxis(candidateAxes, { x: 0, y: 1, z: 0 });
+  addCandidateAxis(candidateAxes, { x: 0, y: 0, z: 1 });
+  for (const axis of computePrincipalAxes(points)) {
+    addCandidateAxis(candidateAxes, axis);
+  }
+
+  let bestCylinder: PrimitiveFitCandidate | undefined;
+  let bestCapsule: PrimitiveFitCandidate | undefined;
+
+  for (const axis of candidateAxes) {
+    const fit = computePrimitiveFitsForAxis(points, axis);
+    if (!fit) {
+      continue;
+    }
+
+    if (!bestCylinder || fit.cylinder.volume < bestCylinder.volume) {
+      bestCylinder = fit.cylinder;
+    }
+    if (!bestCapsule || fit.capsule.volume < bestCapsule.volume) {
+      bestCapsule = fit.capsule;
+    }
+  }
+
+  return {
+    cylinder: bestCylinder,
+    capsule: bestCapsule,
+  };
+}
+
+export function collectMeshPrimitiveFitPoints(
+  object: THREE.Object3D,
+  maxPoints: number = MAX_FIT_POINTS,
+): PrimitivePoint[] {
+  const meshEntries: Array<{
+    mesh: THREE.Mesh;
+    position: THREE.BufferAttribute;
+    vertexCount: number;
+  }> = [];
+  let totalVertexCount = 0;
+
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+    const position = geometry?.attributes?.position as THREE.BufferAttribute | undefined;
+    if (!position || position.count <= 0) {
+      return;
+    }
+
+    meshEntries.push({
+      mesh,
+      position,
+      vertexCount: position.count,
+    });
+    totalVertexCount += position.count;
+  });
+
+  if (meshEntries.length === 0 || totalVertexCount === 0) {
+    return [];
+  }
+
+  const points: PrimitivePoint[] = [];
+  const vertex = new THREE.Vector3();
+  const pushVertex = (mesh: THREE.Mesh, position: THREE.BufferAttribute, vertexIndex: number) => {
+    vertex.fromBufferAttribute(position, vertexIndex).applyMatrix4(mesh.matrixWorld);
+    points.push({ x: vertex.x, y: vertex.y, z: vertex.z });
+  };
+
+  if (totalVertexCount <= maxPoints) {
+    for (const entry of meshEntries) {
+      for (let index = 0; index < entry.vertexCount; index += 1) {
+        pushVertex(entry.mesh, entry.position, index);
+      }
+    }
+    return points;
+  }
+
+  let remainingBudget = maxPoints;
+  let remainingVertexCount = totalVertexCount;
+
+  meshEntries.forEach((entry, meshIndex) => {
+    if (remainingBudget <= 0 || remainingVertexCount <= 0) {
+      remainingVertexCount -= entry.vertexCount;
+      return;
+    }
+
+    const isLastMesh = meshIndex === meshEntries.length - 1;
+    const quota = isLastMesh
+      ? Math.min(remainingBudget, entry.vertexCount)
+      : Math.max(
+          1,
+          Math.min(
+            entry.vertexCount,
+            Math.round((entry.vertexCount / remainingVertexCount) * remainingBudget),
+          ),
+        );
+
+    if (quota >= entry.vertexCount) {
+      for (let index = 0; index < entry.vertexCount; index += 1) {
+        pushVertex(entry.mesh, entry.position, index);
+      }
+    } else if (quota === 1) {
+      pushVertex(entry.mesh, entry.position, Math.floor((entry.vertexCount - 1) / 2));
+    } else {
+      for (let sampleIndex = 0; sampleIndex < quota; sampleIndex += 1) {
+        const vertexIndex = Math.min(
+          Math.round((sampleIndex * (entry.vertexCount - 1)) / (quota - 1)),
+          entry.vertexCount - 1,
+        );
+        pushVertex(entry.mesh, entry.position, vertexIndex);
+      }
+    }
+
+    remainingBudget -= quota;
+    remainingVertexCount -= entry.vertexCount;
+  });
+
+  return points;
+}
+
+function disposeTemporaryObject(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    mesh.geometry?.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      material?.dispose?.();
+    }
+  });
+}
+
+async function loadMeshObjectForUrl(assetUrl: string, filePath: string): Promise<THREE.Object3D | null> {
+  const extension = filePath.split('.').pop()?.toLowerCase() || '';
+
+  try {
+    if (extension === 'stl') {
+      const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
+      const loader = new STLLoader();
+      const geometry = await new Promise<THREE.BufferGeometry>((resolve, reject) => {
+        loader.load(assetUrl, resolve, undefined, reject);
+      });
+      return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    }
+
+    if (extension === 'dae') {
+      const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js');
+      const loader = new ColladaLoader();
+      const result = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) => {
+        loader.load(assetUrl, resolve, undefined, reject);
+      });
+      return result.scene;
+    }
+
+    if (extension === 'obj') {
+      const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
+      const loader = new OBJLoader();
+      return await new Promise<THREE.Group>((resolve, reject) => {
+        loader.load(assetUrl, resolve, undefined, reject);
+      });
+    }
+
+    if (extension === 'gltf' || extension === 'glb') {
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+      const loader = new GLTFLoader();
+      const result = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) => {
+        loader.load(assetUrl, resolve, undefined, reject);
+      });
+      return result.scene;
+    }
+  } catch (error) {
+    console.warn(`[MJCFLoader] Failed to load mesh-backed primitive asset "${filePath}"`, error);
+    return null;
+  }
+
+  return null;
+}
+
+export function fitPrimitiveFromPoints(
+  points: PrimitivePoint[],
+  geomType: 'capsule' | 'cylinder',
+): MJCFFittedPrimitive | null {
+  const fits = computeBestPrimitiveFits(points);
+  const candidate = geomType === 'capsule' ? fits?.capsule : fits?.cylinder;
+  if (!candidate) {
+    return null;
+  }
+
+  const axis = canonicalizeAxis(candidate.axis);
+  if (!axis) {
+    return null;
+  }
+
+  const segmentLength = geomType === 'capsule'
+    ? Math.max(candidate.length - candidate.radius * 2, 0)
+    : Math.max(candidate.length, 0);
+
+  return {
+    axis: [axis.x, axis.y, axis.z],
+    center: [candidate.center.x, candidate.center.y, candidate.center.z],
+    radius: candidate.radius,
+    segmentLength,
+  };
+}
+
+async function fitPrimitiveFromMeshAssetViaUrl(
+  geomType: 'capsule' | 'cylinder',
+  meshDef: MJCFMesh,
+  assets: Record<string, string>,
+  sourceFileDir: string,
+): Promise<MJCFFittedPrimitive | null> {
+  const { applyMeshAssetTransform, resolveMJCFAssetUrl } = await import('./mjcfGeometry');
+  const assetUrl = resolveMJCFAssetUrl(meshDef.file, assets, sourceFileDir);
+  if (!assetUrl) {
+    return null;
+  }
+
+  const loadedObject = await loadMeshObjectForUrl(assetUrl, meshDef.file);
+  if (!loadedObject) {
+    return null;
+  }
+
+  const transformed = applyMeshAssetTransform(loadedObject, meshDef);
+  transformed.updateMatrixWorld(true);
+  const fit = fitPrimitiveFromPoints(collectMeshPrimitiveFitPoints(transformed), geomType);
+  disposeTemporaryObject(transformed);
+  return fit;
+}
+
+export function fitPrimitiveFromObject3D(
+  object: THREE.Object3D,
+  geomType: 'capsule' | 'cylinder',
+): MJCFFittedPrimitive | null {
+  object.updateMatrixWorld(true);
+  return fitPrimitiveFromPoints(collectMeshPrimitiveFitPoints(object), geomType);
+}
+
+function shouldResolveMeshBackedPrimitive(geom: MJCFModelGeom): geom is MJCFModelGeom & {
+  mesh: string;
+  type: 'capsule' | 'cylinder';
+} {
+  return Boolean(
+    geom.mesh
+    && !geom.fromto
+    && (!geom.size || geom.size.length === 0)
+    && (geom.type === 'capsule' || geom.type === 'cylinder'),
+  );
+}
+
+function transformFittedPrimitiveIntoBodySpace(
+  fit: MJCFFittedPrimitive,
+  geom: MJCFModelGeom,
+): MJCFFittedPrimitive {
+  const quaternion = geom.quat
+    ? new THREE.Quaternion(geom.quat[1], geom.quat[2], geom.quat[3], geom.quat[0])
+    : new THREE.Quaternion();
+  const position = new THREE.Vector3(geom.pos?.[0] ?? 0, geom.pos?.[1] ?? 0, geom.pos?.[2] ?? 0);
+  const center = new THREE.Vector3(fit.center[0], fit.center[1], fit.center[2])
+    .applyQuaternion(quaternion)
+    .add(position);
+  const axis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2])
+    .applyQuaternion(quaternion)
+    .normalize();
+
+  return {
+    axis: [axis.x, axis.y, axis.z],
+    center: [center.x, center.y, center.z],
+    radius: fit.radius,
+    segmentLength: fit.segmentLength,
+  };
+}
+
+function applyFittedPrimitiveToGeom(geom: MJCFModelGeom, fit: MJCFFittedPrimitive): void {
+  const center = new THREE.Vector3(fit.center[0], fit.center[1], fit.center[2]);
+  const axis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
+  const halfSegment = fit.segmentLength / 2;
+  const from = center.clone().addScaledVector(axis, -halfSegment);
+  const to = center.clone().addScaledVector(axis, halfSegment);
+
+  geom.size = [fit.radius];
+  geom.fromto = [from.x, from.y, from.z, to.x, to.y, to.z];
+  geom.mesh = undefined;
+  geom.pos = undefined;
+  geom.quat = undefined;
+}
+
+function createDefaultMeshPrimitiveFitter(
+  assets: Record<string, string>,
+  sourceFileDir: string,
+) {
+  const meshSpaceFitCache = new Map<string, Promise<MJCFFittedPrimitive | null>>();
+
+  return async ({ geomType, meshDef }: FitPrimitiveFromMeshAssetParams): Promise<MJCFFittedPrimitive | null> => {
+    const cacheKey = [
+      geomType,
+      meshDef.name,
+      meshDef.file,
+      meshDef.scale?.join(',') || '',
+      meshDef.refpos?.join(',') || '',
+      meshDef.refquat?.join(',') || '',
+    ].join('|');
+
+    if (!meshSpaceFitCache.has(cacheKey)) {
+      meshSpaceFitCache.set(
+        cacheKey,
+        fitPrimitiveFromMeshAssetViaUrl(geomType, meshDef, assets, sourceFileDir),
+      );
+    }
+
+    return meshSpaceFitCache.get(cacheKey)!;
+  };
+}
+
+async function resolveBodyMeshBackedPrimitives(
+  body: MJCFModelBody,
+  parsedModel: ParsedMJCFModel,
+  fitPrimitiveFromMeshAsset: (
+    params: FitPrimitiveFromMeshAssetParams,
+  ) => Promise<MJCFFittedPrimitive | null>,
+): Promise<number> {
+  let resolvedCount = 0;
+
+  for (const geom of body.geoms) {
+    if (!shouldResolveMeshBackedPrimitive(geom)) {
+      continue;
+    }
+
+    const meshDef = parsedModel.meshMap.get(geom.mesh);
+    if (!meshDef) {
+      continue;
+    }
+
+    const fit = await fitPrimitiveFromMeshAsset({
+      geomType: geom.type,
+      meshDef,
+    });
+
+    if (!fit) {
+      continue;
+    }
+
+    applyFittedPrimitiveToGeom(geom, transformFittedPrimitiveIntoBodySpace(fit, geom));
+    resolvedCount += 1;
+  }
+
+  for (const child of body.children) {
+    resolvedCount += await resolveBodyMeshBackedPrimitives(child, parsedModel, fitPrimitiveFromMeshAsset);
+  }
+
+  return resolvedCount;
+}
+
+export async function resolveMJCFMeshBackedPrimitiveGeoms(
+  parsedModel: ParsedMJCFModel,
+  {
+    assets,
+    sourceFileDir = '',
+    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(assets, sourceFileDir),
+  }: ResolveMJCFMeshBackedPrimitiveOptions,
+): Promise<number> {
+  return await resolveBodyMeshBackedPrimitives(
+    parsedModel.worldBody,
+    parsedModel,
+    fitPrimitiveFromMeshAsset,
+  );
+}

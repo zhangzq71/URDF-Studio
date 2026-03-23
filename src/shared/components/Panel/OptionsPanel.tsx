@@ -6,6 +6,7 @@
 import React, { useRef, useState, useCallback, useEffect, ReactNode } from 'react';
 import { 
   Checkbox, 
+  IconButton,
   Slider as UiSlider, 
   SegmentedControl as UiSegmentedControl,
   SegmentedControlOption as UiSegmentedControlOption
@@ -16,13 +17,13 @@ const DRAG_GRIP_PATH = "M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 
 
 // Chevron icons
 const ChevronDown = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
   </svg>
 );
 
 const ChevronUp = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
   </svg>
 );
@@ -34,7 +35,7 @@ const ChevronRight = () => (
 );
 
 const CloseIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
   </svg>
 );
@@ -114,8 +115,8 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   labelClassName = '',
 }) => {
   const paddingClass = compact
-    ? `${indent ? 'pl-4' : ''} pr-3 pb-1`
-    : `${indent ? 'pl-6' : ''} pr-3 pb-2`;
+    ? `${indent ? 'pl-2.5' : ''} pr-1.5 pb-1`
+    : `${indent ? 'pl-4' : ''} pr-1.5 pb-1.5`;
 
   return (
     <div className={paddingClass}>
@@ -129,9 +130,79 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         icon={icon}
         showValue={true}
         formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
-        className={compact ? "scale-95 origin-left" : ""}
         labelClassName={`text-[10px] text-text-tertiary mb-1 ${labelClassName}`}
       />
+    </div>
+  );
+};
+
+interface ToggleSliderOptionProps {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  icon?: ReactNode;
+  compact?: boolean;
+  labelClassName?: string;
+  className?: string;
+  rowClassName?: string;
+  trailingControl?: ReactNode;
+  sliderConfig?: Omit<SliderOptionProps, 'value' | 'onChange' | 'label'> & {
+    label: string;
+    value: number;
+    onChange: (value: number) => void;
+  };
+}
+
+export const ToggleSliderOption: React.FC<ToggleSliderOptionProps> = ({
+  checked,
+  onChange,
+  label,
+  icon,
+  compact = false,
+  labelClassName = '',
+  className = '',
+  rowClassName = '',
+  trailingControl,
+  sliderConfig,
+}) => {
+  const checkbox = (
+    <CheckboxOption
+      checked={checked}
+      onChange={onChange}
+      label={label}
+      icon={icon}
+      compact={compact}
+      labelClassName={labelClassName}
+    />
+  );
+
+  return (
+    <div className={className}>
+      {trailingControl ? (
+        <div className={`flex items-center justify-between ${rowClassName}`}>
+          {checkbox}
+          <div className="shrink-0">{trailingControl}</div>
+        </div>
+      ) : (
+        checkbox
+      )}
+
+      {checked && sliderConfig && (
+        <SliderOption
+          label={sliderConfig.label}
+          value={sliderConfig.value}
+          onChange={sliderConfig.onChange}
+          min={sliderConfig.min}
+          max={sliderConfig.max}
+          step={sliderConfig.step}
+          decimals={sliderConfig.decimals}
+          indent={sliderConfig.indent}
+          compact={sliderConfig.compact}
+          icon={sliderConfig.icon}
+          showPercentage={sliderConfig.showPercentage}
+          labelClassName={sliderConfig.labelClassName}
+        />
+      )}
     </div>
   );
 };
@@ -174,38 +245,145 @@ export const SectionDivider = () => (
 // ============== Collapsible Section ==============
 interface CollapsibleSectionProps {
   title: string;
-  isCollapsed: boolean;
-  onToggle: () => void;
   children: ReactNode;
+  isCollapsed?: boolean;
+  onToggle?: () => void;
+  defaultOpen?: boolean;
+  storageKey?: string;
+  className?: string;
+  useDividerStyle?: boolean;
+  triggerClassName?: string;
+  titleClassName?: string;
+  iconClassName?: string;
+  contentClassName?: string;
+  contentInnerClassName?: string;
 }
 
 export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   title,
+  children,
   isCollapsed,
   onToggle,
-  children,
+  defaultOpen = true,
+  storageKey,
+  className = '',
+  useDividerStyle = true,
+  triggerClassName = '',
+  titleClassName = '',
+  iconClassName = '',
+  contentClassName = '',
+  contentInnerClassName = '',
 }) => {
+  const isControlled = isCollapsed !== undefined;
+  const [internalCollapsed, setInternalCollapsed] = useState(() => {
+    if (storageKey && typeof window !== 'undefined') {
+      const saved = window.localStorage.getItem(`collapse_state_${storageKey}`);
+      if (saved !== null) {
+        return saved !== 'true';
+      }
+    }
+    return !defaultOpen;
+  });
+  const collapsed = isControlled ? isCollapsed : internalCollapsed;
+
+  const handleToggle = () => {
+    const nextCollapsed = !collapsed;
+
+    if (!isControlled) {
+      setInternalCollapsed(nextCollapsed);
+      if (storageKey && typeof window !== 'undefined') {
+        window.localStorage.setItem(`collapse_state_${storageKey}`, String(!nextCollapsed));
+      }
+    }
+
+    onToggle?.();
+  };
+
   return (
-    <div className="border-t border-border-black/60 first:border-t-0">
+    <div className={`${useDividerStyle ? 'border-t border-border-black/60 first:border-t-0' : ''} ${className}`}>
       <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary hover:bg-element-hover transition-colors text-left"
+        type="button"
+        onClick={handleToggle}
+        className={`w-full flex items-center justify-between px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary hover:bg-element-hover transition-colors text-left ${triggerClassName}`}
       >
-        <span>{title}</span>
-        <span className={`transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`}>
+        <span className={titleClassName}>{title}</span>
+        <span className={`transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} ${iconClassName}`}>
           <ChevronRight />
         </span>
       </button>
       <div 
         className={`overflow-hidden transition-all duration-200 ${
-          isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[300px] opacity-100'
-        }`}
+          collapsed ? 'max-h-0 opacity-0' : 'max-h-[300px] opacity-100'
+        } ${contentClassName}`}
       >
-        <div className="p-2 space-y-2">
+        <div className={`px-1 py-1.5 space-y-1.5 ${contentInnerClassName}`}>
           {children}
         </div>
       </div>
     </div>
+  );
+};
+
+interface GroundPlaneControlsProps {
+  autoFitLabel?: string;
+  autoFitIcon?: ReactNode;
+  compact?: boolean;
+  offsetLabel: string;
+  offsetValue: number;
+  onAutoFit?: () => void;
+  onOffsetChange: (value: number) => void;
+  onReset: () => void;
+  resetLabel: string;
+  sliderIndent?: boolean;
+  sliderLabelClassName?: string;
+}
+
+export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
+  autoFitLabel,
+  autoFitIcon,
+  compact = true,
+  offsetLabel,
+  offsetValue,
+  onAutoFit,
+  onOffsetChange,
+  onReset,
+  resetLabel,
+  sliderIndent = false,
+  sliderLabelClassName = '',
+}) => {
+  return (
+    <>
+      <SliderOption
+        label={offsetLabel}
+        value={offsetValue}
+        onChange={onOffsetChange}
+        min={-2}
+        max={2}
+        step={0.01}
+        compact={compact}
+        indent={sliderIndent}
+        labelClassName={sliderLabelClassName}
+      />
+      <div className="flex gap-1.5 px-2 pb-2">
+        {onAutoFit && autoFitLabel && (
+          <button
+            type="button"
+            onClick={onAutoFit}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25"
+          >
+            {autoFitIcon}
+            {autoFitLabel}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onReset}
+          className="flex items-center justify-center gap-1 rounded-md bg-element-bg px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover"
+        >
+          {resetLabel}
+        </button>
+      </div>
+    </>
   );
 };
 
@@ -215,6 +393,7 @@ interface OptionsPanelHeaderProps {
   title: string;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  showCollapseButton?: boolean;
   onClose?: () => void;
   onMouseDown?: (e: React.MouseEvent) => void;
   expandText?: string;
@@ -227,6 +406,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
   title,
   isCollapsed,
   onToggleCollapse,
+  showCollapseButton = true,
   onClose,
   onMouseDown,
   expandText = "Expand",
@@ -236,38 +416,44 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
 }) => {
   return (
     <div
-      className="text-[10px] text-text-tertiary uppercase font-bold tracking-wider px-3 py-2 cursor-move bg-element-bg hover:bg-element-hover select-none flex items-center justify-between shrink-0 border-b border-border-black/60 transition-colors"
+      className="text-[9px] text-text-tertiary uppercase font-bold tracking-wide px-2 py-1 cursor-move bg-element-bg hover:bg-element-hover select-none flex min-w-0 items-center justify-between gap-1 shrink-0 border-b border-border-black/60 transition-colors"
       onMouseDown={onMouseDown}
     >
-      <div className="flex items-center gap-2">
-        <DragGripIcon />
-        <span className="leading-tight">{title}</span>
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="hidden shrink-0 @[220px]:inline-flex">
+          <DragGripIcon />
+        </span>
+        <span className="truncate whitespace-nowrap leading-tight">{title}</span>
       </div>
-      <div className="flex items-center gap-1">
+      <div className="flex min-w-fit shrink-0 items-center gap-0.5">
         {additionalControls}
-        <button
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleCollapse();
-          }}
-          className="p-1 hover:bg-element-hover rounded-md transition-colors"
-          title={isCollapsed ? expandText : collapseText}
-        >
-          {isCollapsed ? <ChevronDown /> : <ChevronUp />}
-        </button>
-        {onClose && (
+        {showCollapseButton && (
           <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCollapse();
+            }}
+            className="rounded-md p-0 hover:bg-element-hover transition-colors"
+            title={isCollapsed ? expandText : collapseText}
+          >
+            {isCollapsed ? <ChevronDown /> : <ChevronUp />}
+          </button>
+        )}
+        {onClose && (
+          <IconButton
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               onClose();
             }}
-            className="p-1 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors"
+            size="sm"
+            className="p-0"
+            variant="close"
             title={closeText}
           >
             <CloseIcon />
-          </button>
+          </IconButton>
         )}
       </div>
     </div>
@@ -337,6 +523,18 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   const startPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const resizeDirection = useRef<'right' | 'bottom' | 'corner' | null>(null);
   const activePointerId = useRef<number | null>(null);
+  const bodyCursorRef = useRef('');
+  const bodyUserSelectRef = useRef('');
+
+  const captureBodyInteractionStyles = useCallback(() => {
+    bodyCursorRef.current = document.body.style.cursor;
+    bodyUserSelectRef.current = document.body.style.userSelect;
+  }, []);
+
+  const restoreBodyInteractionStyles = useCallback(() => {
+    document.body.style.cursor = bodyCursorRef.current;
+    document.body.style.userSelect = bodyUserSelectRef.current;
+  }, []);
 
   const handleResizeMove = useCallback((e: PointerEvent) => {
     if (!resizeDirection.current) return;
@@ -378,11 +576,10 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     document.removeEventListener('pointercancel', handleResizeEnd);
     window.removeEventListener('blur', handleResizeEnd);
 
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
+    restoreBodyInteractionStyles();
     resizeDirection.current = null;
     activePointerId.current = null;
-  }, [handleResizeMove]);
+  }, [handleResizeMove, restoreBodyInteractionStyles]);
 
   const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>, direction: 'right' | 'bottom' | 'corner') => {
     e.preventDefault();
@@ -413,9 +610,10 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     window.addEventListener('blur', handleResizeEnd);
 
     const cursor = direction === 'right' ? 'ew-resize' : direction === 'bottom' ? 'ns-resize' : 'nwse-resize';
+    captureBodyInteractionStyles();
     document.body.style.cursor = cursor;
     document.body.style.userSelect = 'none';
-  }, [handleResizeEnd, handleResizeMove]);
+  }, [captureBodyInteractionStyles, handleResizeEnd, handleResizeMove]);
 
   useEffect(() => {
     return () => {
@@ -437,7 +635,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
         <>
             {/* Right Handle */}
             <div 
-                className="absolute top-0 right-0 w-1.5 h-full cursor-ew-resize z-40 hover:bg-system-blue/20 transition-colors"
+                className="absolute right-0.5 top-10 bottom-4 w-2 cursor-ew-resize rounded-full z-40 hover:bg-system-blue/20 transition-colors"
                 onPointerDown={(e) => handleResizeStart(e, 'right')}
             />
             {/* Bottom Handle */}

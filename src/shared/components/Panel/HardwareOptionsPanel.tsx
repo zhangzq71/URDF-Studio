@@ -1,13 +1,11 @@
 import React, { forwardRef } from 'react';
 import { Language, translations } from '@/shared/i18n';
-import { useUIStore } from '@/store';
 import {
   CheckboxOption,
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  SegmentedControl,
-  CollapsibleSection
+  SegmentedControl
 } from './OptionsPanel';
 
 interface HardwareOptionsPanelProps {
@@ -46,8 +44,6 @@ export const HardwareOptionsPanel = forwardRef<HTMLDivElement, HardwareOptionsPa
     ref
   ) => {
     const t = translations[lang];
-    const panelSections = useUIStore((state) => state.panelSections);
-    const setPanelSection = useUIStore((state) => state.setPanelSection);
 
     return (
       <div
@@ -72,7 +68,7 @@ export const HardwareOptionsPanel = forwardRef<HTMLDivElement, HardwareOptionsPa
           />
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
-            <div className="p-2 pb-0">
+            <div className="px-3 py-2.5 pb-1.5">
                 <SegmentedControl
                   options={[
                     { value: 'translate', label: t.move },
@@ -84,22 +80,18 @@ export const HardwareOptionsPanel = forwardRef<HTMLDivElement, HardwareOptionsPa
                 />
             </div>
 
-            <CollapsibleSection
-              title={t.visuals}
-              isCollapsed={panelSections['hardware_visuals'] ?? false}
-              onToggle={() => setPanelSection('hardware_visuals', !(panelSections['hardware_visuals'] ?? false))}
-            >
-                <CheckboxOption
-                  checked={showHardwareOrigin}
-                  onChange={setShowHardwareOrigin}
-                  label={t.showOrigin}
-                />
-                <CheckboxOption
-                  checked={showHardwareLabels}
-                  onChange={setShowHardwareLabels}
-                  label={t.showLabels}
-                />
-            </CollapsibleSection>
+            <div className="px-3 pt-1.5 pb-2.5 space-y-2">
+              <CheckboxOption
+                checked={showHardwareOrigin}
+                onChange={setShowHardwareOrigin}
+                label={t.showOrigin}
+              />
+              <CheckboxOption
+                checked={showHardwareLabels}
+                onChange={setShowHardwareLabels}
+                label={t.showLabels}
+              />
+            </div>
           </OptionsPanelContent>
         </OptionsPanelContainer>
       </div>

@@ -39,7 +39,7 @@ type MeshAnalysisWorkerResponse =
       error: string;
     };
 
-const workerScope = self as DedicatedWorkerGlobalScope;
+const workerScope = globalThis as unknown as DedicatedWorkerGlobalScope;
 
 workerScope.addEventListener('message', async (event: MessageEvent<MeshAnalysisWorkerRequest>) => {
   const message = event.data;

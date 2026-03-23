@@ -35,6 +35,7 @@ export interface ValidationResult {
  */
 export const validateLink = (link: UrdfLink): ValidationResult => {
     const errors: ValidationError[] = [];
+    const inertial = link.inertial;
 
     if (!link.id) {
         errors.push({ type: 'error', message: 'Link must have an ID', path: 'id' });
@@ -44,11 +45,11 @@ export const validateLink = (link: UrdfLink): ValidationResult => {
         errors.push({ type: 'error', message: 'Link must have a name', path: 'name' });
     }
 
-    if (link.inertial.mass < 0) {
+    if (inertial && inertial.mass < 0) {
         errors.push({ type: 'error', message: 'Link mass cannot be negative', path: 'inertial.mass' });
     }
 
-    if (link.inertial.mass === 0) {
+    if (inertial && inertial.mass === 0) {
         errors.push({ type: 'warning', message: 'Link has zero mass', path: 'inertial.mass' });
     }
 
@@ -117,28 +118,38 @@ export const validateJoint = (joint: UrdfJoint, links: Record<string, UrdfLink>)
 
     // Validate axis only for types that use axis
     if (AXIS_REQUIRED_TYPES.has(joint.type)) {
-        const axisLength = Math.sqrt(joint.axis.x ** 2 + joint.axis.y ** 2 + joint.axis.z ** 2);
-        if (Math.abs(axisLength - 1) > 0.001) {
-            errors.push({ type: 'warning', message: 'Joint axis should be normalized', path: 'axis' });
-        }
-        if (axisLength === 0) {
-            errors.push({ type: 'error', message: 'Joint axis cannot be zero vector', path: 'axis' });
+        if (!joint.axis) {
+            errors.push({ type: 'error', message: 'Joint axis is required for this joint type', path: 'axis' });
+        } else {
+            const axisLength = Math.sqrt(joint.axis.x ** 2 + joint.axis.y ** 2 + joint.axis.z ** 2);
+            if (Math.abs(axisLength - 1) > 0.001) {
+                errors.push({ type: 'warning', message: 'Joint axis should be normalized', path: 'axis' });
+            }
+            if (axisLength === 0) {
+                errors.push({ type: 'error', message: 'Joint axis cannot be zero vector', path: 'axis' });
+            }
         }
     }
 
     // Validate limits for revolute and prismatic joints
     if (joint.type === JointType.REVOLUTE || joint.type === JointType.PRISMATIC) {
-        if (joint.limit.lower > joint.limit.upper) {
+        if (!joint.limit) {
+            errors.push({ type: 'error', message: 'Joint limit is required for this joint type', path: 'limit' });
+        } else if (joint.limit.lower > joint.limit.upper) {
             errors.push({ type: 'error', message: 'Lower limit cannot be greater than upper limit', path: 'limit' });
         }
     }
 
     if (EFFORT_VELOCITY_LIMIT_TYPES.has(joint.type)) {
-        if (joint.limit.effort < 0) {
-            errors.push({ type: 'error', message: 'Effort limit cannot be negative', path: 'limit.effort' });
-        }
-        if (joint.limit.velocity < 0) {
-            errors.push({ type: 'error', message: 'Velocity limit cannot be negative', path: 'limit.velocity' });
+        if (!joint.limit) {
+            errors.push({ type: 'error', message: 'Joint limit is required for this joint type', path: 'limit' });
+        } else {
+            if (joint.limit.effort < 0) {
+                errors.push({ type: 'error', message: 'Effort limit cannot be negative', path: 'limit.effort' });
+            }
+            if (joint.limit.velocity < 0) {
+                errors.push({ type: 'error', message: 'Velocity limit cannot be negative', path: 'limit.velocity' });
+            }
         }
     }
 

@@ -134,6 +134,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   );
 
   const computedHeaderClassName = joinClassNames(
+    'select-none',
     headerClassName,
     !isMaximized && headerDraggableClassName,
     isDragging && headerDraggingClassName,

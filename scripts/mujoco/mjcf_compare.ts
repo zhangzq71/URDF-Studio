@@ -2,7 +2,16 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import * as THREE from 'three';
 import { resolveMJCFSource } from '../../src/core/parsers/mjcf/mjcfSourceResolver';
+import {
+    fitPrimitiveFromObject3D,
+    resolveMJCFMeshBackedPrimitiveGeoms,
+} from '../../src/core/parsers/mjcf/mjcfMeshBackedPrimitiveResolver';
+import {
+    applyMeshAssetTransform,
+    resolveMJCFAssetUrl,
+} from '../../src/core/parsers/mjcf/mjcfGeometry';
 import { parseMJCF } from '../../src/core/parsers/mjcf/mjcfParser';
 import { parseMJCFModel } from '../../src/core/parsers/mjcf/mjcfModel';
 import {
@@ -17,6 +26,10 @@ interface CompareCliOptions {
     outputPath?: string;
     oracleJsonPath?: string;
     smokeLoad: boolean;
+}
+
+function resolveUvCommand(): string {
+    return process.platform === 'win32' ? 'uv.exe' : 'uv';
 }
 
 function installDomGlobals(): void {
@@ -95,18 +108,87 @@ function collectProjectFiles(rootDir: string): RobotFile[] {
     return files;
 }
 
-function runOracle(casePath: string): any {
+function collectProjectAssets(rootDir: string): Record<string, string> {
+    const assets: Record<string, string> = {};
+
+    const visit = (currentDir: string): void => {
+        for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+            const fullPath = path.join(currentDir, entry.name);
+            if (entry.isDirectory()) {
+                visit(fullPath);
+                continue;
+            }
+
+            const ext = path.extname(entry.name).toLowerCase();
+            if (ext === '.xml' || ext === '.mjcf') {
+                continue;
+            }
+
+            const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+            assets[relativePath] = fullPath;
+        }
+    };
+
+    visit(rootDir);
+    return assets;
+}
+
+async function loadLocalMeshObject(assetPath: string, filePath: string): Promise<THREE.Object3D | null> {
+    const extension = filePath.split('.').pop()?.toLowerCase() || '';
+
+    if (extension === 'obj') {
+        const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
+        return new OBJLoader().parse(fs.readFileSync(assetPath, 'utf8'));
+    }
+
+    if (extension === 'stl') {
+        const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
+        const buffer = fs.readFileSync(assetPath);
+        const arrayBuffer = Uint8Array.from(buffer).buffer;
+        const geometry = new STLLoader().parse(arrayBuffer);
+        return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    }
+
+    if (extension === 'dae') {
+        const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js');
+        const loader = new ColladaLoader();
+        const result = loader.parse(fs.readFileSync(assetPath, 'utf8'), `${path.dirname(assetPath)}/`);
+        return result.scene;
+    }
+
+    return null;
+}
+
+function buildOracleOutputFilename(casePath: string): string {
+    const relativePath = path.relative(process.cwd(), casePath) || path.basename(casePath);
+    return relativePath
+        .replace(/[\\/]+/g, '__')
+        .replace(/[^a-zA-Z0-9._-]+/g, '_');
+}
+
+function createOracleTempDir(): { tempDir: string; uvCacheDir: string } {
     const tempDir = path.resolve('.tmp', 'mjcf-compare');
+    const uvCacheDir = path.resolve('.tmp', 'uv-cache');
     fs.mkdirSync(tempDir, { recursive: true });
-    const outputPath = path.join(tempDir, `${path.basename(casePath, path.extname(casePath))}.oracle.full.json`);
+    fs.mkdirSync(uvCacheDir, { recursive: true });
+    return { tempDir, uvCacheDir };
+}
+
+function runOracleJson(casePath: string): any {
+    const { tempDir, uvCacheDir } = createOracleTempDir();
+    const outputPath = path.join(tempDir, `${buildOracleOutputFilename(casePath)}.oracle.full.json`);
 
     const result = spawnSync(
-        'uv.exe',
-        ['run', '--with', 'mujoco', '--script', 'scripts/read_mjcf.py', casePath, '--full-json', '--output', outputPath],
+        resolveUvCommand(),
+        ['run', '--with', 'mujoco', '--script', 'scripts/mujoco/read_mjcf.py', casePath, '--full-json', '--output', outputPath],
         {
             cwd: process.cwd(),
             encoding: 'utf8',
             stdio: 'pipe',
+            env: {
+                ...process.env,
+                UV_CACHE_DIR: uvCacheDir,
+            },
         },
     );
 
@@ -118,6 +200,34 @@ function runOracle(casePath: string): any {
     }
 
     return parseOracleJsonFile(outputPath);
+}
+
+function runOracleResolvedXml(casePath: string): string {
+    const { tempDir, uvCacheDir } = createOracleTempDir();
+    const outputPath = path.join(tempDir, `${buildOracleOutputFilename(casePath)}.oracle.resolved.xml`);
+
+    const result = spawnSync(
+        resolveUvCommand(),
+        ['run', '--with', 'mujoco', '--script', 'scripts/mujoco/read_mjcf.py', casePath, '--dump-xml', outputPath],
+        {
+            cwd: process.cwd(),
+            encoding: 'utf8',
+            stdio: 'pipe',
+            env: {
+                ...process.env,
+                UV_CACHE_DIR: uvCacheDir,
+            },
+        },
+    );
+
+    if (result.status !== 0) {
+        const errorMessage = result.error instanceof Error
+            ? `${result.error.name}: ${result.error.message}`
+            : (result.stderr || result.stdout || 'unknown error');
+        throw new Error(`Oracle failed with exit code ${result.status}: ${errorMessage}`);
+    }
+
+    return fs.readFileSync(outputPath, 'utf8');
 }
 
 function parseOracleJsonFile(filePath: string): any {
@@ -142,6 +252,7 @@ async function main(): Promise<void> {
     installDomGlobals();
     const options = parseArgs(process.argv.slice(2));
     const projectFiles = collectProjectFiles(path.dirname(options.casePath));
+    const projectAssets = collectProjectAssets(path.dirname(options.casePath));
     const selectedFile = projectFiles.find((file) => path.resolve(file.name) === options.casePath);
     if (!selectedFile) {
         throw new Error(`MJCF file not found in project scan: ${options.casePath}`);
@@ -154,22 +265,52 @@ async function main(): Promise<void> {
         throw new Error('TS MJCF model parsing failed');
     }
 
+    const resolvedMeshBackedPrimitiveCount = await resolveMJCFMeshBackedPrimitiveGeoms(parsedModel, {
+        assets: projectAssets,
+        sourceFileDir: resolvedSource.basePath,
+        fitPrimitiveFromMeshAsset: async ({ geomType, meshDef }) => {
+            const assetPath = resolveMJCFAssetUrl(meshDef.file, projectAssets, resolvedSource.basePath);
+            if (!assetPath) {
+                return null;
+            }
+
+            const object = await loadLocalMeshObject(assetPath, meshDef.file);
+            if (!object) {
+                return null;
+            }
+
+            const transformed = applyMeshAssetTransform(object, meshDef);
+            return fitPrimitiveFromObject3D(transformed, geomType);
+        },
+    });
+
     if (options.smokeLoad) {
         const { loadMJCFToThreeJS } = await import('../../src/core/parsers/mjcf/mjcfLoader');
-        await loadMJCFToThreeJS(resolvedSource.content, {});
+        await loadMJCFToThreeJS(resolvedSource.content, projectAssets, resolvedSource.basePath);
     }
 
-    const oracleExport = options.oracleJsonPath
-        ? parseOracleJsonFile(options.oracleJsonPath)
-        : runOracle(options.casePath);
     const tsSnapshot = createCanonicalSnapshotFromParsedModel(parsedModel, {
         sourceFile: resolvedSource.sourceFile.name,
         effectiveFile: resolvedSource.effectiveFile.name,
     });
-    const oracleSnapshot = createCanonicalSnapshotFromOracleExport(oracleExport, {
-        sourceFile: options.casePath,
-        effectiveFile: options.casePath,
-    });
+    const oracleSnapshot = options.oracleJsonPath
+        ? createCanonicalSnapshotFromOracleExport(parseOracleJsonFile(options.oracleJsonPath), {
+            sourceFile: resolvedSource.sourceFile.name,
+            effectiveFile: resolvedSource.effectiveFile.name,
+            angleUnit: parsedModel.compilerSettings.angleUnit,
+        })
+        : (() => {
+            const oracleResolvedXml = runOracleResolvedXml(options.casePath);
+            const oracleParsedModel = parseMJCFModel(oracleResolvedXml);
+            if (!oracleParsedModel) {
+                throw new Error('MuJoCo resolved XML parsing failed');
+            }
+
+            return createCanonicalSnapshotFromParsedModel(oracleParsedModel, {
+                sourceFile: resolvedSource.sourceFile.name,
+                effectiveFile: resolvedSource.effectiveFile.name,
+            });
+        })();
     const diffs = diffCanonicalSnapshots(oracleSnapshot, tsSnapshot);
 
     const diffSummary = diffs.reduce<Record<string, number>>((summary, diff) => {
@@ -180,12 +321,14 @@ async function main(): Promise<void> {
     const payload = {
         schema: 'urdf-studio.mjcf-compare/v1',
         casePath: options.casePath,
+        oracleMode: options.oracleJsonPath ? 'full-json' : 'resolved-xml',
         resolvedSource: {
             sourceFile: resolvedSource.sourceFile.name,
             effectiveFile: resolvedSource.effectiveFile.name,
             basePath: resolvedSource.basePath,
         },
         robotState: summarizeRobotState(robotState),
+        resolvedMeshBackedPrimitiveCount: resolvedMeshBackedPrimitiveCount ?? 0,
         oracleCounts: oracleSnapshot.counts,
         tsCounts: tsSnapshot.counts,
         diffSummary,

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
+import { isSyntheticWorldRoot, resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
 import type { RobotState } from '@/types';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { useCollisionRefs } from './useCollisionRefs';
+import { useClosedLoopDragSync } from './useClosedLoopDragSync';
 import { useDraggablePanel } from './useDraggablePanel';
 import { useJointPivots } from './useJointPivots';
 import { useTransformControls } from './useTransformControls';
@@ -28,6 +29,7 @@ export const useVisualizerController = ({
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
   const tempRotationRef = useRef(new THREE.Euler(0, 0, 0, 'ZYX'));
+  const pendingGroundAlignmentRef = useRef<number | null>(null);
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   const clearHover = useSelectionStore((state) => state.clearHover);
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
@@ -36,7 +38,14 @@ export const useVisualizerController = ({
 
   const state = useVisualizerState({ propShowVisual, propSetShowVisual });
   const panel = useDraggablePanel();
-  const { handleRegisterJointPivot, selectedJointPivot } = useJointPivots(
+  const {
+    jointPivots,
+    jointMotions,
+    handleRegisterJointPivot,
+    handleRegisterJointMotion,
+    selectedJointPivot,
+    selectedJointMotion,
+  } = useJointPivots(
     robot.selection.type,
     robot.selection.id ?? undefined
   );
@@ -47,12 +56,24 @@ export const useVisualizerController = ({
     robot.selection.objectIndex ?? 0,
   );
 
+  const closedLoopDragSync = useClosedLoopDragSync({
+    robot,
+    jointPivots,
+    jointMotions,
+  });
+
   const transformControlsState = useTransformControls(
     selectedJointPivot,
     mode === 'skeleton' ? 'universal' : state.transformMode,
     robot,
     onUpdate,
-    mode
+    mode,
+    {
+      onPreviewObjectChange: closedLoopDragSync.previewConstraintCompensation,
+      onPreviewRotateChange: closedLoopDragSync.previewConstraintMotionCompensation,
+      onResetPreview: closedLoopDragSync.resetConstraintPreview,
+      selectedRotateObject: selectedJointMotion,
+    }
   );
 
   const handleAutoFitGround = useCallback(() => {
@@ -98,8 +119,28 @@ export const useVisualizerController = ({
     });
   }, [onUpdate, robot, selectedCollisionRef]);
 
+  const requestGroundRealignment = useCallback(() => {
+    if (mode !== 'skeleton') return;
+    if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
+
+    if (typeof window === 'undefined') {
+      handleAutoFitGround();
+      return;
+    }
+
+    if (pendingGroundAlignmentRef.current !== null) {
+      window.clearTimeout(pendingGroundAlignmentRef.current);
+    }
+
+    pendingGroundAlignmentRef.current = window.setTimeout(() => {
+      pendingGroundAlignmentRef.current = null;
+      handleAutoFitGround();
+    }, 48);
+  }, [handleAutoFitGround, mode, robot]);
+
   useEffect(() => {
     if (mode !== 'skeleton') return;
+    if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
 
     const timers = [0, 80, 220].map((delay) =>
       window.setTimeout(handleAutoFitGround, delay)
@@ -109,6 +150,15 @@ export const useVisualizerController = ({
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [groundPlaneOffset, handleAutoFitGround, mode, robot.joints, robot.links]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingGroundAlignmentRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(pendingGroundAlignmentRef.current);
+        pendingGroundAlignmentRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -128,11 +178,14 @@ export const useVisualizerController = ({
     state,
     panel,
     selectedJointPivot,
+    selectedJointMotion,
     selectedCollisionRef,
     handleRegisterJointPivot,
+    handleRegisterJointMotion,
     handleRegisterCollisionRef,
     transformControlsState,
     handleAutoFitGround,
+    requestGroundRealignment,
     handleCollisionTransformEnd,
   };
 };

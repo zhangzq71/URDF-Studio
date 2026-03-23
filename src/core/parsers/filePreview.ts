@@ -2,7 +2,6 @@ import {
   generateURDF,
   processXacro,
   parseURDF,
-  parseUSDA,
 } from '@/core/parsers';
 import { GeometryType, type RobotFile, type RobotState } from '@/types';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
@@ -74,12 +73,11 @@ export function computePreviewUrdf(
     }
 
     if (file.format === 'usd') {
-      const parsed = parseUSDA(file.content);
-      return parsed ? generateURDF(parsed, false) : '';
+      return '';
     }
 
     if (file.format === 'mesh') {
-      return generateURDF(buildMeshPreviewState(file), false);
+      return generateURDF(buildMeshPreviewState(file), { preserveMeshPaths: true });
     }
   } catch (error) {
     console.error('[filePreview] Failed to build preview:', error);

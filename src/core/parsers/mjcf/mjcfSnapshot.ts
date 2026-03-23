@@ -4,6 +4,7 @@ import type { ParsedMJCFModel } from './mjcfModel';
 
 const NUMBER_PRECISION = 6;
 const EPSILON = 1e-5;
+const AXISYMMETRIC_GEOM_AXIS_DOT_TOLERANCE = Math.cos(THREE.MathUtils.degToRad(1));
 
 export interface CanonicalMJCFBody {
     key: string;
@@ -12,6 +13,11 @@ export interface CanonicalMJCFBody {
     path: string;
     pos: [number, number, number];
     quat: [number, number, number, number] | null;
+    mass: number | null;
+    inertialPos: [number, number, number] | null;
+    inertialQuat: [number, number, number, number] | null;
+    inertia: [number, number, number] | null;
+    fullinertia: [number, number, number, number, number, number] | null;
 }
 
 export interface CanonicalMJCFJoint {
@@ -32,6 +38,7 @@ export interface CanonicalMJCFGeom {
     size: number[];
     mesh: string | null;
     material: string | null;
+    mass: number | null;
     pos: [number, number, number] | null;
     quat: [number, number, number, number] | null;
     rgba: [number, number, number, number] | null;
@@ -44,11 +51,14 @@ export interface CanonicalMJCFMeshAsset {
     name: string;
     file: string | null;
     scale: number[];
+    refpos: [number, number, number] | null;
+    refquat: [number, number, number, number] | null;
 }
 
 export interface CanonicalMJCFMaterialAsset {
     name: string;
     rgba: [number, number, number, number] | null;
+    emission: number | null;
 }
 
 export interface CanonicalMJCFSnapshot {
@@ -77,6 +87,7 @@ export interface CanonicalMJCFSnapshot {
 export interface CanonicalSnapshotOptions {
     sourceFile?: string;
     effectiveFile?: string;
+    angleUnit?: 'radian' | 'degree';
 }
 
 export interface MJCFSnapshotDiff {
@@ -84,15 +95,38 @@ export interface MJCFSnapshotDiff {
         | 'SOURCE_RESOLUTION_MISMATCH'
         | 'BODY_MISSING'
         | 'BODY_PARENT_MISMATCH'
+        | 'BODY_POS_MISMATCH'
+        | 'BODY_QUAT_MISMATCH'
+        | 'BODY_MASS_MISMATCH'
+        | 'BODY_INERTIAL_POS_MISMATCH'
+        | 'BODY_INERTIAL_QUAT_MISMATCH'
+        | 'BODY_INERTIA_MISMATCH'
+        | 'BODY_FULLINERTIA_MISMATCH'
         | 'JOINT_MISSING'
+        | 'JOINT_BODY_MISMATCH'
         | 'JOINT_TYPE_MISMATCH'
         | 'JOINT_AXIS_MISMATCH'
+        | 'JOINT_POS_MISMATCH'
         | 'JOINT_RANGE_MISMATCH'
         | 'GEOM_MISSING'
         | 'GEOM_TYPE_MISMATCH'
         | 'GEOM_BODY_MISMATCH'
         | 'GEOM_SIZE_MISMATCH'
+        | 'GEOM_MESH_MISMATCH'
+        | 'GEOM_MATERIAL_MISMATCH'
+        | 'GEOM_POS_MISMATCH'
+        | 'GEOM_QUAT_MISMATCH'
+        | 'GEOM_RGBA_MISMATCH'
+        | 'GEOM_GROUP_MISMATCH'
+        | 'GEOM_CONTYPE_MISMATCH'
+        | 'GEOM_CONAFFINITY_MISMATCH'
+        | 'GEOM_MASS_MISMATCH'
         | 'MESH_PATH_MISMATCH'
+        | 'MESH_SCALE_MISMATCH'
+        | 'MESH_REFPOS_MISMATCH'
+        | 'MESH_REFQUAT_MISMATCH'
+        | 'MATERIAL_RGBA_MISMATCH'
+        | 'MATERIAL_EMISSION_MISMATCH'
         | 'COUNT_MISMATCH';
     key: string;
     message: string;
@@ -138,12 +172,289 @@ function normalizeQuatFromEuler(euler: number[] | undefined, angleUnit: 'radian'
 }
 
 function normalizeQuat(value: number[] | undefined | null): [number, number, number, number] | null {
-    const normalized = normalizeVector(value, 4);
-    return normalized ? normalized as [number, number, number, number] : null;
+    const raw = normalizeVector(value, 4);
+    if (!raw) {
+        return null;
+    }
+
+    const [w, x, y, z] = raw;
+    const length = Math.hypot(w, x, y, z);
+    if (length <= 1e-8) {
+        return [1, 0, 0, 0];
+    }
+
+    return [
+        roundNumber(w / length),
+        roundNumber(x / length),
+        roundNumber(y / length),
+        roundNumber(z / length),
+    ];
 }
 
 function normalizePos(value: number[] | undefined | null): [number, number, number] {
     return (normalizeVector(value, 3) || [0, 0, 0]) as [number, number, number];
+}
+
+function normalizeNumber(value: number | null | undefined): number | null {
+    if (value == null || Number.isNaN(value)) {
+        return null;
+    }
+    return roundNumber(value);
+}
+
+function normalizeScale(value: number[] | undefined | null): number[] {
+    const normalized = normalizeVector(value, 3);
+    if (!normalized) {
+        return [1, 1, 1];
+    }
+
+    return [
+        normalized[0] ?? 1,
+        normalized[1] ?? 1,
+        normalized[2] ?? 1,
+    ];
+}
+
+function normalizeGeomRGBA(value: number[] | undefined | null): [number, number, number, number] {
+    const normalized = normalizeVector(value, 4);
+    if (!normalized) {
+        return [0.5, 0.5, 0.5, 1];
+    }
+
+    return [
+        normalized[0] ?? 0.5,
+        normalized[1] ?? 0.5,
+        normalized[2] ?? 0.5,
+        normalized[3] ?? 1,
+    ];
+}
+
+function quaternionToMjcfTuple(quaternion: THREE.Quaternion): [number, number, number, number] {
+    const normalized = quaternion.normalize();
+    return [
+        roundNumber(normalized.w),
+        roundNumber(normalized.x),
+        roundNumber(normalized.y),
+        roundNumber(normalized.z),
+    ];
+}
+
+function createMuJoCoFromToQuaternion(direction: THREE.Vector3): THREE.Quaternion {
+    const normalizedDirection = direction.clone().normalize();
+    const localNegativeZ = new THREE.Vector3(0, 0, -1);
+    const dot = localNegativeZ.dot(normalizedDirection);
+
+    // MuJoCo resolves the 180deg ambiguity for fromto primitives by rotating
+    // around +X when the canonical -Z axis needs to flip to +Z.
+    if (dot <= -1 + 1e-9) {
+        return new THREE.Quaternion(1, 0, 0, 0);
+    }
+
+    return new THREE.Quaternion().setFromUnitVectors(localNegativeZ, normalizedDirection);
+}
+
+function normalizeQuaternionFromDirection(direction: THREE.Vector3): [number, number, number, number] {
+    if (direction.lengthSq() <= 1e-12) {
+        return [1, 0, 0, 0];
+    }
+
+    const quaternion = createMuJoCoFromToQuaternion(direction);
+    return quaternionToMjcfTuple(quaternion);
+}
+
+function canonicalizeFromToGeom(
+    geom: Pick<ParsedMJCFModel['worldBody']['geoms'][number], 'type' | 'size' | 'fromto'>,
+): {
+    pos: [number, number, number];
+    quat: [number, number, number, number];
+    size: number[];
+} | null {
+    if (!geom.fromto || geom.fromto.length < 6) {
+        return null;
+    }
+
+    if (geom.type !== 'capsule' && geom.type !== 'cylinder') {
+        return null;
+    }
+
+    const radius = geom.size?.[0];
+    if (radius == null) {
+        return null;
+    }
+
+    const from = new THREE.Vector3(geom.fromto[0] ?? 0, geom.fromto[1] ?? 0, geom.fromto[2] ?? 0);
+    const to = new THREE.Vector3(geom.fromto[3] ?? 0, geom.fromto[4] ?? 0, geom.fromto[5] ?? 0);
+    const direction = new THREE.Vector3().subVectors(to, from);
+    const center = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
+
+    return {
+        pos: [roundNumber(center.x), roundNumber(center.y), roundNumber(center.z)],
+        quat: normalizeQuaternionFromDirection(direction),
+        size: [roundNumber(radius), roundNumber(direction.length() / 2)],
+    };
+}
+
+function sortEigenvectorsByDescendingValues(
+    eigenvalues: [number, number, number],
+    eigenvectors: [THREE.Vector3, THREE.Vector3, THREE.Vector3],
+): {
+    values: [number, number, number];
+    vectors: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
+} {
+    const pairs = eigenvalues.map((value, index) => ({
+        value,
+        vector: eigenvectors[index]!.clone(),
+    })).sort((left, right) => right.value - left.value);
+
+    const vectors = pairs.map((pair) => pair.vector) as [THREE.Vector3, THREE.Vector3, THREE.Vector3];
+    const basis = new THREE.Matrix4().makeBasis(vectors[0], vectors[1], vectors[2]);
+    if (basis.determinant() < 0) {
+        vectors[2] = vectors[2].clone().multiplyScalar(-1);
+    }
+
+    return {
+        values: pairs.map((pair) => roundNumber(pair.value)) as [number, number, number],
+        vectors,
+    };
+}
+
+function diagonalizeFullInertia(
+    fullinertia: [number, number, number, number, number, number] | null | undefined,
+): {
+    diaginertia: [number, number, number];
+    quat: [number, number, number, number];
+} | null {
+    if (!fullinertia || fullinertia.some((value) => !Number.isFinite(value))) {
+        return null;
+    }
+
+    const matrix = [
+        [fullinertia[0], fullinertia[3], fullinertia[4]],
+        [fullinertia[3], fullinertia[1], fullinertia[5]],
+        [fullinertia[4], fullinertia[5], fullinertia[2]],
+    ];
+    const eigenvectors = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+    ];
+
+    for (let iteration = 0; iteration < 24; iteration += 1) {
+        let pivotRow = 0;
+        let pivotCol = 1;
+        let pivotValue = Math.abs(matrix[pivotRow]![pivotCol]!);
+
+        for (const [row, col] of [[0, 1], [0, 2], [1, 2]] as const) {
+            const candidate = Math.abs(matrix[row]![col]!);
+            if (candidate > pivotValue) {
+                pivotRow = row;
+                pivotCol = col;
+                pivotValue = candidate;
+            }
+        }
+
+        if (pivotValue <= 1e-12) {
+            break;
+        }
+
+        const app = matrix[pivotRow]![pivotRow]!;
+        const aqq = matrix[pivotCol]![pivotCol]!;
+        const apq = matrix[pivotRow]![pivotCol]!;
+        const tau = (aqq - app) / (2 * apq);
+        const tangent = Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
+        const cosine = 1 / Math.sqrt(1 + tangent * tangent);
+        const sine = tangent * cosine;
+
+        for (let row = 0; row < 3; row += 1) {
+            if (row === pivotRow || row === pivotCol) {
+                continue;
+            }
+
+            const arp = matrix[row]![pivotRow]!;
+            const arq = matrix[row]![pivotCol]!;
+            matrix[row]![pivotRow] = arp * cosine - arq * sine;
+            matrix[pivotRow]![row] = matrix[row]![pivotRow]!;
+            matrix[row]![pivotCol] = arp * sine + arq * cosine;
+            matrix[pivotCol]![row] = matrix[row]![pivotCol]!;
+        }
+
+        matrix[pivotRow]![pivotRow] = app * cosine * cosine - 2 * apq * cosine * sine + aqq * sine * sine;
+        matrix[pivotCol]![pivotCol] = app * sine * sine + 2 * apq * cosine * sine + aqq * cosine * cosine;
+        matrix[pivotRow]![pivotCol] = 0;
+        matrix[pivotCol]![pivotRow] = 0;
+
+        for (let row = 0; row < 3; row += 1) {
+            const vrp = eigenvectors[row]![pivotRow]!;
+            const vrq = eigenvectors[row]![pivotCol]!;
+            eigenvectors[row]![pivotRow] = vrp * cosine - vrq * sine;
+            eigenvectors[row]![pivotCol] = vrp * sine + vrq * cosine;
+        }
+    }
+
+    const sorted = sortEigenvectorsByDescendingValues(
+        [
+            matrix[0]![0]!,
+            matrix[1]![1]!,
+            matrix[2]![2]!,
+        ],
+        [
+            new THREE.Vector3(eigenvectors[0]![0]!, eigenvectors[1]![0]!, eigenvectors[2]![0]!),
+            new THREE.Vector3(eigenvectors[0]![1]!, eigenvectors[1]![1]!, eigenvectors[2]![1]!),
+            new THREE.Vector3(eigenvectors[0]![2]!, eigenvectors[1]![2]!, eigenvectors[2]![2]!),
+        ],
+    );
+    const quaternion = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(sorted.vectors[0], sorted.vectors[1], sorted.vectors[2]),
+    );
+
+    return {
+        diaginertia: sorted.values,
+        quat: quaternionToMjcfTuple(quaternion),
+    };
+}
+
+function quaternionsEqual(
+    left: [number, number, number, number] | null | undefined,
+    right: [number, number, number, number] | null | undefined,
+): boolean {
+    if (!left && !right) {
+        return true;
+    }
+    if (!left || !right) {
+        return false;
+    }
+    if (arraysEqual(left, right)) {
+        return true;
+    }
+
+    return arraysEqual(left.map((value) => -value), right);
+}
+
+function axisymmetricGeomOrientationsEqual(
+    geomType: string,
+    left: [number, number, number, number] | null | undefined,
+    right: [number, number, number, number] | null | undefined,
+): boolean {
+    if (quaternionsEqual(left, right)) {
+        return true;
+    }
+
+    if (geomType !== 'capsule' && geomType !== 'cylinder') {
+        return false;
+    }
+
+    if (!left || !right) {
+        return false;
+    }
+
+    const leftAxis = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        new THREE.Quaternion(left[1], left[2], left[3], left[0]).normalize(),
+    ).normalize();
+    const rightAxis = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        new THREE.Quaternion(right[1], right[2], right[3], right[0]).normalize(),
+    ).normalize();
+
+    return Math.abs(leftAxis.dot(rightAxis)) >= AXISYMMETRIC_GEOM_AXIS_DOT_TOLERANCE;
 }
 
 function normalizeRange(value: number[] | undefined | null, angleUnit: 'radian' | 'degree'): [number, number] | null {
@@ -201,6 +512,14 @@ function geomKeyFromName(name: string | null | undefined, fallback: string): str
     return name?.trim() || fallback;
 }
 
+function normalizeOracleAngleUnit(value: unknown): 'radian' | 'degree' {
+    const normalized = String(value || '').toLowerCase();
+    if (!normalized) {
+        return 'degree';
+    }
+    return normalized.includes('degree') ? 'degree' : 'radian';
+}
+
 export function createCanonicalSnapshotFromParsedModel(
     parsedModel: ParsedMJCFModel,
     options: CanonicalSnapshotOptions = {},
@@ -212,7 +531,14 @@ export function createCanonicalSnapshotFromParsedModel(
     const visitBody = (body: ParsedMJCFModel['worldBody'], parentKey: string | null, path: string): void => {
         const bodyName = body.sourceName || (path === 'world' ? 'world' : null);
         const bodyKey = bodyKeyFromName(bodyName, path);
-        const quat = normalizeQuat(body.quat) || normalizeQuatFromEuler(body.euler, parsedModel.compilerSettings.angleUnit);
+        const canonicalInertia = diagonalizeFullInertia(
+            body.inertial?.fullinertia
+                ? (normalizeVector(body.inertial.fullinertia, 6) as [number, number, number, number, number, number] | null)
+                : null,
+        );
+        const quat = normalizeQuat(body.quat)
+            || normalizeQuatFromEuler(body.euler, parsedModel.compilerSettings.angleUnit)
+            || [1, 0, 0, 0];
 
         bodies.push({
             key: bodyKey,
@@ -221,39 +547,54 @@ export function createCanonicalSnapshotFromParsedModel(
             path,
             pos: normalizePos(body.pos),
             quat,
+            mass: normalizeNumber(body.inertial?.mass),
+            inertialPos: body.inertial ? normalizePos(body.inertial.pos) : null,
+            inertialQuat: body.inertial
+                ? (normalizeQuat(body.inertial.quat) || canonicalInertia?.quat || [1, 0, 0, 0])
+                : null,
+            inertia: body.inertial?.diaginertia
+                ? (normalizeVector(body.inertial.diaginertia, 3) as [number, number, number] | null)
+                : (canonicalInertia?.diaginertia || null),
+            fullinertia: body.inertial?.fullinertia
+                ? (normalizeVector(body.inertial.fullinertia, 6) as [number, number, number, number, number, number] | null)
+                : null,
         });
 
         body.joints.forEach((joint, jointIndex) => {
-            const fallback = `${path}::joint[${jointIndex}]`;
+            const fallback = `${bodyKey}::joint[${jointIndex}]`;
             joints.push({
-                key: jointKeyFromName(joint.sourceName || joint.name, fallback),
+                key: jointKeyFromName(joint.sourceName, fallback),
                 name: joint.sourceName || null,
                 parentBodyKey: bodyKey,
                 type: joint.type,
                 axis: (normalizeVector(joint.axis, 3) as [number, number, number] | null),
                 range: joint.range
-                    ? normalizeRange(joint.range, parsedModel.compilerSettings.angleUnit)
+                    ? normalizeRange(joint.range, 'radian')
                     : [0, 0],
-                pos: (normalizeVector(joint.pos, 3) as [number, number, number] | null),
+                pos: normalizePos(joint.pos),
             });
         });
 
         body.geoms.forEach((geom, geomIndex) => {
-            const fallback = `${path}::geom[${geomIndex}]`;
+            const fallback = `${bodyKey}::geom[${geomIndex}]`;
+            const canonicalFromTo = canonicalizeFromToGeom(geom);
             geoms.push({
                 key: geomKeyFromName(geom.sourceName || geom.name, fallback),
                 name: geom.sourceName || null,
                 bodyKey,
                 type: geom.type,
-                size: trimTrailingZeros(normalizeVector(geom.size, geom.size?.length || 0)) || [],
+                size: canonicalFromTo?.size
+                    || trimTrailingZeros(normalizeVector(geom.size, geom.size?.length || 0))
+                    || [],
                 mesh: geom.mesh || null,
                 material: geom.material || null,
-                pos: (normalizeVector(geom.pos, 3) as [number, number, number] | null),
-                quat: normalizeQuat(geom.quat),
-                rgba: (normalizeVector(geom.rgba, 4) as [number, number, number, number] | null),
-                group: geom.group ?? null,
-                contype: geom.contype ?? null,
-                conaffinity: geom.conaffinity ?? null,
+                mass: normalizeNumber(geom.mass),
+                pos: canonicalFromTo?.pos || normalizePos(geom.pos),
+                quat: canonicalFromTo?.quat || normalizeQuat(geom.quat) || [1, 0, 0, 0],
+                rgba: normalizeGeomRGBA(geom.rgba),
+                group: geom.group ?? 0,
+                contype: geom.contype ?? 1,
+                conaffinity: geom.conaffinity ?? 1,
             });
         });
 
@@ -269,7 +610,9 @@ export function createCanonicalSnapshotFromParsedModel(
         .map((mesh) => ({
             name: mesh.name,
             file: normalizeMeshFile(mesh.file),
-            scale: normalizeVector(mesh.scale, mesh.scale?.length || 0) || [],
+            scale: normalizeScale(mesh.scale),
+            refpos: (normalizeVector(mesh.refpos, 3) as [number, number, number] | null),
+            refquat: normalizeQuat(mesh.refquat),
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
 
@@ -277,6 +620,7 @@ export function createCanonicalSnapshotFromParsedModel(
         .map((material) => ({
             name: material.name,
             rgba: (normalizeVector(material.rgba, 4) as [number, number, number, number] | null),
+            emission: normalizeNumber(material.emission),
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
 
@@ -308,6 +652,7 @@ export function createCanonicalSnapshotFromOracleExport(
     oracleExport: any,
     options: CanonicalSnapshotOptions = {},
 ): CanonicalMJCFSnapshot {
+    const oracleAngleUnit = options.angleUnit || normalizeOracleAngleUnit(oracleExport?.compiler?.angle);
     const bodyKeyById = new Map<string, string>();
     const bodyPathById = new Map<string, string>();
     const childBodyIndexByParentId = new Map<string, number>();
@@ -338,7 +683,14 @@ export function createCanonicalSnapshotFromOracleExport(
             parentKey,
             path,
             pos: normalizePos(body.attrs?.pos),
-            quat: normalizeQuat(body.attrs?.quat),
+            quat: normalizeQuat(body.attrs?.quat)
+                || normalizeQuatFromEuler(body.attrs?.euler, oracleAngleUnit)
+                || [1, 0, 0, 0],
+            mass: normalizeNumber(body.attrs?.mass),
+            inertialPos: (normalizeVector(body.attrs?.ipos, 3) as [number, number, number] | null),
+            inertialQuat: normalizeQuat(body.attrs?.iquat) || [1, 0, 0, 0],
+            inertia: (normalizeVector(body.attrs?.inertia, 3) as [number, number, number] | null),
+            fullinertia: (normalizeVector(body.attrs?.fullinertia, 6) as [number, number, number, number, number, number] | null),
         } satisfies CanonicalMJCFBody;
     }).sort((left: CanonicalMJCFBody, right: CanonicalMJCFBody) => left.key.localeCompare(right.key));
 
@@ -352,8 +704,8 @@ export function createCanonicalSnapshotFromOracleExport(
             parentBodyKey,
             type: normalizeOracleJointType(joint.attrs?.type),
             axis: (normalizeVector(joint.attrs?.axis, 3) as [number, number, number] | null),
-            range: normalizeRange(joint.attrs?.range, 'radian'),
-            pos: (normalizeVector(joint.attrs?.pos, 3) as [number, number, number] | null),
+            range: normalizeRange(joint.attrs?.range, oracleAngleUnit),
+            pos: normalizePos(joint.attrs?.pos),
         } satisfies CanonicalMJCFJoint;
     }).sort((left: CanonicalMJCFJoint, right: CanonicalMJCFJoint) => left.key.localeCompare(right.key));
 
@@ -361,32 +713,46 @@ export function createCanonicalSnapshotFromOracleExport(
     const geoms = (oracleExport.geoms || []).map((geom: any) => {
         const parentBodyKey = bodyKeyById.get(geom.parent?.id) || geom.parent?.name || 'world';
         const fallback = `${parentBodyKey}::geom[${nextLocalIndex(geomLocalIndexByBody, parentBodyKey)}]`;
+        const canonicalFromTo = canonicalizeFromToGeom({
+            type: normalizeOracleGeomType(geom.attrs?.type),
+            size: geom.attrs?.size,
+            fromto: geom.attrs?.fromto,
+        });
         return {
             key: geomKeyFromName(geom.name || null, fallback),
             name: geom.name || null,
             bodyKey: parentBodyKey,
             type: normalizeOracleGeomType(geom.attrs?.type),
-            size: trimTrailingZeros(normalizeVector(geom.attrs?.size, geom.attrs?.size?.length || 0)) || [],
+            size: canonicalFromTo?.size
+                || trimTrailingZeros(normalizeVector(geom.attrs?.size, geom.attrs?.size?.length || 0))
+                || [],
             mesh: geom.attrs?.meshname || null,
             material: geom.attrs?.material || null,
-            pos: (normalizeVector(geom.attrs?.pos, 3) as [number, number, number] | null),
-            quat: normalizeQuat(geom.attrs?.quat),
-            rgba: (normalizeVector(geom.attrs?.rgba, 4) as [number, number, number, number] | null),
-            group: geom.attrs?.group ?? null,
-            contype: geom.attrs?.contype ?? null,
-            conaffinity: geom.attrs?.conaffinity ?? null,
+            mass: normalizeNumber(geom.attrs?.mass),
+            pos: canonicalFromTo?.pos || normalizePos(geom.attrs?.pos),
+            quat: canonicalFromTo?.quat
+                || normalizeQuat(geom.attrs?.quat)
+                || normalizeQuatFromEuler(geom.attrs?.euler, oracleAngleUnit)
+                || [1, 0, 0, 0],
+            rgba: normalizeGeomRGBA(geom.attrs?.rgba),
+            group: geom.attrs?.group ?? 0,
+            contype: geom.attrs?.contype ?? 1,
+            conaffinity: geom.attrs?.conaffinity ?? 1,
         } satisfies CanonicalMJCFGeom;
     }).sort((left: CanonicalMJCFGeom, right: CanonicalMJCFGeom) => left.key.localeCompare(right.key));
 
     const meshAssets = (oracleExport.meshes || []).map((mesh: any) => ({
         name: mesh.name || mesh.id,
         file: normalizeMeshFile(mesh.attrs?.file),
-        scale: normalizeVector(mesh.attrs?.scale, mesh.attrs?.scale?.length || 0) || [],
+        scale: normalizeScale(mesh.attrs?.scale),
+        refpos: (normalizeVector(mesh.attrs?.refpos, 3) as [number, number, number] | null),
+        refquat: normalizeQuat(mesh.attrs?.refquat),
     })).sort((left: CanonicalMJCFMeshAsset, right: CanonicalMJCFMeshAsset) => left.name.localeCompare(right.name));
 
     const materialAssets = (oracleExport.materials || []).map((material: any) => ({
         name: material.name || material.id,
         rgba: (normalizeVector(material.attrs?.rgba, 4) as [number, number, number, number] | null),
+        emission: normalizeNumber(material.attrs?.emission),
     })).sort((left: CanonicalMJCFMaterialAsset, right: CanonicalMJCFMaterialAsset) => left.name.localeCompare(right.name));
 
     return {
@@ -433,6 +799,47 @@ function arraysEqual(left: number[] | null | undefined, right: number[] | null |
     return left.every((value, index) => nearlyEqual(value, right[index]));
 }
 
+function canonicalBodyInertiaTensor(body: CanonicalMJCFBody): number[] | null {
+    if (body.fullinertia) {
+        return body.fullinertia.map((value) => roundNumber(value));
+    }
+
+    if (!body.inertia) {
+        return null;
+    }
+
+    const quaternion = body.inertialQuat || [1, 0, 0, 0];
+    const rotation = new THREE.Matrix4().makeRotationFromQuaternion(
+        new THREE.Quaternion(quaternion[1], quaternion[2], quaternion[3], quaternion[0]).normalize(),
+    );
+    const basisX = new THREE.Vector3().setFromMatrixColumn(rotation, 0);
+    const basisY = new THREE.Vector3().setFromMatrixColumn(rotation, 1);
+    const basisZ = new THREE.Vector3().setFromMatrixColumn(rotation, 2);
+    const moments = body.inertia;
+
+    const tensor = new THREE.Matrix3().set(
+        basisX.x * basisX.x * moments[0] + basisY.x * basisY.x * moments[1] + basisZ.x * basisZ.x * moments[2],
+        basisX.x * basisX.y * moments[0] + basisY.x * basisY.y * moments[1] + basisZ.x * basisZ.y * moments[2],
+        basisX.x * basisX.z * moments[0] + basisY.x * basisY.z * moments[1] + basisZ.x * basisZ.z * moments[2],
+        basisX.y * basisX.x * moments[0] + basisY.y * basisY.x * moments[1] + basisZ.y * basisZ.x * moments[2],
+        basisX.y * basisX.y * moments[0] + basisY.y * basisY.y * moments[1] + basisZ.y * basisZ.y * moments[2],
+        basisX.y * basisX.z * moments[0] + basisY.y * basisY.z * moments[1] + basisZ.y * basisZ.z * moments[2],
+        basisX.z * basisX.x * moments[0] + basisY.z * basisY.x * moments[1] + basisZ.z * basisZ.x * moments[2],
+        basisX.z * basisX.y * moments[0] + basisY.z * basisY.y * moments[1] + basisZ.z * basisZ.y * moments[2],
+        basisX.z * basisX.z * moments[0] + basisY.z * basisY.z * moments[1] + basisZ.z * basisZ.z * moments[2],
+    );
+    const elements = tensor.elements;
+
+    return [
+        roundNumber(elements[0] ?? 0),
+        roundNumber(elements[4] ?? 0),
+        roundNumber(elements[8] ?? 0),
+        roundNumber(elements[1] ?? 0),
+        roundNumber(elements[2] ?? 0),
+        roundNumber(elements[5] ?? 0),
+    ];
+}
+
 export function diffCanonicalSnapshots(
     expected: CanonicalMJCFSnapshot,
     actual: CanonicalMJCFSnapshot,
@@ -475,6 +882,10 @@ export function diffCanonicalSnapshots(
             return;
         }
 
+        const expectedInertiaTensor = canonicalBodyInertiaTensor(expectedBody);
+        const actualInertiaTensor = canonicalBodyInertiaTensor(actualBody);
+        const inertiaTensorMatches = arraysEqual(expectedInertiaTensor, actualInertiaTensor);
+
         if ((expectedBody.parentKey || null) !== (actualBody.parentKey || null)) {
             diffs.push({
                 type: 'BODY_PARENT_MISMATCH',
@@ -484,6 +895,69 @@ export function diffCanonicalSnapshots(
                 actual: actualBody.parentKey || null,
             });
         }
+
+        if (!arraysEqual(expectedBody.pos, actualBody.pos)) {
+            diffs.push({
+                type: 'BODY_POS_MISMATCH',
+                key,
+                message: 'Body position differs',
+                expected: expectedBody.pos,
+                actual: actualBody.pos,
+            });
+        }
+
+        if (!quaternionsEqual(expectedBody.quat, actualBody.quat)) {
+            diffs.push({
+                type: 'BODY_QUAT_MISMATCH',
+                key,
+                message: 'Body orientation differs',
+                expected: expectedBody.quat,
+                actual: actualBody.quat,
+            });
+        }
+
+        if (!nearlyEqual(expectedBody.mass, actualBody.mass)) {
+            diffs.push({
+                type: 'BODY_MASS_MISMATCH',
+                key,
+                message: 'Body mass differs',
+                expected: expectedBody.mass,
+                actual: actualBody.mass,
+            });
+        }
+
+        if (!arraysEqual(expectedBody.inertialPos, actualBody.inertialPos)) {
+            diffs.push({
+                type: 'BODY_INERTIAL_POS_MISMATCH',
+                key,
+                message: 'Body inertial position differs',
+                expected: expectedBody.inertialPos,
+                actual: actualBody.inertialPos,
+            });
+        }
+
+        if (!quaternionsEqual(expectedBody.inertialQuat, actualBody.inertialQuat) && !inertiaTensorMatches) {
+            diffs.push({
+                type: 'BODY_INERTIAL_QUAT_MISMATCH',
+                key,
+                message: 'Body inertial orientation differs',
+                expected: expectedBody.inertialQuat,
+                actual: actualBody.inertialQuat,
+            });
+        }
+
+        if (!arraysEqual(expectedBody.inertia, actualBody.inertia) && !inertiaTensorMatches) {
+            diffs.push({
+                type: 'BODY_INERTIA_MISMATCH',
+                key,
+                message: 'Body diagonal inertia differs',
+                expected: expectedBody.inertia,
+                actual: actualBody.inertia,
+            });
+        }
+
+        // MuJoCo may represent non-principal inertia as NaN-padded fullinertia;
+        // skip strict fullinertia comparison to avoid noisy false positives.
     });
 
     const expectedJoints = new Map(expected.joints.map((joint) => [joint.key, joint]));
@@ -510,6 +984,16 @@ export function diffCanonicalSnapshots(
             });
         }
 
+        if (expectedJoint.parentBodyKey !== actualJoint.parentBodyKey) {
+            diffs.push({
+                type: 'JOINT_BODY_MISMATCH',
+                key,
+                message: 'Joint parent body differs',
+                expected: expectedJoint.parentBodyKey,
+                actual: actualJoint.parentBodyKey,
+            });
+        }
+
         if (!arraysEqual(expectedJoint.axis, actualJoint.axis)) {
             diffs.push({
                 type: 'JOINT_AXIS_MISMATCH',
@@ -517,6 +1001,16 @@ export function diffCanonicalSnapshots(
                 message: 'Joint axis differs',
                 expected: expectedJoint.axis,
                 actual: actualJoint.axis,
+            });
+        }
+
+        if (!arraysEqual(expectedJoint.pos, actualJoint.pos)) {
+            diffs.push({
+                type: 'JOINT_POS_MISMATCH',
+                key,
+                message: 'Joint anchor position differs',
+                expected: expectedJoint.pos,
+                actual: actualJoint.pos,
             });
         }
 
@@ -574,6 +1068,96 @@ export function diffCanonicalSnapshots(
                 actual: actualGeom.size,
             });
         }
+
+        if ((expectedGeom.mesh || null) !== (actualGeom.mesh || null)) {
+            diffs.push({
+                type: 'GEOM_MESH_MISMATCH',
+                key,
+                message: 'Geom mesh reference differs',
+                expected: expectedGeom.mesh || null,
+                actual: actualGeom.mesh || null,
+            });
+        }
+
+        if ((expectedGeom.material || null) !== (actualGeom.material || null)) {
+            diffs.push({
+                type: 'GEOM_MATERIAL_MISMATCH',
+                key,
+                message: 'Geom material differs',
+                expected: expectedGeom.material || null,
+                actual: actualGeom.material || null,
+            });
+        }
+
+        if (!arraysEqual(expectedGeom.pos, actualGeom.pos)) {
+            diffs.push({
+                type: 'GEOM_POS_MISMATCH',
+                key,
+                message: 'Geom position differs',
+                expected: expectedGeom.pos,
+                actual: actualGeom.pos,
+            });
+        }
+
+        if (!axisymmetricGeomOrientationsEqual(expectedGeom.type, expectedGeom.quat, actualGeom.quat)) {
+            diffs.push({
+                type: 'GEOM_QUAT_MISMATCH',
+                key,
+                message: 'Geom orientation differs',
+                expected: expectedGeom.quat,
+                actual: actualGeom.quat,
+            });
+        }
+
+        if (!arraysEqual(expectedGeom.rgba, actualGeom.rgba)) {
+            diffs.push({
+                type: 'GEOM_RGBA_MISMATCH',
+                key,
+                message: 'Geom color differs',
+                expected: expectedGeom.rgba,
+                actual: actualGeom.rgba,
+            });
+        }
+
+        if (expectedGeom.group !== actualGeom.group) {
+            diffs.push({
+                type: 'GEOM_GROUP_MISMATCH',
+                key,
+                message: 'Geom group differs',
+                expected: expectedGeom.group,
+                actual: actualGeom.group,
+            });
+        }
+
+        if (expectedGeom.contype !== actualGeom.contype) {
+            diffs.push({
+                type: 'GEOM_CONTYPE_MISMATCH',
+                key,
+                message: 'Geom contype differs',
+                expected: expectedGeom.contype,
+                actual: actualGeom.contype,
+            });
+        }
+
+        if (expectedGeom.conaffinity !== actualGeom.conaffinity) {
+            diffs.push({
+                type: 'GEOM_CONAFFINITY_MISMATCH',
+                key,
+                message: 'Geom conaffinity differs',
+                expected: expectedGeom.conaffinity,
+                actual: actualGeom.conaffinity,
+            });
+        }
+
+        if (!nearlyEqual(expectedGeom.mass, actualGeom.mass)) {
+            diffs.push({
+                type: 'GEOM_MASS_MISMATCH',
+                key,
+                message: 'Geom mass differs',
+                expected: expectedGeom.mass,
+                actual: actualGeom.mass,
+            });
+        }
     });
 
     const expectedMeshes = new Map(expected.assets.meshes.map((mesh) => [mesh.name, mesh]));
@@ -587,6 +1171,61 @@ export function diffCanonicalSnapshots(
                 message: 'Mesh file path differs',
                 expected: expectedMesh.file || null,
                 actual: actualMesh?.file || null,
+            });
+        }
+
+        if (!arraysEqual(expectedMesh.scale, actualMesh?.scale || null)) {
+            diffs.push({
+                type: 'MESH_SCALE_MISMATCH',
+                key,
+                message: 'Mesh scale differs',
+                expected: expectedMesh.scale,
+                actual: actualMesh?.scale || null,
+            });
+        }
+
+        if (!arraysEqual(expectedMesh.refpos, actualMesh?.refpos || null)) {
+            diffs.push({
+                type: 'MESH_REFPOS_MISMATCH',
+                key,
+                message: 'Mesh reference position differs',
+                expected: expectedMesh.refpos,
+                actual: actualMesh?.refpos || null,
+            });
+        }
+
+        if (!quaternionsEqual(expectedMesh.refquat, actualMesh?.refquat || null)) {
+            diffs.push({
+                type: 'MESH_REFQUAT_MISMATCH',
+                key,
+                message: 'Mesh reference orientation differs',
+                expected: expectedMesh.refquat,
+                actual: actualMesh?.refquat || null,
+            });
+        }
+    });
+
+    const expectedMaterials = new Map(expected.assets.materials.map((material) => [material.name, material]));
+    const actualMaterials = new Map(actual.assets.materials.map((material) => [material.name, material]));
+    expectedMaterials.forEach((expectedMaterial, key) => {
+        const actualMaterial = actualMaterials.get(key);
+        if (!arraysEqual(expectedMaterial.rgba, actualMaterial?.rgba || null)) {
+            diffs.push({
+                type: 'MATERIAL_RGBA_MISMATCH',
+                key,
+                message: 'Material rgba differs',
+                expected: expectedMaterial.rgba,
+                actual: actualMaterial?.rgba || null,
+            });
+        }
+
+        if (!nearlyEqual(expectedMaterial.emission, actualMaterial?.emission)) {
+            diffs.push({
+                type: 'MATERIAL_EMISSION_MISMATCH',
+                key,
+                message: 'Material emission differs',
+                expected: expectedMaterial.emission,
+                actual: actualMaterial?.emission ?? null,
             });
         }
     });

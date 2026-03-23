@@ -71,6 +71,13 @@ export const parseColor = (materialEl: Element | null): string | undefined => {
     return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 };
 
+export const parseTexture = (materialEl: Element | null): string | undefined => {
+    if (!materialEl) return undefined;
+    const textureEl = materialEl.querySelector("texture");
+    const filename = textureEl?.getAttribute("filename")?.trim();
+    return filename || undefined;
+};
+
 export const GAZEBO_COLORS: Record<string, string> = {
     'Gazebo/Black': '#000000',
     'Gazebo/Blue': '#0000FF',

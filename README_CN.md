@@ -46,13 +46,13 @@
 *   **项目导入**：支持加载包含 URDF 和网格资产的 ZIP 归档。
 *   **一键导出**：生成生产级资源包，包含标准 URDF、整合后的网格文件、BOM 清单（CSV）及 MuJoCo 仿真 XML。
 
-## 📚 文档与教程
+## 📚 文档入口
 
-通过以下步骤指南快速掌握 URDF Studio：
+当前保留的关键文档：
 
-1.  **[快速入门](./docs/tutorials/zh/01_getting_started.md)**：在 URDF Studio 的最初 5 分钟。
-2.  **[设计模式详解](./docs/tutorials/zh/02_design_modes.md)**：深入了解骨架、细节和硬件模式。
-3.  **[AI 助手与审阅](./docs/tutorials/zh/03_ai_features.md)**：利用 AI 加速您的设计工作流。
+1.  **[架构边界](./docs/architecture-boundaries.md)**：说明分层、依赖方向与模块职责。
+2.  **[Robot Canvas 库说明](./docs/robot-canvas-lib.md)**：记录 `react-robot-canvas` 工作区的封装与使用方式。
+3.  **[贡献者 Prompt 主文档](./docs/prompts/CLAUDE.md)**：贡献者与 AI coding agent 的统一上下文入口。
 
 ---
 

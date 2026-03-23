@@ -9,34 +9,40 @@ import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
+import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
-import { parseURDF, parseMJCF, parseUSDA, parseXacro } from '@/core/parsers';
+import { resolveRobotFileData } from '@/core/parsers';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
-import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
-import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
+import {
+  installRegressionDebugApi,
+  setRegressionAppHandlers,
+} from '@/shared/debug/regressionBridge';
 
 const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
-const loadURDFGalleryModule = () => import('@/features/urdf-gallery/components/URDFGallery');
 const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
 
 const AIModal = lazy(() =>
   loadAIModalModule().then((module) => ({ default: module.AIModal }))
 );
 
-const URDFGallery = lazy(() =>
-  loadURDFGalleryModule().then((module) => ({ default: module.URDFGallery }))
-);
-
 const ExportDialog = lazy(() =>
   loadExportDialogModule().then((module) => ({ default: module.ExportDialog }))
 );
+
+type ExportDialogTarget =
+  | { type: 'current' }
+  | { type: 'library-file'; file: RobotFile };
 
 function AppContent() {
   // Refs for file inputs
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
+  const loadRobotByNameRef = useRef<((file: RobotFile, options?: { forceReload?: boolean }) => void) | null>(null);
   const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
+  const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({ type: 'current' });
+  const [viewerReloadKey, setViewerReloadKey] = useState(0);
 
   // UI Store
   const lang = useUIStore((state) => state.lang);
@@ -54,9 +60,13 @@ function AppContent() {
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
   const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
   const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
+  const documentLoadState = useAssetsStore((state) => state.documentLoadState);
+  const setDocumentLoadState = useAssetsStore((state) => state.setDocumentLoadState);
   const selectedFile = useAssetsStore((state) => state.selectedFile);
   const availableFiles = useAssetsStore((state) => state.availableFiles);
   const assets = useAssetsStore((state) => state.assets);
+  const getUsdSceneSnapshot = useAssetsStore((state) => state.getUsdSceneSnapshot);
+  const getUsdPreparedExportCache = useAssetsStore((state) => state.getUsdPreparedExportCache);
   const motorLibrary = useAssetsStore((state) => state.motorLibrary);
 
   // Robot Store
@@ -80,8 +90,6 @@ function AppContent() {
     setIsAIModalOpen,
     isCodeViewerOpen,
     setIsCodeViewerOpen,
-    isURDFGalleryOpen,
-    setIsURDFGalleryOpen,
     isExportDialogOpen,
     setIsExportDialogOpen,
     isExporting,
@@ -124,94 +132,78 @@ function AppContent() {
     mergedWorkspaceRobot,
   ]);
 
-  // Load robot file handler
-  const handleLoadRobot = useCallback((file: RobotFile) => {
+  const isSelectedUsdHydrating = selectedFile?.format === 'usd'
+    && documentLoadState.status === 'hydrating'
+    && documentLoadState.fileName === selectedFile.name;
+  const currentUsdExportMode = selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+    ? resolveCurrentUsdExportMode({
+      isHydrating: isSelectedUsdHydrating,
+      hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
+      hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
+      hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
+    })
+    : 'unavailable';
+
+  // Keep one internal loader so debug automation can force a reload of the
+  // currently selected file without changing normal click behavior.
+  const loadRobotFile = useCallback((file: RobotFile, options?: { forceReload?: boolean }) => {
     if (
-      selectedFile
+      !options?.forceReload
+      && selectedFile
       && selectedFile.name === file.name
       && selectedFile.format === file.format
       && selectedFile.content === file.content
+      && selectedFile.blobUrl === file.blobUrl
     ) {
       setAppMode('detail');
       return;
     }
+    const liveAssetsState = useAssetsStore.getState();
+    setDocumentLoadState({
+      status: 'loading',
+      fileName: file.name,
+      format: file.format,
+      error: null,
+    });
+    const importResult = resolveRobotFileData(file, {
+      availableFiles: liveAssetsState.availableFiles,
+      assets: liveAssetsState.assets,
+      usdRobotData: getUsdPreparedExportCache(file.name)?.robotData ?? null,
+    });
 
-    let newState: RobotState | null = null;
-
-    switch (file.format) {
-      case 'urdf':
-        newState = parseURDF(file.content);
-        break;
-      case 'mjcf': {
-        const resolved = resolveMJCFSource(file, availableFiles);
-        newState = parseMJCF(resolved.content);
-        break;
-      }
-      case 'usd':
-        newState = parseUSDA(file.content);
-        break;
-      case 'xacro':
-        const fileMap: Record<string, string> = {};
-        availableFiles.forEach(f => { fileMap[f.name] = f.content; });
-        Object.entries(assets).forEach(([path, content]) => {
-          if (typeof content === 'string') fileMap[path] = content;
-        });
-        const pathParts = file.name.split('/');
-        pathParts.pop();
-        newState = parseXacro(file.content, {}, fileMap, pathParts.join('/'));
-        break;
-      case 'mesh': {
-        const meshName = file.name.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'mesh';
-        const linkId = 'base_link';
-        newState = {
-          name: meshName,
-          links: {
-            [linkId]: {
-              id: linkId,
-              name: 'base_link',
-              visible: true,
-              visual: {
-                type: GeometryType.MESH,
-                dimensions: { x: 1, y: 1, z: 1 },
-                color: '#808080',
-                meshPath: file.name,
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-              },
-              collision: {
-                type: GeometryType.NONE,
-                dimensions: { x: 0, y: 0, z: 0 },
-                color: '#ef4444',
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-              },
-              inertial: {
-                mass: 1.0,
-                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
-                inertia: { ixx: 0.1, ixy: 0, ixz: 0, iyy: 0.1, iyz: 0, izz: 0.1 },
-              },
-            },
-          },
-          joints: {},
-          rootLinkId: linkId,
-          selection: { type: null, id: null },
-        };
-        break;
-      }
-    }
-
-    if (newState) {
-      const { selection: _, ...data } = newState;
-      setRobot(data);
-      setSelection({ type: null, id: null });
+    if (importResult.status === 'ready' || importResult.status === 'needs_hydration') {
+      setViewerReloadKey((value) => value + 1);
       setSelectedFile(file);
       setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
       setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+      if (importResult.status === 'ready') {
+        setRobot(
+          importResult.robotData,
+          file.format === 'usd'
+            ? { resetHistory: true, label: 'Load USD stage' }
+            : undefined,
+        );
+      }
+      setDocumentLoadState({
+        status: importResult.status === 'needs_hydration' ? 'hydrating' : 'ready',
+        fileName: file.name,
+        format: file.format,
+        error: null,
+      });
+      setSelection({ type: null, id: null });
       setAppMode('detail');
     } else {
+      setDocumentLoadState({
+        status: 'error',
+        fileName: file.name,
+        format: file.format,
+        error: t.failedToParseFormat.replace('{format}', file.format.toUpperCase()),
+      });
       alert(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()));
     }
   }, [
-    availableFiles,
-    assets,
+    setDocumentLoadState,
+    getUsdPreparedExportCache,
     selectedFile,
     setRobot,
     setSelection,
@@ -221,6 +213,52 @@ function AppContent() {
     setAppMode,
     t,
   ]);
+
+  const handleLoadRobot = useCallback((file: RobotFile) => {
+    loadRobotFile(file);
+  }, [loadRobotFile]);
+
+  loadRobotByNameRef.current = loadRobotFile;
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') {
+      return;
+    }
+
+    installRegressionDebugApi(window);
+
+    setRegressionAppHandlers({
+      getAvailableFiles: () => useAssetsStore.getState().availableFiles,
+      getSelectedFile: () => useAssetsStore.getState().selectedFile,
+      getRobotState: () => ({
+        name: useRobotStore.getState().name,
+        links: useRobotStore.getState().links,
+        joints: useRobotStore.getState().joints,
+        rootLinkId: useRobotStore.getState().rootLinkId,
+        selection: useSelectionStore.getState().selection,
+      }),
+      loadRobotByName: async (fileName: string) => {
+        const file = useAssetsStore.getState().availableFiles.find((entry) => entry.name === fileName) ?? null;
+        if (!file) {
+          return {
+            loaded: false,
+            selectedFile: useAssetsStore.getState().selectedFile?.name ?? null,
+          };
+        }
+
+        loadRobotByNameRef.current?.(file, { forceReload: true });
+        return {
+          loaded: true,
+          selectedFile: file.name,
+        };
+      },
+    });
+
+    return () => {
+      setRegressionAppHandlers(null);
+      delete window.__URDF_STUDIO_DEBUG__;
+    };
+  }, []);
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
@@ -247,7 +285,6 @@ function AppContent() {
     const warmup = () => {
       void loadAIModalModule();
       void loadExportDialogModule();
-      void loadURDFGalleryModule();
     };
 
     const idleWindow = window as Window & {
@@ -265,20 +302,34 @@ function AppContent() {
   }, []);
 
   const handleOpenAIModal = useCallback(() => {
+    if (isSelectedUsdHydrating) {
+      showToast(t.usdLoadInProgress, 'info');
+      return;
+    }
     setShouldRenderAIModal(true);
     void loadAIModalModule();
     setIsAIModalOpen(true);
-  }, [setIsAIModalOpen]);
+  }, [isSelectedUsdHydrating, setIsAIModalOpen, showToast, t.usdLoadInProgress]);
 
   const handleOpenExportDialog = useCallback(() => {
     void loadExportDialogModule();
+    setExportDialogTarget({ type: 'current' });
     setIsExportDialogOpen(true);
   }, [setIsExportDialogOpen]);
 
-  const handleOpenURDFGallery = useCallback(() => {
-    void loadURDFGalleryModule();
-    setIsURDFGalleryOpen(true);
-  }, [setIsURDFGalleryOpen]);
+  const handleOpenLibraryExportDialog = useCallback((file: RobotFile) => {
+    void loadExportDialogModule();
+    setExportDialogTarget({ type: 'library-file', file });
+    setIsExportDialogOpen(true);
+  }, [setIsExportDialogOpen]);
+
+  const canExportUsd = exportDialogTarget.type === 'current'
+    ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+      ? currentUsdExportMode !== 'unavailable'
+      : !isSelectedUsdHydrating
+    : exportDialogTarget.file.format === 'urdf'
+      || exportDialogTarget.file.format === 'mjcf'
+      || exportDialogTarget.file.format === 'xacro';
 
   const loadingLabel = t.loadingPanel;
 
@@ -289,6 +340,7 @@ function AppContent() {
         importFolderInputRef={importFolderInputRef}
         onFileDrop={(files) => handleImport(files as any)}
         onOpenExport={handleOpenExportDialog}
+        onOpenLibraryExport={handleOpenLibraryExportDialog}
         onExportProject={handleExportProject}
         showToast={showToast}
         onOpenAI={handleOpenAIModal}
@@ -296,10 +348,10 @@ function AppContent() {
         setIsCodeViewerOpen={setIsCodeViewerOpen}
         onOpenSettings={() => openSettings()}
         onOpenAbout={() => setIsAboutOpen(true)}
-        onOpenURDFGallery={handleOpenURDFGallery}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
+        viewerReloadKey={viewerReloadKey}
       />
 
       {/* Modals */}
@@ -326,29 +378,35 @@ function AppContent() {
       {isExportDialogOpen && (
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
           <ExportDialog
-            onClose={() => setIsExportDialogOpen(false)}
-            onExport={async (config) => {
+            onClose={() => {
+              if (!isExporting) {
+                setIsExportDialogOpen(false);
+              }
+            }}
+            onExport={async (config, options) => {
               setIsExporting(true);
+              await new Promise<void>((resolve) => {
+                requestAnimationFrame(() => resolve());
+              });
               try {
-                await handleExportWithConfig(config);
+                await handleExportWithConfig(config, exportDialogTarget, {
+                  onProgress: options?.onProgress,
+                });
+                setIsExportDialogOpen(false);
+              } catch (error) {
+                showToast(
+                  error instanceof Error && error.message
+                    ? error.message
+                    : t.exportFailedParse,
+                  'info',
+                );
               } finally {
                 setIsExporting(false);
-                setIsExportDialogOpen(false);
               }
             }}
             lang={lang}
             isExporting={isExporting}
-          />
-        </Suspense>
-      )}
-
-      {/* URDF Gallery */}
-      {isURDFGalleryOpen && (
-        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
-          <URDFGallery
-            onClose={() => setIsURDFGalleryOpen(false)}
-            lang={lang}
-            onImport={(e) => handleImport(e.target.files)}
+            canExportUsd={canExportUsd}
           />
         </Suspense>
       )}

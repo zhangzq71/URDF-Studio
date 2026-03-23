@@ -1,6 +1,6 @@
-import React, { memo, Suspense, useEffect } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import React, { memo, Suspense, useCallback, useEffect, useRef } from 'react';
+import { Canvas, type RootState, useThree } from '@react-three/fiber';
+import { GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { Theme } from '@/types';
 import {
@@ -9,10 +9,15 @@ import {
   ReferenceGrid,
   CanvasResizeSync,
   NeutralStudioEnvironment,
+  WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
+  WORKSPACE_DEFAULT_CAMERA_FOV,
+  WORKSPACE_DEFAULT_CAMERA_POSITION,
+  WORKSPACE_DEFAULT_CAMERA_UP,
   WorldOriginAxes,
 } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
+import { attachContextMenuBlocker } from '@/shared/utils';
 
 interface VisualizerCanvasProps {
   theme: Theme;
@@ -50,46 +55,71 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
   // Use the hook to get the effective theme (light/dark)
   // This handles the 'system' case correctly
   const effectiveTheme = useEffectiveTheme();
+  const canvasCleanupRef = useRef<(() => void) | null>(null);
+
+  const handleCreated = useCallback((state: RootState) => {
+    canvasCleanupRef.current?.();
+    canvasCleanupRef.current = attachContextMenuBlocker(state.gl.domElement);
+  }, []);
+
+  const handleContextMenuCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      canvasCleanupRef.current?.();
+      canvasCleanupRef.current = null;
+    };
+  }, []);
 
   return (
-    <Canvas
-      shadows
-      frameloop="demand"
-      camera={{ position: [2, 2, 2], up: [0, 0, 1], fov: 60 }}
-      onPointerMissed={onPointerMissed}
-      gl={{
-        antialias: true,
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.2,
-      }}
-    >
-      <CanvasResizeSync />
-      {sceneRef && <SceneCapture sceneRef={sceneRef} />}
-      <color attach="background" args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]} />
-      <Suspense fallback={null}>
-        <OrbitControls makeDefault enableDamping={false} />
-        {/* Pass effective theme to SceneLighting and ReferenceGrid */}
-        <SceneLighting theme={effectiveTheme} />
-        <NeutralStudioEnvironment intensity={effectiveTheme === 'light' ? 0.38 : 0.46} />
-        <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
+    <div className="h-full w-full" style={{ touchAction: 'none', userSelect: 'none' }} onContextMenuCapture={handleContextMenuCapture}>
+      <Canvas
+        shadows
+        frameloop="demand"
+        camera={{
+          position: WORKSPACE_DEFAULT_CAMERA_POSITION,
+          up: WORKSPACE_DEFAULT_CAMERA_UP,
+          fov: WORKSPACE_DEFAULT_CAMERA_FOV,
+        }}
+        onCreated={handleCreated}
+        onPointerMissed={onPointerMissed}
+        gl={{
+          antialias: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.2,
+        }}
+        translate="no"
+      >
+        <CanvasResizeSync />
+        {sceneRef && <SceneCapture sceneRef={sceneRef} />}
+        <color attach="background" args={[effectiveTheme === 'light' ? WORKSPACE_CANVAS_BACKGROUND.light : WORKSPACE_CANVAS_BACKGROUND.dark]} />
+        <Suspense fallback={null}>
+          <WorkspaceOrbitControls />
+          {/* Pass effective theme to SceneLighting and ReferenceGrid */}
+          <SceneLighting theme={effectiveTheme} />
+          <NeutralStudioEnvironment intensity={effectiveTheme === 'light' ? 0.46 : 0.46} />
+          <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
 
-        {/* Render robot and controls passed as children */}
-        {children}
+          {/* Render robot and controls passed as children */}
+          {children}
 
-        {/* Reference Grid */}
-        <ReferenceGrid theme={effectiveTheme} />
-        <WorldOriginAxes />
+          {/* Reference Grid */}
+          <ReferenceGrid theme={effectiveTheme} />
+          <WorldOriginAxes />
 
-        {/* Axis Gizmo */}
-        <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
-          <GizmoViewport
-            axisColors={['#ef4444', '#22c55e', '#3b82f6']}
-            labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
-            axisHeadScale={0.9}
-            scale={34}
-          />
-        </GizmoHelper>
-      </Suspense>
-    </Canvas>
+          {/* Axis Gizmo */}
+          <GizmoHelper alignment="bottom-right" margin={[68, 68]}>
+            <GizmoViewport
+              axisColors={['#ef4444', '#22c55e', '#3b82f6']}
+              labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+              axisHeadScale={0.9}
+              scale={34}
+            />
+          </GizmoHelper>
+        </Suspense>
+      </Canvas>
+    </div>
   );
 });

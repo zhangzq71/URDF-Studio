@@ -3,30 +3,18 @@
  * Features: File tree, robot structure tree, link/joint management
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Eye,
-  EyeOff,
-  FileCode,
-  LayoutGrid,
-  Plus,
-  Shapes,
-  Shield,
-  Trash2,
-  Trees,
-} from 'lucide-react';
-import { getPrimaryTreeDisplayRootLinkId, getTreeDisplayRootLinkIds } from '@/core/robot';
+import { getPrimaryTreeRenderRootLinkId, getTreeRenderRootLinkIds } from '@/core/robot';
 import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import { Button, Dialog } from '@/shared/components/ui';
 import { useAssemblyStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
-import { AssemblyTreeView } from './AssemblyTreeView';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
-import { FileTreeNodeComponent, type LibraryDeleteTarget } from './FileTreeNode';
-import { TreeNode } from './TreeNode';
+import type { LibraryDeleteTarget } from './FileTreeNode';
+import { TreeEditorFileBrowserPanel } from './tree-editor/TreeEditorFileBrowserPanel';
+import { TreeEditorSidebarHeader } from './tree-editor/TreeEditorSidebarHeader';
+import { useTreeEditorLayout } from './tree-editor/useTreeEditorLayout';
+import { TreeEditorStructureSection } from './tree-editor/TreeEditorStructureSection';
 
 export interface TreeEditorProps {
   robot: RobotState;
@@ -48,19 +36,23 @@ export interface TreeEditorProps {
   availableFiles?: RobotFile[];
   onLoadRobot?: (file: RobotFile) => void;
   currentFileName?: string;
-  // Assembly mode
   assemblyState?: AssemblyState | null;
   onAddComponent?: (file: RobotFile) => void;
   onDeleteLibraryFile?: (file: RobotFile) => void;
   onDeleteLibraryFolder?: (folderPath: string) => void;
+  onRenameLibraryFolder?: (
+    folderPath: string,
+    nextName: string,
+  ) => { ok: true; nextPath: string } | { ok: false; reason: 'missing' | 'invalid' | 'conflict' };
   onDeleteAllLibraryFiles?: () => void;
-  onExportLibraryFile?: (file: RobotFile, format: 'urdf' | 'mjcf') => void | Promise<void>;
+  onExportLibraryFile?: (file: RobotFile) => void | Promise<void>;
   onCreateBridge?: () => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
   onPreviewFile?: (file: RobotFile) => void;
   previewFileName?: string;
+  isReadOnly?: boolean;
 }
 
 export const TreeEditor: React.FC<TreeEditorProps> = ({
@@ -87,6 +79,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onAddComponent,
   onDeleteLibraryFile,
   onDeleteLibraryFolder,
+  onRenameLibraryFolder,
   onDeleteAllLibraryFiles,
   onExportLibraryFile,
   onCreateBridge,
@@ -95,6 +88,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onRenameComponent,
   onPreviewFile,
   previewFileName,
+  isReadOnly = false,
 }) => {
   const t = translations[lang];
   const sidebarTab = useUIStore((state) => state.sidebarTab);
@@ -104,10 +98,21 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const toggleComponentVisibility = useAssemblyStore((state) => state.toggleComponentVisibility);
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
 
-  const isProMode = sidebarTab === 'workspace';
-  const isAssemblyView = sidebarTab === 'workspace' && Boolean(assemblyState);
+  const {
+    width,
+    fileBrowserHeight,
+    isDragging,
+    isFileBrowserOpen,
+    isStructureOpen,
+    setIsFileBrowserOpen,
+    setIsStructureOpen,
+    handleHorizontalResizeStart,
+    handleVerticalResizeStart,
+  } = useTreeEditorLayout();
 
-  // Switch to Pro mode: auto-init assembly if not yet created
+  const isProMode = sidebarTab === 'workspace';
+  const isAssemblyView = !isReadOnly && sidebarTab === 'workspace' && Boolean(assemblyState);
+
   const handleSwitchToProMode = useCallback(() => {
     if (!assemblyState) {
       initAssembly(robot.name || 'assembly');
@@ -115,23 +120,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     setSidebarTab('workspace');
   }, [assemblyState, initAssembly, robot.name, setSidebarTab]);
 
-  const [width, setWidth] = useState(288);
-  const [isDragging, setIsDragging] = useState(false);
-  const isResizing = useRef(false);
-  const startX = useRef(0);
-  const startWidth = useRef(0);
-
-  const [fileBrowserHeight, setFileBrowserHeight] = useState(250);
-  const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(true);
-  const [isStructureOpen, setIsStructureOpen] = useState(true);
-  const isVerticalResizing = useRef(false);
-  const startY = useRef(0);
-  const startHeight = useRef(0);
-
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null);
+  const [folderRenameDraft, setFolderRenameDraft] = useState('');
+  const folderRenameInputRef = useRef<HTMLInputElement>(null);
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
@@ -142,7 +137,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
   const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
   const namePlaceholder = sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName;
-  const showStructureFilePath = Boolean(currentFileName && sidebarTab === 'structure');
+  const showStructureFilePath = Boolean(currentFileName && (sidebarTab === 'structure' || isReadOnly));
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
   const topLevelLibraryFoldersKey = useMemo(() => {
@@ -157,6 +152,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
     return Array.from(firstLevel).sort().join('\u0000');
   }, [availableFiles]);
+
   const childJointsByParent = useMemo<Record<string, RobotState['joints'][string][]>>(() => {
     const grouped: Record<string, RobotState['joints'][string][]> = {};
 
@@ -169,7 +165,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
     return grouped;
   }, [robot.joints]);
-  const treeRootLinkIds = useMemo(() => getTreeDisplayRootLinkIds(robot), [robot]);
+
+  const treeRootLinkIds = useMemo(() => getTreeRenderRootLinkIds(robot), [robot]);
+
   const selectionBranchLinkIds = useMemo(() => {
     const branchLinkIds = new Set<string>();
     const { selection } = robot;
@@ -205,13 +203,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
   const toggleFolder = useCallback((path: string) => {
     setExpandedFolders((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(path)) {
-        newSet.delete(path);
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
       } else {
-        newSet.add(path);
+        next.add(path);
       }
-      return newSet;
+      return next;
     });
   }, []);
 
@@ -259,31 +257,25 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
   useEffect(() => {
     if (!isEditingName) return;
+
     const id = window.requestAnimationFrame(() => {
       nameInputRef.current?.focus();
       nameInputRef.current?.select();
     });
+
     return () => window.cancelAnimationFrame(id);
   }, [isEditingName]);
 
-  const startNameEditing = useCallback(() => {
-    setNameDraft(currentName || '');
-    setIsEditingName(true);
-  }, [currentName]);
+  useEffect(() => {
+    if (!editingFolderPath) return;
 
-  const cancelNameEditing = useCallback(() => {
-    setNameDraft('');
-    setIsEditingName(false);
-  }, []);
+    const id = window.requestAnimationFrame(() => {
+      folderRenameInputRef.current?.focus();
+      folderRenameInputRef.current?.select();
+    });
 
-  const commitNameEditing = useCallback(() => {
-    const nextName = nameDraft.trim();
-    if (nextName && nextName !== currentName) {
-      onNameChange(nextName);
-    }
-    setNameDraft('');
-    setIsEditingName(false);
-  }, [currentName, nameDraft, onNameChange]);
+    return () => window.cancelAnimationFrame(id);
+  }, [editingFolderPath]);
 
   useEffect(() => {
     if (!fileContextMenu) return;
@@ -306,6 +298,45 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     };
   }, [fileContextMenu]);
 
+  const remapExpandedFolderPaths = useCallback((fromPath: string, toPath: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set<string>();
+      prev.forEach((path) => {
+        if (path === fromPath) {
+          next.add(toPath);
+          return;
+        }
+
+        if (path.startsWith(`${fromPath}/`)) {
+          next.add(`${toPath}/${path.slice(fromPath.length + 1)}`);
+          return;
+        }
+
+        next.add(path);
+      });
+      return next;
+    });
+  }, []);
+
+  const startNameEditing = useCallback(() => {
+    setNameDraft(currentName || '');
+    setIsEditingName(true);
+  }, [currentName]);
+
+  const cancelNameEditing = useCallback(() => {
+    setNameDraft('');
+    setIsEditingName(false);
+  }, []);
+
+  const commitNameEditing = useCallback(() => {
+    const nextName = nameDraft.trim();
+    if (nextName && nextName !== currentName) {
+      onNameChange(nextName);
+    }
+    setNameDraft('');
+    setIsEditingName(false);
+  }, [currentName, nameDraft, onNameChange]);
+
   const handlePreviewFile = useCallback((file: RobotFile) => {
     onPreviewFile?.(file);
   }, [onPreviewFile]);
@@ -315,7 +346,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     event.stopPropagation();
 
     const supportsExport = file.format === 'urdf' || file.format === 'mjcf';
-    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 2 : 0);
+    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 1 : 0) + (onDeleteLibraryFile ? 1 : 0);
     if (actionCount === 0) return;
 
     const menuWidth = 180;
@@ -328,14 +359,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       x: Math.min(event.clientX, maxX),
       y: Math.min(event.clientY, maxY),
     });
-  }, [isProMode]);
+  }, [isProMode, onDeleteLibraryFile]);
 
   const handleFolderContextMenu = useCallback((event: React.MouseEvent, folderPath: string) => {
     event.preventDefault();
     event.stopPropagation();
 
+    if (!onDeleteLibraryFolder && !onRenameLibraryFolder) {
+      return;
+    }
+
     const menuWidth = 180;
-    const menuHeight = 44;
+    const menuHeight = 76;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
 
@@ -344,7 +379,46 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       x: Math.min(event.clientX, maxX),
       y: Math.min(event.clientY, maxY),
     });
+  }, [onDeleteLibraryFolder, onRenameLibraryFolder]);
+
+  const handleStartFolderRename = useCallback((folderPath: string) => {
+    const folderName = folderPath.split('/').pop() ?? folderPath;
+    setFolderRenameDraft(folderName);
+    setEditingFolderPath(folderPath);
+    setFileContextMenu(null);
   }, []);
+
+  const handleCancelFolderRename = useCallback(() => {
+    setEditingFolderPath(null);
+    setFolderRenameDraft('');
+  }, []);
+
+  const handleCommitFolderRename = useCallback(() => {
+    if (!editingFolderPath || !onRenameLibraryFolder) {
+      handleCancelFolderRename();
+      return;
+    }
+
+    const result = onRenameLibraryFolder(editingFolderPath, folderRenameDraft);
+    if (result.ok) {
+      if (result.nextPath !== editingFolderPath) {
+        remapExpandedFolderPaths(editingFolderPath, result.nextPath);
+      }
+      handleCancelFolderRename();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      folderRenameInputRef.current?.focus();
+      folderRenameInputRef.current?.select();
+    });
+  }, [
+    editingFolderPath,
+    folderRenameDraft,
+    handleCancelFolderRename,
+    onRenameLibraryFolder,
+    remapExpandedFolderPaths,
+  ]);
 
   const handleAddFileToAssembly = useCallback(() => {
     if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onAddComponent) return;
@@ -352,89 +426,34 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     setFileContextMenu(null);
   }, [fileContextMenu, onAddComponent]);
 
-  const handleExportLibraryFile = useCallback((format: 'urdf' | 'mjcf') => {
+  const handleExportLibraryFile = useCallback(() => {
     if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onExportLibraryFile) return;
-    void onExportLibraryFile(fileContextMenu.target.file, format);
+    void onExportLibraryFile(fileContextMenu.target.file);
     setFileContextMenu(null);
   }, [fileContextMenu, onExportLibraryFile]);
 
-  const handleDeleteFromLibrary = useCallback(
-    (target: LibraryDeleteTarget) => {
-      if (target.type === 'file') {
-        if (!onDeleteLibraryFile) return;
-        onDeleteLibraryFile(target.file);
-      } else {
-        if (!onDeleteLibraryFolder) return;
-        onDeleteLibraryFolder(target.path);
-      }
+  const handleRenameFolderFromMenu = useCallback(() => {
+    if (!fileContextMenu || fileContextMenu.target.type !== 'folder') return;
+    handleStartFolderRename(fileContextMenu.target.path);
+  }, [fileContextMenu, handleStartFolderRename]);
 
-      setFileContextMenu(null);
-    },
-    [onDeleteLibraryFile, onDeleteLibraryFolder],
-  );
+  const handleDeleteFromLibrary = useCallback((target: LibraryDeleteTarget) => {
+    if (target.type === 'file') {
+      if (!onDeleteLibraryFile) return;
+      onDeleteLibraryFile(target.file);
+    } else {
+      if (!onDeleteLibraryFolder) return;
+      onDeleteLibraryFolder(target.path);
+    }
+
+    setFileContextMenu(null);
+  }, [onDeleteLibraryFile, onDeleteLibraryFolder]);
 
   const handleConfirmDeleteAllLibraryFiles = useCallback(() => {
     if (!onDeleteAllLibraryFiles || availableFiles.length === 0) return;
     onDeleteAllLibraryFiles();
     setIsDeleteAllLibraryDialogOpen(false);
   }, [availableFiles.length, onDeleteAllLibraryFiles]);
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      isResizing.current = true;
-      setIsDragging(true);
-      startX.current = e.clientX;
-      startWidth.current = width;
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-    },
-    [width],
-  );
-
-  const handleVerticalMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      isVerticalResizing.current = true;
-      setIsDragging(true);
-      startY.current = e.clientY;
-      startHeight.current = fileBrowserHeight;
-      document.body.style.cursor = 'row-resize';
-      document.body.style.userSelect = 'none';
-    },
-    [fileBrowserHeight],
-  );
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isResizing.current) {
-        const delta = e.clientX - startX.current;
-        const newWidth = Math.max(200, Math.min(600, startWidth.current + delta));
-        setWidth(newWidth);
-      }
-
-      if (isVerticalResizing.current) {
-        const delta = e.clientY - startY.current;
-        const newHeight = Math.max(100, Math.min(600, startHeight.current + delta));
-        setFileBrowserHeight(newHeight);
-      }
-    };
-
-    const handleMouseUp = () => {
-      isResizing.current = false;
-      isVerticalResizing.current = false;
-      setIsDragging(false);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
 
   const actualWidth = collapsed ? 0 : width;
   const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;
@@ -450,313 +469,118 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
         overflow: 'visible',
       }}
     >
-      <button
-        onClick={onToggle}
-        className="absolute -right-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-panel-bg hover:bg-system-blue-solid hover:text-white border border-border-strong rounded-r-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-text-tertiary transition-all group"
-        title={collapsed ? t.structure : t.collapseSidebar}
-      >
-        <div className="flex flex-col gap-0.5 items-center">
-          <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
-          {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
-          <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
-        </div>
-      </button>
+      <TreeEditorSidebarHeader
+        collapsed={collapsed}
+        onToggle={onToggle}
+        isProMode={isProMode}
+        simpleModeLabel={t.simpleMode}
+        proModeLabel={t.proMode}
+        collapseTitle={t.collapseSidebar}
+        expandTitle={t.structure}
+        nameLabel={nameLabel}
+        currentName={currentName}
+        namePlaceholder={namePlaceholder}
+        isEditingName={isEditingName}
+        nameDraft={nameDraft}
+        nameInputRef={nameInputRef}
+        onSwitchToStructure={() => setSidebarTab('structure')}
+        onSwitchToWorkspace={handleSwitchToProMode}
+        onNameDraftChange={setNameDraft}
+        onStartNameEditing={startNameEditing}
+        onCommitNameEditing={commitNameEditing}
+        onCancelNameEditing={cancelNameEditing}
+      />
 
       {!collapsed && (
         <div className="flex flex-col h-full overflow-hidden w-full relative">
-          <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-            <div className="flex bg-element-bg p-0.5 rounded-lg">
-              <button
-                onClick={() => setSidebarTab('structure')}
-                className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all
-                ${
-                  sidebarTab === 'structure'
-                    ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
-                    : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
-                }`}
-              >
-                <Trees size={13} />
-                {t.simpleMode}
-              </button>
-              <button
-                onClick={handleSwitchToProMode}
-                className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all
-                ${
-                  sidebarTab === 'workspace'
-                    ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
-                    : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
-                }`}
-              >
-                <LayoutGrid size={13} />
-                {t.proMode}
-              </button>
-            </div>
-          </div>
-
-          <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-            <div className="flex items-center gap-2">
-              <label className="shrink-0 text-[10px] text-text-tertiary uppercase font-bold tracking-wider">
-                {nameLabel}
-              </label>
-              {isEditingName ? (
-                <input
-                  ref={nameInputRef}
-                  type="text"
-                  value={nameDraft}
-                  onChange={(e) => setNameDraft(e.target.value)}
-                  onBlur={commitNameEditing}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      commitNameEditing();
-                    } else if (e.key === 'Escape') {
-                      cancelNameEditing();
-                    }
-                  }}
-                  className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-[13px] font-medium text-text-primary px-2 py-1 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
-                  placeholder={namePlaceholder}
-                />
-              ) : (
-                <button
-                  type="button"
-                  onClick={startNameEditing}
-                  className="flex-1 min-w-0 text-left text-[13px] font-medium text-text-primary hover:text-system-blue transition-colors truncate"
-                  title={currentName || namePlaceholder}
-                >
-                  {currentName || namePlaceholder}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div
-            className={`flex flex-col bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black ${shouldFileBrowserFillSpace ? 'flex-1 min-h-0' : 'shrink-0'} ${isDragging ? '' : 'transition-all duration-200'}`}
-            style={
-              shouldFileBrowserFillSpace
-                ? undefined
-                : { height: isFileBrowserOpen ? `${fileBrowserHeight}px` : 'auto' }
+          <TreeEditorFileBrowserPanel
+            isOpen={isFileBrowserOpen}
+            isDragging={isDragging}
+            isProMode={isProMode}
+            height={fileBrowserHeight}
+            shouldFillSpace={shouldFileBrowserFillSpace}
+            availableFiles={availableFiles}
+            fileTree={fileTree}
+            expandedFolders={expandedFolders}
+            previewFileName={previewFileName}
+            editingFolderPath={editingFolderPath}
+            folderRenameDraft={folderRenameDraft}
+            folderRenameInputRef={folderRenameInputRef}
+            canDeleteAllLibraryFiles={canDeleteAllLibraryFiles}
+            t={t}
+            onToggleOpen={() => setIsFileBrowserOpen(!isFileBrowserOpen)}
+            onDeleteAll={() => {
+              setFileContextMenu(null);
+              setIsDeleteAllLibraryDialogOpen(true);
+            }}
+            onFolderRenameDraftChange={setFolderRenameDraft}
+            onCommitFolderRename={handleCommitFolderRename}
+            onCancelFolderRename={handleCancelFolderRename}
+            onLoadRobot={onLoadRobot}
+            onPreviewFile={handlePreviewFile}
+            onAddComponent={onAddComponent}
+            onDeleteFromLibrary={
+              onDeleteLibraryFile || onDeleteLibraryFolder ? handleDeleteFromLibrary : undefined
             }
-          >
-            <div
-              className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
-              onClick={() => setIsFileBrowserOpen(!isFileBrowserOpen)}
-            >
-              <div className="flex items-center gap-2">
-                {isFileBrowserOpen ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
-                )}
-                <span className="text-xs font-bold text-text-secondary uppercase tracking-wider">
-                  {t.fileBrowser}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-text-tertiary">{availableFiles.length}</span>
-                {canDeleteAllLibraryFiles && (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setFileContextMenu(null);
-                      setIsDeleteAllLibraryDialogOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
-                    title={t.deleteAllLibraryFiles}
-                  >
-                    <Trash2 size={10} strokeWidth={2.25} />
-                    <span>{t.deleteAllLibraryFiles}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {isFileBrowserOpen && isProMode && availableFiles.length > 0 && (
-              <div className="px-3 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
-                <span className="text-[10px] text-system-blue">{t.clickToAddComponent}</span>
-              </div>
-            )}
-
-            {isFileBrowserOpen && (
-              <div
-                className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1"
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                }}
-              >
-                {availableFiles.length === 0 ? (
-                  <div className="text-xs text-text-tertiary text-center py-4 italic">{t.dropOrImport}</div>
-                ) : (
-                  fileTree.map((node) => (
-                    <FileTreeNodeComponent
-                      key={node.path}
-                      node={node}
-                      depth={0}
-                      onLoadRobot={isProMode ? handlePreviewFile : onLoadRobot}
-                      onAddAsComponent={isProMode ? onAddComponent : undefined}
-                      onDeleteFromLibrary={
-                        onDeleteLibraryFile || onDeleteLibraryFolder
-                          ? handleDeleteFromLibrary
-                          : undefined
-                      }
-                      onFileContextMenu={handleFileContextMenu}
-                      onFolderContextMenu={handleFolderContextMenu}
-                      expandedFolders={expandedFolders}
-                      toggleFolder={toggleFolder}
-                      showAddAsComponent={isProMode}
-                      selectedFileName={isProMode ? previewFileName : undefined}
-                      t={t}
-                    />
-                  ))
-                )}
-              </div>
-            )}
-
-          </div>
+            onFileContextMenu={handleFileContextMenu}
+            onFolderContextMenu={handleFolderContextMenu}
+            toggleFolder={toggleFolder}
+          />
 
           {isFileBrowserOpen && isStructureOpen && (
             <div
               className="h-1 bg-border-black cursor-row-resize hover:bg-system-blue transition-colors shrink-0 z-10"
-              onMouseDown={handleVerticalMouseDown}
+              onMouseDown={handleVerticalResizeStart}
             />
           )}
 
-          <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isStructureOpen ? '1 1 0%' : '0 0 auto' }}>
-            <div
-              className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none border-b border-border-black dark:border-border-black"
-              onClick={() => setIsStructureOpen(!isStructureOpen)}
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                {isStructureOpen ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
-                )}
-                <span className="shrink-0 text-xs font-bold text-text-secondary uppercase tracking-wider">
-                  {isAssemblyView ? t.assemblyTree : t.structureTree}
-                </span>
-                {showStructureFilePath && (
-                  <div
-                    className="flex min-w-0 items-center gap-1 rounded-md border border-border-black bg-white px-1.5 py-0.5 dark:bg-panel-bg"
-                    title={currentFileName}
-                  >
-                    <FileCode className="h-3 w-3 shrink-0 text-system-blue" />
-                    <span className="truncate text-[10px] font-medium text-text-secondary dark:text-text-tertiary">
-                      {currentFileName}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 transition-colors ${
-                    structureTreeShowGeometryDetails
-                      ? 'bg-element-hover text-text-primary ring-1 ring-inset ring-border-black/60'
-                      : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
-                  }`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setStructureTreeShowGeometryDetails(!structureTreeShowGeometryDetails);
-                  }}
-                  title={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
-                  aria-label={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
-                >
-                  <Shapes size={11} />
-                  <Shield size={11} />
-                </button>
-
-                {mode === 'skeleton' && sidebarTab === 'structure' && (
-                  <button
-                    className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      let targetId = getPrimaryTreeDisplayRootLinkId(robot) ?? robot.rootLinkId;
-                      if (robot.selection.type === 'link' && robot.selection.id) {
-                        targetId = robot.selection.id;
-                      } else if (robot.selection.type === 'joint' && robot.selection.id) {
-                        const selectedJoint = robot.joints[robot.selection.id];
-                        if (selectedJoint) {
-                          targetId = selectedJoint.childLinkId;
-                        }
-                      }
-                      onAddChild(targetId);
-                    }}
-                    title={t.addChildLink}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                )}
-
-                {!isAssemblyView && (
-                  <div
-                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-element-hover cursor-pointer text-text-tertiary transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowVisual(!showVisual);
-                    }}
-                    title={showVisual ? t.hideAllVisuals : t.showAllVisuals}
-                  >
-                    {showVisual ? <Eye size={14} /> : <EyeOff size={14} />}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {isStructureOpen && (
-              <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-                <div className="flex-1 overflow-y-auto overflow-x-auto py-2 custom-scrollbar bg-white dark:bg-panel-bg">
-                  <div className="min-w-max">
-                  {isAssemblyView && assemblyState ? (
-                    <AssemblyTreeView
-                      assemblyState={assemblyState}
-                      robot={robot}
-                      showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
-                      onSelect={onSelect}
-                      onSelectGeometry={onSelectGeometry}
-                      onFocus={onFocus}
-                      onAddChild={onAddChild}
-                      onAddCollisionBody={onAddCollisionBody}
-                      onDelete={onDelete}
-                      onUpdate={onUpdate}
-                      onRemoveComponent={onRemoveComponent}
-                      onRemoveBridge={onRemoveBridge}
-                      onRenameComponent={onRenameComponent}
-                      onCreateBridge={onCreateBridge}
-                      onToggleComponentVisibility={toggleComponentVisibility}
-                      mode={mode}
-                      t={t}
-                    />
-                  ) : (
-                    treeRootLinkIds.map((treeRootLinkId) => (
-                      <TreeNode
-                        key={treeRootLinkId}
-                        linkId={treeRootLinkId}
-                        robot={robot}
-                        showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
-                        childJointsByParent={childJointsByParent}
-                        selectionBranchLinkIds={selectionBranchLinkIds}
-                        onSelect={onSelect}
-                        onSelectGeometry={onSelectGeometry}
-                        onFocus={onFocus}
-                        onAddChild={onAddChild}
-                        onAddCollisionBody={onAddCollisionBody}
-                        onDelete={onDelete}
-                        onUpdate={onUpdate}
-                        mode={mode}
-                        t={t}
-                      />
-                    ))
-                  )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <TreeEditorStructureSection
+            isOpen={isStructureOpen}
+            isAssemblyView={isAssemblyView}
+            structureTreeShowGeometryDetails={structureTreeShowGeometryDetails}
+            showVisual={showVisual}
+            showStructureFilePath={showStructureFilePath}
+            currentFileName={currentFileName}
+            mode={mode}
+            assemblyState={assemblyState}
+            robot={robot}
+            treeRootLinkIds={treeRootLinkIds}
+            childJointsByParent={childJointsByParent}
+            selectionBranchLinkIds={selectionBranchLinkIds}
+            t={t}
+            onToggleOpen={() => setIsStructureOpen(!isStructureOpen)}
+            onToggleGeometryDetails={() => setStructureTreeShowGeometryDetails(!structureTreeShowGeometryDetails)}
+            onAddChildFromSelection={() => {
+              let targetId = getPrimaryTreeRenderRootLinkId(robot) ?? robot.rootLinkId;
+              if (robot.selection.type === 'link' && robot.selection.id) {
+                targetId = robot.selection.id;
+              } else if (robot.selection.type === 'joint' && robot.selection.id) {
+                const selectedJoint = robot.joints[robot.selection.id];
+                if (selectedJoint) {
+                  targetId = selectedJoint.childLinkId;
+                }
+              }
+              onAddChild(targetId);
+            }}
+            onToggleVisuals={() => setShowVisual(!showVisual)}
+            onSelect={onSelect}
+            onSelectGeometry={onSelectGeometry}
+            onFocus={onFocus}
+            onAddChild={onAddChild}
+            onAddCollisionBody={onAddCollisionBody}
+            onDelete={onDelete}
+            onUpdate={onUpdate}
+            onRemoveComponent={onRemoveComponent}
+            onRemoveBridge={onRemoveBridge}
+            onRenameComponent={onRenameComponent}
+            onCreateBridge={onCreateBridge}
+            onToggleComponentVisibility={toggleComponentVisibility}
+            isReadOnly={isReadOnly}
+          />
 
           <div
             className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue-solid/50 transition-colors z-20"
-            onMouseDown={handleMouseDown}
+            onMouseDown={handleHorizontalResizeStart}
           />
         </div>
       )}
@@ -764,22 +588,22 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       <FileTreeContextMenu
         position={fileContextMenu ? { x: fileContextMenu.x, y: fileContextMenu.y } : null}
         addLabel={t.addComponent}
-        exportAsURDFLabel={`${t.export} URDF`}
-        exportAsMJCFLabel={`${t.export} MJCF`}
+        renameLabel={t.rename}
+        exportLabel={t.export}
         deleteLabel={t.removeFromLibrary}
         onAdd={handleAddFileToAssembly}
-        onExportAsURDF={() => handleExportLibraryFile('urdf')}
-        onExportAsMJCF={() => handleExportLibraryFile('mjcf')}
+        onRename={handleRenameFolderFromMenu}
+        onExport={handleExportLibraryFile}
         showAddAction={isProMode && fileContextMenu?.target.type === 'file'}
-        showExportAsURDFAction={
+        showRenameAction={Boolean(fileContextMenu?.target.type === 'folder' && onRenameLibraryFolder)}
+        showExportAction={
           fileContextMenu?.target.type === 'file'
           && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
         }
-        showExportAsMJCFAction={
-          fileContextMenu?.target.type === 'file'
-          && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
-        }
-        showDeleteAction={fileContextMenu?.target.type === 'folder'}
+        showDeleteAction={Boolean(
+          (fileContextMenu?.target.type === 'folder' && onDeleteLibraryFolder)
+          || (fileContextMenu?.target.type === 'file' && onDeleteLibraryFile),
+        )}
         onDelete={() => {
           if (fileContextMenu?.target) {
             handleDeleteFromLibrary(fileContextMenu.target);
@@ -794,18 +618,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
         width="w-[420px]"
         footer={(
           <div className="flex items-center justify-end gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setIsDeleteAllLibraryDialogOpen(false)}
-            >
+            <Button type="button" variant="secondary" onClick={() => setIsDeleteAllLibraryDialogOpen(false)}>
               {t.cancel}
             </Button>
-            <Button
-              type="button"
-              variant="danger"
-              onClick={handleConfirmDeleteAllLibraryFiles}
-            >
+            <Button type="button" variant="danger" onClick={handleConfirmDeleteAllLibraryFiles}>
               {t.confirm}
             </Button>
           </div>

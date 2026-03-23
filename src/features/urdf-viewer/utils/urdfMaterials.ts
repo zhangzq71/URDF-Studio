@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { disposeMaterial } from './dispose';
 
 // ============================================================
 // URDF Material Parser - Extract rgba colors from URDF XML
@@ -10,12 +9,42 @@ export interface URDFMaterialInfo {
     rgba?: [number, number, number, number];
 }
 
+export function normalizeURDFMaterialName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/-effect$/i, '')
+    .replace(/[._\-\s]+/g, '');
+}
+
+function findURDFMaterialByName(
+  materials: Map<string, URDFMaterialInfo>,
+  materialName: string,
+): URDFMaterialInfo | undefined {
+  const exactMatch = materials.get(materialName);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const normalizedMaterialName = normalizeURDFMaterialName(materialName);
+  if (!normalizedMaterialName) {
+    return undefined;
+  }
+
+  for (const [candidateName, candidateMaterial] of materials) {
+    if (normalizeURDFMaterialName(candidateName) === normalizedMaterialName) {
+      return candidateMaterial;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Parse URDF materials - returns a Map keyed by material NAME (not link name)
  * This allows matching materials in DAE files by their name
  */
-export function parseURDFMaterials(urdfContent: string): Map<string, THREE.Material> {
-  const materials = new Map<string, THREE.Material>();
+export function parseURDFMaterials(urdfContent: string): Map<string, URDFMaterialInfo> {
   const namedMaterials = new Map<string, URDFMaterialInfo>();
   
   try {
@@ -77,54 +106,49 @@ export function parseURDFMaterials(urdfContent: string): Map<string, THREE.Mater
       });
     });
 
-    // Convert URDFMaterialInfo to THREE.Material
-    namedMaterials.forEach((info, name) => {
-      if (info.rgba) {
-        const [r, g, b, a] = info.rgba;
-        const mat = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(r, g, b),
-          transparent: a < 1,
-          opacity: a,
-        });
-        mat.name = name;
-        materials.set(name, mat);
-      }
-    });
-
   } catch (error) {
     // Silently handle parse errors
   }
 
-  return materials;
+  return namedMaterials;
 }
 
 /**
  * Apply URDF materials to robot model by matching material NAMES
  * This works with DAE files where materials have specific names like "深色橡胶_005-effect"
  */
-export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string, THREE.Material>) {
+export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string, URDFMaterialInfo>) {
   if (materials.size === 0) return;
-
-  const replacedMaterials = new Set<THREE.Material>();
 
   robot.traverse((child: any) => {
     if (!child.isMesh) return;
-
-    const originalMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
-    let didReplace = false;
 
     // Process each material on this mesh
     const processMaterial = (mat: THREE.Material): THREE.Material => {
       // Try to match by material name
       const matName = mat.name;
-      const urdfMat = materials.get(matName);
+      const urdfMaterial = findURDFMaterialByName(materials, matName);
 
-      if (urdfMat) {
-        didReplace = true;
-        const cloned = urdfMat.clone();
+      if (urdfMaterial?.rgba) {
+        const [r, g, b, a] = urdfMaterial.rgba;
+        const color = new THREE.Color(r, g, b);
+        const cloned = mat.clone();
+
+        if ((cloned as any).color?.copy) {
+          (cloned as any).color.copy(color);
+        } else {
+          (cloned as any).color = color;
+        }
+
+        cloned.name = matName || urdfMaterial.name || cloned.name;
         cloned.userData.urdfColorApplied = true;
-        if ((urdfMat as THREE.MeshStandardMaterial).color) {
-          cloned.userData.urdfColor = (urdfMat as THREE.MeshStandardMaterial).color.clone();
+        cloned.userData.urdfColor = color.clone();
+        if (urdfMaterial.name) {
+          cloned.userData.urdfMaterialName = urdfMaterial.name;
+        }
+        if (a < 1) {
+          cloned.transparent = true;
+          cloned.opacity = a;
         }
         cloned.needsUpdate = true;
         return cloned;
@@ -137,16 +161,6 @@ export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string,
       child.material = child.material.map(processMaterial);
     } else if (child.material) {
       child.material = processMaterial(child.material);
-    }
-
-    if (didReplace && originalMaterial) {
-      const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
-      for (const mat of mats) {
-        if (!mat || replacedMaterials.has(mat)) continue;
-        // New materials don't reuse old textures here, dispose fully.
-        disposeMaterial(mat, true);
-        replacedMaterials.add(mat);
-      }
     }
   });
 }

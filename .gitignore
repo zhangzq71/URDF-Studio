@@ -6,15 +6,17 @@ node_modules/
 dist/
 build/
 test/
-
+scripts/
+.github/
 output/
+tmp/
 
 .claude/
 .codex/
 AGENTS.md
 
 .vscode/
-
-test/
 .tmp/
 .uv-cache/
+__pycache__/
+*.py[cod]

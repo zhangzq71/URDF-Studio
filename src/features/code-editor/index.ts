@@ -5,9 +5,7 @@
 
 // Components
 export { SourceCodeEditor } from './components/SourceCodeEditor';
-export { SourceCodeViewer } from './components/SourceCodeViewer';
-export { preloadSourceCodeEditor } from './components/SourceCodeEditor';
 
 // Types
+export type { SourceCodeDocumentFlavor, SourceCodeEditorLanguageId } from './types';
 export type { SourceCodeEditorProps } from './components/SourceCodeEditor';
-export type { SourceCodeViewerProps } from './components/SourceCodeViewer';

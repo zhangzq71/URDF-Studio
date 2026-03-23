@@ -74,8 +74,8 @@ const getContextRobot = (robot: RobotState) => {
     links: Object.values(robot.links).map(l => ({
       id: l.id,
       name: l.name,
-      mass: l.inertial.mass,
-      inertia: l.inertial.inertia
+      mass: l.inertial?.mass ?? 0,
+      inertia: l.inertial?.inertia
     })),
     joints: Object.values(robot.joints).map(j => ({
       id: j.id,

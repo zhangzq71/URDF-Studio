@@ -46,13 +46,13 @@ The platform integrates **Generative AI** for rapid prototyping and automated mo
 *   **Import**: Load existing projects via ZIP (URDF + meshes).
 *   **Export**: Production-ready packages including URDF, consolidated meshes, BOM (CSV), and MuJoCo XML.
 
-## 📚 Documentation & Tutorials
+## 📚 Documentation
 
-Learn how to master URDF Studio with our step-by-step guides:
+Key project references:
 
-1.  **[Getting Started](./docs/tutorials/en/01_getting_started.md)**: Your first 5 minutes in URDF Studio.
-2.  **[Design Modes](./docs/tutorials/en/02_design_modes.md)**: Deep dive into Skeleton, Detail, and Hardware modes.
-3.  **[AI Assistant & Inspector](./docs/tutorials/en/03_ai_features.md)**: Leveraging AI to speed up your design workflow.
+1.  **[Architecture Boundaries](./docs/architecture-boundaries.md)**: Layering, dependency direction, and module ownership.
+2.  **[Robot Canvas Library](./docs/robot-canvas-lib.md)**: Notes for the reusable `react-robot-canvas` workspace.
+3.  **[Contributor Prompt Context](./docs/prompts/CLAUDE.md)**: The single prompt source of truth for contributors and coding agents.
 
 ---
 

@@ -1,0 +1,57 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+
+import { computeCameraFrame, createCameraFrameStabilityKey } from './cameraFrame.ts';
+
+function assertVectorClose(actual: THREE.Vector3, expected: THREE.Vector3, epsilon = 1e-6): void {
+  assert.ok(actual.distanceTo(expected) <= epsilon, `expected ${actual.toArray()} to be close to ${expected.toArray()}`);
+}
+
+test('computeCameraFrame centers on the visible mesh bounds and preserves orbit direction', () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.position.set(2, 2, 2);
+
+  const currentOrbitTarget = new THREE.Vector3(0, 0, 0);
+  const group = new THREE.Group();
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 6));
+  mesh.position.set(1, -2, 3);
+  group.add(mesh);
+
+  const frame = computeCameraFrame(group, camera, currentOrbitTarget);
+  assert.ok(frame, 'expected a camera frame result');
+
+  const expectedCenter = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
+  assertVectorClose(frame.focusTarget, expectedCenter);
+
+  const initialDirection = camera.position.clone().sub(currentOrbitTarget).normalize();
+  const framedDirection = frame.cameraPosition.clone().sub(frame.focusTarget).normalize();
+  assertVectorClose(framedDirection, initialDirection);
+  assert.ok(frame.cameraPosition.distanceTo(frame.focusTarget) > 0.5);
+});
+
+test('computeCameraFrame ignores helper-only objects', () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.position.set(2, 2, 2);
+
+  const group = new THREE.Group();
+  const helperMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  helperMesh.userData.isHelper = true;
+  group.add(helperMesh);
+
+  const frame = computeCameraFrame(group, camera, new THREE.Vector3(0, 0, 0));
+  assert.equal(frame, null);
+});
+
+test('createCameraFrameStabilityKey is stable for identical bounds', () => {
+  const bounds = new THREE.Box3(
+    new THREE.Vector3(-1, -2, -3),
+    new THREE.Vector3(4, 5, 6),
+  );
+
+  assert.equal(
+    createCameraFrameStabilityKey(bounds),
+    createCameraFrameStabilityKey(bounds.clone()),
+  );
+  assert.equal(createCameraFrameStabilityKey(null), null);
+});

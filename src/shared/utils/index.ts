@@ -8,4 +8,6 @@ export * from './throttle';
 export * from './threeBounds';
 export * from './materialFactory';
 export * from './jointTypes';
+export * from './jointUnits';
+export * from './domEvents';
 export * from './three/dispose';

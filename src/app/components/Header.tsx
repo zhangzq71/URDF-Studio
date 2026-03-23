@@ -3,69 +3,14 @@
  * Contains logo, menus, mode switcher, and action buttons
  */
 import React from 'react';
-import {
-  Download,
-  Activity,
-  Box,
-  Cpu,
-  Pencil,
-  Upload,
-  Check,
-  Globe,
-  Info,
-  ChevronDown,
-  FileText,
-  Sun,
-  Moon,
-  Monitor,
-  Briefcase,
-  Undo,
-  Redo,
-  Code,
-  Settings,
-  Camera,
-  Eye,
-  MoreHorizontal,
-  Folder,
-  LayoutGrid,
-} from 'lucide-react';
-import { useUIStore, useSelectionStore } from '@/store';
+import { useUIStore } from '@/store';
 import { translations } from '@/shared/i18n';
-import type { AppMode, Theme } from '@/types';
-import { ToolboxMenu } from './header/ToolboxMenu';
 import { useActiveHistory } from '../hooks/useActiveHistory';
-
-/**
- * Unified Header Button Component
- * Provides consistent styling for all navigation buttons
- */
-function HeaderButton({
-  isActive,
-  onClick,
-  children,
-  className = '',
-  title,
-}: {
-  isActive: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  className?: string;
-  title?: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`relative z-50 shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md whitespace-nowrap text-xs font-medium transition-all ${
-        isActive
-          ? 'bg-element-bg dark:bg-element-active text-text-primary dark:text-white'
-          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
-      } ${className}`}
-      title={title}
-    >
-      {children}
-    </button>
-  );
-}
+import { HeaderActions } from './header/HeaderActions';
+import { HeaderMenus } from './header/HeaderMenus';
+import { ModeSwitcher } from './header/ModeSwitcher';
+import { useHeaderResponsiveLayout } from './header/useHeaderResponsiveLayout';
+import type { HeaderMenuKey, HeaderQuickAction, HeaderViewConfig } from './header/types';
 
 interface HeaderProps {
   // Import actions
@@ -75,11 +20,13 @@ interface HeaderProps {
   onExportProject: () => void;
   // Modal actions
   onOpenAI: () => void;
+  onOpenMeasureTool: () => void;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenURDFGallery: () => void;
+  onOpenUser?: () => void;
+  quickAction?: HeaderQuickAction;
   // Snapshot
   onSnapshot: () => void;
   onOpenCollisionOptimizer: () => void;
@@ -90,12 +37,7 @@ interface HeaderProps {
     showSkeletonOptionsPanel: boolean;
     showJointPanel: boolean;
   };
-  setViewConfig: React.Dispatch<React.SetStateAction<{
-    showToolbar: boolean;
-    showOptionsPanel: boolean;
-    showSkeletonOptionsPanel: boolean;
-    showJointPanel: boolean;
-  }>>;
+  setViewConfig: React.Dispatch<React.SetStateAction<HeaderViewConfig>>;
 }
 
 export function Header({
@@ -104,116 +46,30 @@ export function Header({
   onOpenExport,
   onExportProject,
   onOpenAI,
+  onOpenMeasureTool,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onOpenSettings,
   onOpenAbout,
-  onOpenURDFGallery,
+  onOpenUser,
+  quickAction,
   onSnapshot,
   onOpenCollisionOptimizer,
   viewConfig,
   setViewConfig,
 }: HeaderProps) {
   const headerRef = React.useRef<HTMLElement | null>(null);
-  const [headerWidth, setHeaderWidth] = React.useState(() => (
-    typeof window !== 'undefined' ? window.innerWidth : 0
-  ));
+  const [activeMenu, setActiveMenu] = React.useState<HeaderMenuKey>(null);
 
-  // Store state
   const appMode = useUIStore((state) => state.appMode);
   const setAppMode = useUIStore((state) => state.setAppMode);
   const theme = useUIStore((state) => state.theme);
   const setTheme = useUIStore((state) => state.setTheme);
   const lang = useUIStore((state) => state.lang);
   const setLang = useUIStore((state) => state.setLang);
-  const activeMenu = useUIStore((state) => state.activeMenu);
-  const setActiveMenu = useUIStore((state) => state.setActiveMenu);
-
   const { undo, redo, canUndo, canRedo } = useActiveHistory();
-
+  const responsive = useHeaderResponsiveLayout(headerRef);
   const t = translations[lang];
-
-  const {
-    showMenuLabels,
-    showSourceInline,
-    showSourceText,
-    showUndoRedoInline,
-    showFullModeSwitcher,
-    showGalleryInline,
-    showGalleryLabel,
-    showSnapshotInline,
-    showSettingsInline,
-    showLanguageInline,
-    showThemeInline,
-    showAboutInline,
-    showDesktopOverflow,
-  } = React.useMemo(() => {
-    const width = headerWidth;
-
-    const showMenuLabels = width >= 1080;
-    const showSourceInline = width >= 1120;
-    const showSourceText = width >= 1280;
-    const showUndoRedoInline = width >= 1400;
-    const showFullModeSwitcher = width >= 1280;
-    const showGalleryInline = width >= 720;
-    const showGalleryLabel = width >= 1360;
-    const showSnapshotInline = width >= 1024;
-    const showSettingsInline = width >= 960;
-    const showLanguageInline = width >= 900;
-    const showThemeInline = width >= 840;
-    const showAboutInline = width >= 780;
-
-    return {
-      showMenuLabels,
-      showSourceInline,
-      showSourceText,
-      showUndoRedoInline,
-      showFullModeSwitcher,
-      showGalleryInline,
-      showGalleryLabel,
-      showSnapshotInline,
-      showSettingsInline,
-      showLanguageInline,
-      showThemeInline,
-      showAboutInline,
-      showDesktopOverflow:
-        width >= 640 && (
-          !showGalleryInline ||
-          !showSourceInline ||
-          !showUndoRedoInline ||
-          !showSnapshotInline ||
-          !showSettingsInline ||
-          !showLanguageInline ||
-          !showThemeInline ||
-          !showAboutInline
-        ),
-    };
-  }, [headerWidth]);
-
-  React.useLayoutEffect(() => {
-    const node = headerRef.current;
-
-    if (!node || typeof ResizeObserver === 'undefined') {
-      return;
-    }
-
-    const updateWidth = () => {
-      const nextWidth = Math.round(node.getBoundingClientRect().width);
-      setHeaderWidth((prevWidth) => (prevWidth === nextWidth ? prevWidth : nextWidth));
-    };
-
-    updateWidth();
-
-    const observer = new ResizeObserver(() => {
-      updateWidth();
-    });
-
-    observer.observe(node);
-
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
 
   return (
     <header
@@ -222,682 +78,65 @@ export function Header({
     >
       {/* Left Section - Logo & Menus */}
       <div className="flex items-center gap-1 min-w-0">
-        {/* Logo */}
         <div className="flex items-center gap-2 pr-3 mr-1 border-r border-border-black">
           <img src="/logos/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
         </div>
 
-        {/* Menu Buttons */}
-        <div className="flex items-center">
-          {/* File Menu */}
-          <div className="relative">
-            <HeaderButton
-              isActive={activeMenu === 'file'}
-              onClick={() => {
-                setActiveMenu(activeMenu === 'file' ? null : 'file');
-              }}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              {showMenuLabels && <span>{t.file}</span>}
-              {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'file' ? 'rotate-180' : ''}`} />}
-            </HeaderButton>
-
-            {activeMenu === 'file' && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => { setActiveMenu(null); }} />
-                <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
-                  <button
-                    onClick={() => { setActiveMenu(null); setTimeout(onImportFolder, 0); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
-                  >
-                    <Folder className="w-4 h-4 text-slate-400" />
-                    {t.importFolder}
-                  </button>
-                  <button
-                    onClick={() => { setActiveMenu(null); setTimeout(onImportFile, 0); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
-                  >
-                    <Download className="w-4 h-4 text-slate-400" />
-                    {t.importUspZipFile}
-                  </button>
-                  <div className="h-px bg-element-bg dark:bg-border-black my-1" />
-                  <button
-                    onClick={() => { setActiveMenu(null); onOpenExport(); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
-                  >
-                    <Upload className="w-4 h-4 text-slate-400" />
-                    {t.export}
-                  </button>
-                  <button
-                    onClick={() => { setActiveMenu(null); onExportProject(); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
-                  >
-                    <Briefcase className="w-4 h-4 text-slate-400" />
-                    {t.exportProject}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Edit Menu */}
-          <div className="relative">
-            <HeaderButton
-              isActive={activeMenu === 'edit'}
-              onClick={() => setActiveMenu(activeMenu === 'edit' ? null : 'edit')}
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              {showMenuLabels && <span>{t.edit}</span>}
-              {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'edit' ? 'rotate-180' : ''}`} />}
-            </HeaderButton>
-
-            {activeMenu === 'edit' && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-max bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-visible py-1">
-                  <button
-                    onClick={() => {
-                      undo();
-                      setActiveMenu(null);
-                    }}
-                    disabled={!canUndo}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center justify-between gap-6 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <Undo className="w-4 h-4 text-slate-400" />
-                      {t.undo}
-                    </span>
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Z</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      redo();
-                      setActiveMenu(null);
-                    }}
-                    disabled={!canRedo}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center justify-between gap-6 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <Redo className="w-4 h-4 text-slate-400" />
-                      {t.redo}
-                    </span>
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500">Ctrl+Shift+Z</span>
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Toolbox Menu */}
-          <div className="relative">
-            <HeaderButton
-              isActive={activeMenu === 'toolbox'}
-              onClick={() => setActiveMenu(activeMenu === 'toolbox' ? null : 'toolbox')}
-            >
-              <Briefcase className="w-3.5 h-3.5" />
-              {showMenuLabels && <span>{t.toolbox}</span>}
-              {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />}
-            </HeaderButton>
-
-            {activeMenu === 'toolbox' && (
-              <ToolboxMenu
-                t={t}
-                onClose={() => setActiveMenu(null)}
-                onOpenAI={onOpenAI}
-                onOpenCollisionOptimizer={onOpenCollisionOptimizer}
-              />
-            )}
-          </div>
-
-          {/* View Menu */}
-          <div className="relative">
-            <HeaderButton
-              isActive={activeMenu === 'view'}
-              onClick={() => setActiveMenu(activeMenu === 'view' ? null : 'view')}
-            >
-              <Eye className="w-3.5 h-3.5" />
-              {showMenuLabels && <span>{t.view}</span>}
-              {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'view' ? 'rotate-180' : ''}`} />}
-            </HeaderButton>
-
-            {activeMenu === 'view' && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-                <div className="absolute top-full left-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
-                  <ViewMenuItem
-                    checked={viewConfig.showToolbar}
-                    label={t.toolbar}
-                    onClick={() => setViewConfig(prev => ({ ...prev, showToolbar: !prev.showToolbar }))}
-                  />
-                  <ViewMenuItem
-                    checked={viewConfig.showOptionsPanel}
-                    label={t.detailOptions}
-                    onClick={() => setViewConfig(prev => ({ ...prev, showOptionsPanel: !prev.showOptionsPanel }))}
-                  />
-                  <ViewMenuItem
-                    checked={viewConfig.showSkeletonOptionsPanel}
-                    label={t.skeletonHardwareOptions}
-                    onClick={() => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: !prev.showSkeletonOptionsPanel }))}
-                  />
-                  <ViewMenuItem
-                    checked={viewConfig.showJointPanel}
-                    label={t.jointControls}
-                    onClick={() => setViewConfig(prev => ({ ...prev, showJointPanel: !prev.showJointPanel }))}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-
-          {showSourceInline && (
-            <div className="relative hidden sm:block shrink-0 ml-1">
-              <button
-                onClick={onOpenCodeViewer}
-                onMouseEnter={onPrefetchCodeViewer}
-                onFocus={onPrefetchCodeViewer}
-                onPointerDown={onPrefetchCodeViewer}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md whitespace-nowrap text-xs font-medium transition-all text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white"
-                title={t.sourceCode}
-              >
-                <Code className="w-3.5 h-3.5" />
-                {showSourceText && <span>{t.sourceCode}</span>}
-              </button>
-            </div>
-          )}
-
-          {showUndoRedoInline && <div className="w-px h-5 bg-border-black mx-1.5 hidden sm:block" />}
-
-          {showUndoRedoInline && (
-            <div className="items-center gap-0.5 hidden sm:flex">
-              <button
-                onClick={undo}
-                disabled={!canUndo}
-                className={`p-1.5 rounded-md transition-all ${
-                  !canUndo
-                    ? 'text-slate-300 dark:text-element-hover cursor-not-allowed'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
-                }`}
-                title={`${t.undo} (Ctrl+Z)`}
-              >
-                <Undo className="w-4 h-4" />
-              </button>
-              <button
-                onClick={redo}
-                disabled={!canRedo}
-                className={`p-1.5 rounded-md transition-all ${
-                  !canRedo
-                    ? 'text-slate-300 dark:text-element-hover cursor-not-allowed'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-900 dark:hover:text-white'
-                }`}
-                title={`${t.redo} (Ctrl+Shift+Z)`}
-              >
-                <Redo className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
-        </div>
+        <HeaderMenus
+          activeMenu={activeMenu}
+          setActiveMenu={setActiveMenu}
+          showMenuLabels={responsive.showMenuLabels}
+          showSourceInline={responsive.showSourceInline}
+          showSourceText={responsive.showSourceText}
+          showUndoRedoInline={responsive.showUndoRedoInline}
+          t={t}
+          viewConfig={viewConfig}
+          setViewConfig={setViewConfig}
+          onImportFile={onImportFile}
+          onImportFolder={onImportFolder}
+          onOpenExport={onOpenExport}
+          onExportProject={onExportProject}
+          onOpenAI={onOpenAI}
+          onOpenMeasureTool={onOpenMeasureTool}
+          onOpenCollisionOptimizer={onOpenCollisionOptimizer}
+          onOpenCodeViewer={onOpenCodeViewer}
+          onPrefetchCodeViewer={onPrefetchCodeViewer}
+          undo={undo}
+          redo={redo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+        />
       </div>
 
       {/* Center - Mode Switcher */}
       <div className="hidden md:flex justify-self-center">
-        <ModeSwitcher appMode={appMode} setAppMode={setAppMode} t={t} compact={!showFullModeSwitcher} />
+        <ModeSwitcher appMode={appMode} setAppMode={setAppMode} t={t} compact={!responsive.showFullModeSwitcher} />
       </div>
 
-      {/* Right Section - Actions */}
-      <div className="flex items-center gap-0.5 shrink-0 justify-self-end">
-        {showGalleryInline && (
-          <button
-            onClick={onOpenURDFGallery}
-            className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
-            title={t.urdfGallery}
-          >
-            <LayoutGrid className="w-4 h-4" />
-            {showGalleryLabel && <span>{t.gallery}</span>}
-          </button>
-        )}
-
-        {showSnapshotInline && (
-          <button
-            onClick={onSnapshot}
-            className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={t.snapshot}
-          >
-            <Camera className="w-4 h-4" />
-          </button>
-        )}
-
-        {showSettingsInline && (
-          <button
-            onClick={onOpenSettings}
-            className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={t.settings}
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-        )}
-
-        {showLanguageInline && (
-          <button
-            onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
-            className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={t.switchLanguage}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-semibold">{lang === 'en' ? 'EN' : '中'}</span>
-          </button>
-        )}
-
-        {showThemeInline && (
-          <button
-            onClick={() => {
-              if (theme === 'system') {
-                const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                setTheme(isSystemDark ? 'light' : 'dark');
-              } else {
-                setTheme(theme === 'dark' ? 'light' : 'dark');
-              }
-            }}
-            className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={t.toggleTheme}
-          >
-            {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </button>
-        )}
-
-        {(showThemeInline || showDesktopOverflow || showAboutInline) && <div className="w-px h-5 bg-border-black mx-1 hidden sm:block" />}
-
-        {showDesktopOverflow && (
-          <HeaderOverflowMenu
-            className="hidden sm:block"
-            lang={lang}
-            theme={theme}
-            appMode={appMode}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            activeMenu={activeMenu}
-            setActiveMenu={setActiveMenu}
-            setAppMode={setAppMode}
-            setLang={setLang}
-            setTheme={setTheme}
-            undo={undo}
-            redo={redo}
-            onOpenURDFGallery={onOpenURDFGallery}
-            onOpenCodeViewer={onOpenCodeViewer}
-            onPrefetchCodeViewer={onPrefetchCodeViewer}
-            onSnapshot={onSnapshot}
-            onOpenSettings={onOpenSettings}
-            onOpenAbout={onOpenAbout}
-            t={t}
-            showGallery={!showGalleryInline}
-            showModeSwitcher={false}
-            showSourceCode={!showSourceInline}
-            showUndoRedo={!showUndoRedoInline}
-            showSnapshot={!showSnapshotInline}
-            showSettings={!showSettingsInline}
-            showLanguage={!showLanguageInline}
-            showTheme={!showThemeInline}
-            showAbout={!showAboutInline}
-          />
-        )}
-
-        {showAboutInline && (
-          <button
-            onClick={onOpenAbout}
-            className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
-            title={t.about}
-          >
-            <Info className="w-4 h-4" />
-          </button>
-        )}
-
-        {/* Mobile/Tablet "More" Menu */}
-        <HeaderOverflowMenu
-          className="sm:hidden"
-          lang={lang}
-          theme={theme}
-          appMode={appMode}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          activeMenu={activeMenu}
-          setActiveMenu={setActiveMenu}
-          setAppMode={setAppMode}
-          setLang={setLang}
-          setTheme={setTheme}
-          undo={undo}
-          redo={redo}
-          onOpenURDFGallery={onOpenURDFGallery}
-          onOpenCodeViewer={onOpenCodeViewer}
-          onPrefetchCodeViewer={onPrefetchCodeViewer}
-          onSnapshot={onSnapshot}
-          onOpenSettings={onOpenSettings}
-          onOpenAbout={onOpenAbout}
-          t={t}
-          showGallery
-          showModeSwitcher
-          showSourceCode
-          showUndoRedo
-          showSnapshot
-          showSettings
-          showLanguage
-          showTheme
-          showAbout
-        />
-      </div>
+      <HeaderActions
+        responsive={responsive}
+        lang={lang}
+        theme={theme}
+        appMode={appMode}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        activeMenu={activeMenu}
+        setActiveMenu={setActiveMenu}
+        setAppMode={setAppMode}
+        setLang={setLang}
+        setTheme={setTheme}
+        undo={undo}
+        redo={redo}
+        quickAction={quickAction}
+        onOpenCodeViewer={onOpenCodeViewer}
+        onPrefetchCodeViewer={onPrefetchCodeViewer}
+        onSnapshot={onSnapshot}
+        onOpenSettings={onOpenSettings}
+        onOpenAbout={onOpenAbout}
+        onOpenUser={onOpenUser}
+        t={t}
+      />
     </header>
-  );
-}
-
-// Helper component for view menu items
-function ViewMenuItem({ checked, label, onClick }: { checked: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center justify-between group"
-    >
-      <div className="flex items-center gap-2">
-        <div className={`w-4 h-4 flex items-center justify-center rounded border ${
-          checked
-            ? 'bg-system-blue border-system-blue text-white'
-            : 'border-border-strong'
-        }`}>
-          {checked && <Check className="w-3 h-3" />}
-        </div>
-        <span>{label}</span>
-      </div>
-    </button>
-  );
-}
-
-// Mode Switcher component
-function ModeSwitcher({
-  appMode,
-  setAppMode,
-  t,
-  compact = false,
-}: {
-  appMode: AppMode;
-  setAppMode: (mode: AppMode) => void;
-  t: typeof translations['en'];
-  compact?: boolean;
-}) {
-  if (compact) {
-    return (
-      <div className="flex items-center bg-element-bg dark:bg-app-bg rounded-lg p-0.5">
-        <ModeButton mode="skeleton" current={appMode} setMode={setAppMode} icon={<Activity className="w-3.5 h-3.5" />} title={t.skeleton} />
-        <ModeButton mode="detail" current={appMode} setMode={setAppMode} icon={<Box className="w-3.5 h-3.5" />} title={t.detail} />
-        <ModeButton mode="hardware" current={appMode} setMode={setAppMode} icon={<Cpu className="w-3.5 h-3.5" />} title={t.hardware} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center bg-element-bg dark:bg-app-bg rounded-lg p-0.5 pointer-events-auto border border-border-black">
-      <ModeButton mode="skeleton" current={appMode} setMode={setAppMode} icon={<Activity className="w-3.5 h-3.5" />} label={t.skeleton} />
-      <ModeButton mode="detail" current={appMode} setMode={setAppMode} icon={<Box className="w-3.5 h-3.5" />} label={t.detail} />
-      <ModeButton mode="hardware" current={appMode} setMode={setAppMode} icon={<Cpu className="w-3.5 h-3.5" />} label={t.hardware} />
-    </div>
-  );
-}
-
-function ModeButton({
-  mode,
-  current,
-  setMode,
-  icon,
-  label,
-  title,
-}: {
-  mode: AppMode;
-  current: AppMode;
-  setMode: (mode: AppMode) => void;
-  icon: React.ReactNode;
-  label?: string;
-  title?: string;
-}) {
-  const isActive = current === mode;
-  return (
-    <button
-      onClick={() => {
-        useSelectionStore.getState().setFocusTarget(null);
-        setMode(mode);
-      }}
-      className={`flex items-center ${label ? 'gap-1.5 px-3' : 'justify-center'} p-1.5 rounded-md text-xs font-medium transition-all ${
-        isActive
-          ? 'bg-white dark:bg-segmented-active text-text-primary dark:text-white shadow-sm dark:shadow-md'
-          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white'
-      }`}
-      title={title}
-    >
-      {icon}
-      {label && <span>{label}</span>}
-    </button>
-  );
-}
-
-// Responsive overflow menu
-function HeaderOverflowMenu({
-  className = '',
-  lang,
-  theme,
-  appMode,
-  canUndo,
-  canRedo,
-  activeMenu,
-  setActiveMenu,
-  setAppMode,
-  setLang,
-  setTheme,
-  undo,
-  redo,
-  onOpenURDFGallery,
-  onOpenCodeViewer,
-  onPrefetchCodeViewer,
-  onSnapshot,
-  onOpenSettings,
-  onOpenAbout,
-  t,
-  showGallery,
-  showModeSwitcher,
-  showSourceCode,
-  showUndoRedo,
-  showSnapshot,
-  showSettings,
-  showLanguage,
-  showTheme,
-  showAbout,
-}: {
-  className?: string;
-  lang: 'en' | 'zh';
-  theme: Theme;
-  appMode: AppMode;
-  canUndo: boolean;
-  canRedo: boolean;
-  activeMenu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
-  setActiveMenu: (menu: 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null) => void;
-  setAppMode: (mode: AppMode) => void;
-  setLang: (lang: 'en' | 'zh') => void;
-  setTheme: (theme: Theme) => void;
-  undo: () => void;
-  redo: () => void;
-  onOpenURDFGallery: () => void;
-  onOpenCodeViewer: () => void;
-  onPrefetchCodeViewer: () => void;
-  onSnapshot: () => void;
-  onOpenSettings: () => void;
-  onOpenAbout: () => void;
-  t: typeof translations['en'];
-  showGallery: boolean;
-  showModeSwitcher: boolean;
-  showSourceCode: boolean;
-  showUndoRedo: boolean;
-  showSnapshot: boolean;
-  showSettings: boolean;
-  showLanguage: boolean;
-  showTheme: boolean;
-  showAbout: boolean;
-}) {
-  const showPrimaryGroup = showGallery || showSourceCode || showUndoRedo;
-  const showSecondaryGroup = showSnapshot || showSettings || showLanguage || showTheme || showAbout;
-
-  return (
-    <div className={`relative ${className}`.trim()}>
-      <button
-        onClick={() => setActiveMenu(activeMenu === 'more' ? null : 'more')}
-        className={`relative z-50 flex items-center justify-center w-8 h-8 rounded-md transition-all ${
-          activeMenu === 'more'
-            ? 'bg-element-bg dark:bg-element-active text-text-primary dark:text-white'
-            : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg'
-        }`}
-        title={t.more}
-      >
-        <MoreHorizontal className="w-5 h-5" />
-      </button>
-      {activeMenu === 'more' && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
-          <div className="absolute top-full right-0 mt-1 w-auto min-w-[10.5rem] bg-panel-bg dark:bg-panel-bg rounded-lg shadow-md dark:shadow-xl border border-border-black z-50 overflow-hidden py-1">
-            {/* Mode Switcher for Mobile */}
-            {showModeSwitcher && (
-              <div className="px-3 py-2 border-b border-border-black dark:border-border-black md:hidden">
-                <div className="text-[10px] uppercase text-text-tertiary font-bold mb-1">{t.modeLabel}</div>
-                <div className="flex gap-1 bg-element-bg dark:bg-app-bg p-0.5 rounded-lg border border-border-black">
-                  <button
-                    onClick={() => {
-                      useSelectionStore.getState().setFocusTarget(null);
-                      setAppMode('skeleton');
-                      setActiveMenu(null);
-                    }}
-                    className={`flex-1 p-1.5 rounded text-center text-xs ${appMode === 'skeleton' ? 'bg-white dark:bg-segmented-active text-system-blue dark:text-white shadow-sm' : 'text-text-secondary dark:text-text-tertiary'}`}
-                  >
-                    <Activity className="w-4 h-4 mx-auto" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      useSelectionStore.getState().setFocusTarget(null);
-                      setAppMode('detail');
-                      setActiveMenu(null);
-                    }}
-                    className={`flex-1 p-1.5 rounded text-center text-xs ${appMode === 'detail' ? 'bg-white dark:bg-segmented-active text-system-blue dark:text-white shadow-sm' : 'text-text-secondary dark:text-text-tertiary'}`}
-                  >
-                    <Box className="w-4 h-4 mx-auto" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      useSelectionStore.getState().setFocusTarget(null);
-                      setAppMode('hardware');
-                      setActiveMenu(null);
-                    }}
-                    className={`flex-1 p-1.5 rounded text-center text-xs ${appMode === 'hardware' ? 'bg-white dark:bg-segmented-active text-system-blue dark:text-white shadow-sm' : 'text-text-secondary dark:text-text-tertiary'}`}
-                  >
-                    <Cpu className="w-4 h-4 mx-auto" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {showPrimaryGroup && (
-              <>
-                {showGallery && (
-                  <button
-                    onClick={() => { onOpenURDFGallery(); setActiveMenu(null); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <LayoutGrid className="w-4 h-4" /> {t.gallery}
-                  </button>
-                )}
-                {showSourceCode && (
-                  <button
-                    onClick={() => { onOpenCodeViewer(); setActiveMenu(null); }}
-                    onMouseEnter={onPrefetchCodeViewer}
-                    onFocus={onPrefetchCodeViewer}
-                    onTouchStart={onPrefetchCodeViewer}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <Code className="w-4 h-4" /> {t.sourceCode}
-                  </button>
-                )}
-                {showUndoRedo && (
-                  <>
-                    <button
-                      onClick={() => { undo(); setActiveMenu(null); }}
-                      disabled={!canUndo}
-                      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
-                    >
-                      <Undo className="w-4 h-4" /> {t.undo}
-                    </button>
-                    <button
-                      onClick={() => { redo(); setActiveMenu(null); }}
-                      disabled={!canRedo}
-                      className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
-                    >
-                      <Redo className="w-4 h-4" /> {t.redo}
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-
-            {showPrimaryGroup && showSecondaryGroup && (
-              <div className="h-px bg-element-bg dark:bg-border-black my-1" />
-            )}
-
-            {showSecondaryGroup && (
-              <>
-                {showSnapshot && (
-                  <button
-                    onClick={() => { onSnapshot(); setActiveMenu(null); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <Camera className="w-4 h-4" /> {t.snapshot}
-                  </button>
-                )}
-                {showSettings && (
-                  <button
-                    onClick={() => { onOpenSettings(); setActiveMenu(null); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <Settings className="w-4 h-4" /> {t.settings}
-                  </button>
-                )}
-                {showLanguage && (
-                  <button
-                    onClick={() => { setLang(lang === 'en' ? 'zh' : 'en'); setActiveMenu(null); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <Globe className="w-4 h-4" /> {t.switchLanguage}
-                  </button>
-                )}
-                {showTheme && (
-                  <button
-                    onClick={() => {
-                      if (theme === 'system') {
-                        const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                        setTheme(isSystemDark ? 'light' : 'dark');
-                      } else {
-                        setTheme(theme === 'dark' ? 'light' : 'dark');
-                      }
-                      setActiveMenu(null);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {t.toggleTheme}
-                  </button>
-                )}
-                {showAbout && (
-                  <button
-                    onClick={() => { onOpenAbout(); setActiveMenu(null); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <Info className="w-4 h-4" /> {t.about}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 

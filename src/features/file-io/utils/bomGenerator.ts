@@ -29,8 +29,8 @@ export function generateBOM(robot: RobotState, lang: Language = 'en'): string {
       j.hardware?.motorId || '',
       j.hardware?.motorDirection || 1,
       j.hardware?.armature || 0,
-      j.limit.lower,
-      j.limit.upper
+      j.limit?.lower ?? '',
+      j.limit?.upper ?? ''
     ].join(',');
   }).filter(row => row !== null);
 

@@ -3,34 +3,99 @@
  * Generates URDF XML format from RobotState
  */
 
-import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState } from '@/types';
+import {
+  RobotState,
+  UrdfLink,
+  UrdfJoint,
+  GeometryType,
+  AssemblyState,
+  type UrdfVisualMaterial,
+} from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
 } from '@/core/utils/numberPrecision';
-import { normalizeMeshPathForExport } from '../meshPathUtils';
+import { normalizeMeshPathForExport, normalizeTexturePathForExport } from '../meshPathUtils';
+import { formatUrdfMeshScaleAttribute } from './meshScale';
 
 const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'planar']);
 const FULL_LIMIT_EXPORT_TYPES = new Set(['revolute', 'prismatic']);
 const EFFORT_VELOCITY_LIMIT_EXPORT_TYPES = new Set(['continuous']);
 const DYNAMICS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic']);
 
-// Helper to convert hex color to RGBA string
+const hasExportableInertial = (link: UrdfLink): boolean => Boolean(link.inertial);
+
+// Bias each serialized color channel by a tiny positive epsilon before converting
+// to floats. The importer currently floors `rgba * 255`, so a direct decimal
+// expansion of `channel / 255` can still fall just below the intended 8-bit value
+// after parsing. Keeping the bias far below one full color step preserves the
+// visual result while making roundtrips stable.
 const hexToRgba = (hex: string): string => {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  const normalized = String(hex || '').trim();
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})?$/i.exec(normalized);
   if (result) {
-    const r = parseInt(result[1], 16) / 255;
-    const g = parseInt(result[2], 16) / 255;
-    const b = parseInt(result[3], 16) / 255;
-    return `${r.toFixed(4)} ${g.toFixed(4)} ${b.toFixed(4)} 1.0`;
+    const serializeChannel = (channelHex: string) => {
+      const channel = parseInt(channelHex, 16);
+      return Math.min(1, (channel + 1e-3) / 255).toFixed(8);
+    };
+
+    const r = serializeChannel(result[1]);
+    const g = serializeChannel(result[2]);
+    const b = serializeChannel(result[3]);
+    const a = result[4] ? serializeChannel(result[4]) : '1.00000000';
+    return `${r} ${g} ${b} ${a}`;
   }
   return '0.5 0.5 0.5 1.0'; // fallback gray
 };
 
+function resolveLinkExportMaterial(
+  robot: RobotState,
+  link: UrdfLink,
+): { color?: string; texture?: string } {
+  const material = robot.materials?.[link.id] || robot.materials?.[link.name];
+  return {
+    color: material?.color || (!material?.texture ? link.visual.color : undefined),
+    texture: material?.texture,
+  };
+}
+
+function generateUrdfMaterialXml(
+  material: UrdfVisualMaterial,
+  indent: string,
+  exportRobotName: string,
+  useRelativePaths: boolean,
+  preserveMeshPaths: boolean,
+): string {
+  const nameAttr = material.name ? ` name="${material.name}"` : '';
+  let xml = `${indent}<material${nameAttr}>\n`;
+
+  if (material.color) {
+    xml += `${indent}  <color rgba="${hexToRgba(material.color)}"/>\n`;
+  }
+
+  if (material.texture) {
+    const texturePath = preserveMeshPaths
+      ? material.texture.replace(/\\/g, '/')
+      : normalizeTexturePathForExport(material.texture);
+    const textureFilename = preserveMeshPaths
+      ? texturePath
+      : useRelativePaths
+        ? `textures/${texturePath || 'texture.png'}`
+        : `package://${exportRobotName}/textures/${texturePath || 'texture.png'}`;
+    xml += `${indent}  <texture filename="${textureFilename}" />\n`;
+  }
+
+  xml += `${indent}</material>\n`;
+  return xml;
+}
+
 const generateLimitTag = (joint: UrdfJoint, formatScalar: (n: number) => string): string | null => {
   const jointType = String(joint.type).toLowerCase();
+  if (!joint.limit) {
+    return null;
+  }
   if (FULL_LIMIT_EXPORT_TYPES.has(jointType)) {
     return `    <limit lower="${formatScalar(joint.limit.lower)}" upper="${formatScalar(joint.limit.upper)}" effort="${formatScalar(joint.limit.effort)}" velocity="${formatScalar(joint.limit.velocity)}" />`;
   }
@@ -47,6 +112,7 @@ const generateCollisionElement = (
   formatShape: (n: number) => string,
   exportRobotName: string,
   useRelativePaths: boolean = false,
+  preserveMeshPaths: boolean = false,
 ): string => {
   if (!collision || collision.type === GeometryType.NONE) return '';
 
@@ -64,11 +130,18 @@ const generateCollisionElement = (
   } else if (collision.type === GeometryType.CAPSULE) {
     xml += `        <capsule radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
   } else if (collision.type === GeometryType.MESH) {
-    const meshPath = collision.meshPath ? normalizeMeshPathForExport(collision.meshPath) : 'part_collision.stl';
-    const filename = useRelativePaths
-      ? `meshes/${meshPath || 'part_collision.stl'}`
-      : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
-    xml += `        <mesh filename="${filename}" />\n`;
+    const meshPath = collision.meshPath
+      ? (preserveMeshPaths
+        ? collision.meshPath.replace(/\\/g, '/')
+        : normalizeMeshPathForExport(collision.meshPath))
+      : 'part_collision.stl';
+    const filename = preserveMeshPaths
+      ? (meshPath || 'part_collision.stl')
+      : useRelativePaths
+        ? `meshes/${meshPath || 'part_collision.stl'}`
+        : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
+    const scaleAttribute = formatUrdfMeshScaleAttribute(collision.dimensions, formatShape);
+    xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
   }
   xml += `      </geometry>\n`;
   xml += `    </collision>\n`;
@@ -78,8 +151,30 @@ const generateCollisionElement = (
 
 export interface UrdfGeneratorOptions {
   extended?: boolean;
+  includeHardware?: 'never' | 'auto' | 'always';
   useRelativePaths?: boolean;
+  preserveMeshPaths?: boolean;
+  omitMeshMaterialPaths?: Iterable<string>;
 }
+
+const DEFAULT_PARSED_HARDWARE = {
+  armature: 0,
+  motorType: 'None',
+  motorId: '',
+  motorDirection: 1 as 1 | -1,
+};
+
+const hasExportableHardware = (joint: UrdfJoint): boolean => {
+  const hardware = joint.hardware;
+  if (!hardware) return false;
+
+  return (
+    (hardware.motorType?.trim() ?? '') !== DEFAULT_PARSED_HARDWARE.motorType
+    || (hardware.motorId?.trim() ?? '') !== DEFAULT_PARSED_HARDWARE.motorId
+    || (hardware.motorDirection ?? DEFAULT_PARSED_HARDWARE.motorDirection) !== DEFAULT_PARSED_HARDWARE.motorDirection
+    || (hardware.armature ?? DEFAULT_PARSED_HARDWARE.armature) !== DEFAULT_PARSED_HARDWARE.armature
+  );
+};
 
 export const generateAssemblyURDF = (assembly: AssemblyState, options: UrdfGeneratorOptions = {}): string => {
   const mergedData = mergeAssembly(assembly);
@@ -89,8 +184,12 @@ export const generateAssemblyURDF = (assembly: AssemblyState, options: UrdfGener
 export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | boolean = false): string => {
   // Backward compat: accept boolean as legacy `extended` param
   const opts: UrdfGeneratorOptions = typeof options === 'boolean' ? { extended: options } : options;
-  const extended = opts.extended ?? false;
+  const hardwareMode = opts.includeHardware ?? ((opts.extended ?? false) ? 'always' : 'never');
   const useRelativePaths = opts.useRelativePaths ?? false;
+  const preserveMeshPaths = opts.preserveMeshPaths ?? false;
+  const omitMeshMaterialPaths = opts.omitMeshMaterialPaths
+    ? new Set(Array.from(opts.omitMeshMaterialPaths, (path) => String(path || '').replace(/\\/g, '/')))
+    : null;
   const { name, links, joints } = robot;
   const exportRobotName = name?.trim() ? name : 'robot';
 
@@ -101,6 +200,19 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
   const formatShape = (n: number) => formatNumberWithMaxDecimals(n, MAX_GEOMETRY_DIMENSION_DECIMALS);
   const vecStr = (v: { x: number; y: number; z: number }) => `${formatScalar(v.x)} ${formatScalar(v.y)} ${formatScalar(v.z)}`;
   const rotStr = (v: { r: number; p: number; y: number }) => `${formatScalar(v.r)} ${formatScalar(v.p)} ${formatScalar(v.y)}`;
+  const shouldOmitMeshMaterial = (meshPath?: string): boolean => {
+    if (!omitMeshMaterialPaths || !meshPath) {
+      return false;
+    }
+
+    const normalizedPath = meshPath.replace(/\\/g, '/');
+    if (omitMeshMaterialPaths.has(normalizedPath)) {
+      return true;
+    }
+
+    const exportPath = normalizeMeshPathForExport(meshPath);
+    return Boolean(exportPath && omitMeshMaterialPaths.has(exportPath));
+  };
 
   // Generate Links
   Object.values(links).forEach((link) => {
@@ -108,6 +220,11 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
 
     // Visual
     if (link.visual.type !== GeometryType.NONE) {
+        const visualMaterial = resolveLinkExportMaterial(robot, link);
+        const hasExplicitVisualMaterialOverride = Boolean(visualMaterial.color || visualMaterial.texture);
+        const authoredMaterials = hasExplicitVisualMaterialOverride
+          ? undefined
+          : link.visual.authoredMaterials;
         xml += `    <visual>\n`;
         if (link.visual.origin) {
             xml += `      <origin xyz="${vecStr(link.visual.origin.xyz)}" rpy="${rotStr(link.visual.origin.rpy)}" />\n`;
@@ -123,33 +240,82 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
         } else if (link.visual.type === GeometryType.CAPSULE) {
           xml += `        <capsule radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
         } else if (link.visual.type === GeometryType.MESH) {
-           const meshPath = link.visual.meshPath ? normalizeMeshPathForExport(link.visual.meshPath) : 'part.stl';
-           const filename = useRelativePaths
-             ? `meshes/${meshPath || 'part.stl'}`
-             : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
-           xml += `        <mesh filename="${filename}" />\n`;
+           const meshPath = link.visual.meshPath
+             ? (preserveMeshPaths
+               ? link.visual.meshPath.replace(/\\/g, '/')
+               : normalizeMeshPathForExport(link.visual.meshPath))
+             : 'part.stl';
+           const filename = preserveMeshPaths
+             ? (meshPath || 'part.stl')
+             : useRelativePaths
+               ? `meshes/${meshPath || 'part.stl'}`
+               : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
+           const scaleAttribute = formatUrdfMeshScaleAttribute(link.visual.dimensions, formatShape);
+           xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
         }
         xml += `      </geometry>\n`;
-        xml += `      <material name="${link.id}_mat">\n`;
-        xml += `        <color rgba="${hexToRgba(link.visual.color || '#808080')}"/>\n`;
-        xml += `      </material>\n`;
+        const shouldEmitVisualColor = !(
+          link.visual.type === GeometryType.MESH
+          && shouldOmitMeshMaterial(link.visual.meshPath)
+        );
+        if (shouldEmitVisualColor && authoredMaterials && authoredMaterials.length > 0) {
+          authoredMaterials.forEach((material) => {
+            xml += generateUrdfMaterialXml(
+              material,
+              '      ',
+              exportRobotName,
+              useRelativePaths,
+              preserveMeshPaths,
+            );
+          });
+        } else if ((shouldEmitVisualColor && visualMaterial.color) || visualMaterial.texture) {
+          xml += generateUrdfMaterialXml(
+            {
+              name: `${link.id}_mat`,
+              color: shouldEmitVisualColor ? visualMaterial.color : undefined,
+              texture: visualMaterial.texture,
+            },
+            '      ',
+            exportRobotName,
+            useRelativePaths,
+            preserveMeshPaths,
+          );
+        }
         xml += `    </visual>\n`;
     }
 
     // Collision (primary + additional bodies on the same link)
-    xml += generateCollisionElement(link.collision, vecStr, rotStr, formatShape, exportRobotName, useRelativePaths);
+    xml += generateCollisionElement(
+      link.collision,
+      vecStr,
+      rotStr,
+      formatShape,
+      exportRobotName,
+      useRelativePaths,
+      preserveMeshPaths,
+    );
     (link.collisionBodies || []).forEach((collisionBody: UrdfLink['collision']) => {
-      xml += generateCollisionElement(collisionBody, vecStr, rotStr, formatShape, exportRobotName, useRelativePaths);
+      xml += generateCollisionElement(
+        collisionBody,
+        vecStr,
+        rotStr,
+        formatShape,
+        exportRobotName,
+        useRelativePaths,
+        preserveMeshPaths,
+      );
     });
 
     // Inertial
-    xml += `    <inertial>\n`;
-    if (link.inertial.origin) {
-      xml += `      <origin xyz="${vecStr(link.inertial.origin.xyz)}" rpy="${rotStr(link.inertial.origin.rpy)}" />\n`;
+    if (hasExportableInertial(link) && link.inertial) {
+      xml += `    <inertial>\n`;
+      if (link.inertial.origin) {
+        xml += `      <origin xyz="${vecStr(link.inertial.origin.xyz)}" rpy="${rotStr(link.inertial.origin.rpy)}" />\n`;
+      }
+      xml += `      <mass value="${formatScalar(link.inertial.mass)}" />\n`;
+      xml += `      <inertia ixx="${formatScalar(link.inertial.inertia.ixx)}" ixy="${formatScalar(link.inertial.inertia.ixy)}" ixz="${formatScalar(link.inertial.inertia.ixz)}" iyy="${formatScalar(link.inertial.inertia.iyy)}" iyz="${formatScalar(link.inertial.inertia.iyz)}" izz="${formatScalar(link.inertial.inertia.izz)}" />\n`;
+      xml += `    </inertial>\n`;
     }
-    xml += `      <mass value="${formatScalar(link.inertial.mass)}" />\n`;
-    xml += `      <inertia ixx="${formatScalar(link.inertial.inertia.ixx)}" ixy="${formatScalar(link.inertial.inertia.ixy)}" ixz="${formatScalar(link.inertial.inertia.ixz)}" iyy="${formatScalar(link.inertial.inertia.iyy)}" iyz="${formatScalar(link.inertial.inertia.iyz)}" izz="${formatScalar(link.inertial.inertia.izz)}" />\n`;
-    xml += `    </inertial>\n`;
     xml += `  </link>\n\n`;
   });
 
@@ -164,7 +330,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
     xml += `    <parent link="${parent.name}" />\n`;
     xml += `    <child link="${child.name}" />\n`;
     xml += `    <origin xyz="${vecStr(joint.origin.xyz)}" rpy="${rotStr(joint.origin.rpy)}" />\n`;
-    if (AXIS_EXPORT_TYPES.has(jointType)) {
+    if (AXIS_EXPORT_TYPES.has(jointType) && joint.axis) {
         xml += `    <axis xyz="${vecStr(joint.axis)}" />\n`;
     }
 
@@ -180,8 +346,13 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
     }
 
     if (DYNAMICS_EXPORT_TYPES.has(jointType)) {
-        // Extended Hardware Info
-        if (extended && joint.hardware) {
+        const shouldExportHardware = joint.hardware
+          && (
+            hardwareMode === 'always'
+            || (hardwareMode === 'auto' && hasExportableHardware(joint))
+          );
+
+        if (shouldExportHardware) {
             xml += `    <hardware>\n`;
             if (joint.hardware.motorType) xml += `      <motorType>${joint.hardware.motorType}</motorType>\n`;
             if (joint.hardware.motorId) xml += `      <motorId>${joint.hardware.motorId}</motorId>\n`;
@@ -189,6 +360,17 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
             if (joint.hardware.armature !== undefined) xml += `      <armature>${formatScalar(joint.hardware.armature)}</armature>\n`;
             xml += `    </hardware>\n`;
         }
+    }
+
+    if (joint.mimic?.joint) {
+        const mimicAttributes = [`joint="${joint.mimic.joint}"`];
+        if (typeof joint.mimic.multiplier === 'number' && Number.isFinite(joint.mimic.multiplier)) {
+          mimicAttributes.push(`multiplier="${formatScalar(joint.mimic.multiplier)}"`);
+        }
+        if (typeof joint.mimic.offset === 'number' && Number.isFinite(joint.mimic.offset)) {
+          mimicAttributes.push(`offset="${formatScalar(joint.mimic.offset)}"`);
+        }
+        xml += `    <mimic ${mimicAttributes.join(' ')} />\n`;
     }
     xml += `  </joint>\n\n`;
   });

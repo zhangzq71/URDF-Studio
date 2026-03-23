@@ -1,11 +1,48 @@
-import { UrdfLink, GeometryType } from '@/types';
+import { UrdfLink, GeometryType, type UrdfVisualMaterial } from '@/types';
 import { DEFAULT_LINK } from '@/types/constants';
-import { parseVec3, parseRPY, parseColor } from './utils';
+import { parseVec3, parseRPY, parseColor, parseTexture } from './utils';
 import { parseGeometry } from './geometry';
 
-export const parseLinks = (robotEl: Element, globalMaterials: Record<string, string>, linkGazeboMaterials: Record<string, string>) => {
+interface ParsedMaterialDefinition {
+    color?: string;
+    texture?: string;
+}
+
+function resolveMaterialDefinition(
+    materialEl: Element,
+    globalMaterials: Record<string, ParsedMaterialDefinition>,
+): ParsedMaterialDefinition & { name?: string } {
+    const inlineColor = parseColor(materialEl);
+    const inlineTexture = parseTexture(materialEl);
+    const materialName = materialEl.getAttribute("name")?.trim() || undefined;
+    const namedMaterial = materialName ? globalMaterials[materialName] : undefined;
+
+    return {
+        ...(materialName ? { name: materialName } : {}),
+        ...(namedMaterial?.color || inlineColor ? { color: namedMaterial?.color || inlineColor } : {}),
+        ...(namedMaterial?.texture || inlineTexture ? { texture: namedMaterial?.texture || inlineTexture } : {}),
+    };
+}
+
+function parseAuthoredMaterials(
+    materialEls: Element[],
+    globalMaterials: Record<string, ParsedMaterialDefinition>,
+): UrdfVisualMaterial[] | undefined {
+    const authoredMaterials = materialEls
+        .map((materialEl) => resolveMaterialDefinition(materialEl, globalMaterials))
+        .filter((material) => Boolean(material.name || material.color || material.texture));
+
+    return authoredMaterials.length > 0 ? authoredMaterials : undefined;
+}
+
+export const parseLinks = (
+    robotEl: Element,
+    globalMaterials: Record<string, ParsedMaterialDefinition>,
+    linkGazeboMaterials: Record<string, string>,
+) => {
     const links: Record<string, UrdfLink> = {};
     const extraJoints: any[] = []; // Reserved for backward compatibility
+    const linkMaterials: Record<string, ParsedMaterialDefinition> = {};
 
     Array.from(robotEl.children).forEach(child => {
         if (child.tagName !== 'link') return;
@@ -18,29 +55,46 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
         const visualEl = linkEl.querySelector("visual");
         const visualOriginEl = visualEl?.querySelector("origin");
 
-        let visualGeo: UrdfLink['visual'];
+        let visualGeo: Partial<UrdfLink['visual']>;
         let visualColor: string | undefined = undefined;
+        let visualTexture: string | undefined = undefined;
+        let authoredMaterials: UrdfVisualMaterial[] | undefined = undefined;
         let materialSource: 'inline' | 'named' | 'gazebo' | undefined = undefined;
 
-        let hasInlineMaterial = false;
         if (visualEl) {
             visualGeo = parseGeometry(visualEl.querySelector("geometry"), DEFAULT_LINK.visual);
             if (!visualGeo) visualGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
 
-            // Parse Material Color
-            const materialEl = visualEl.querySelector("material");
-            const parsedColor = parseColor(materialEl);
+            const materialEls = Array.from(visualEl.children).filter(
+                (node): node is Element => node.tagName === 'material',
+            );
+            const hasMultipleMeshMaterials = visualGeo.type === GeometryType.MESH && materialEls.length > 1;
+            authoredMaterials = hasMultipleMeshMaterials
+                ? parseAuthoredMaterials(materialEls, globalMaterials)
+                : undefined;
 
-            if (parsedColor) {
-                visualColor = parsedColor;
-                materialSource = 'inline';
-                hasInlineMaterial = true;
-            } else if (materialEl) {
-                // Handle named material reference
-                const matName = materialEl.getAttribute("name");
-                if (matName && globalMaterials[matName]) {
-                    visualColor = globalMaterials[matName];
+            // URDF visuals can only express a single material override cleanly.
+            // When imported mesh visuals carry multiple named material tags
+            // (common for Collada assets such as Unitree go2/go2w), collapsing
+            // them into one link-level color would destroy the mesh's embedded
+            // material palette on export. Preserve the mesh materials instead.
+            if (!hasMultipleMeshMaterials) {
+                const materialEl = materialEls[0] ?? null;
+                const resolvedMaterial = materialEl
+                    ? resolveMaterialDefinition(materialEl, globalMaterials)
+                    : {};
+
+                if (resolvedMaterial.name && globalMaterials[resolvedMaterial.name]) {
+                    // Isaac Sim resolves same-name conflicts to the global definition.
+                    visualColor = resolvedMaterial.color;
+                    visualTexture = resolvedMaterial.texture;
                     materialSource = 'named';
+                } else {
+                    visualColor = resolvedMaterial.color;
+                    visualTexture = resolvedMaterial.texture;
+                    if (visualColor || visualTexture) {
+                        materialSource = 'inline';
+                    }
                 }
             }
         } else {
@@ -51,7 +105,7 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
         // Gazebo material override:
         // - Inline RGBA in URDF keeps highest priority
         // - Named URDF material can be overridden by gazebo reference
-        if (!hasInlineMaterial && linkGazeboMaterials[linkName]) {
+        if (!visualColor && linkGazeboMaterials[linkName]) {
             visualColor = linkGazeboMaterials[linkName];
             materialSource = 'gazebo';
         }
@@ -80,26 +134,8 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
         const inertiaEl = inertialEl?.querySelector("inertia");
         const inertialOriginEl = inertialEl?.querySelector("origin");
 
-        links[id] = {
-            id,
-            name: linkName,
-            visual: {
-                ...DEFAULT_LINK.visual,
-                ...visualGeo,
-                origin: {
-                    xyz: parseVec3(visualOriginEl?.getAttribute("xyz")),
-                    rpy: parseRPY(visualOriginEl?.getAttribute("rpy"))
-                },
-                color: visualColor,
-                materialSource
-            },
-            collision: {
-                ...DEFAULT_LINK.collision,
-                ...mainCollisionGeo,
-                origin: mainCollisionOrigin
-            },
-            collisionBodies: [],
-            inertial: {
+        const inertial = inertialEl
+            ? {
                 mass: parseFloat(massEl?.getAttribute("value") || "0"),
                 origin: inertialOriginEl ? {
                     xyz: parseVec3(inertialOriginEl.getAttribute("xyz")),
@@ -114,7 +150,37 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
                     izz: parseFloat(inertiaEl?.getAttribute("izz") || "0"),
                 }
             }
+            : undefined;
+
+        links[id] = {
+            id,
+            name: linkName,
+            visual: {
+                ...DEFAULT_LINK.visual,
+                ...visualGeo,
+                origin: {
+                    xyz: parseVec3(visualOriginEl?.getAttribute("xyz")),
+                    rpy: parseRPY(visualOriginEl?.getAttribute("rpy"))
+                },
+                color: visualColor,
+                ...(authoredMaterials ? { authoredMaterials } : {}),
+                materialSource
+            },
+            collision: {
+                ...DEFAULT_LINK.collision,
+                ...mainCollisionGeo,
+                origin: mainCollisionOrigin
+            },
+            collisionBodies: [],
+            inertial
         };
+
+        if (visualColor || visualTexture) {
+            linkMaterials[id] = {
+                ...(visualColor ? { color: visualColor } : {}),
+                ...(visualTexture ? { texture: visualTexture } : {}),
+            };
+        }
 
         // Keep additional collisions on the same link
         for (let i = 1; i < collisionEls.length; i++) {
@@ -139,5 +205,5 @@ export const parseLinks = (robotEl: Element, globalMaterials: Record<string, str
         }
     });
 
-    return { links, extraJoints };
+    return { links, extraJoints, linkMaterials };
 };

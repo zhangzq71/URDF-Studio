@@ -6,7 +6,9 @@
 import * as THREE from 'three';
 import { type MJCFMeshCache } from './mjcfGeometry';
 import { buildMJCFHierarchy } from './mjcfHierarchyBuilder';
+import { resolveMJCFMeshBackedPrimitiveGeoms } from './mjcfMeshBackedPrimitiveResolver';
 import { parseMJCFModel } from './mjcfModel';
+import { looksLikeMJCFDocument } from './mjcfUtils';
 
 interface MJCFBody {
     name: string;
@@ -20,6 +22,8 @@ interface MJCFBody {
 
 interface MJCFGeom {
     name?: string;
+    className?: string;
+    classQName?: string;
     type: string;
     size?: number[];
     mesh?: string;
@@ -44,7 +48,8 @@ interface MJCFJoint {
 /** Load MJCF XML content and create a Three.js scene graph. */
 export async function loadMJCFToThreeJS(
     xmlContent: string,
-    assets: Record<string, string>
+    assets: Record<string, string>,
+    sourceFileDir = '',
 ): Promise<THREE.Object3D | null> {
     try {
         const parsedModel = parseMJCFModel(xmlContent);
@@ -56,8 +61,14 @@ export async function loadMJCFToThreeJS(
         const compilerSettings = parsedModel.compilerSettings;
         console.log(`[MJCFLoader] Compiler settings: angle=${compilerSettings.angleUnit}, meshdir=${compilerSettings.meshdir}`);
 
+        await resolveMJCFMeshBackedPrimitiveGeoms(parsedModel, {
+            assets,
+            sourceFileDir,
+        });
+
         const meshMap = parsedModel.meshMap;
         const materialMap = parsedModel.materialMap;
+        const textureMap = parsedModel.textureMap;
         const bodies: MJCFBody[] = [parsedModel.worldBody as MJCFBody];
 
         const rootGroup = new THREE.Group();
@@ -73,7 +84,9 @@ export async function loadMJCFToThreeJS(
             assets,
             meshCache,
             compilerSettings,
-            materialMap
+            materialMap,
+            textureMap,
+            sourceFileDir,
         });
 
         (rootGroup as any).links = linksMap;
@@ -90,12 +103,5 @@ export async function loadMJCFToThreeJS(
 
 /** Check whether XML root element is MJCF `<mujoco>`. */
 export function isMJCFContent(content: string): boolean {
-    try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(content, 'text/xml');
-        const rootElement = doc.documentElement;
-        return rootElement && rootElement.tagName.toLowerCase() === 'mujoco';
-    } catch {
-        return false;
-    }
+    return looksLikeMJCFDocument(content);
 }

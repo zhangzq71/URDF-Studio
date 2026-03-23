@@ -1,12 +1,17 @@
 import React, { useEffect } from 'react';
 import { AlertCircle, FileCode, X } from 'lucide-react';
-import type { RobotState, Theme } from '@/types';
+import type { RobotFile, RobotState, Theme } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
+import { useResolvedTheme } from '@/shared/hooks';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
 import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
-import { useURDFViewerController, URDFViewerPanels, URDFViewerScene } from '@/features/urdf-viewer';
+import { useURDFViewerController, URDFViewerPanels, URDFViewerScene, type ToolMode, type ViewerJointMotionStateValue } from '@/features/urdf-viewer';
+import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
+import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/urdf-viewer/utils/viewerResourceScope';
+import { useUIStore } from '@/store';
+import { useSelectionStore } from '@/store/selectionStore';
 
 interface FilePreviewState {
   urdfContent: string;
@@ -34,9 +39,15 @@ interface UnifiedViewerProps {
   setShowSkeletonOptionsPanel?: (show: boolean) => void;
   showJointPanel?: boolean;
   setShowJointPanel?: (show: boolean) => void;
+  availableFiles: RobotFile[];
   urdfContent: string;
+  sourceFilePath?: string;
+  sourceFile?: RobotFile | null;
+  onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   jointAngleState?: Record<string, number>;
+  jointMotionState?: Record<string, ViewerJointMotionStateValue>;
   onJointChange?: (jointName: string, angle: number) => void;
+  syncJointChangesToApp?: boolean;
   selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
   focusTarget?: string | null;
   isMeshPreview?: boolean;
@@ -45,6 +56,9 @@ interface UnifiedViewerProps {
   onCollisionTransform?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
   filePreview?: FilePreviewState;
   onClosePreview?: () => void;
+  pendingViewerToolMode?: ToolMode | null;
+  onConsumePendingViewerToolMode?: () => void;
+  viewerReloadKey?: number;
 }
 
 const emptySelection = { type: null as null, id: null as null };
@@ -117,9 +131,15 @@ export const UnifiedViewer = React.memo(({
   setShowSkeletonOptionsPanel,
   showJointPanel = true,
   setShowJointPanel,
+  availableFiles,
   urdfContent,
+  sourceFilePath,
+  sourceFile,
+  onRobotDataResolved,
   jointAngleState,
+  jointMotionState,
   onJointChange,
+  syncJointChangesToApp = false,
   selection,
   focusTarget,
   isMeshPreview = false,
@@ -128,11 +148,31 @@ export const UnifiedViewer = React.memo(({
   onCollisionTransform,
   filePreview,
   onClosePreview,
+  pendingViewerToolMode = null,
+  onConsumePendingViewerToolMode,
+  viewerReloadKey = 0,
 }: UnifiedViewerProps) => {
   const t = translations[lang];
   const activePreview = mode === 'skeleton' ? undefined : filePreview;
   const isPreviewing = !!activePreview;
   const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
+  const resolvedTheme = useResolvedTheme(theme);
+  const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
+  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+  const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
+  const skeletonOptionsVisibleRef = React.useRef(showSkeletonOptionsPanel);
+  const optionsVisibleAtPointerDownRef = React.useRef({
+    viewer: showOptionsPanel,
+    skeleton: showSkeletonOptionsPanel,
+  });
+
+  useEffect(() => {
+    viewerOptionsVisibleRef.current = showOptionsPanel;
+  }, [showOptionsPanel]);
+
+  useEffect(() => {
+    skeletonOptionsVisibleRef.current = showSkeletonOptionsPanel;
+  }, [showSkeletonOptionsPanel]);
 
   const visualizerController = useVisualizerController({
     robot,
@@ -143,7 +183,10 @@ export const UnifiedViewer = React.memo(({
   });
   const viewerController = useURDFViewerController({
     onJointChange,
+    syncJointChangesToApp,
+    showJointPanel,
     jointAngleState,
+    jointMotionState,
     onSelect,
     onMeshSelect,
     onHover,
@@ -155,11 +198,109 @@ export const UnifiedViewer = React.memo(({
   });
 
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
+  const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
+  const effectiveSourceFile = activePreview ? null : sourceFile;
   const effectiveSelection = activePreview ? emptySelection : selection;
+  const effectiveHoveredSelection = activePreview ? undefined : hoveredSelection;
   const hoverSelectionEnabled = !activePreview;
   const effectiveFocusTarget = activePreview ? undefined : focusTarget;
   const effectiveIsMeshPreview = activePreview ? false : isMeshPreview;
   const controlLayerKey = isViewerMode ? 'viewer' : 'visualizer';
+  const workspaceEnvironment = 'studio' as const;
+  const workspaceEnvironmentIntensity = isViewerMode
+    ? (resolvedTheme === 'light' ? 0.24 : 0.22)
+    : 0.46;
+  const showWorldOriginAxes = isViewerMode
+    ? !viewerController.showOrigins
+    : !(
+      (mode === 'skeleton' && visualizerController.state.showSkeletonOrigin)
+      || (mode === 'detail' && visualizerController.state.showDetailOrigin)
+      || (mode === 'hardware' && visualizerController.state.showHardwareOrigin)
+    );
+  const viewerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
+  const visualizerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
+
+  const viewerResourceScope = React.useMemo(() => {
+    const next = createStableViewerResourceScope(viewerResourceScopeRef.current, {
+      assets,
+      availableFiles,
+      sourceFile: effectiveSourceFile,
+      sourceFilePath: effectiveSourceFilePath,
+      robotLinks: activePreview ? undefined : robot.links,
+    });
+    viewerResourceScopeRef.current = next;
+    return next;
+  }, [activePreview, assets, availableFiles, effectiveSourceFile, effectiveSourceFilePath, robot.links]);
+
+  const visualizerResourceScope = React.useMemo(() => {
+    const next = createStableViewerResourceScope(visualizerResourceScopeRef.current, {
+      assets,
+      availableFiles,
+      sourceFile,
+      sourceFilePath,
+      robotLinks: robot.links,
+    });
+    visualizerResourceScopeRef.current = next;
+    return next;
+  }, [assets, availableFiles, robot.links, sourceFile, sourceFilePath]);
+
+  const handleWorkspacePointerDownCapture = React.useCallback(() => {
+    optionsVisibleAtPointerDownRef.current = {
+      viewer: showOptionsPanel,
+      skeleton: showSkeletonOptionsPanel,
+    };
+  }, [showOptionsPanel, showSkeletonOptionsPanel]);
+
+  // Blank-canvas clicks should clear selection, not dismiss an already-open options panel.
+  const restoreViewerOptionsIfNeeded = React.useCallback(() => {
+    if (!optionsVisibleAtPointerDownRef.current.viewer || !setShowOptionsPanel) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      if (!viewerOptionsVisibleRef.current) {
+        setShowOptionsPanel(true);
+      }
+    });
+  }, [setShowOptionsPanel]);
+
+  const restoreSkeletonOptionsIfNeeded = React.useCallback(() => {
+    if (!optionsVisibleAtPointerDownRef.current.skeleton || !setShowSkeletonOptionsPanel) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      if (!skeletonOptionsVisibleRef.current) {
+        setShowSkeletonOptionsPanel(true);
+      }
+    });
+  }, [setShowSkeletonOptionsPanel]);
+
+  const handleViewerPointerMissed = React.useCallback(() => {
+    viewerController.handlePointerMissed();
+    restoreViewerOptionsIfNeeded();
+  }, [restoreViewerOptionsIfNeeded, viewerController]);
+
+  const handleVisualizerPointerMissed = React.useCallback(() => {
+    visualizerController.clearSelection();
+    restoreSkeletonOptionsIfNeeded();
+  }, [restoreSkeletonOptionsIfNeeded, visualizerController]);
+
+  useEffect(() => {
+    if (!pendingViewerToolMode || !isViewerMode) {
+      return;
+    }
+
+    setShowToolbar?.(true);
+    viewerController.handleToolModeChange(pendingViewerToolMode);
+    onConsumePendingViewerToolMode?.();
+  }, [
+    isViewerMode,
+    onConsumePendingViewerToolMode,
+    pendingViewerToolMode,
+    setShowToolbar,
+    viewerController,
+  ]);
 
   return (
     <WorkspaceCanvas
@@ -169,26 +310,29 @@ export const UnifiedViewer = React.memo(({
       containerRef={isViewerMode ? viewerController.containerRef : visualizerController.panel.containerRef}
       sceneRef={isViewerMode ? undefined : visualizerController.sceneRef}
       snapshotAction={snapshotAction}
-      onPointerMissed={isViewerMode ? viewerController.handlePointerMissed : visualizerController.clearSelection}
+      onPointerDownCapture={handleWorkspacePointerDownCapture}
+      onPointerMissed={isViewerMode ? handleViewerPointerMissed : handleVisualizerPointerMissed}
       onMouseMove={isViewerMode ? viewerController.handleMouseMove : visualizerController.panel.handleMouseMove}
       onMouseUp={isViewerMode ? viewerController.handleMouseUp : visualizerController.panel.handleMouseUp}
       onMouseLeave={
         isViewerMode
           ? viewerController.handleMouseUp
           : (event) => {
-              visualizerController.panel.handleMouseUp(event);
+              void event;
+              visualizerController.panel.handleMouseUp();
               visualizerController.clearHover();
             }
       }
-      environment={isViewerMode ? 'studio' : 'hdr'}
-      environmentIntensity={0.36}
+      environment={workspaceEnvironment}
+      environmentIntensity={workspaceEnvironmentIntensity}
       cameraFollowPrimary={isViewerMode}
       controlLayerKey={controlLayerKey}
+      showWorldOriginAxes={showWorldOriginAxes}
       orbitControlsProps={
         isViewerMode
           ? {
-              minDistance: 0.5,
-              maxDistance: 20,
+              minDistance: 0.1,
+              maxDistance: 2000,
               enabled: !viewerController.isDragging,
               onStart: () => {
                 viewerController.isOrbitDragging.current = true;
@@ -216,6 +360,7 @@ export const UnifiedViewer = React.memo(({
             lang={lang}
             mode={mode as 'detail' | 'hardware'}
             controller={viewerController}
+            onUpdate={onUpdate}
             showToolbar={showToolbar}
             setShowToolbar={setShowToolbar}
             showOptionsPanel={showOptionsPanel}
@@ -237,10 +382,16 @@ export const UnifiedViewer = React.memo(({
       {isViewerMode ? (
         <URDFViewerScene
           controller={viewerController}
+          sourceFile={effectiveSourceFile}
+          availableFiles={viewerResourceScope.availableFiles}
           urdfContent={effectiveUrdfContent}
-          assets={assets}
+          assets={viewerResourceScope.assets}
+          onRobotDataResolved={onRobotDataResolved}
+          sourceFilePath={effectiveSourceFilePath}
+          groundPlaneOffset={groundPlaneOffset}
           mode={activePreview ? 'detail' : (mode as 'detail' | 'hardware')}
           selection={effectiveSelection}
+          hoveredSelection={effectiveHoveredSelection}
           hoverSelectionEnabled={hoverSelectionEnabled}
           onHover={activePreview ? undefined : onHover}
           onMeshSelect={activePreview ? undefined : onMeshSelect}
@@ -250,6 +401,8 @@ export const UnifiedViewer = React.memo(({
           onCollisionTransformPreview={activePreview ? undefined : onCollisionTransformPreview}
           onCollisionTransform={activePreview ? undefined : onCollisionTransform}
           isMeshPreview={effectiveIsMeshPreview}
+          runtimeInstanceKey={viewerReloadKey}
+          toolMode={viewerController.toolMode}
           t={t}
         />
       ) : (
@@ -258,7 +411,7 @@ export const UnifiedViewer = React.memo(({
           onSelect={onSelect}
           onUpdate={onUpdate}
           mode={mode}
-          assets={assets}
+          assets={visualizerResourceScope.assets}
           lang={lang}
           controller={visualizerController}
         />

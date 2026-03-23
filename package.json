@@ -21,8 +21,22 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:robot-canvas-lib": "vite build -c vite.lib.config.ts",
+    "build:robot-canvas-lib:types": "node ./node_modules/typescript/bin/tsc -p tsconfig.lib.json && node ./scripts/rewrite_dts_aliases.mjs ./dist/lib-types",
+    "build:package:react-robot-canvas": "npm --prefix packages/react-robot-canvas run build",
+    "pack:package:react-robot-canvas": "npm --prefix packages/react-robot-canvas run pack:dry-run",
     "preview": "vite preview",
-    "mjcf:compare": "esbuild scripts/mjcf_compare.ts --bundle --platform=node --format=cjs --alias:@=./src --external:jsdom --outfile=.tmp/mjcf_compare.cjs && node .tmp/mjcf_compare.cjs"
+    "code-editor:generate-urdf-schema": "node scripts/generate_urdf_schema_metadata.mjs",
+    "mjcf:compare": "esbuild scripts/mujoco/mjcf_compare.ts --bundle --platform=node --format=cjs --alias:@=./src --external:jsdom --outfile=.tmp/mjcf_compare.cjs && node .tmp/mjcf_compare.cjs",
+    "codex:retry": "python3 scripts/codex_resilient_exec.py",
+    "codex:retry:strict": "python3 scripts/codex_resilient_exec.py --completion-token TASK_COMPLETE",
+    "codex:gui": "python3 scripts/codex_resilient_gui.py",
+    "codex:tui": "python3 scripts/codex_resilient_tui.py",
+    "codex:key-router:deploy": "python3 scripts/codex_key_router/deploy_and_start.py",
+    "codex:key-router:deploy:dry": "python3 scripts/codex_key_router/deploy_and_start.py --dry-run",
+    "codex:key-router:gui": "python3 scripts/codex_key_router/deploy_gui.py",
+    "codex:key-router:server-gui": "python3 scripts/codex_key_router/server_gui.py",
+    "codex:key-router:simple-gui": "python3 scripts/codex_key_router/simple_gui_router.py"
   },
   "license": "Apache-2.0",
   "dependencies": {

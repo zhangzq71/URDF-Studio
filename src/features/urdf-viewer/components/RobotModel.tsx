@@ -1,27 +1,24 @@
 import React, { memo, useRef, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { useUIStore } from '@/store';
 import { CollisionTransformControls } from './CollisionTransformControls';
-import { HoverSelectionSync } from './HoverSelectionSync';
+import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps } from '../types';
-import { isSingleDofJoint } from '../utils/jointTypes';
-import { offsetRobotToGround } from '../utils/robotPositioning';
+import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 
-// Import hooks
-import {
-    useRobotLoader,
-    useHighlightManager,
-    useCameraFocus,
-    useMouseInteraction,
-    useHoverDetection,
-    useVisualizationEffects
-} from '../hooks';
+import { useRobotLoader } from '../hooks/useRobotLoader';
+import { useHighlightManager } from '../hooks/useHighlightManager';
+import { useCameraFocus } from '../hooks/useCameraFocus';
+import { useMouseInteraction } from '../hooks/useMouseInteraction';
+import { useHoverDetection } from '../hooks/useHoverDetection';
+import { useVisualizationEffects } from '../hooks/useVisualizationEffects';
 
 // Wrap with memo and custom comparison to prevent unnecessary re-renders
 export const RobotModel: React.FC<RobotModelProps> = memo(({
     urdfContent,
     assets,
+    sourceFormat = 'auto',
+    sourceFilePath,
     onRobotLoaded,
     showCollision = false,
     showVisual = true,
@@ -30,7 +27,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     onMeshSelect,
     onJointChange,
     onJointChangeCommit,
-    jointAngles,
+    initialJointAngles,
+    registerSceneRefresh,
     setIsDragging,
     setActiveJoint,
     justSelectedRef,
@@ -60,18 +58,16 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     isOrbitDragging,
     onTransformPending,
     isSelectionLockedRef,
-    isMeshPreview = false
+    isMeshPreview = false,
+    hoveredSelection,
+    groundPlaneOffset = 0,
 }) => {
     const { invalidate } = useThree();
-    const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
-    const needsInitialGroundFitRef = useRef(true);
-    const initialGroundFitTimersRef = useRef<number[]>([]);
-    const appliedJointAnglesRef = useRef<Record<string, number>>({});
+    const autoFrameScopeFallbackRef = useRef<string | null>(null);
 
-    const clearInitialGroundFitTimers = () => {
-        initialGroundFitTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-        initialGroundFitTimersRef.current = [];
-    };
+    if (!autoFrameScopeFallbackRef.current) {
+        autoFrameScopeFallbackRef.current = `viewer-session:${Math.random().toString(36).slice(2)}`;
+    }
 
     // Keep ref for setIsDragging to avoid stale closures
     const setIsDraggingRef = useRef(setIsDragging);
@@ -89,18 +85,23 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     const {
         robot,
         error,
+        isLoading,
+        loadingProgress,
         robotVersion,
         linkMeshMapRef
     } = useRobotLoader({
         urdfContent,
         assets,
+        sourceFormat,
+        sourceFilePath,
         showCollision,
         showVisual,
         isMeshPreview,
         robotLinks,
         robotJoints,
-        initialJointAngles: jointAngles,
-        onRobotLoaded
+        initialJointAngles,
+        onRobotLoaded,
+        groundPlaneOffset,
     });
 
     // ============================================================
@@ -128,7 +129,9 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robot,
         focusTarget,
         selection,
-        mode
+        mode,
+        autoFrameOnRobotChange: !focusTarget && !isLoading,
+        autoFrameScopeKey: sourceFilePath ?? autoFrameScopeFallbackRef.current,
     });
 
     // ============================================================
@@ -154,6 +157,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         onMeshSelect,
         onJointChange,
         onJointChangeCommit,
+        throttleJointChangeDuringDrag: true,
         setIsDragging,
         setActiveJoint,
         justSelectedRef,
@@ -209,83 +213,50 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         jointAxisSize,
         modelOpacity,
         robotLinks,
-        toolMode,
         selection,
         highlightGeometry,
         highlightedMeshesRef
     });
 
     useEffect(() => {
-        needsInitialGroundFitRef.current = true;
-        appliedJointAnglesRef.current = {};
-        return () => {
-            clearInitialGroundFitTimers();
-        };
-    }, [robot, robotVersion]);
+        if (hoveredSelection === undefined) return;
+        syncHoverHighlight(hoveredSelection);
+    }, [
+        hoveredSelection?.type,
+        hoveredSelection?.id,
+        hoveredSelection?.subType,
+        hoveredSelection?.objectIndex,
+        syncHoverHighlight,
+        hoveredSelection,
+    ]);
 
-    // ============================================================
-    // Apply joint angles when jointAngles prop changes
-    // ============================================================
-    useEffect(() => {
-        if (!robot || !jointAngles) return;
-
-        const joints = (robot as any).joints;
-        if (!joints) return;
-        let hasJointTransformChanges = false;
-
-        Object.entries(jointAngles).forEach(([jointName, angle]) => {
-            const joint = joints[jointName];
-            const previousAngle = appliedJointAnglesRef.current[jointName];
-            const currentAngle = joint?.angle ?? joint?.jointValue;
-
-            if (
-                previousAngle === angle
-                && currentAngle === angle
-            ) {
-                return;
-            }
-
-            if (isSingleDofJoint(joint) && typeof joint.setJointValue === 'function') {
-                joint.setJointValue(angle);
-                hasJointTransformChanges = true;
-            }
-
-            appliedJointAnglesRef.current[jointName] = angle;
-        });
-
-        if (needsInitialGroundFitRef.current && Object.keys(jointAngles).length > 0) {
-            needsInitialGroundFitRef.current = false;
-            clearInitialGroundFitTimers();
-
-            initialGroundFitTimersRef.current = [0, 80, 220, 500].map((delay) =>
-                window.setTimeout(() => {
-                    offsetRobotToGround(robot, groundPlaneOffset);
-                    boundingBoxNeedsUpdateRef.current = true;
-                    needsRaycastRef.current = true;
-                    invalidate();
-                }, delay)
-            );
-        }
-
-        if (!hasJointTransformChanges) {
-            return () => {
-                clearInitialGroundFitTimers();
-            };
+    const requestSceneRefresh = useCallback(() => {
+        if (!robot) {
+            return;
         }
 
         robot.updateMatrixWorld(true);
         boundingBoxNeedsUpdateRef.current = true;
         needsRaycastRef.current = true;
         invalidate();
+    }, [boundingBoxNeedsUpdateRef, invalidate, needsRaycastRef, robot]);
 
+    useEffect(() => {
+        registerSceneRefresh?.(requestSceneRefresh);
         return () => {
-            clearInitialGroundFitTimers();
+            registerSceneRefresh?.(null);
         };
-    }, [robot, jointAngles, groundPlaneOffset, invalidate, boundingBoxNeedsUpdateRef, needsRaycastRef]);
+    }, [registerSceneRefresh, requestSceneRefresh]);
 
     // ============================================================
     // RENDER
     // ============================================================
+    const loadingHudState = buildViewerLoadingHudState({
+        loadedCount: loadingProgress?.loadedCount,
+        totalCount: loadingProgress?.totalCount,
+        fallbackDetail: t.loadingRobotPreparing,
+    });
+
     if (error) {
         return (
             <Html center>
@@ -296,21 +267,21 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         );
     }
 
-    if (!robot) {
-        return (
-            <Html center>
-                <div className="text-slate-500 dark:text-slate-400 text-sm">{t.loadingRobot}</div>
-            </Html>
-        );
-    }
-
     return (
         <>
-            <HoverSelectionSync
-                enabled={hoverSelectionEnabled}
-                onHoverSelectionChange={syncHoverHighlight}
-            />
-            <primitive object={robot} />
+            {robot ? <primitive object={robot} /> : null}
+            {isLoading ? (
+                <Html fullscreen>
+                    <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
+                        <ViewerLoadingHud
+                            title={t.loadingRobot}
+                            detail={t.loadingRobotPreparing}
+                            progress={loadingHudState.progress}
+                            statusLabel={loadingHudState.statusLabel}
+                        />
+                    </div>
+                </Html>
+            ) : null}
             {(() => {
                 const shouldShow = mode === 'detail' && highlightMode === 'collision' && transformMode !== 'select' && selection?.subType === 'collision';
                 return shouldShow ? (

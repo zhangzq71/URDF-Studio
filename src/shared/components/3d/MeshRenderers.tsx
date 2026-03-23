@@ -21,15 +21,17 @@ const LazyDAERenderer = lazy(() => import('./renderers/DAERendererImpl'));
 export const STLRenderer = React.memo(({
   url,
   material,
-  scale
+  scale,
+  onResolved,
 }: {
   url: string;
   material: THREE.Material;
   scale?: ScaleProps;
+  onResolved?: () => void;
 }) => {
   return (
     <Suspense fallback={null}>
-      <LazySTLRenderer url={url} material={material} scale={scale} />
+      <LazySTLRenderer url={url} material={material} scale={scale} onResolved={onResolved} />
     </Suspense>
   );
 });
@@ -40,17 +42,29 @@ export const OBJRenderer = React.memo(({
   material,
   color,
   assets,
-  scale
+  assetBaseDir,
+  scale,
+  onResolved,
 }: {
   url: string;
   material: THREE.Material;
   color: string;
   assets: Record<string, string>;
+  assetBaseDir?: string;
   scale?: ScaleProps;
+  onResolved?: () => void;
 }) => {
   return (
     <Suspense fallback={null}>
-      <LazyOBJRenderer url={url} material={material} color={color} assets={assets} scale={scale} />
+      <LazyOBJRenderer
+        url={url}
+        material={material}
+        color={color}
+        assets={assets}
+        assetBaseDir={assetBaseDir}
+        scale={scale}
+        onResolved={onResolved}
+      />
     </Suspense>
   );
 });
@@ -60,16 +74,30 @@ export const DAERenderer = React.memo(({
   url,
   material,
   assets,
-  scale
+  assetBaseDir,
+  normalizeRoot,
+  scale,
+  onResolved,
 }: {
   url: string;
   material: THREE.Material;
   assets: Record<string, string>;
+  assetBaseDir?: string;
+  normalizeRoot?: boolean;
   scale?: ScaleProps;
+  onResolved?: () => void;
 }) => {
   return (
     <Suspense fallback={null}>
-      <LazyDAERenderer url={url} material={material} assets={assets} scale={scale} />
+      <LazyDAERenderer
+        url={url}
+        material={material}
+        assets={assets}
+        assetBaseDir={assetBaseDir}
+        normalizeRoot={normalizeRoot}
+        scale={scale}
+        onResolved={onResolved}
+      />
     </Suspense>
   );
 });

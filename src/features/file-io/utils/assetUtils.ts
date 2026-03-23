@@ -3,12 +3,14 @@
  * Utilities for handling mesh and texture assets
  */
 
+import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import type { AssetFile } from '../types';
 import { isAssetFile } from './formatDetection';
 
 /**
- * Create blob URLs for asset files with multiple path patterns
- * This enables flexible matching of mesh paths in URDF/MJCF files
+ * Create blob URLs for asset files using stable library-relative keys.
+ * Ambiguous global aliases like bare filenames are intentionally avoided so
+ * different robot packages can safely contain files with the same name.
  */
 export function createAssetUrls(assetFiles: AssetFile[]): Record<string, string> {
   const assets: Record<string, string> = {};
@@ -17,32 +19,8 @@ export function createAssetUrls(assetFiles: AssetFile[]): Record<string, string>
     if (!isAssetFile(f.name)) return;
 
     const url = URL.createObjectURL(f.blob);
-
-    // Store with full path for path-based lookup
-    assets[f.name] = url;
-
-    // Also store with just filename for simple matching
-    const filename = f.name.split('/').pop()!;
-    assets[filename] = url;
-
-    // Store with /meshes/filename pattern (common in URDF)
-    if (f.name.includes('/meshes/')) {
-      const meshPath = '/meshes/' + filename;
-      assets[meshPath] = url;
-    }
-
-    // Store various path patterns for flexible matching
-    const parts = f.name.split('/');
-    for (let i = 0; i < parts.length; i++) {
-      const subPath = parts.slice(i).join('/');
-      if (!assets[subPath]) {
-        assets[subPath] = url;
-      }
-      // Also with leading slash
-      if (!assets['/' + subPath]) {
-        assets['/' + subPath] = url;
-      }
-    }
+    const normalizedPath = f.name.replace(/\\/g, '/').replace(/^\/+/, '');
+    assets[normalizedPath] = url;
   });
 
   return assets;
@@ -82,14 +60,21 @@ export async function fetchMeshBlobs(
   assets: Record<string, string>
 ): Promise<Array<{ name: string; blob: Blob }>> {
   const results: Array<{ name: string; blob: Blob }> = [];
+  const exportedMeshPaths = new Set<string>();
 
   const promises = Array.from(meshPaths).map(async (fileName) => {
-    const blobUrl = assets[fileName];
+    const exportPath = normalizeMeshPathForExport(fileName);
+    if (!exportPath || exportedMeshPaths.has(exportPath)) {
+      return;
+    }
+    exportedMeshPaths.add(exportPath);
+
+    const blobUrl = resolveMeshAssetUrl(fileName, assets);
     if (blobUrl) {
       try {
         const res = await fetch(blobUrl);
         const blob = await res.blob();
-        results.push({ name: fileName, blob });
+        results.push({ name: exportPath, blob });
       } catch (err) {
         console.error(`Failed to load mesh ${fileName}`, err);
       }

@@ -4,7 +4,6 @@
  */
 
 export {
-    cleanFilePath,
     buildAssetIndex,
     findAssetByIndex,
     findAssetByPath,
@@ -13,5 +12,16 @@ export {
     resetUnitDetection,
     createMeshLoader
 } from './meshLoader';
+export {
+    mitigateCoplanarMaterialZFighting,
+    isCoplanarOffsetMaterial,
+} from './coplanarMaterialOffset';
 
 export type { AssetIndex } from './meshLoader';
+export { bakeColladaRootTransformInPlace } from './colladaRootTransform';
+export { cleanFilePath } from './pathNormalization';
+export {
+    buildColladaRootNormalizationHints,
+    shouldNormalizeColladaRoot,
+} from './colladaRootNormalization';
+export type { ColladaRootNormalizationHints } from './colladaRootNormalization';

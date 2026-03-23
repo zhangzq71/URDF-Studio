@@ -14,7 +14,6 @@ interface UseResponsivePanelLayoutOptions {
   jointPanelRef: RefObject<HTMLDivElement>;
   showOptionsPanel: boolean;
   showJointPanel: boolean;
-  showJointControls: boolean;
   showToolbar: boolean;
 }
 
@@ -53,7 +52,6 @@ export function useResponsivePanelLayout({
   jointPanelRef,
   showOptionsPanel,
   showJointPanel,
-  showJointControls,
   showToolbar,
 }: UseResponsivePanelLayoutOptions) {
   const [metrics, setMetrics] = useState<PanelMetrics>(() =>
@@ -74,7 +72,7 @@ export function useResponsivePanelLayout({
 
     const observer = new ResizeObserver(updateMetrics);
     const observedNodes = [containerRef.current, optionsPanelRef.current, jointPanelRef.current].filter(
-      (node): node is HTMLElement => Boolean(node)
+      (node): node is HTMLDivElement => Boolean(node)
     );
 
     observedNodes.forEach((node) => observer.observe(node));
@@ -88,7 +86,6 @@ export function useResponsivePanelLayout({
     containerRef,
     jointPanelRef,
     optionsPanelRef,
-    showJointControls,
     showJointPanel,
     showOptionsPanel,
   ]);
@@ -98,7 +95,6 @@ export function useResponsivePanelLayout({
     const shouldStackPanels =
       showOptionsPanel &&
       showJointPanel &&
-      showJointControls &&
       metrics.containerWidth > 0 &&
       metrics.containerWidth < metrics.optionsWidth + metrics.jointsWidth + EDGE_GAP * 2 + PANEL_GAP;
 
@@ -138,7 +134,6 @@ export function useResponsivePanelLayout({
     metrics.jointsWidth,
     metrics.optionsHeight,
     metrics.optionsWidth,
-    showJointControls,
     showJointPanel,
     showOptionsPanel,
     showToolbar,

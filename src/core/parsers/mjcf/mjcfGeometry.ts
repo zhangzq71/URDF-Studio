@@ -24,6 +24,150 @@ function createDefaultMaterial(): THREE.MeshStandardMaterial {
     });
 }
 
+function mjcfQuatToThreeQuat(quat: [number, number, number, number]): THREE.Quaternion {
+    return new THREE.Quaternion(quat[1], quat[2], quat[3], quat[0]);
+}
+
+function createMuJoCoFromToQuaternion(direction: THREE.Vector3): THREE.Quaternion {
+    const normalizedDirection = direction.clone().normalize();
+    const localNegativeZ = new THREE.Vector3(0, 0, -1);
+    const dot = localNegativeZ.dot(normalizedDirection);
+
+    // MuJoCo uses a deterministic 180deg rotation around +X when fromto points
+    // exactly opposite the canonical local -Z axis.
+    if (dot <= -1 + 1e-9) {
+        return new THREE.Quaternion(1, 0, 0, 0);
+    }
+
+    return new THREE.Quaternion().setFromUnitVectors(localNegativeZ, normalizedDirection);
+}
+
+function normalizeScale(scale?: number[]): [number, number, number] | null {
+    if (!scale || scale.length === 0) {
+        return null;
+    }
+
+    return [
+        scale[0] ?? 1,
+        scale[1] ?? scale[0] ?? 1,
+        scale[2] ?? scale[0] ?? 1,
+    ];
+}
+
+export function applyMeshAssetTransform(meshObject: THREE.Object3D, meshDef: MJCFMesh): THREE.Object3D {
+    const normalizedScale = normalizeScale(meshDef.scale);
+    if (normalizedScale) {
+        meshObject.scale.set(normalizedScale[0], normalizedScale[1], normalizedScale[2]);
+    }
+
+    if (!meshDef.refpos && !meshDef.refquat) {
+        return meshObject;
+    }
+
+    const assetTransform = new THREE.Group();
+    assetTransform.add(meshObject);
+
+    if (meshDef.refquat) {
+        assetTransform.quaternion.copy(mjcfQuatToThreeQuat(meshDef.refquat).conjugate());
+    }
+
+    if (meshDef.refpos) {
+        assetTransform.position.set(-meshDef.refpos[0], -meshDef.refpos[1], -meshDef.refpos[2]);
+        if (meshDef.refquat) {
+            assetTransform.position.applyQuaternion(assetTransform.quaternion);
+        }
+    }
+
+    return assetTransform;
+}
+
+function normalizeLookupPath(path: string): string {
+    return path
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/')
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
+}
+
+function pickDeterministicAssetMatch(matches: Array<{ key: string; url: string }>): string | null {
+    if (matches.length === 0) return null;
+    if (matches.length === 1) return matches[0].url;
+    matches.sort((a, b) => a.key.length - b.key.length || a.key.localeCompare(b.key));
+    return matches[0].url;
+}
+
+export function resolveMJCFAssetUrl(
+    filePath: string,
+    assets: Record<string, string>,
+    sourceFileDir: string,
+): string | null {
+    const direct = findAssetByPath(filePath, assets, sourceFileDir);
+    if (direct) return direct;
+
+    const normalizedFilePath = normalizeLookupPath(filePath);
+    const normalizedSourceDir = normalizeLookupPath(sourceFileDir);
+    const sourcePrefix = normalizedSourceDir ? `${normalizedSourceDir}/` : '';
+    const assetEntries = Object.entries(assets).map(([key, url]) => ({
+        key: normalizeLookupPath(key),
+        url,
+    }));
+
+    if (sourcePrefix) {
+        const fullSuffix = normalizeLookupPath(`${sourcePrefix}${normalizedFilePath}`);
+        const fullSuffixMatches = assetEntries.filter(({ key }) =>
+            key === fullSuffix || key.endsWith(`/${fullSuffix}`),
+        );
+        const fullSuffixResolved = pickDeterministicAssetMatch(fullSuffixMatches);
+        if (fullSuffixResolved) return fullSuffixResolved;
+    }
+
+    if (normalizedFilePath) {
+        const relativeMatches = assetEntries.filter(({ key }) =>
+            key === normalizedFilePath || key.endsWith(`/${normalizedFilePath}`),
+        );
+
+        if (relativeMatches.length === 1) {
+            return relativeMatches[0].url;
+        }
+
+        if (relativeMatches.length > 1 && sourcePrefix) {
+            const scopedRelativeMatches = relativeMatches.filter(({ key }) =>
+                key.includes(`/${sourcePrefix}`) || key.startsWith(sourcePrefix),
+            );
+            const scopedRelativeResolved = pickDeterministicAssetMatch(scopedRelativeMatches);
+            if (scopedRelativeResolved) return scopedRelativeResolved;
+        }
+    }
+
+    const filename = normalizedFilePath.split('/').pop() || '';
+    if (filename) {
+        const filenameMatches = assetEntries.filter(({ key }) =>
+            key === filename || key.endsWith(`/${filename}`),
+        );
+
+        if (filenameMatches.length === 1) {
+            return filenameMatches[0].url;
+        }
+
+        if (filenameMatches.length > 1 && sourcePrefix) {
+            const scopedFilenameMatches = filenameMatches.filter(({ key }) =>
+                key.includes(`/${sourcePrefix}`) || key.startsWith(sourcePrefix),
+            );
+            const scopedFilenameResolved = pickDeterministicAssetMatch(scopedFilenameMatches);
+            if (scopedFilenameResolved) return scopedFilenameResolved;
+        }
+
+        if (filenameMatches.length > 1) {
+            console.warn(
+                `[MJCFLoader] Ambiguous mesh filename "${filename}" (${filenameMatches.length} matches), refusing unscoped fallback.`,
+            );
+            return null;
+        }
+    }
+
+    return null;
+}
+
 /**
  * Create geometry from fromto specification (common in MuJoCo).
  * fromto defines two endpoints, and we create a cylinder/capsule between them.
@@ -39,35 +183,42 @@ function createFromToGeometry(geom: MJCFGeometryDef, type: 'cylinder' | 'capsule
     const radius = geom.size?.[0] || 0.05;
 
     const group = new THREE.Group();
+    const shapeGroup = new THREE.Group();
 
     if (type === 'cylinder') {
         const geometry = new THREE.CylinderGeometry(radius, radius, length, 32);
+        geometry.rotateX(-Math.PI / 2);
         const mesh = new THREE.Mesh(geometry, createDefaultMaterial());
-        group.add(mesh);
+        shapeGroup.add(mesh);
     } else {
         // Capsule: cylinder + 2 hemispheres
         const cylGeom = new THREE.CylinderGeometry(radius, radius, length, 32);
         const cylMesh = new THREE.Mesh(cylGeom, createDefaultMaterial());
-        group.add(cylMesh);
+        shapeGroup.add(cylMesh);
 
         const topSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
         const topMesh = new THREE.Mesh(topSphere, createDefaultMaterial());
         topMesh.position.y = length / 2;
-        group.add(topMesh);
+        shapeGroup.add(topMesh);
 
         const bottomSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
         const bottomMesh = new THREE.Mesh(bottomSphere, createDefaultMaterial());
         bottomMesh.position.y = -length / 2;
-        group.add(bottomMesh);
+        shapeGroup.add(bottomMesh);
+
+        // MuJoCo canonicalizes fromto capsules so the primitive points along local -Z.
+        shapeGroup.rotation.x = -Math.PI / 2;
     }
+
+    group.add(shapeGroup);
 
     // Position at center
     group.position.copy(center);
 
-    // Orient to align Y-axis with direction
+    // MuJoCo canonicalizes fromto cylinder/capsule primitives so local -Z points
+    // from the first endpoint to the second.
     if (length > 0.0001) {
-        const yAxis = new THREE.Vector3(0, 1, 0);
-        const quaternion = new THREE.Quaternion().setFromUnitVectors(yAxis, direction.normalize());
+        const quaternion = createMuJoCoFromToQuaternion(direction);
         group.quaternion.copy(quaternion);
     }
 
@@ -77,19 +228,10 @@ function createFromToGeometry(geom: MJCFGeometryDef, type: 'cylinder' | 'capsule
 async function loadMeshForMJCF(
     filePath: string,
     assets: Record<string, string>,
-    meshCache: MJCFMeshCache
+    meshCache: MJCFMeshCache,
+    sourceFileDir: string,
 ): Promise<THREE.Object3D | null> {
-    // 1. Try exact path (with meshdir)
-    let assetUrl = findAssetByPath(filePath, assets, '');
-
-    // 2. Fallback: Try filename only (ignore path/meshdir)
-    if (!assetUrl) {
-        const filename = filePath.split('/').pop() || '';
-        if (filename && filename !== filePath) {
-            console.warn(`[MJCFLoader] Mesh not found at ${filePath}, trying filename ${filename}`);
-            assetUrl = findAssetByPath(filename, assets, '');
-        }
-    }
+    const assetUrl = resolveMJCFAssetUrl(filePath, assets, sourceFileDir);
 
     if (!assetUrl) {
         console.warn(`[MJCFLoader] Mesh file definitely not found: ${filePath}`);
@@ -158,7 +300,8 @@ export async function createGeometryMesh(
     geom: MJCFGeometryDef,
     meshMap: Map<string, MJCFMesh>,
     assets: Record<string, string>,
-    meshCache: MJCFMeshCache
+    meshCache: MJCFMeshCache,
+    sourceFileDir = '',
 ): Promise<THREE.Object3D | null> {
     // Determine geometry type: mesh attribute takes priority, otherwise use parsed type
     const type = geom.mesh ? 'mesh' : geom.type;
@@ -258,31 +401,21 @@ export async function createGeometryMesh(
                 const cached = meshCache.get(meshDef.file)!;
                 if ((cached as any).isGroup || (cached as any).isObject3D) {
                     const cloned = (cached as THREE.Object3D).clone(true);
-                    if (meshDef.scale) {
-                        cloned.scale.set(meshDef.scale[0], meshDef.scale[1], meshDef.scale[2]);
-                    }
-                    return cloned;
+                    return applyMeshAssetTransform(cloned, meshDef);
                 } else {
                     // BufferGeometry
                     const mesh = new THREE.Mesh(cached as THREE.BufferGeometry, createDefaultMaterial());
-                    if (meshDef.scale) {
-                        mesh.scale.set(meshDef.scale[0], meshDef.scale[1], meshDef.scale[2]);
-                    }
-                    return mesh;
+                    return applyMeshAssetTransform(mesh, meshDef);
                 }
             }
 
             // Load mesh
-            const loadedMesh = await loadMeshForMJCF(meshDef.file, assets, meshCache);
+            const loadedMesh = await loadMeshForMJCF(meshDef.file, assets, meshCache, sourceFileDir);
             if (!loadedMesh) {
                 return createPlaceholderMesh(meshDef.file);
             }
 
-            if (meshDef.scale) {
-                loadedMesh.scale.set(meshDef.scale[0], meshDef.scale[1], meshDef.scale[2]);
-            }
-
-            return loadedMesh;
+            return applyMeshAssetTransform(loadedMesh, meshDef);
         }
 
         default:

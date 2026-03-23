@@ -13,11 +13,16 @@ interface STLRendererImplProps {
   url: string;
   material: THREE.Material;
   scale?: ScaleProps;
+  onResolved?: () => void;
 }
 
-export function STLRendererImpl({ url, material, scale }: STLRendererImplProps) {
+export function STLRendererImpl({ url, material, scale, onResolved }: STLRendererImplProps) {
   const geometry = useLoader(STLLoader, url);
   const clone = useMemo(() => geometry.clone(), [geometry]);
+
+  useEffect(() => {
+    onResolved?.();
+  }, [clone, onResolved]);
 
   useEffect(() => () => {
     clone.dispose();

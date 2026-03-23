@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { MathUtils as SharedMathUtils } from '@/shared/utils';
 import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import { collisionBaseMaterial, emptyRaycast } from '../utils/materials';
+import { shouldSyncDirectLinkChildVisibility } from '../utils/runtimeVisibility';
 import {
     createJointAxisVisualization,
     createOriginAxes,
@@ -12,7 +13,7 @@ import {
     createInertiaBox
 } from '../utils/visualizationFactories';
 import type { UrdfLink } from '@/types';
-import type { ToolMode, URDFViewerProps } from '../types';
+import type { URDFViewerProps } from '../types';
 import type { HighlightedMeshSnapshot } from './useHighlightManager';
 
 export interface UseVisualizationEffectsOptions {
@@ -34,7 +35,6 @@ export interface UseVisualizationEffectsOptions {
     jointAxisSize: number;
     modelOpacity: number;
     robotLinks?: Record<string, UrdfLink>;
-    toolMode: ToolMode;
     selection?: URDFViewerProps['selection'];
     highlightGeometry: (
         linkName: string | null,
@@ -123,7 +123,6 @@ export function useVisualizationEffects({
     jointAxisSize,
     modelOpacity,
     robotLinks,
-    toolMode,
     selection,
     highlightGeometry,
     highlightedMeshesRef
@@ -225,7 +224,10 @@ export function useVisualizationEffects({
                     if (!inner.isMesh) return;
 
                     inner.userData.isCollisionMesh = true;
-                    inner.raycast = (highlightMode === 'collision' && isVisible)
+                    // Keep collision meshes raycastable whenever they are visible.
+                    // The picker already filters by requested subtype, so disabling
+                    // raycast here breaks the "auto fallback to visible geometry" flow.
+                    inner.raycast = isVisible
                         ? THREE.Mesh.prototype.raycast
                         : emptyRaycast;
 
@@ -253,17 +255,16 @@ export function useVisualizationEffects({
                 return;
             }
 
-            if (
-                child.parent
-                && child.parent.isURDFLink
-                && !child.isURDFJoint
-                && !child.isURDFCollider
-                && child.userData?.isGizmo !== true
-            ) {
+            if (shouldSyncDirectLinkChildVisibility(child)) {
                 child.visible = isVisualGeometryVisible(linkData, showVisual);
             }
 
-            if (child.isMesh && child.userData?.isVisual) {
+            if (
+                child.isMesh
+                && child.userData?.isVisual
+                && !child.userData?.isCollision
+                && !child.userData?.isCollisionMesh
+            ) {
                 child.visible = isVisualGeometryVisible(linkData, showVisual);
             }
 
@@ -705,14 +706,6 @@ export function useVisualizationEffects({
 
         if (!robot) return;
 
-        if (toolMode === 'measure') {
-            if (currentHoverRef.current.id) {
-                highlightGeometry(currentHoverRef.current.id, true, currentHoverRef.current.subType as any, currentHoverRef.current.objectIndex);
-            }
-            currentHoverRef.current = { id: null, subType: null };
-            return;
-        }
-
         const activeSelection = selectionRef.current;
         const {
             id: selectionHighlightId,
@@ -760,20 +753,11 @@ export function useVisualizationEffects({
         }
 
         currentHoverRef.current = { id: null, subType: null };
-    }, [robot, toolMode, highlightGeometry, resolveHighlightTarget]);
+    }, [robot, highlightGeometry, resolveHighlightTarget]);
 
     // Effect to handle selection highlighting
     useEffect(() => {
         if (!robot) return;
-
-        if (toolMode === 'measure') {
-            if (currentSelectionRef.current.id) {
-                highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any, currentSelectionRef.current.objectIndex);
-            }
-            currentSelectionRef.current = { id: null, subType: null };
-            syncHoverHighlight(undefined);
-            return;
-        }
 
         if (currentSelectionRef.current.id) {
             highlightGeometry(currentSelectionRef.current.id, true, currentSelectionRef.current.subType as any, currentSelectionRef.current.objectIndex);
@@ -788,7 +772,7 @@ export function useVisualizationEffects({
             currentSelectionRef.current = { id: null, subType: null };
         }
         syncHoverHighlight(latestHoverSelectionRef.current);
-    }, [robot, selection?.type, selection?.id, selection?.subType, selection?.objectIndex, highlightGeometry, robotVersion, highlightMode, showCollision, showVisual, toolMode, syncHoverHighlight]);
+    }, [robot, selection?.type, selection?.id, selection?.subType, selection?.objectIndex, highlightGeometry, robotVersion, highlightMode, showCollision, showVisual, syncHoverHighlight]);
 
     return { syncHoverHighlight };
 }

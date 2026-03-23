@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import type { RobotState, UrdfJoint } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
+import { buildColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { RobotNode } from './nodes';
+import { ClosedLoopConstraintsOverlay } from './constraints';
 import { JointTransformControls } from './controls';
 import type { VisualizerController } from '../hooks/useVisualizerController';
 
@@ -37,11 +39,14 @@ export const VisualizerScene = React.memo(({
     robotRootRef,
     state,
     selectedJointPivot,
+    selectedJointMotion,
     selectedCollisionRef,
     handleRegisterJointPivot,
+    handleRegisterJointMotion,
     handleRegisterCollisionRef,
     transformControlsState,
     handleCollisionTransformEnd,
+    requestGroundRealignment,
   } = controller;
   const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
     const grouped: Record<string, UrdfJoint[]> = {};
@@ -56,6 +61,10 @@ export const VisualizerScene = React.memo(({
 
     return grouped;
   }, [robot.joints]);
+  const colladaRootNormalizationHints = React.useMemo(
+    () => buildColladaRootNormalizationHints(robot.links),
+    [robot.links]
+  );
 
   const handleCollisionDraggingChanged = React.useCallback(
     (event: { value?: boolean }) => {
@@ -68,6 +77,7 @@ export const VisualizerScene = React.memo(({
   return (
     <>
       <GroundedGroup ref={robotRootRef}>
+        {mode === 'skeleton' && <ClosedLoopConstraintsOverlay robot={robot} />}
         <RobotNode
           linkId={robot.rootLinkId}
           robot={robot}
@@ -93,15 +103,19 @@ export const VisualizerScene = React.memo(({
           depth={0}
           assets={assets}
           lang={lang}
+          colladaRootNormalizationHints={colladaRootNormalizationHints}
           childJointsByParent={childJointsByParent}
           onRegisterJointPivot={handleRegisterJointPivot}
+          onRegisterJointMotion={handleRegisterJointMotion}
           onRegisterCollisionRef={handleRegisterCollisionRef}
+          onMeshResolved={requestGroundRealignment}
         />
       </GroundedGroup>
 
-      <JointTransformControls
+        <JointTransformControls
         mode={mode}
         selectedJointPivot={selectedJointPivot}
+        selectedJointMotion={selectedJointMotion}
         robot={robot}
         transformMode="universal"
         transformControlsState={transformControlsState}

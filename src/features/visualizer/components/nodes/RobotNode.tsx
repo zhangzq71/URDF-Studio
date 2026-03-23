@@ -2,7 +2,8 @@ import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { RobotState, UrdfJoint } from '@/types';
-import { getCollisionGeometryEntries } from '@/core/robot';
+import { getCollisionGeometryEntries, isTransparentDisplayLink } from '@/core/robot';
+import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
 import { Language, translations } from '@/shared/i18n';
@@ -35,14 +36,18 @@ interface CommonVisualizerProps {
   transformMode: 'translate' | 'rotate';
   assets: Record<string, string>;
   lang: Language;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
+  onMeshResolved?: () => void;
 }
 
 interface RobotNodeProps extends CommonVisualizerProps {
   linkId: string;
   depth: number;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
+  onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
 }
 
@@ -85,8 +90,11 @@ export const RobotNode = memo(function RobotNode({
   depth,
   assets,
   lang,
+  colladaRootNormalizationHints,
   onRegisterJointPivot,
-  onRegisterCollisionRef
+  onRegisterJointMotion,
+  onRegisterCollisionRef,
+  onMeshResolved,
 }: RobotNodeProps) {
   const t = translations[lang];
 
@@ -106,6 +114,7 @@ export const RobotNode = memo(function RobotNode({
   };
 
   const childJoints = childJointsByParent[linkId] ?? EMPTY_CHILD_JOINTS;
+  const isTransparentLink = isTransparentDisplayLink(robot, linkId);
   const isSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const selectionSubType = robot.selection.subType;
   const isRoot = linkId === robot.rootLinkId;
@@ -166,9 +175,52 @@ export const RobotNode = memo(function RobotNode({
   }, [linkId]);
 
   const showRootAxes = isRoot && ((mode === 'skeleton' && showSkeletonOrigin) || (mode === 'detail' && showDetailOrigin) || (mode === 'hardware' && showHardwareOrigin));
-  const shouldRenderGeometry = !(mode === 'skeleton' && !showGeometry && !showCollision);
+  const shouldRenderGeometry = mode !== 'skeleton' || showGeometry || showCollision || Boolean(link.visual);
   const showLinkLabel = (mode === 'detail' && showDetailLabels) || (mode === 'hardware' && showHardwareLabels);
   const showRootLabel = isRoot && ((mode === 'skeleton' && showLabels) || (mode === 'hardware' && showHardwareLabels));
+
+  if (isTransparentLink) {
+    return (
+      <group>
+        {childJoints.map((joint) => (
+          <JointNode
+            key={joint.id}
+            joint={joint}
+            robot={robot}
+            childJointsByParent={childJointsByParent}
+            onSelect={onSelect}
+            onUpdate={onUpdate}
+            mode={mode}
+            showGeometry={showGeometry}
+            showVisual={showVisual}
+            selectionTarget={selectionTarget}
+            showLabels={showLabels}
+            showJointAxes={showJointAxes}
+            jointAxisSize={jointAxisSize}
+            frameSize={frameSize}
+            labelScale={labelScale}
+            showSkeletonOrigin={showSkeletonOrigin}
+            showDetailOrigin={showDetailOrigin}
+            showDetailLabels={showDetailLabels}
+            showCollision={showCollision}
+            showHardwareOrigin={showHardwareOrigin}
+            showHardwareLabels={showHardwareLabels}
+            showInertia={showInertia}
+            showCenterOfMass={showCenterOfMass}
+            transformMode={transformMode}
+            depth={depth + 1}
+            assets={assets}
+            lang={lang}
+            colladaRootNormalizationHints={colladaRootNormalizationHints}
+            onRegisterJointPivot={onRegisterJointPivot}
+            onRegisterJointMotion={onRegisterJointMotion}
+            onRegisterCollisionRef={onRegisterCollisionRef}
+            onMeshResolved={onMeshResolved}
+          />
+        ))}
+      </group>
+    );
+  }
 
   return (
     <group>
@@ -220,7 +272,9 @@ export const RobotNode = memo(function RobotNode({
             onLinkClick={handleLinkClick}
             setVisualRef={setVisualRef}
             objectIndex={0}
-          />
+          colladaRootNormalizationHints={colladaRootNormalizationHints}
+          onMeshResolved={onMeshResolved}
+        />
 
           {collisionEntries.map((entry) => (
             <GeometryRenderer
@@ -237,8 +291,9 @@ export const RobotNode = memo(function RobotNode({
               setCollisionRef={getCollisionRefHandler(entry.objectIndex)}
               geometryData={entry.bodyIndex === null ? undefined : entry.geometry}
               geometryId={entry.bodyIndex === null ? '0' : `extra-${entry.bodyIndex + 1}`}
-              objectIndex={entry.objectIndex}
-            />
+                objectIndex={entry.objectIndex}
+                colladaRootNormalizationHints={colladaRootNormalizationHints}
+              />
           ))}
         </>
       )}
@@ -317,12 +372,15 @@ export const RobotNode = memo(function RobotNode({
           showCenterOfMass={showCenterOfMass}
           transformMode={transformMode}
           depth={depth + 1}
-          assets={assets}
-          lang={lang}
-          onRegisterJointPivot={onRegisterJointPivot}
-          onRegisterCollisionRef={onRegisterCollisionRef}
-        />
-      ))}
-    </group>
+            assets={assets}
+            lang={lang}
+            colladaRootNormalizationHints={colladaRootNormalizationHints}
+            onRegisterJointPivot={onRegisterJointPivot}
+            onRegisterJointMotion={onRegisterJointMotion}
+            onRegisterCollisionRef={onRegisterCollisionRef}
+            onMeshResolved={onMeshResolved}
+          />
+        ))}
+      </group>
   );
 });

@@ -1,13 +1,11 @@
 import React, { forwardRef } from 'react';
 import { Language, translations } from '@/shared/i18n';
-import { useUIStore } from '@/store';
 import {
   CheckboxOption,
   OptionsPanelContainer,
   OptionsPanelHeader,
   OptionsPanelContent,
-  SegmentedControl,
-  CollapsibleSection
+  SegmentedControl
 } from './OptionsPanel';
 
 interface DetailOptionsPanelProps {
@@ -60,8 +58,6 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
     ref
   ) => {
     const t = translations[lang];
-    const panelSections = useUIStore((state) => state.panelSections);
-    const setPanelSection = useUIStore((state) => state.setPanelSection);
 
     return (
       <div
@@ -73,7 +69,12 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
             : { top: '16px', right: '16px' }
         }
       >
-        <OptionsPanelContainer isCollapsed={isCollapsed} resizeTitle={t.resize}>
+        <OptionsPanelContainer
+          width="11rem"
+          minWidth={168}
+          isCollapsed={isCollapsed}
+          resizeTitle={t.resize}
+        >
           <OptionsPanelHeader
             title={t.detailOptions}
             isCollapsed={isCollapsed}
@@ -86,7 +87,7 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
             {/* Main Transform - Always Visible */}
-            <div className="p-2 pb-0">
+            <div className="px-3 py-2.5 pb-1.5">
                 <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
                   {t.move} / {t.rotate}
                 </div>
@@ -101,31 +102,18 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
                 />
             </div>
 
-            {/* Visuals Group */}
-            <CollapsibleSection
-              title={t.visuals} // Use existing or appropriate key
-              isCollapsed={panelSections['detail_visuals'] ?? false}
-              onToggle={() => setPanelSection('detail_visuals', !(panelSections['detail_visuals'] ?? false))}
-            >
-                 <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
-                 <CheckboxOption
-                  checked={showDetailOrigin}
-                  onChange={setShowDetailOrigin}
-                  label={t.showOrigin}
-                />
-                <CheckboxOption
-                  checked={showDetailLabels}
-                  onChange={setShowDetailLabels}
-                  label={t.showLabels}
-                />
-            </CollapsibleSection>
-
-             {/* Physics Group */}
-             <CollapsibleSection
-              title={t.physics}
-              isCollapsed={panelSections['detail_physics'] ?? true}
-              onToggle={() => setPanelSection('detail_physics', !(panelSections['detail_physics'] ?? true))}
-            >
+            <div className="px-3 pt-1.5 pb-2.5 space-y-2">
+              <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
+              <CheckboxOption
+                checked={showDetailOrigin}
+                onChange={setShowDetailOrigin}
+                label={t.showOrigin}
+              />
+              <CheckboxOption
+                checked={showDetailLabels}
+                onChange={setShowDetailLabels}
+                label={t.showLabels}
+              />
               <CheckboxOption
                 checked={showCollision}
                 onChange={setShowCollision}
@@ -137,7 +125,7 @@ export const DetailOptionsPanel = forwardRef<HTMLDivElement, DetailOptionsPanelP
                 onChange={setShowCenterOfMass}
                 label={t.showCenterOfMass}
               />
-            </CollapsibleSection>
+            </div>
 
           </OptionsPanelContent>
         </OptionsPanelContainer>

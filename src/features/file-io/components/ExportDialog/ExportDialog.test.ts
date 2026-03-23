@@ -1,0 +1,200 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { JSDOM } from 'jsdom';
+
+import { ExportDialog, type ExportDialogConfig } from './ExportDialog.tsx';
+
+function installDom() {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    url: 'http://localhost/',
+    pretendToBeVisual: true,
+  });
+
+  (globalThis as { window?: Window }).window = dom.window as unknown as Window;
+  (globalThis as { document?: Document }).document = dom.window.document;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: dom.window.navigator,
+    configurable: true,
+  });
+
+  (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
+  (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
+  (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { FocusEvent?: typeof FocusEvent }).FocusEvent = dom.window.FocusEvent;
+  (globalThis as { KeyboardEvent?: typeof KeyboardEvent }).KeyboardEvent = dom.window.KeyboardEvent;
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+  if (!('attachEvent' in dom.window.HTMLElement.prototype)) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, 'attachEvent', {
+      value: () => {},
+      configurable: true,
+    });
+  }
+  if (!('detachEvent' in dom.window.HTMLElement.prototype)) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, 'detachEvent', {
+      value: () => {},
+      configurable: true,
+    });
+  }
+
+  return dom;
+}
+
+function createComponentRoot() {
+  const dom = installDom();
+  const container = dom.window.document.getElementById('root');
+  assert.ok(container, 'root container should exist');
+
+  const root = createRoot(container);
+  return { dom, container, root };
+}
+
+async function destroyComponentRoot(dom: JSDOM, root: Root) {
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+async function renderExportDialog(root: Root, onExport: (config: ExportDialogConfig) => void) {
+  await act(async () => {
+    root.render(
+      React.createElement(ExportDialog, {
+        onClose: () => {},
+        onExport,
+        lang: 'zh',
+        canExportUsd: true,
+      }),
+    );
+  });
+}
+
+function getButtonByText(container: Element, text: string): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (candidate) => candidate.textContent?.replace(/\s+/g, ' ').trim() === text,
+  );
+  assert.ok(button, `button "${text}" should exist`);
+  return button as HTMLButtonElement;
+}
+
+async function click(element: Element) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+function getQualitySlider(container: Element): HTMLInputElement | null {
+  return container.querySelector('input[type="range"]') as HTMLInputElement | null;
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const prototype = input.ownerDocument.defaultView?.HTMLInputElement.prototype;
+  const valueSetter = prototype
+    ? Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+    : undefined;
+
+  assert.ok(valueSetter, 'HTMLInputElement value setter should exist');
+  valueSetter.call(input, value);
+}
+
+async function changeRangeValue(input: HTMLInputElement, value: number) {
+  await act(async () => {
+    setInputValue(input, String(value));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+test('MJCF, URDF, and USD exports expose a custom compression mode with a slider', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, '自定义'));
+    assert.ok(getQualitySlider(container), 'MJCF custom compression slider should render');
+
+    await click(getButtonByText(container, 'URDF'));
+    await click(getButtonByText(container, '自定义'));
+    assert.ok(getQualitySlider(container), 'URDF custom compression slider should render');
+
+    await click(getButtonByText(container, 'USD'));
+    await click(getButtonByText(container, '自定义'));
+    assert.ok(getQualitySlider(container), 'USD custom compression slider should render');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD export shows compression presets immediately without an extra toggle', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'USD'));
+
+    assert.ok(getButtonByText(container, '不压缩'));
+    assert.ok(getButtonByText(container, '低压缩'));
+    assert.ok(getButtonByText(container, '中等'));
+    assert.ok(getButtonByText(container, '自定义'));
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('custom compression keeps the slider visible and exports the selected MJCF quality', async () => {
+  const { dom, container, root } = createComponentRoot();
+  let exportedConfig: ExportDialogConfig | null = null;
+
+  try {
+    await renderExportDialog(root, (config) => {
+      exportedConfig = config;
+    });
+
+    await click(getButtonByText(container, '自定义'));
+
+    const slider = getQualitySlider(container);
+    assert.ok(slider, 'custom compression slider should render');
+
+    await changeRangeValue(slider, 42);
+    assert.ok(getQualitySlider(container), 'slider should remain visible after custom quality changes');
+
+    await click(getButtonByText(container, '导出 ZIP'));
+
+    assert.ok(exportedConfig, 'export handler should receive the dialog config');
+    assert.equal(exportedConfig.format, 'mjcf');
+    assert.equal(exportedConfig.mjcf.compressSTL, true);
+    assert.equal(exportedConfig.mjcf.stlQuality, 42);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('custom compression uses semantic space-vs-fidelity guidance instead of percentage wording', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, '自定义'));
+
+    assert.match(container.textContent ?? '', /平衡/);
+    assert.match(container.textContent ?? '', /更省空间/);
+    assert.match(container.textContent ?? '', /更高保真/);
+    assert.doesNotMatch(container.textContent ?? '', /更小体积/);
+    assert.doesNotMatch(container.textContent ?? '', /更多细节/);
+    assert.doesNotMatch(container.textContent ?? '', /\b50%\b/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});

@@ -1,11 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from './JointControlItem';
 import { isSingleDofJoint } from '@/shared/utils/jointTypes';
+import { resolveViewerJointAngleValue } from '@/shared/utils/jointPanelState';
+import type { JointPanelStore } from '@/shared/utils/jointPanelStore';
 
 interface JointsPanelProps {
-    showJointControls: boolean;
     showJointPanel: boolean;
     robot: any;
     jointPanelRef: React.RefObject<HTMLDivElement>;
@@ -20,17 +21,16 @@ interface JointsPanelProps {
     isJointsCollapsed: boolean;
     toggleJointsCollapsed: () => void;
     setShowJointPanel?: (show: boolean) => void;
-    jointAngles: Record<string, number>;
-    activeJoint: string | null;
+    jointPanelStore: JointPanelStore;
     setActiveJoint: (name: string | null) => void;
     handleJointAngleChange: (name: string, angle: number) => void;
     handleJointChangeCommit: (name: string, angle: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
+    onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }
 
 export const JointsPanel: React.FC<JointsPanelProps> = ({
-    showJointControls,
     showJointPanel,
     robot,
     jointPanelRef,
@@ -45,18 +45,23 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     isJointsCollapsed,
     toggleJointsCollapsed,
     setShowJointPanel,
-    jointAngles,
-    activeJoint,
+    jointPanelStore,
     setActiveJoint,
     handleJointAngleChange,
     handleJointChangeCommit,
     onSelect,
     onHover,
+    onUpdate,
 }) => {
     // Condition to show
-    const shouldShow = showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
+    const shouldShow = showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
     const [isAdvanced, setIsAdvanced] = useState(false);
     const onHoverRef = useRef(onHover);
+    const { jointAngles, activeJoint } = useSyncExternalStore(
+        jointPanelStore.subscribe,
+        jointPanelStore.getSnapshot,
+        jointPanelStore.getSnapshot,
+    );
 
     useEffect(() => {
         onHoverRef.current = onHover;
@@ -69,7 +74,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     }, []);
 
     const additionalControls = (
-        <div className="flex items-center gap-1 mr-1">
+        <div className="mr-1 flex shrink-0 items-center gap-1">
             <button
                 onClick={(e) => { e.stopPropagation(); handleResetJoints(); }}
                 className="flex items-center gap-1.5 p-1 px-2 rounded border border-border-black/60 bg-panel-bg text-text-secondary hover:bg-system-blue/10 hover:text-system-blue transition-colors"
@@ -118,7 +123,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             resizeTitle={t.resize}
             panelClassName="urdf-joint-panel"
         >
-            <div className="p-2 space-y-2" onMouseLeave={() => onHover?.(null, null)}>
+            <div className="px-1 py-1.5 space-y-1" onMouseLeave={() => onHover?.(null, null)}>
                 {robot?.joints && Object.entries(robot.joints)
                     .filter(([_, joint]: [string, any]) => isSingleDofJoint(joint))
                     .map(([name, joint]: [string, any]) => (
@@ -126,7 +131,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             key={name}
                             name={name}
                             joint={joint}
-                            value={jointAngles[name] || 0}
+                            value={resolveViewerJointAngleValue(jointAngles, name, joint, 0)}
                             angleUnit={angleUnit}
                             isActive={activeJoint === name}
                             setActiveJoint={setActiveJoint}
@@ -135,6 +140,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                             onSelect={onSelect}
                             onHover={onHover}
                             isAdvanced={isAdvanced}
+                            onUpdate={onUpdate}
                         />
                     ))}
             </div>

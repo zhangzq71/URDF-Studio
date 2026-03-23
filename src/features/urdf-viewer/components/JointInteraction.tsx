@@ -166,8 +166,11 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
             else newValue = 2 * Math.atan2(deltaQuat.z, deltaQuat.w);
 
             // Apply limits for revolute joints
-            const limit = joint.limit || { lower: -Math.PI, upper: Math.PI };
-            if (joint.jointType === 'revolute') {
+            const limit = joint.limit;
+            const hasFiniteLimit = limit
+                && Number.isFinite(limit.lower)
+                && Number.isFinite(limit.upper);
+            if (joint.jointType === 'revolute' && hasFiniteLimit) {
                 newValue = Math.max(limit.lower, Math.min(limit.upper, newValue));
             }
 

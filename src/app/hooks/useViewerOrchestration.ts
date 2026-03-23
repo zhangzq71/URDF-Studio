@@ -17,10 +17,31 @@ export function useViewerOrchestration({
   focusOn,
   transformPendingRef,
 }: UseViewerOrchestrationOptions) {
+  const preserveCollisionObjectIndex = useCallback((selection: RobotState['selection']) => {
+    if (selection.type !== 'link' || selection.subType !== 'collision' || selection.objectIndex !== undefined) {
+      return selection;
+    }
+
+    const currentSelection = useSelectionStore.getState().selection;
+    if (
+      currentSelection.type === 'link'
+      && currentSelection.id === selection.id
+      && currentSelection.subType === 'collision'
+      && currentSelection.objectIndex !== undefined
+    ) {
+      return {
+        ...selection,
+        objectIndex: currentSelection.objectIndex,
+      };
+    }
+
+    return selection;
+  }, []);
+
   const handleSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
     if (transformPendingRef.current) return;
-    setSelection({ type, id, subType });
-  }, [setSelection, transformPendingRef]);
+    setSelection(preserveCollisionObjectIndex({ type, id, subType }));
+  }, [preserveCollisionObjectIndex, setSelection, transformPendingRef]);
 
   const handleSelectGeometry = useCallback((linkId: string, subType: 'visual' | 'collision', objectIndex = 0) => {
     if (transformPendingRef.current) return;
@@ -29,10 +50,10 @@ export function useViewerOrchestration({
 
   const handleViewerSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
     if (transformPendingRef.current) return;
-    const nextSelection = { type, id, subType } as const;
+    const nextSelection = preserveCollisionObjectIndex({ type, id, subType } as const);
     setSelection(nextSelection);
     pulseSelection(nextSelection);
-  }, [pulseSelection, setSelection, transformPendingRef]);
+  }, [preserveCollisionObjectIndex, pulseSelection, setSelection, transformPendingRef]);
 
   const handleViewerMeshSelect = useCallback((linkId: string, _jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => {
     if (transformPendingRef.current) return;
