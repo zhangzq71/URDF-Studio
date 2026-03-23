@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react';
+import type { Dispatch, MouseEventHandler, SetStateAction } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
@@ -15,11 +15,11 @@ export interface HeaderViewConfig {
 
 export type HeaderSetViewConfig = Dispatch<SetStateAction<HeaderViewConfig>>;
 
-export interface HeaderQuickAction {
+export interface HeaderAction {
   label: string;
   title?: string;
   icon: LucideIcon;
-  onClick: () => void;
+  onClick: MouseEventHandler<HTMLButtonElement>;
 }
 
 export interface HeaderResponsiveLayout {
@@ -35,7 +35,7 @@ export interface HeaderResponsiveLayout {
   showLanguageInline: boolean;
   showThemeInline: boolean;
   showAboutInline: boolean;
-  showUserInline: boolean;
+  showSecondaryActionInline: boolean;
   showDesktopOverflow: boolean;
 }
 
@@ -53,13 +53,13 @@ export interface HeaderOverflowMenuProps {
   setTheme: (theme: Theme) => void;
   undo: () => void;
   redo: () => void;
-  quickAction?: HeaderQuickAction;
+  quickAction?: HeaderAction;
+  secondaryAction?: HeaderAction;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: () => void;
   t: HeaderTranslations;
   showQuickAction: boolean;
   showModeSwitcher: boolean;
@@ -70,5 +70,5 @@ export interface HeaderOverflowMenuProps {
   showLanguage: boolean;
   showTheme: boolean;
   showAbout: boolean;
-  showUser?: boolean;
+  showSecondaryAction?: boolean;
 }

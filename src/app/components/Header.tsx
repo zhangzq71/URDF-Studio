@@ -10,7 +10,7 @@ import { HeaderActions } from './header/HeaderActions';
 import { HeaderMenus } from './header/HeaderMenus';
 import { ModeSwitcher } from './header/ModeSwitcher';
 import { useHeaderResponsiveLayout } from './header/useHeaderResponsiveLayout';
-import type { HeaderMenuKey, HeaderQuickAction, HeaderViewConfig } from './header/types';
+import type { HeaderAction, HeaderMenuKey, HeaderViewConfig } from './header/types';
 
 interface HeaderProps {
   // Import actions
@@ -25,8 +25,8 @@ interface HeaderProps {
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: () => void;
-  quickAction?: HeaderQuickAction;
+  quickAction?: HeaderAction;
+  secondaryAction?: HeaderAction;
   // Snapshot
   onSnapshot: () => void;
   onOpenCollisionOptimizer: () => void;
@@ -51,8 +51,8 @@ export function Header({
   onPrefetchCodeViewer,
   onOpenSettings,
   onOpenAbout,
-  onOpenUser,
   quickAction,
+  secondaryAction,
   onSnapshot,
   onOpenCollisionOptimizer,
   viewConfig,
@@ -128,12 +128,12 @@ export function Header({
         undo={undo}
         redo={redo}
         quickAction={quickAction}
+        secondaryAction={secondaryAction}
         onOpenCodeViewer={onOpenCodeViewer}
         onPrefetchCodeViewer={onPrefetchCodeViewer}
         onSnapshot={onSnapshot}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenUser={onOpenUser}
         t={t}
       />
     </header>

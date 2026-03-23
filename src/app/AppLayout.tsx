@@ -12,7 +12,7 @@ import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
 } from './utils/overlayLoaders';
-import type { HeaderQuickAction } from './components/header/types';
+import type { HeaderAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
 import type { ToolMode } from '@/features/urdf-viewer';
@@ -77,8 +77,8 @@ interface AppLayoutProps {
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: () => void;
-  headerQuickAction?: HeaderQuickAction;
+  headerQuickAction?: HeaderAction;
+  headerSecondaryAction?: HeaderAction;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -110,8 +110,8 @@ export function AppLayout({
   setIsCodeViewerOpen,
   onOpenSettings,
   onOpenAbout,
-  onOpenUser,
   headerQuickAction,
+  headerSecondaryAction,
   viewConfig,
   setViewConfig,
   onLoadRobot,
@@ -716,8 +716,8 @@ export function AppLayout({
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenUser={onOpenUser}
         quickAction={headerQuickAction}
+        secondaryAction={headerSecondaryAction}
         onSnapshot={handleSnapshot}
         onOpenCollisionOptimizer={handleOpenCollisionOptimizer}
         viewConfig={viewConfig}

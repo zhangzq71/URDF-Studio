@@ -44,7 +44,7 @@ export function useHeaderResponsiveLayout(headerRef: RefObject<HTMLElement | nul
     const showLanguageInline = width >= 900;
     const showThemeInline = width >= 840;
     const showAboutInline = width >= 780;
-    const showUserInline = width >= 780;
+    const showSecondaryActionInline = width >= 780;
 
     return {
       showMenuLabels,
@@ -59,7 +59,7 @@ export function useHeaderResponsiveLayout(headerRef: RefObject<HTMLElement | nul
       showLanguageInline,
       showThemeInline,
       showAboutInline,
-      showUserInline,
+      showSecondaryActionInline,
       showDesktopOverflow:
         width >= 640 &&
         (
@@ -71,7 +71,7 @@ export function useHeaderResponsiveLayout(headerRef: RefObject<HTMLElement | nul
           !showLanguageInline ||
           !showThemeInline ||
           !showAboutInline ||
-          !showUserInline
+          !showSecondaryActionInline
         ),
     };
   }, [headerWidth]);

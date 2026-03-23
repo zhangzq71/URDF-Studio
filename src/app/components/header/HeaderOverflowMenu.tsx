@@ -1,4 +1,4 @@
-import { Activity, Box, Camera, Code, Cpu, Globe, Info, Moon, Monitor, MoreHorizontal, Redo, Settings, Sun, Undo, User } from 'lucide-react';
+import { Activity, Box, Camera, Code, Cpu, Globe, Info, Moon, Monitor, MoreHorizontal, Redo, Settings, Sun, Undo } from 'lucide-react';
 import { useSelectionStore } from '@/store';
 import type { HeaderOverflowMenuProps } from './types';
 
@@ -17,12 +17,12 @@ export function HeaderOverflowMenu({
   undo,
   redo,
   quickAction,
+  secondaryAction,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onSnapshot,
   onOpenSettings,
   onOpenAbout,
-  onOpenUser,
   t,
   showQuickAction,
   showModeSwitcher,
@@ -33,11 +33,12 @@ export function HeaderOverflowMenu({
   showLanguage,
   showTheme,
   showAbout,
-  showUser,
+  showSecondaryAction,
 }: HeaderOverflowMenuProps) {
   const QuickActionIcon = quickAction?.icon;
+  const SecondaryActionIcon = secondaryAction?.icon;
   const showPrimaryGroup = showQuickAction || showSourceCode || showUndoRedo;
-  const showSecondaryGroup = showSnapshot || showSettings || showLanguage || showTheme || showAbout || showUser;
+  const showSecondaryGroup = showSnapshot || showSettings || showLanguage || showTheme || showAbout || showSecondaryAction;
 
   return (
     <div className={`relative ${className}`.trim()}>
@@ -98,7 +99,10 @@ export function HeaderOverflowMenu({
               <>
                 {showQuickAction && quickAction && QuickActionIcon && (
                   <button
-                    onClick={() => { quickAction.onClick(); setActiveMenu(null); }}
+                    onClick={(event) => {
+                      quickAction.onClick(event);
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
                     <QuickActionIcon className="w-4 h-4" /> {quickAction.label}
@@ -142,12 +146,15 @@ export function HeaderOverflowMenu({
 
             {showSecondaryGroup && (
               <>
-                {showUser && (
+                {showSecondaryAction && secondaryAction && SecondaryActionIcon && (
                   <button
-                    onClick={() => { onOpenUser?.(); setActiveMenu(null); }}
+                    onClick={(event) => {
+                      secondaryAction.onClick(event);
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    <User className="w-4 h-4" /> {t.user}
+                    <SecondaryActionIcon className="w-4 h-4" /> {secondaryAction.label}
                   </button>
                 )}
                 {showSnapshot && (

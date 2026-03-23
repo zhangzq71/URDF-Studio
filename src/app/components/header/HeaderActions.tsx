@@ -1,6 +1,6 @@
-import { Camera, Globe, Info, Moon, Monitor, Settings, Sun, User } from 'lucide-react';
+import { Camera, Globe, Info, Moon, Monitor, Settings, Sun } from 'lucide-react';
 import type { AppMode, Theme } from '@/types';
-import type { HeaderQuickAction, HeaderResponsiveLayout, HeaderTranslations, HeaderMenuKey } from './types';
+import type { HeaderAction, HeaderResponsiveLayout, HeaderTranslations, HeaderMenuKey } from './types';
 import { HeaderOverflowMenu } from './HeaderOverflowMenu';
 
 interface HeaderActionsProps {
@@ -17,13 +17,13 @@ interface HeaderActionsProps {
   setTheme: (theme: Theme) => void;
   undo: () => void;
   redo: () => void;
-  quickAction?: HeaderQuickAction;
+  quickAction?: HeaderAction;
+  secondaryAction?: HeaderAction;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
   onOpenAbout: () => void;
-  onOpenUser?: () => void;
   t: HeaderTranslations;
 }
 
@@ -42,12 +42,12 @@ export function HeaderActions({
   undo,
   redo,
   quickAction,
+  secondaryAction,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onSnapshot,
   onOpenSettings,
   onOpenAbout,
-  onOpenUser,
   t,
 }: HeaderActionsProps) {
   const {
@@ -58,10 +58,11 @@ export function HeaderActions({
     showLanguageInline,
     showThemeInline,
     showAboutInline,
-    showUserInline,
+    showSecondaryActionInline,
     showDesktopOverflow,
   } = responsive;
   const QuickActionIcon = quickAction?.icon;
+  const SecondaryActionIcon = secondaryAction?.icon;
 
   return (
     <div className="flex items-center gap-0.5 shrink-0 justify-self-end">
@@ -142,12 +143,12 @@ export function HeaderActions({
           undo={undo}
           redo={redo}
           quickAction={quickAction}
+          secondaryAction={secondaryAction}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}
           onSnapshot={onSnapshot}
           onOpenSettings={onOpenSettings}
           onOpenAbout={onOpenAbout}
-          onOpenUser={onOpenUser}
           t={t}
           showQuickAction={Boolean(quickAction) && !showQuickActionInline}
           showModeSwitcher={false}
@@ -158,7 +159,7 @@ export function HeaderActions({
           showLanguage={!showLanguageInline}
           showTheme={!showThemeInline}
           showAbout={!showAboutInline}
-          showUser={!showUserInline}
+          showSecondaryAction={Boolean(secondaryAction) && !showSecondaryActionInline}
         />
       )}
 
@@ -172,14 +173,14 @@ export function HeaderActions({
         </button>
       )}
 
-      {showUserInline && (
+      {showSecondaryActionInline && secondaryAction && SecondaryActionIcon && (
         <button
-          onClick={onOpenUser}
+          onClick={secondaryAction.onClick}
           className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
-          title={t.user}
+          title={secondaryAction.title ?? secondaryAction.label}
         >
-          <User className="w-4 h-4" />
-          <span className="hidden lg:inline">{t.user}</span>
+          <SecondaryActionIcon className="w-4 h-4" />
+          <span className="hidden lg:inline">{secondaryAction.label}</span>
         </button>
       )}
 
@@ -198,12 +199,12 @@ export function HeaderActions({
         undo={undo}
         redo={redo}
         quickAction={quickAction}
+        secondaryAction={secondaryAction}
         onOpenCodeViewer={onOpenCodeViewer}
         onPrefetchCodeViewer={onPrefetchCodeViewer}
         onSnapshot={onSnapshot}
         onOpenSettings={onOpenSettings}
         onOpenAbout={onOpenAbout}
-        onOpenUser={onOpenUser}
         t={t}
         showQuickAction={Boolean(quickAction)}
         showModeSwitcher
@@ -214,7 +215,7 @@ export function HeaderActions({
         showLanguage
         showTheme
         showAbout
-        showUser
+        showSecondaryAction={Boolean(secondaryAction)}
       />
     </div>
   );
