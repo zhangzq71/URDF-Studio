@@ -400,6 +400,83 @@ function collectReferencedMeshPaths(robot: RobotState): Set<string> {
   return meshPaths;
 }
 
+interface ReferencedMeshUsage {
+  hasVisualUsage: boolean;
+  hasVisualMultiMaterialUsage: boolean;
+  hasNonVisualUsage: boolean;
+}
+
+function collectReferencedMeshUsage(robot: RobotState): Map<string, ReferencedMeshUsage> {
+  const usageByPath = new Map<string, ReferencedMeshUsage>();
+
+  const markUsage = (meshPath: string | undefined, usageType: 'visual' | 'non-visual') => {
+    if (!meshPath) {
+      return;
+    }
+
+    const candidatePaths = new Set<string>([meshPath]);
+    const normalizedPath = normalizeMeshPathForExport(meshPath);
+    if (normalizedPath) {
+      candidatePaths.add(normalizedPath);
+    }
+
+    candidatePaths.forEach((candidatePath) => {
+      const usage = usageByPath.get(candidatePath) ?? {
+        hasVisualUsage: false,
+        hasVisualMultiMaterialUsage: false,
+        hasNonVisualUsage: false,
+      };
+
+      if (usageType === 'visual') {
+        usage.hasVisualUsage = true;
+      } else {
+        usage.hasNonVisualUsage = true;
+      }
+
+      usageByPath.set(candidatePath, usage);
+    });
+  };
+
+  Object.values(robot.links).forEach((link) => {
+    if (link.visual.type === GeometryType.MESH) {
+      markUsage(link.visual.meshPath, 'visual');
+      const normalizedPath = normalizeMeshPathForExport(link.visual.meshPath);
+      if ((link.visual.authoredMaterials?.length || 0) > 1) {
+        const candidatePaths = new Set<string>([link.visual.meshPath || '']);
+        if (normalizedPath) {
+          candidatePaths.add(normalizedPath);
+        }
+
+        candidatePaths.forEach((candidatePath) => {
+          if (!candidatePath) {
+            return;
+          }
+          const usage = usageByPath.get(candidatePath) ?? {
+            hasVisualUsage: false,
+            hasVisualMultiMaterialUsage: false,
+            hasNonVisualUsage: false,
+          };
+          usage.hasVisualUsage = true;
+          usage.hasVisualMultiMaterialUsage = true;
+          usageByPath.set(candidatePath, usage);
+        });
+      }
+    }
+
+    if (link.collision.type === GeometryType.MESH) {
+      markUsage(link.collision.meshPath, 'non-visual');
+    }
+
+    (link.collisionBodies || []).forEach((body) => {
+      if (body.type === GeometryType.MESH) {
+        markUsage(body.meshPath, 'non-visual');
+      }
+    });
+  });
+
+  return usageByPath;
+}
+
 function containsPlaceholderMesh(object: any): boolean {
   let hasPlaceholder = Boolean(object?.userData?.isPlaceholder);
 
@@ -422,6 +499,7 @@ export async function prepareMjcfMeshExportAssets(
   const visualMeshVariants = new Map<string, MjcfVisualMeshVariant[]>();
   const usedArchivePaths = new Set<string>();
   const referencedMeshPaths = collectReferencedMeshPaths(robot);
+  const referencedMeshUsage = collectReferencedMeshUsage(robot);
   const { resolvedAssets, tempObjectUrls } = registerInlineMeshBlobUrls(assets, extraMeshFiles);
   const colladaRootNormalizationHints = buildColladaRootNormalizationHints(robot.links);
   const explicitScaleMeshPaths = collectExplicitlyScaledMeshPaths(robot);
@@ -443,25 +521,6 @@ export async function prepareMjcfMeshExportAssets(
         continue;
       }
 
-      const exportPath = buildConvertedMeshExportPath(meshPath, usedArchivePaths);
-      if (!exportPath) {
-        continue;
-      }
-
-      if (archiveFiles.has(exportPath)) {
-        meshPathOverrides.set(meshPath, exportPath);
-        const normalizedSourcePath = normalizeMeshPathForExport(meshPath);
-        const existingVariants = visualMeshVariants.get(meshPath)
-          || (normalizedSourcePath ? visualMeshVariants.get(normalizedSourcePath) : undefined);
-        if (existingVariants) {
-          visualMeshVariants.set(meshPath, existingVariants);
-          if (normalizedSourcePath) {
-            visualMeshVariants.set(normalizedSourcePath, existingVariants);
-          }
-        }
-        continue;
-      }
-
       try {
         const meshObject = await new Promise<any>((resolve, reject) => {
           loadMesh(meshPath, loadingManager, (result, err) => {
@@ -480,17 +539,44 @@ export async function prepareMjcfMeshExportAssets(
           continue;
         }
 
-        const exportedObj = objExporter.parse(meshObject);
-        archiveFiles.set(exportPath, new Blob([exportedObj], { type: 'text/plain' }));
-        meshPathOverrides.set(meshPath, exportPath);
-        convertedSourceMeshPaths.add(meshPath);
-
         const extractedVariantFiles = extractVisualMeshVariants(
           meshObject,
           meshPath,
           usedArchivePaths,
           objExporter,
         );
+        const normalizedSourcePath = normalizeMeshPathForExport(meshPath);
+        const sourceUsage = referencedMeshUsage.get(meshPath)
+          || (normalizedSourcePath ? referencedMeshUsage.get(normalizedSourcePath) : undefined);
+        const hasSplitVisualVariants = extractedVariantFiles.length > 1;
+        const shouldPreferVisualVariants = hasSplitVisualVariants
+          && Boolean(sourceUsage?.hasVisualMultiMaterialUsage)
+          && !sourceUsage?.hasNonVisualUsage;
+        const needsFullMeshExport = !shouldPreferVisualVariants;
+
+        if (needsFullMeshExport) {
+          const exportPath = buildConvertedMeshExportPath(meshPath, usedArchivePaths);
+          if (!exportPath) {
+            disposeObject3D(meshObject, true);
+            continue;
+          }
+
+          const exportedObj = objExporter.parse(meshObject);
+          archiveFiles.set(exportPath, new Blob([exportedObj], { type: 'text/plain' }));
+          meshPathOverrides.set(meshPath, exportPath);
+          convertedSourceMeshPaths.add(meshPath);
+
+          if (normalizedSourcePath && normalizedSourcePath !== meshPath) {
+            meshPathOverrides.set(normalizedSourcePath, exportPath);
+            convertedSourceMeshPaths.add(normalizedSourcePath);
+          }
+        } else {
+          convertedSourceMeshPaths.add(meshPath);
+          if (normalizedSourcePath && normalizedSourcePath !== meshPath) {
+            convertedSourceMeshPaths.add(normalizedSourcePath);
+          }
+        }
+
         if (extractedVariantFiles.length > 1) {
           const variants = extractedVariantFiles.map(({ blob, ...variant }) => {
             archiveFiles.set(variant.meshPath, blob);
@@ -498,14 +584,7 @@ export async function prepareMjcfMeshExportAssets(
           });
 
           visualMeshVariants.set(meshPath, variants);
-        }
-
-        const normalizedSourcePath = normalizeMeshPathForExport(meshPath);
-        if (normalizedSourcePath && normalizedSourcePath !== meshPath) {
-          meshPathOverrides.set(normalizedSourcePath, exportPath);
-          convertedSourceMeshPaths.add(normalizedSourcePath);
-          const variants = visualMeshVariants.get(meshPath);
-          if (variants) {
+          if (normalizedSourcePath && normalizedSourcePath !== meshPath) {
             visualMeshVariants.set(normalizedSourcePath, variants);
           }
         }

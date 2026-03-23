@@ -26,8 +26,6 @@ interface ViewerOptionsPanelProps {
     lang: string;
     highlightMode: 'link' | 'collision';
     setHighlightMode: (mode: 'link' | 'collision') => void;
-    showJointControls: boolean;
-    setShowJointControls: (show: boolean) => void;
     showVisual: boolean;
     setShowVisual: (show: boolean) => void;
     showCollision: boolean;
@@ -158,8 +156,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     setShowOptionsPanel,
     highlightMode,
     setHighlightMode,
-    showJointControls,
-    setShowJointControls,
     showVisual,
     setShowVisual,
     showCollision,
@@ -246,7 +242,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                         </div>
 
                         <div className="px-2 py-2 space-y-2">
-                            <CheckboxOption checked={showJointControls} onChange={setShowJointControls} label={t.showJointControls} />
                             <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
                             <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} />
                             

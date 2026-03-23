@@ -237,7 +237,6 @@ export const zh: TranslationKeys = {
   // Additional UI
   collapseSidebar: "收起侧栏",
   switchUnit: "切换单位",
-  showJointControls: "显示关节控制",
   showVisual: "显示可视化",
   showCenterOfMass: "显示质心",
   showInertia: "显示惯量",
@@ -384,6 +383,9 @@ export const zh: TranslationKeys = {
   addedComponent: "已添加组件: {name}",
   noCollisionOptimizationApplied: "未应用任何碰撞体优化。",
   collisionOptimizationApplied: "已应用 {count} 项碰撞体优化（Mesh {meshCount}，基础体 {primitiveCount}）",
+  renamedFolder: "已重命名文件夹: {from} -> {to}",
+  assetLibraryRenameInvalid: "文件夹名称无效，请重新输入。",
+  assetLibraryRenameConflict: "目标文件夹已存在: {path}",
   removedFromAssetLibrary: "已从素材库删除: {name}",
   removedFolder: "已删除文件夹: {path}",
   deletedAllLibraryFiles: "已删除素材库全部 {count} 个文件",

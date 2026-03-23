@@ -8,7 +8,7 @@ import {
   type UsdSceneMeshDescriptor,
   type UsdSceneSnapshot,
 } from '@/types';
-import { computeLinkWorldMatrices } from '@/core/robot/kinematics';
+import { computeLinkWorldMatrices, createOriginMatrix } from '@/core/robot/kinematics';
 import type { UrdfVisual } from '@/types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
 import { resolveUsdDescriptorTargetLinkPath } from './usdDescriptorLinkResolution';
@@ -218,7 +218,11 @@ function applyLocalOriginToVisual(
   ownerLinkWorldMatrix: THREE.Matrix4,
   primWorldMatrix: THREE.Matrix4,
 ): UrdfVisual {
-  const localMatrix = ownerLinkWorldMatrix.clone().invert().multiply(primWorldMatrix);
+  const localMatrix = ownerLinkWorldMatrix
+    .clone()
+    .invert()
+    .multiply(primWorldMatrix)
+    .multiply(createOriginMatrix(visual.origin));
   return {
     ...visual,
     origin: matrixToOrigin(localMatrix),
@@ -396,11 +400,16 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
         return;
       }
 
-      const nextOrigin = matrixToOrigin(ownerLinkWorldMatrix.clone().invert().multiply(primWorldMatrix));
       if (index === 0) {
         link.collision = {
           ...link.collision,
-          origin: nextOrigin,
+          origin: matrixToOrigin(
+            ownerLinkWorldMatrix
+              .clone()
+              .invert()
+              .multiply(primWorldMatrix)
+              .multiply(createOriginMatrix(link.collision.origin)),
+          ),
         };
         return;
       }
@@ -412,7 +421,13 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
 
       collisionBodies[index - 1] = {
         ...collisionBodies[index - 1],
-        origin: nextOrigin,
+        origin: matrixToOrigin(
+          ownerLinkWorldMatrix
+            .clone()
+            .invert()
+            .multiply(primWorldMatrix)
+            .multiply(createOriginMatrix(collisionBodies[index - 1].origin)),
+        ),
       };
       link.collisionBodies = collisionBodies;
     });

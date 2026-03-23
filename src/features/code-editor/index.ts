@@ -7,4 +7,5 @@
 export { SourceCodeEditor } from './components/SourceCodeEditor';
 
 // Types
+export type { SourceCodeDocumentFlavor, SourceCodeEditorLanguageId } from './types';
 export type { SourceCodeEditorProps } from './components/SourceCodeEditor';

@@ -227,6 +227,78 @@ test('adapts USD visual materials and extra visuals into RobotState-maintained l
   assert.equal(result.robotData.materials?.[extraLink.id]?.color, '#f3f3f3');
 });
 
+test('approximates USD mesh descriptors from snapshot buffers into boxed visuals when no mesh asset path exists', () => {
+  const result = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/unitree/buffer_box.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ],
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/unitree/buffer_box.usd',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ],
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/mesh_0',
+          primType: 'mesh',
+          ranges: {
+            positions: {
+              offset: 0,
+              count: 6,
+              stride: 3,
+            },
+          },
+        },
+      ],
+    },
+    buffers: {
+      positions: [
+        -0.5, -1, -0.25,
+        1.0, 2.0, 1.75,
+      ],
+    },
+  }, {
+    fileName: 'buffer_box.usd',
+  });
+
+  assert.ok(result);
+  assert.equal(result.robotData.links.base_link.visual.type, GeometryType.BOX);
+  assert.deepEqual(result.robotData.links.base_link.visual.dimensions, {
+    x: 1.5,
+    y: 3,
+    z: 2,
+  });
+  assert.deepEqual(result.robotData.links.base_link.visual.origin?.xyz, {
+    x: 0.25,
+    y: 0.5,
+    z: 0.75,
+  });
+  assert.deepEqual(result.robotData.links.base_link.visual.origin?.rpy, {
+    r: 0,
+    p: 0,
+    y: 0,
+  });
+  assert.equal(result.robotData.links.base_link.visual.meshPath, undefined);
+});
+
 test('maps folded semantic child visual and collision prims back onto existing child links', () => {
   const result = adaptUsdViewerSnapshotToRobotData({
     stageSourcePath: '/robots/unitree/folded_child.usd',

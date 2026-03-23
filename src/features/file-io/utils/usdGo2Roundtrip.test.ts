@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
+import { generateMujocoXML } from '@/core/parsers/mjcf/mjcfGenerator';
+import { parseMJCF } from '@/core/parsers/mjcf/mjcfParser';
 import { parseURDF } from '@/core/parsers/urdf/parser';
+import { generateURDF } from '@/core/parsers/urdf/urdfGenerator';
+import { computeLinkWorldMatrices } from '@/core/robot/kinematics';
 import type { RobotState } from '@/types';
 import { adaptUsdViewerSnapshotToRobotData } from '@/features/urdf-viewer/utils/usdViewerRobotAdapter';
 import { ThreeRenderDelegateCore } from '@/features/urdf-viewer/runtime/hydra/render-delegate/ThreeRenderDelegateCore.js';
@@ -290,6 +294,34 @@ function createRoundtripMetadataSnapshot(
   }
 }
 
+function buildWorldMatricesByLinkName(robot: RobotState): Record<string, number[]> {
+  const linkWorldMatrices = computeLinkWorldMatrices(robot);
+  return Object.fromEntries(
+    Object.values(robot.links)
+      .slice()
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((link) => {
+        const matrix = linkWorldMatrices[link.id];
+        assert.ok(matrix, `expected world matrix for link "${link.name}"`);
+        return [link.name, matrix.elements.slice()];
+      }),
+  );
+}
+
+function assertWorldTransformsMatch(label: string, source: RobotState, target: RobotState) {
+  const sourceMatrices = buildWorldMatricesByLinkName(source);
+  const targetMatrices = buildWorldMatricesByLinkName(target);
+  assert.deepEqual(Object.keys(targetMatrices), Object.keys(sourceMatrices), `${label} should keep the same link set`);
+  for (const [linkName, sourceElements] of Object.entries(sourceMatrices)) {
+    const targetElements = targetMatrices[linkName];
+    assert.ok(targetElements, `${label} should keep world transform for ${linkName}`);
+    const maxDelta = sourceElements.reduce((currentMax, sourceValue, index) => {
+      return Math.max(currentMax, Math.abs(sourceValue - (targetElements[index] ?? 0)));
+    }, 0);
+    assert.ok(maxDelta <= 1e-5, `${label} should preserve link world transforms for ${linkName} (max delta ${maxDelta})`);
+  }
+}
+
 test('go2 USD export avoids baking Collada root correction into the serialized stage', async () => {
   const robot = loadGo2RobotState();
   const assets = buildGo2AssetMap();
@@ -398,6 +430,66 @@ test('go2 USD roundtrip metadata rebuilds the original link and joint hierarchy 
     Object.values(flHipJoint?.origin.xyz || {}).map((value) => Number(value.toFixed(6))),
     Object.values(sourceFlHipJoint?.origin.xyz || {}).map((value) => Number(value.toFixed(6))),
   );
+});
+
+test('go2 USD-hydrated robots preserve world transforms across URDF and MJCF export roundtrips', async () => {
+  const robot = loadGo2RobotState();
+  const assets = buildGo2AssetMap();
+
+  const payload = await withSuppressedColladaLogs(() => exportRobotToUsd({
+    robot,
+    exportName: 'go2_description',
+    assets,
+  }));
+
+  const metadata = createRoundtripMetadataSnapshot(robot, {
+    rootLayer: await payload.archiveFiles.get('go2_description/usd/go2_description.usd')?.text() || '',
+    baseLayer: await payload.archiveFiles.get('go2_description/usd/configuration/go2_description_base.usd')?.text() || '',
+    physicsLayer: await payload.archiveFiles.get('go2_description/usd/configuration/go2_description_physics.usd')?.text() || '',
+    sensorLayer: await payload.archiveFiles.get('go2_description/usd/configuration/go2_description_sensor.usd')?.text() || '',
+  });
+
+  const adapted = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/go2_description/usd/go2_description.usd',
+    stage: { defaultPrimPath: '/go2_description' },
+    robotMetadataSnapshot: metadata,
+    robotTree: {
+      linkParentPairs: metadata.linkParentPairs,
+      jointCatalogEntries: metadata.jointCatalogEntries,
+      rootLinkPaths: [],
+    },
+    physics: {
+      linkDynamicsEntries: metadata.linkDynamicsEntries,
+    },
+    render: {
+      meshDescriptors: [],
+      materials: [],
+    },
+  });
+
+  assert.ok(adapted, 'expected USD snapshot to adapt back into robot data');
+  if (!adapted) {
+    return;
+  }
+
+  const hydratedRobot = adapted.robotData;
+  assertWorldTransformsMatch('USD hydrate', robot, hydratedRobot);
+
+  const urdfRoundtrip = parseURDF(generateURDF(hydratedRobot));
+  assert.ok(urdfRoundtrip, 'expected hydrated robot to export and reparse as URDF');
+  if (!urdfRoundtrip) {
+    return;
+  }
+  assertWorldTransformsMatch('URDF roundtrip', hydratedRobot, urdfRoundtrip);
+
+  const mjcfRoundtrip = parseMJCF(generateMujocoXML(hydratedRobot, {
+    includeSceneHelpers: false,
+  }));
+  assert.ok(mjcfRoundtrip, 'expected hydrated robot to export and reparse as MJCF');
+  if (!mjcfRoundtrip) {
+    return;
+  }
+  assertWorldTransformsMatch('MJCF roundtrip', hydratedRobot, mjcfRoundtrip);
 });
 
 test('textured USD roundtrip preserves visual color and texture references after reload hydration', async () => {

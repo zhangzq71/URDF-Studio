@@ -5,8 +5,10 @@ import * as THREE from 'three';
 import { URDFLoader } from '@/core/parsers/urdf/loader';
 import { disposeObject3D } from '../utils/dispose';
 import {
+    alignRobotToGroundBeforeFirstMount,
     beginInitialGroundAlignment,
     offsetRobotToGround,
+    setInitialGroundAlignment,
     setPreserveAuthoredRootTransform,
 } from '../utils/robotPositioning';
 import { SHARED_MATERIALS } from '../constants';
@@ -405,6 +407,10 @@ export function useRobotLoader({
                         loadedRobot.updateMatrixWorld(true);
                     }
 
+                    // Place the robot on the ground before the first visible mount so
+                    // the scene never shows it popping up from below the grid.
+                    alignRobotToGroundBeforeFirstMount(loadedRobot, groundPlaneOffset);
+
                     const previousRobot = robotRef.current;
 
                     robotRef.current = loadedRobot;
@@ -421,6 +427,7 @@ export function useRobotLoader({
                 };
 
                 const finalizeLoadedRobot = (loadedRobot: THREE.Object3D) => {
+                    const wasMountedBeforeFinalize = hasMountedRobot;
                     mountLoadedRobot(loadedRobot);
                     if (abortController.aborted || !isMountedRef.current) {
                         return;
@@ -435,6 +442,9 @@ export function useRobotLoader({
                     setLoadingProgress(null);
                     setError(null);
                     invalidate();
+                    if (wasMountedBeforeFinalize) {
+                        setInitialGroundAlignment(loadedRobot, false);
+                    }
                     scheduleGroundAlignment(loadedRobot);
                     onRobotLoaded?.(loadedRobot);
                 };

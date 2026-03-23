@@ -11,10 +11,16 @@ export type LibraryDeleteTarget =
 export interface FileTreeNodeComponentProps {
   node: FileTreeNode;
   depth: number;
+  editingFolderPath?: string | null;
+  folderRenameDraft: string;
+  folderRenameInputRef: React.RefObject<HTMLInputElement | null>;
   onLoadRobot?: (file: RobotFile) => void;
   onAddAsComponent?: (file: RobotFile) => void;
+  onCancelFolderRename: () => void;
+  onCommitFolderRename: () => void;
   onDeleteFromLibrary?: (target: LibraryDeleteTarget) => void;
   onFileContextMenu?: (event: React.MouseEvent, file: RobotFile) => void;
+  onFolderRenameDraftChange: (value: string) => void;
   onFolderContextMenu?: (event: React.MouseEvent, folderPath: string) => void;
   expandedFolders: Set<string>;
   toggleFolder: (path: string) => void;
@@ -26,10 +32,16 @@ export interface FileTreeNodeComponentProps {
 export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
   node,
   depth,
+  editingFolderPath,
+  folderRenameDraft,
+  folderRenameInputRef,
   onLoadRobot,
   onAddAsComponent,
+  onCancelFolderRename,
+  onCommitFolderRename,
   onDeleteFromLibrary,
   onFileContextMenu,
+  onFolderRenameDraftChange,
   onFolderContextMenu,
   expandedFolders,
   toggleFolder,
@@ -39,12 +51,16 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
 }) => {
   const isExpanded = expandedFolders.has(node.path);
   const isSelectedFile = Boolean(node.file && selectedFileName === node.file.name);
+  const isEditingFolder = Boolean(node.isFolder && editingFolderPath === node.path);
   const paddingLeft = depth * 12 + 8;
-  const canDeleteRootFolder = Boolean(onDeleteFromLibrary && node.isFolder && depth === 0);
+  const canDeleteFolder = Boolean(onDeleteFromLibrary && node.isFolder);
+  const canDeleteFile = Boolean(onDeleteFromLibrary && node.file);
   const showAddButton = Boolean(node.file && showAddAsComponent && onAddAsComponent);
-  const showDeleteButton = canDeleteRootFolder;
+  const showDeleteButton = canDeleteFolder || canDeleteFile;
 
   const handleClick = () => {
+    if (isEditingFolder) return;
+
     if (node.isFolder) {
       toggleFolder(node.path);
       return;
@@ -64,7 +80,7 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
 
   const handleContextMenu = (e: React.MouseEvent) => {
     if (node.isFolder) {
-      if (canDeleteRootFolder && onFolderContextMenu) {
+      if (onFolderContextMenu) {
         onFolderContextMenu(e, node.path);
       }
       return;
@@ -82,7 +98,7 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
       onDeleteFromLibrary({ type: 'file', file: node.file });
       return;
     }
-    if (canDeleteRootFolder) {
+    if (canDeleteFolder) {
       onDeleteFromLibrary({ type: 'folder', path: node.path });
     }
   };
@@ -90,7 +106,7 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
   return (
     <div>
       <div
-        className={`flex items-center gap-1.5 py-1 pr-2 cursor-pointer transition-colors group rounded-sm
+        className={`group flex cursor-pointer select-none items-center gap-1.5 rounded-sm py-1 pr-2 transition-colors
           ${
             isSelectedFile
               ? 'bg-element-bg dark:bg-element-hover shadow-sm ring-1 ring-inset ring-border-strong'
@@ -114,15 +130,37 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
 
         {getFileIcon(node.name, node.isFolder, isExpanded)}
 
-        <span
-          className={`text-xs truncate flex-1 ${
-            node.isFolder
-              ? 'text-text-primary font-medium'
-              : 'text-text-secondary dark:text-text-secondary'
-          }`}
-        >
-          {node.name}
-        </span>
+        <div className="min-w-0 flex-1">
+          {isEditingFolder ? (
+            <input
+              ref={folderRenameInputRef}
+              type="text"
+              value={folderRenameDraft}
+              onChange={(event) => onFolderRenameDraftChange(event.target.value)}
+              onBlur={onCommitFolderRename}
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  onCommitFolderRename();
+                } else if (event.key === 'Escape') {
+                  onCancelFolderRename();
+                }
+              }}
+              className="h-6 w-full min-w-0 select-text rounded-md border border-system-blue bg-panel-bg px-2 text-xs font-medium text-text-primary outline-none ring-2 ring-system-blue/20"
+            />
+          ) : (
+            <span
+              className={`block truncate text-xs ${
+                node.isFolder
+                  ? 'font-medium text-text-primary'
+                  : 'text-text-secondary dark:text-text-secondary'
+              }`}
+            >
+              {node.name}
+            </span>
+          )}
+        </div>
 
         {node.file && (
           <span
@@ -144,8 +182,10 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
           </span>
         )}
 
-        {(showAddButton || showDeleteButton) && (
-          <div className="flex items-center gap-1">
+        {(showAddButton || showDeleteButton) && !isEditingFolder && (
+          <div className={`flex items-center gap-1 transition-opacity ${
+            isSelectedFile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+          }`}>
             {showAddButton && (
               <button
                 onClick={handleAddAsComponent}
@@ -177,10 +217,16 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
               key={child.path}
               node={child}
               depth={depth + 1}
+              editingFolderPath={editingFolderPath}
+              folderRenameDraft={folderRenameDraft}
+              folderRenameInputRef={folderRenameInputRef}
               onLoadRobot={onLoadRobot}
               onAddAsComponent={onAddAsComponent}
+              onCancelFolderRename={onCancelFolderRename}
+              onCommitFolderRename={onCommitFolderRename}
               onDeleteFromLibrary={onDeleteFromLibrary}
               onFileContextMenu={onFileContextMenu}
+              onFolderRenameDraftChange={onFolderRenameDraftChange}
               onFolderContextMenu={onFolderContextMenu}
               expandedFolders={expandedFolders}
               toggleFolder={toggleFolder}

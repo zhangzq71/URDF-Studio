@@ -190,6 +190,68 @@ function createMeshRobot(meshPath: string): RobotState {
   };
 }
 
+function createSharedMeshRobot(meshPath: string): RobotState {
+  return {
+    name: 'shared_mesh_robot',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    joints: {
+      child_joint: {
+        id: 'child_joint',
+        name: 'child_joint',
+        type: JointType.FIXED,
+        parentLinkId: 'base_link',
+        childLinkId: 'child_link',
+        origin: { xyz: { x: 0.5, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        axis: { x: 1, y: 0, z: 0 },
+        angle: 0,
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          meshPath,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+      child_link: {
+        id: 'child_link',
+        name: 'child_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          meshPath,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+    },
+    materials: {},
+  };
+}
+
 function createTexturedMeshRobot(meshPath: string, texturePath: string): RobotState {
   const robot = createMeshRobot(meshPath);
   robot.links.base_link.visual.color = '#ffffff';
@@ -404,6 +466,34 @@ test('exports explicit mesh material colors into USD preview materials instead o
   assert.match(baseLayer, /primvars:displayColor = \[\(0\.006049, 0\.40724, 0\.03434\)\]/);
   assert.match(baseLayer, /color3f inputs:diffuseColor = \(0\.006049, 0\.40724, 0\.03434\)/);
   assert.doesNotMatch(baseLayer, /color3f inputs:diffuseColor = \(1, 1, 1\)/);
+});
+
+test('deduplicates repeated mesh geometry into a shared USD mesh library', async () => {
+  const meshPath = 'meshes/shared_triangle.obj';
+  const payload = await exportRobotToUsd({
+    robot: createSharedMeshRobot(meshPath),
+    exportName: 'shared_mesh_robot',
+    assets: {},
+    extraMeshFiles: new Map([[meshPath, createUvObjBlob()]]),
+  });
+
+  const baseLayer = await readArchiveText(
+    payload,
+    'shared_mesh_robot/usd/configuration/shared_mesh_robot_description_base.usd',
+  );
+
+  assert.match(baseLayer, /def Scope "__MeshLibrary"/);
+  assert.equal(
+    Array.from(baseLayer.matchAll(/point3f\[] points = \[/g)).length,
+    1,
+    'expected shared mesh geometry to be serialized once',
+  );
+  assert.match(baseLayer, /prepend references = <\/shared_mesh_robot_description\/__MeshLibrary\/Geometry_0>/);
+  assert.equal(
+    Array.from(baseLayer.matchAll(/prepend references = <\/shared_mesh_robot_description\/__MeshLibrary\/Geometry_0>/g)).length,
+    2,
+    'expected both mesh instances to reference the shared geometry prototype',
+  );
 });
 
 test('diagonalizes off-diagonal inertial tensors before writing USD mass properties', async () => {

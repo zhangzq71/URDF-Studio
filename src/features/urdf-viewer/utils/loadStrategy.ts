@@ -1,3 +1,4 @@
 export function shouldMountRobotBeforeAssetsComplete(sourceFormat: 'urdf' | 'mjcf'): boolean {
-  return sourceFormat === 'urdf';
+  void sourceFormat;
+  return false;
 }

@@ -39,7 +39,6 @@ export const URDFViewerPanels = ({
     jointPanelRef: controller.jointPanelRef,
     showOptionsPanel,
     showJointPanel,
-    showJointControls: controller.showJointControls,
     showToolbar,
   });
 
@@ -61,8 +60,6 @@ export const URDFViewerPanels = ({
         lang={lang}
         highlightMode={controller.highlightMode}
         setHighlightMode={controller.setHighlightMode}
-        showJointControls={controller.showJointControls}
-        setShowJointControls={controller.setShowJointControls}
         showVisual={controller.showVisual}
         setShowVisual={controller.setShowVisual}
         showCollision={controller.showCollision}
@@ -95,7 +92,6 @@ export const URDFViewerPanels = ({
       />
 
       <JointsPanel
-        showJointControls={controller.showJointControls}
         showJointPanel={showJointPanel}
         robot={controller.jointPanelRobot ?? controller.robot}
         jointPanelRef={controller.jointPanelRef}

@@ -65,9 +65,24 @@ type UsdPreviewMaterialRecord = {
   appearance: UsdRenderableAppearance;
 };
 
+type UsdMeshGeometryData = {
+  faceVertexCounts: number[];
+  faceVertexIndices: number[];
+  points: string[];
+  stValues: string[] | null;
+};
+
+type UsdMeshGeometryRecord = {
+  name: string;
+  path: string;
+  data: UsdMeshGeometryData;
+};
+
 type UsdSerializationContext = {
   materialByObject: WeakMap<THREE.Object3D, UsdPreviewMaterialRecord>;
   materialRecords: UsdPreviewMaterialRecord[];
+  geometryByObject: WeakMap<THREE.Object3D, UsdMeshGeometryRecord>;
+  geometryRecords: UsdMeshGeometryRecord[];
 };
 
 export interface UsdMeshCompressionOptions {
@@ -1098,16 +1113,11 @@ function collectUsdFaceVertexIndices(
   return groupedIndices;
 }
 
-function serializeMeshGeometry(
-  mesh: THREE.Mesh,
-  lines: string[],
-  depth: number,
-): void {
-  const indent = makeIndent(depth);
+function extractUsdMeshGeometryData(mesh: THREE.Mesh): UsdMeshGeometryData | null {
   const geometry = mesh.geometry;
   const position = geometry.getAttribute('position');
   if (!position || position.count === 0) {
-    return;
+    return null;
   }
 
   const points: string[] = [];
@@ -1131,23 +1141,42 @@ function serializeMeshGeometry(
     faceVertexIndices.push(indexValues[index], indexValues[index + 1], indexValues[index + 2]);
   }
 
-  lines.push(`${indent}int[] faceVertexCounts = [${faceVertexCounts.join(', ')}]`);
-  lines.push(`${indent}int[] faceVertexIndices = [${faceVertexIndices.join(', ')}]`);
-  lines.push(`${indent}point3f[] points = [${points.join(', ')}]`);
-
   const uv = geometry.getAttribute('uv');
+  let stValues: string[] | null = null;
   if (uv && uv.count > 0) {
-    const stValues = faceVertexIndices
+    const nextStValues = faceVertexIndices
       .filter((index) => index >= 0 && index < uv.count)
       .map((index) => formatTuple([
         uv.getX(index),
         uv.getY(index),
       ]));
 
-    if (stValues.length === faceVertexIndices.length && stValues.length > 0) {
-      lines.push(`${indent}texCoord2f[] primvars:st = [${stValues.join(', ')}]`);
-      lines.push(`${indent}uniform token primvars:st:interpolation = "faceVarying"`);
+    if (nextStValues.length === faceVertexIndices.length && nextStValues.length > 0) {
+      stValues = nextStValues;
     }
+  }
+
+  return {
+    faceVertexCounts,
+    faceVertexIndices,
+    points,
+    stValues,
+  };
+}
+
+function serializeMeshGeometryData(
+  data: UsdMeshGeometryData,
+  lines: string[],
+  depth: number,
+): void {
+  const indent = makeIndent(depth);
+  lines.push(`${indent}int[] faceVertexCounts = [${data.faceVertexCounts.join(', ')}]`);
+  lines.push(`${indent}int[] faceVertexIndices = [${data.faceVertexIndices.join(', ')}]`);
+  lines.push(`${indent}point3f[] points = [${data.points.join(', ')}]`);
+
+  if (data.stValues && data.stValues.length > 0) {
+    lines.push(`${indent}texCoord2f[] primvars:st = [${data.stValues.join(', ')}]`);
+    lines.push(`${indent}uniform token primvars:st:interpolation = "faceVarying"`);
   }
 
   lines.push(`${indent}uniform token subdivisionScheme = "none"`);
@@ -1196,11 +1225,23 @@ function createUsdMaterialSignature(appearance: UsdRenderableAppearance): string
   ].join(':');
 }
 
-function collectUsdPreviewMaterials(sceneRoot: THREE.Object3D): UsdSerializationContext {
+function createUsdGeometrySignature(data: UsdMeshGeometryData): string {
+  return hashString(JSON.stringify({
+    faceVertexCounts: data.faceVertexCounts,
+    faceVertexIndices: data.faceVertexIndices,
+    points: data.points,
+    stValues: data.stValues,
+  }));
+}
+
+function collectUsdSerializationContext(sceneRoot: THREE.Object3D): UsdSerializationContext {
   const rootPrimName = sanitizeUsdIdentifier(sceneRoot.name || 'Robot');
   const materialByObject = new WeakMap<THREE.Object3D, UsdPreviewMaterialRecord>();
   const materialBySignature = new Map<string, UsdPreviewMaterialRecord>();
   const materialRecords: UsdPreviewMaterialRecord[] = [];
+  const geometryByObject = new WeakMap<THREE.Object3D, UsdMeshGeometryRecord>();
+  const geometryBySignature = new Map<string, UsdMeshGeometryRecord>();
+  const geometryRecords: UsdMeshGeometryRecord[] = [];
 
   sceneRoot.traverse((object) => {
     if (!(object.userData.usdGeomType || isMeshObject(object))) {
@@ -1208,38 +1249,62 @@ function collectUsdPreviewMaterials(sceneRoot: THREE.Object3D): UsdSerialization
     }
 
     const appearance = getRenderableAppearance(object);
-    if (!appearance) {
+    if (appearance) {
+      const signature = createUsdMaterialSignature(appearance);
+      let record = materialBySignature.get(signature);
+      if (!record) {
+        const name = `Material_${materialRecords.length}`;
+        record = {
+          name,
+          path: `/${rootPrimName}/Looks/${name}`,
+          appearance: {
+            color: appearance.color.clone(),
+            opacity: appearance.opacity,
+            texture: appearance.texture
+              ? {
+                sourcePath: appearance.texture.sourcePath,
+                exportPath: appearance.texture.exportPath,
+              }
+              : null,
+          },
+        };
+        materialBySignature.set(signature, record);
+        materialRecords.push(record);
+      }
+
+      materialByObject.set(object, record);
+    }
+
+    if (!isMeshObject(object)) {
       return;
     }
 
-    const signature = createUsdMaterialSignature(appearance);
-    let record = materialBySignature.get(signature);
-    if (!record) {
-      const name = `Material_${materialRecords.length}`;
-      record = {
-        name,
-        path: `/${rootPrimName}/Looks/${name}`,
-        appearance: {
-          color: appearance.color.clone(),
-          opacity: appearance.opacity,
-          texture: appearance.texture
-            ? {
-              sourcePath: appearance.texture.sourcePath,
-              exportPath: appearance.texture.exportPath,
-            }
-            : null,
-        },
-      };
-      materialBySignature.set(signature, record);
-      materialRecords.push(record);
+    const geometryData = extractUsdMeshGeometryData(object);
+    if (!geometryData) {
+      return;
     }
 
-    materialByObject.set(object, record);
+    const geometrySignature = createUsdGeometrySignature(geometryData);
+    let geometryRecord = geometryBySignature.get(geometrySignature);
+    if (!geometryRecord) {
+      const name = `Geometry_${geometryRecords.length}`;
+      geometryRecord = {
+        name,
+        path: `/${rootPrimName}/__MeshLibrary/${name}`,
+        data: geometryData,
+      };
+      geometryBySignature.set(geometrySignature, geometryRecord);
+      geometryRecords.push(geometryRecord);
+    }
+
+    geometryByObject.set(object, geometryRecord);
   });
 
   return {
     materialByObject,
     materialRecords,
+    geometryByObject,
+    geometryRecords,
   };
 }
 
@@ -1319,6 +1384,31 @@ function serializeUsdPreviewMaterials(
   lines.push(`${indent}}`);
 }
 
+function serializeUsdMeshGeometryLibrary(
+  lines: string[],
+  depth: number,
+  context: UsdSerializationContext,
+): void {
+  if (context.geometryRecords.length === 0) {
+    return;
+  }
+
+  const indent = makeIndent(depth);
+  const childIndent = makeIndent(depth + 1);
+
+  lines.push(`${indent}def Scope "__MeshLibrary"`);
+  lines.push(`${indent}{`);
+
+  context.geometryRecords.forEach((record) => {
+    lines.push(`${childIndent}def Mesh "${record.name}"`);
+    lines.push(`${childIndent}{`);
+    serializeMeshGeometryData(record.data, lines, depth + 2);
+    lines.push(`${childIndent}}`);
+  });
+
+  lines.push(`${indent}}`);
+}
+
 function serializeMaterialBinding(
   lines: string[],
   depth: number,
@@ -1346,14 +1436,21 @@ function serializeSceneNode(
   const name = sanitizeUsdIdentifier(forcedName || object.name || primitiveType || 'Node');
   const typeName = primitiveType || (isMeshObject(object) ? 'Mesh' : 'Xform');
   const materialRecord = context.materialByObject.get(object);
-
+  const geometryRecord = isMeshObject(object) ? context.geometryByObject.get(object) : undefined;
+  const primMetadata: string[] = [];
   if (materialRecord) {
-    lines.push(`${indent}def ${typeName} "${name}" (`);
-    lines.push(`${childIndent}prepend apiSchemas = ["MaterialBindingAPI"]`);
-    lines.push(`${indent})`);
-  } else {
-    lines.push(`${indent}def ${typeName} "${name}"`);
+    primMetadata.push('prepend apiSchemas = ["MaterialBindingAPI"]');
   }
+  if (geometryRecord) {
+    primMetadata.push(`prepend references = <${geometryRecord.path}>`);
+  }
+
+  serializePrimSpecWithMetadata(
+    lines,
+    depth,
+    `def ${typeName} "${name}"`,
+    primMetadata,
+  );
   lines.push(`${indent}{`);
 
   const childDepth = depth + 1;
@@ -1370,16 +1467,25 @@ function serializeSceneNode(
     serializeDisplayColor(lines, childDepth, object);
     serializeMaterialBinding(lines, childDepth, object, context);
   } else if (isMeshObject(object)) {
-    serializeMeshGeometry(object, lines, childDepth);
+    if (!geometryRecord) {
+      const inlineGeometry = extractUsdMeshGeometryData(object);
+      if (inlineGeometry) {
+        serializeMeshGeometryData(inlineGeometry, lines, childDepth);
+      }
+    }
     serializeDisplayColor(lines, childDepth, object);
     serializeMaterialBinding(lines, childDepth, object, context);
   }
 
   if (depth === 0) {
+    serializeUsdMeshGeometryLibrary(lines, childDepth, context);
     serializeUsdPreviewMaterials(lines, childDepth, context);
   }
 
   const usedNames = new Set<string>();
+  if (depth === 0 && context.geometryRecords.length > 0) {
+    usedNames.add('__MeshLibrary');
+  }
   if (depth === 0 && context.materialRecords.length > 0) {
     usedNames.add('Looks');
   }
@@ -1801,7 +1907,7 @@ async function buildLinkSceneNode(
 
 function buildBaseLayerContent(sceneRoot: THREE.Object3D): string {
   const rootPrimName = sanitizeUsdIdentifier(sceneRoot.name || 'Robot');
-  const serializationContext = collectUsdPreviewMaterials(sceneRoot);
+  const serializationContext = collectUsdSerializationContext(sceneRoot);
   const lines = [
     '#usda 1.0',
     '(',
@@ -2068,7 +2174,7 @@ export async function exportRobotToUsd({
     const baseLayerContent = buildBaseLayerContent(sceneRoot);
     const physicsLayerContent = buildPhysicsLayerContent(robot, pathMaps, rootPrimName, configStem);
     const sensorLayerContent = buildSensorLayerContent(rootPrimName);
-    const usdContext = collectUsdPreviewMaterials(sceneRoot);
+    const usdContext = collectUsdSerializationContext(sceneRoot);
     const usdAssetFiles = await collectUsdAssetFiles(sceneRoot, usdContext, registry);
 
     const archive = createArchiveFiles(

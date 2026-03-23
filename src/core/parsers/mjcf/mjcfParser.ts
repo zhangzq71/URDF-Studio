@@ -389,6 +389,60 @@ function toRPYObjectFromEulerTuple(
     });
 }
 
+function isNonZeroPosition(position: { x: number, y: number, z: number } | undefined): boolean {
+    if (!position) {
+        return false;
+    }
+
+    return Math.abs(position.x) > 1e-9
+        || Math.abs(position.y) > 1e-9
+        || Math.abs(position.z) > 1e-9;
+}
+
+function subtractLocalOffset(
+    position: { x: number, y: number, z: number } | undefined,
+    localOffset: { x: number, y: number, z: number } | null,
+): { x: number, y: number, z: number } | undefined {
+    if (!position) {
+        return undefined;
+    }
+
+    if (!localOffset) {
+        return position;
+    }
+
+    return {
+        x: position.x - localOffset.x,
+        y: position.y - localOffset.y,
+        z: position.z - localOffset.z,
+    };
+}
+
+function rotateLocalOffsetToParentFrame(
+    localOffset: { x: number, y: number, z: number } | null,
+    rotation: { r: number, p: number, y: number } | undefined,
+): { x: number, y: number, z: number } | null {
+    if (!localOffset) {
+        return null;
+    }
+
+    if (!rotation) {
+        return localOffset;
+    }
+
+    const quaternion = new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(rotation.r, rotation.p, rotation.y, 'ZYX'),
+    );
+    const rotated = new THREE.Vector3(localOffset.x, localOffset.y, localOffset.z)
+        .applyQuaternion(quaternion);
+
+    return {
+        x: rotated.x,
+        y: rotated.y,
+        z: rotated.z,
+    };
+}
+
 function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody {
     return {
         name: sharedBody.name,
@@ -587,7 +641,10 @@ function mjcfToRobotState(
         materials[linkId] = materialState;
     }
 
-    function processGeometry(geom: MJCFGeom): UrdfVisual {
+    function processGeometry(
+        geom: MJCFGeom,
+        linkFrameOffsetLocal: { x: number, y: number, z: number } | null = null,
+    ): UrdfVisual {
         const result: UrdfVisual = { ...DEFAULT_LINK.visual };
         result.type = geom.mesh ? GeometryType.MESH : convertGeomType(geom.type);
 
@@ -654,13 +711,14 @@ function mjcfToRobotState(
             || Math.abs(geomRotation.p) > 1e-9
             || Math.abs(geomRotation.y) > 1e-9
         );
+        const geomPosition = subtractLocalOffset(geom.pos, linkFrameOffsetLocal);
 
-        if (geom.pos || hasMeaningfulRotation) {
+        if (geomPosition || hasMeaningfulRotation) {
             result.origin = {
                 xyz: {
-                    x: geom.pos?.x ?? 0,
-                    y: geom.pos?.y ?? 0,
-                    z: geom.pos?.z ?? 0,
+                    x: geomPosition?.x ?? 0,
+                    y: geomPosition?.y ?? 0,
+                    z: geomPosition?.z ?? 0,
                 },
                 rpy: geomRotation || { r: 0, p: 0, y: 0 }
             };
@@ -671,6 +729,16 @@ function mjcfToRobotState(
 
     function processBody(body: MJCFBody, parentLinkId: string | null): string {
         const mainLinkId = body.name || `link_${linkCounter++}`;
+        const bodyRotation = body.euler || toRPYObjectFromQuat(body.quat) || { r: 0, p: 0, y: 0 };
+        const mjcfJoint = body.joints[0];
+        const linkFrameOffsetLocal = isNonZeroPosition(mjcfJoint?.pos)
+            ? {
+                x: mjcfJoint!.pos!.x,
+                y: mjcfJoint!.pos!.y,
+                z: mjcfJoint!.pos!.z,
+            }
+            : null;
+        const jointFrameOffsetInParent = rotateLocalOffsetToParentFrame(linkFrameOffsetLocal, bodyRotation);
 
         // 1. Classify Geoms
         const visuals: MJCFGeom[] = [];
@@ -744,7 +812,7 @@ function mjcfToRobotState(
         
         let visual = { ...DEFAULT_LINK.visual };
         if (mainPair.visual) {
-            visual = processGeometry(mainPair.visual);
+            visual = processGeometry(mainPair.visual, linkFrameOffsetLocal);
             assignLinkMaterial(mainLinkId, mainPair.visual);
         } else {
             visual.type = GeometryType.NONE;
@@ -752,7 +820,7 @@ function mjcfToRobotState(
 
         let collision = { ...DEFAULT_LINK.collision };
         if (mainPair.collision) {
-            const colGeo = processGeometry(mainPair.collision);
+            const colGeo = processGeometry(mainPair.collision, linkFrameOffsetLocal);
             collision = {
                 ...collision,
                 type: colGeo.type,
@@ -771,9 +839,10 @@ function mjcfToRobotState(
 
         if (body.inertial) {
             const { mass, pos: inertialPos, quat: inertialQuat, diaginertia, fullinertia } = body.inertial;
+            const linkInertialPos = subtractLocalOffset(inertialPos, linkFrameOffsetLocal) || { x: 0, y: 0, z: 0 };
             linkInertial.mass = mass;
             linkInertial.origin = {
-                xyz: { x: inertialPos.x, y: inertialPos.y, z: inertialPos.z },
+                xyz: { x: linkInertialPos.x, y: linkInertialPos.y, z: linkInertialPos.z },
                 rpy: toRPYObjectFromQuat(inertialQuat) || { r: 0, p: 0, y: 0 }
             };
             if (fullinertia && fullinertia.length >= 6) {
@@ -794,6 +863,12 @@ function mjcfToRobotState(
         } else {
             const derivedGeomMassInertial = deriveGeomMassInertial(body.geoms);
             if (derivedGeomMassInertial) {
+                if (linkFrameOffsetLocal) {
+                    derivedGeomMassInertial.origin.xyz = subtractLocalOffset(
+                        derivedGeomMassInertial.origin.xyz,
+                        linkFrameOffsetLocal,
+                    ) || { x: 0, y: 0, z: 0 };
+                }
                 linkInertial = derivedGeomMassInertial;
             }
         }
@@ -810,7 +885,6 @@ function mjcfToRobotState(
 
         // Create Main Joint
         if (parentLinkId) {
-            const mjcfJoint = body.joints[0];
             const jointId = mjcfJoint?.name || `fixed_${mainLinkId}`;
             const jointType = mjcfJoint
                 ? convertJointType(mjcfJoint.type, mjcfJoint.range, mjcfJoint.limited)
@@ -818,9 +892,12 @@ function mjcfToRobotState(
             const jointMechanicalRange = resolveJointMechanicalRange(mjcfJoint, jointType);
             const jointEffort = resolveJointEffortLimit(mjcfJoint, actuatorMap.get(jointId));
             const jointLimit = buildImportedJointLimit(jointType, jointMechanicalRange, jointEffort, 0);
-            const bodyRotation = body.euler || toRPYObjectFromQuat(body.quat) || { r: 0, p: 0, y: 0 };
             const jointOrigin = {
-                xyz: { x: body.pos.x, y: body.pos.y, z: body.pos.z },
+                xyz: {
+                    x: body.pos.x + (jointFrameOffsetInParent?.x ?? 0),
+                    y: body.pos.y + (jointFrameOffsetInParent?.y ?? 0),
+                    z: body.pos.z + (jointFrameOffsetInParent?.z ?? 0),
+                },
                 rpy: bodyRotation,
             };
             const joint: UrdfJoint = {
@@ -858,7 +935,7 @@ function mjcfToRobotState(
             // already understands `collisionBodies`, so emitting synthetic links here only makes
             // URDF exports drift away from the source MJCF topology.
             if (!pair.visual && pair.collision) {
-                const colGeo = processGeometry(pair.collision);
+                const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
                 const extraCollision: UrdfLink['collision'] = {
                     ...DEFAULT_LINK.collision,
                     type: colGeo.type,
@@ -884,7 +961,7 @@ function mjcfToRobotState(
             // Virtual Link Visual
             let subVisual = { ...DEFAULT_LINK.visual };
             if (pair.visual) {
-                subVisual = processGeometry(pair.visual);
+                subVisual = processGeometry(pair.visual, linkFrameOffsetLocal);
                 assignLinkMaterial(subLinkId, pair.visual);
             } else {
                 subVisual.type = GeometryType.NONE;
@@ -893,7 +970,7 @@ function mjcfToRobotState(
             // Virtual Link Collision
             let subCollision = { ...DEFAULT_LINK.collision };
             if (pair.collision) {
-                const colGeo = processGeometry(pair.collision);
+                const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
                 subCollision = {
                     ...subCollision,
                     type: colGeo.type,

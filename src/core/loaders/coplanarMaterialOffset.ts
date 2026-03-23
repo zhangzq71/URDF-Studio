@@ -91,6 +91,27 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
     const indexArray = geometry.index?.array ?? null;
     const triangleOwners = new Map<string, Set<number>>();
     const trianglesPerMaterial = new Map<number, number>();
+    const overlappingMaterials = new Map<number, Set<number>>();
+
+    const connectOverlappingMaterials = (materialIndices: number[]) => {
+        if (materialIndices.length < 2) {
+            return;
+        }
+
+        for (const materialIndex of materialIndices) {
+            if (!overlappingMaterials.has(materialIndex)) {
+                overlappingMaterials.set(materialIndex, new Set());
+            }
+        }
+
+        const firstMaterialIndex = materialIndices[0];
+        const firstNeighbors = overlappingMaterials.get(firstMaterialIndex)!;
+        for (let index = 1; index < materialIndices.length; index += 1) {
+            const materialIndex = materialIndices[index];
+            firstNeighbors.add(materialIndex);
+            overlappingMaterials.get(materialIndex)!.add(firstMaterialIndex);
+        }
+    };
 
     for (const group of groups) {
         const materialIndex = toFiniteGroupValue(group.materialIndex ?? 0);
@@ -125,21 +146,55 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
 
         duplicateTriangleCount += 1;
         const materialIndices = [...owners].sort((left, right) => left - right);
-        let anchorMaterialIndex = materialIndices[0];
-        let anchorTriangleCount = trianglesPerMaterial.get(anchorMaterialIndex) ?? 0;
+        connectOverlappingMaterials(materialIndices);
+    }
 
-        for (let index = 1; index < materialIndices.length; index += 1) {
-            const materialIndex = materialIndices[index];
-            const triangleCount = trianglesPerMaterial.get(materialIndex) ?? 0;
-            if (triangleCount > anchorTriangleCount) {
-                anchorMaterialIndex = materialIndex;
-                anchorTriangleCount = triangleCount;
+    const visitedMaterials = new Set<number>();
+    const pickAnchorMaterialIndex = (componentMaterialIndices: number[]) => componentMaterialIndices.reduce((bestMaterialIndex, materialIndex) => {
+        const bestTriangleCount = trianglesPerMaterial.get(bestMaterialIndex) ?? 0;
+        const triangleCount = trianglesPerMaterial.get(materialIndex) ?? 0;
+        if (triangleCount > bestTriangleCount) {
+            return materialIndex;
+        }
+
+        if (triangleCount === bestTriangleCount && materialIndex < bestMaterialIndex) {
+            return materialIndex;
+        }
+
+        return bestMaterialIndex;
+    }, componentMaterialIndices[0]);
+
+    for (const materialIndex of overlappingMaterials.keys()) {
+        if (visitedMaterials.has(materialIndex)) {
+            continue;
+        }
+
+        const componentMaterialIndices: number[] = [];
+        const stack = [materialIndex];
+        visitedMaterials.add(materialIndex);
+
+        while (stack.length > 0) {
+            const currentMaterialIndex = stack.pop()!;
+            componentMaterialIndices.push(currentMaterialIndex);
+
+            for (const neighborMaterialIndex of overlappingMaterials.get(currentMaterialIndex) ?? []) {
+                if (visitedMaterials.has(neighborMaterialIndex)) {
+                    continue;
+                }
+
+                visitedMaterials.add(neighborMaterialIndex);
+                stack.push(neighborMaterialIndex);
             }
         }
 
-        for (const materialIndex of materialIndices) {
-            if (materialIndex !== anchorMaterialIndex) {
-                materialsToOffset.add(materialIndex);
+        if (componentMaterialIndices.length < 2) {
+            continue;
+        }
+
+        const anchorMaterialIndex = pickAnchorMaterialIndex(componentMaterialIndices);
+        for (const candidateMaterialIndex of componentMaterialIndices) {
+            if (candidateMaterialIndex !== anchorMaterialIndex) {
+                materialsToOffset.add(candidateMaterialIndex);
             }
         }
     }

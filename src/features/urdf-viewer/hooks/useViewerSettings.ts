@@ -5,8 +5,6 @@ export interface ViewerSettings {
     setShowCollision: React.Dispatch<React.SetStateAction<boolean>>;
     localShowVisual: boolean;
     setLocalShowVisual: React.Dispatch<React.SetStateAction<boolean>>;
-    showJointControls: boolean;
-    setShowJointControls: React.Dispatch<React.SetStateAction<boolean>>;
     showCenterOfMass: boolean;
     setShowCenterOfMass: React.Dispatch<React.SetStateAction<boolean>>;
     showCoMOverlay: boolean;
@@ -42,7 +40,6 @@ export interface ViewerSettings {
 export function useViewerSettings(): ViewerSettings {
     const [showCollision, setShowCollision] = useState(false);
     const [localShowVisual, setLocalShowVisual] = useState(true);
-    const [showJointControls, setShowJointControls] = useState(true);
     const [showCenterOfMass, setShowCenterOfMass] = useState(false);
     const [showCoMOverlay, setShowCoMOverlay] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -172,7 +169,6 @@ export function useViewerSettings(): ViewerSettings {
     return {
         showCollision, setShowCollision,
         localShowVisual, setLocalShowVisual,
-        showJointControls, setShowJointControls,
         showCenterOfMass, setShowCenterOfMass,
         showCoMOverlay, setShowCoMOverlay,
         centerOfMassSize, setCenterOfMassSize,

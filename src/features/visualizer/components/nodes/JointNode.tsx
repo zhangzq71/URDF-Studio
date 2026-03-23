@@ -38,6 +38,7 @@ interface CommonVisualizerProps {
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
   onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
+  onMeshResolved?: () => void;
 }
 
 interface JointNodeProps extends CommonVisualizerProps {
@@ -86,7 +87,8 @@ export const JointNode = memo(function JointNode({
   colladaRootNormalizationHints,
   onRegisterJointPivot,
   onRegisterJointMotion,
-  onRegisterCollisionRef
+  onRegisterCollisionRef,
+  onMeshResolved,
 }: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void }) {
 
   if (depth > 50) return null;
@@ -263,6 +265,7 @@ export const JointNode = memo(function JointNode({
             onRegisterJointPivot={onRegisterJointPivot}
             onRegisterJointMotion={onRegisterJointMotion}
             onRegisterCollisionRef={onRegisterCollisionRef}
+            onMeshResolved={onMeshResolved}
           />
         </group>
         </group>

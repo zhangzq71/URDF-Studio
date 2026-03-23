@@ -195,3 +195,87 @@ test('setSelectedFile null resets document load state', () => {
     error: null,
   });
 });
+
+test('renameRobotFolder renames file, asset, selection, and USD cache paths together', () => {
+  resetAssetsStore();
+
+  const state = useAssetsStore.getState();
+  state.setAvailableFiles([
+    {
+      name: 'robots/demo/robot.urdf',
+      content: '<robot />',
+      format: 'urdf',
+    },
+    {
+      name: 'robots/demo/demo.usd',
+      content: '',
+      format: 'usd',
+    },
+  ]);
+  state.setAssets({
+    'robots/demo/meshes/base.stl': 'blob:mesh',
+  });
+  state.setAllFileContents({
+    'robots/demo/robot.urdf': '<robot />',
+  });
+  state.setSelectedFile({
+    name: 'robots/demo/demo.usd',
+    content: '',
+    format: 'usd',
+  });
+  state.setDocumentLoadState({
+    status: 'ready',
+    fileName: 'robots/demo/demo.usd',
+    format: 'usd',
+    error: null,
+  });
+  state.setUsdSceneSnapshot('robots/demo/demo.usd', createUsdSceneSnapshot('robots/demo/demo.usd'));
+  state.setUsdPreparedExportCache('robots/demo/demo.usd', createPreparedUsdExportCache('robots/demo/demo.usd'));
+
+  const result = state.renameRobotFolder('robots/demo', 'renamed-demo');
+  assert.deepEqual(result, { ok: true, nextPath: 'robots/renamed-demo' });
+
+  const nextState = useAssetsStore.getState();
+  assert.deepEqual(
+    nextState.availableFiles.map((file) => file.name).sort(),
+    ['robots/renamed-demo/demo.usd', 'robots/renamed-demo/robot.urdf'],
+  );
+  assert.deepEqual(Object.keys(nextState.assets), ['robots/renamed-demo/meshes/base.stl']);
+  assert.deepEqual(Object.keys(nextState.allFileContents), ['robots/renamed-demo/robot.urdf']);
+  assert.equal(nextState.selectedFile?.name, 'robots/renamed-demo/demo.usd');
+  assert.deepEqual(nextState.documentLoadState, {
+    status: 'ready',
+    fileName: 'robots/renamed-demo/demo.usd',
+    format: 'usd',
+    error: null,
+  });
+  assert.ok(nextState.getUsdSceneSnapshot('robots/renamed-demo/demo.usd'));
+  assert.ok(nextState.getUsdPreparedExportCache('robots/renamed-demo/demo.usd'));
+  assert.equal(nextState.getUsdSceneSnapshot('robots/demo/demo.usd'), null);
+  assert.equal(nextState.getUsdPreparedExportCache('robots/demo/demo.usd'), null);
+});
+
+test('renameRobotFolder rejects conflicting target folders', () => {
+  resetAssetsStore();
+
+  const state = useAssetsStore.getState();
+  state.setAvailableFiles([
+    {
+      name: 'robots/demo/robot.urdf',
+      content: '<robot />',
+      format: 'urdf',
+    },
+    {
+      name: 'robots/existing/other.urdf',
+      content: '<robot />',
+      format: 'urdf',
+    },
+  ]);
+
+  const result = state.renameRobotFolder('robots/demo', 'existing');
+  assert.deepEqual(result, { ok: false, reason: 'conflict' });
+  assert.deepEqual(
+    useAssetsStore.getState().availableFiles.map((file) => file.name).sort(),
+    ['robots/demo/robot.urdf', 'robots/existing/other.urdf'],
+  );
+});

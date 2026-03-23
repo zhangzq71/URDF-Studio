@@ -11,6 +11,7 @@ export interface ResolveCurrentUsdExportBundleOptions {
   currentRobot: RobotState;
   cachedSnapshot?: unknown | null;
   preparedCache?: UsdPreparedExportCache | null;
+  targetWindow?: Parameters<typeof resolveUsdExportSceneSnapshot>[0]['targetWindow'];
 }
 
 export function resolveCurrentUsdExportBundle({
@@ -18,10 +19,12 @@ export function resolveCurrentUsdExportBundle({
   currentRobot,
   cachedSnapshot = null,
   preparedCache = null,
+  targetWindow,
 }: ResolveCurrentUsdExportBundleOptions): UsdExportBundle | null {
   const snapshot = resolveUsdExportSceneSnapshot({
     stageSourcePath,
     cachedSnapshot: cachedSnapshot as Parameters<typeof resolveUsdExportSceneSnapshot>[0]['cachedSnapshot'],
+    targetWindow,
   });
 
   if (preparedCache) {
@@ -37,6 +40,7 @@ export function resolveCurrentUsdExportBundle({
     const snapshotBundle = buildUsdExportBundleFromSnapshot(snapshot, {
       fileName: stageSourcePath,
       currentRobot,
+      targetWindow,
     });
     if (snapshotBundle) {
       return snapshotBundle;

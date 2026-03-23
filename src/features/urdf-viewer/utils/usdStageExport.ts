@@ -21,6 +21,7 @@ export interface ExportUsdStageSnapshotOptions {
   stageSourcePath?: string | null;
   outputFileName?: string | null;
   flattenStage?: boolean;
+  persistToServer?: boolean;
   targetWindow?: UsdStageExportHost;
 }
 
@@ -98,7 +99,7 @@ export async function exportUsdStageSnapshot(
   const normalizedStageSourcePath = normalizeUsdStageSourcePath(options.stageSourcePath);
 
   const exportResult = await exportLoadedStageSnapshot({
-    persistToServer: false,
+    persistToServer: options.persistToServer === true,
     overwrite: true,
     flattenStage: options.flattenStage === true,
     stageSourcePath: normalizedStageSourcePath,

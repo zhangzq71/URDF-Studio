@@ -430,6 +430,168 @@ test('buildUsdExportBundleFromSnapshot still bakes descriptor transforms when no
   assert.match(meshText, /^v 5 6 7$/m);
 });
 
+test('buildUsdExportBundleFromSnapshot hydrates live attachment visual origins before exporting meshes', async () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const indices = new Uint32Array([
+    0, 1, 2,
+    3, 4, 5,
+  ]);
+  const transforms = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0.1, 0.2, 0.3, 1,
+
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0.4, 0.5, 0.6, 1,
+  ]);
+
+  const snapshot = {
+    stageSourcePath: '/robots/demo/runtime_hydrated.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/arm_link', '/Robot/base_link'],
+      ] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/demo/runtime_hydrated.usd',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/arm_link', '/Robot/base_link'],
+      ] as Array<[string, string | null]>,
+      jointCatalogEntries: [
+        {
+          linkPath: '/Robot/arm_link',
+          parentLinkPath: '/Robot/base_link',
+          jointName: 'arm_joint',
+          jointTypeName: 'revolute',
+          axisToken: 'Z',
+          localPivotInLink: [0, 0, 0],
+        },
+      ],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 0,
+          collisionMeshCount: 0,
+        },
+        '/Robot/arm_link': {
+          visualMeshCount: 2,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/arm_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/arm_link/visuals/arm_link/mesh',
+          primType: 'mesh',
+          ranges: {
+            positions: { offset: 0, count: 9, stride: 3 },
+            indices: { offset: 0, count: 3, stride: 1 },
+            transform: { offset: 0, count: 16, stride: 16 },
+          },
+        },
+        {
+          meshId: '/Robot/arm_link/visuals.proto_mesh_id1',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/arm_link/visuals/arm_cap/mesh',
+          primType: 'mesh',
+          ranges: {
+            positions: { offset: 9, count: 9, stride: 3 },
+            indices: { offset: 3, count: 3, stride: 1 },
+            transform: { offset: 16, count: 16, stride: 16 },
+          },
+        },
+      ],
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs: new Float32Array(0),
+      transforms,
+      rangesByMeshId: {},
+    },
+  };
+
+  const bundle = buildUsdExportBundleFromSnapshot(snapshot, {
+    fileName: 'runtime_hydrated.usd',
+    targetWindow: {
+      renderInterface: {
+        getPreferredLinkWorldTransform: (linkPath: string) => {
+          if (linkPath === '/Robot/base_link') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              0, 0, 0, 1,
+            ];
+          }
+          if (linkPath === '/Robot/arm_link') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              1, 2, 3, 1,
+            ];
+          }
+          return null;
+        },
+        getWorldTransformForPrimPath: (primPath: string) => {
+          if (primPath === '/Robot/arm_link/visuals/arm_link/mesh') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              1.1, 2.2, 3.3, 1,
+            ];
+          }
+          if (primPath === '/Robot/arm_link/visuals/arm_cap/mesh') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              1.4, 2.5, 3.6, 1,
+            ];
+          }
+          return null;
+        },
+      },
+    },
+  });
+
+  assert.ok(bundle);
+  assert.ok(Math.abs((bundle.robot.links.arm_link.visual.origin.xyz.x || 0) - 0.1) < 1e-9);
+  assert.ok(Math.abs((bundle.robot.links.arm_link.visual.origin.xyz.y || 0) - 0.2) < 1e-9);
+  assert.ok(Math.abs((bundle.robot.links.arm_link.visual.origin.xyz.z || 0) - 0.3) < 1e-9);
+  assert.ok(bundle.robot.links.arm_cap, 'expected hydrated export bundle to keep the attachment link');
+  assert.ok(Math.abs((bundle.robot.links.arm_cap.visual.origin.xyz.x || 0) - 0.4) < 1e-9);
+  assert.ok(Math.abs((bundle.robot.links.arm_cap.visual.origin.xyz.y || 0) - 0.5) < 1e-9);
+  assert.ok(Math.abs((bundle.robot.links.arm_cap.visual.origin.xyz.z || 0) - 0.6) < 1e-9);
+
+  const attachmentMeshText = await bundle.meshFiles.get('arm_link_visual_1.obj')?.text();
+  assert.ok(attachmentMeshText);
+  assert.match(attachmentMeshText || '', /^v 0 0 0$/m);
+  assert.doesNotMatch(attachmentMeshText || '', /^v 0\.4 0\.5 0\.6$/m);
+});
+
 test('buildUsdExportBundleFromSnapshot assigns extra visual descriptors to fixed child links and syncs materials into robot state', () => {
   const { positions, indices } = createTriangleBuffers();
 
@@ -707,6 +869,146 @@ test('buildUsdExportBundleFromSnapshot falls back to preferred live visual mater
   assert.equal(hasVertexColors, true);
 });
 
+test('buildUsdExportBundleFromSnapshot splits geom subsets into separate export meshes with subset material colors', async () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+
+    0, 0, 0,
+    0, 1, 0,
+    0, 0, 1,
+  ]);
+  const indices = new Uint32Array([
+    0, 1, 2,
+    3, 4, 5,
+  ]);
+
+  const snapshot = {
+    stageSourcePath: '/robots/demo/go2.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/demo/go2.usd',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ] as Array<[string, string | null]>,
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/base_link',
+          primType: 'mesh',
+          geometry: {
+            geomSubsetSections: [
+              { start: 0, length: 3, materialId: '/Looks/Red' },
+              { start: 3, length: 3, materialId: '/Looks/Green' },
+            ],
+          },
+          ranges: {
+            positions: { offset: 0, count: 18, stride: 3 },
+            indices: { offset: 0, count: 6, stride: 1 },
+          },
+        },
+      ],
+      materials: [
+        {
+          materialId: '/Looks/Red',
+          name: 'Red',
+          color: [1, 0, 0, 1],
+        },
+        {
+          materialId: '/Looks/Green',
+          name: 'Green',
+          color: [0, 1, 0, 1],
+        },
+      ],
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs: new Float32Array(0),
+      transforms: new Float32Array(0),
+      rangesByMeshId: {},
+    },
+  };
+
+  const currentRobot: RobotState = {
+    name: 'subset_export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#3b82f6',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ef4444',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {
+      base_link: {
+        color: '#3b82f6',
+      },
+    },
+  };
+
+  const bundle = buildUsdExportBundleFromSnapshot(snapshot, {
+    fileName: 'go2.usd',
+    currentRobot,
+  });
+
+  assert.ok(bundle);
+  assert.equal(bundle.robot.links.base_link.visual.meshPath, 'base_link_visual_0_section_0.obj');
+  assert.equal(bundle.robot.links.base_link.visual.color, '#ff0000');
+
+  const syntheticVisualLink = Object.values(bundle.robot.links).find((link) => link.id !== 'base_link');
+  assert.ok(syntheticVisualLink, 'expected an extra fixed visual attachment link for the second subset');
+  assert.equal(syntheticVisualLink!.visual.meshPath, 'base_link_visual_0_section_1.obj');
+  assert.equal(syntheticVisualLink!.visual.color, '#00ff00');
+
+  const firstSubsetObj = await bundle.meshFiles.get('base_link_visual_0_section_0.obj')?.text();
+  const secondSubsetObj = await bundle.meshFiles.get('base_link_visual_0_section_1.obj')?.text();
+  assert.ok(firstSubsetObj);
+  assert.ok(secondSubsetObj);
+  assert.match(firstSubsetObj, /^v 0 0 0 1 0 0$/m);
+  assert.match(secondSubsetObj, /^v 0 0 0 0 1 0$/m);
+});
+
 test('prepareUsdExportCacheFromSnapshot materializes exportable mesh paths and reusable mesh files', async () => {
   const { positions, indices } = createTriangleBuffers();
 
@@ -772,6 +1074,164 @@ test('prepareUsdExportCacheFromSnapshot materializes exportable mesh paths and r
   assert.ok(preparedBlob);
   const meshText = await preparedBlob.text();
   assert.match(meshText, /^o base_link_visual_0/m);
+});
+
+test('prepareUsdExportCacheFromSnapshot hydrates live attachment visual origins before caching export data', () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const indices = new Uint32Array([
+    0, 1, 2,
+    3, 4, 5,
+  ]);
+  const transforms = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0.1, 0.2, 0.3, 1,
+
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0.4, 0.5, 0.6, 1,
+  ]);
+
+  const snapshot = {
+    stageSourcePath: '/robots/demo/runtime_cache.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/arm_link', '/Robot/base_link'],
+      ] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/demo/runtime_cache.usd',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/arm_link', '/Robot/base_link'],
+      ] as Array<[string, string | null]>,
+      jointCatalogEntries: [
+        {
+          linkPath: '/Robot/arm_link',
+          parentLinkPath: '/Robot/base_link',
+          jointName: 'arm_joint',
+          jointTypeName: 'revolute',
+          axisToken: 'Z',
+          localPivotInLink: [0, 0, 0],
+        },
+      ],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 0,
+          collisionMeshCount: 0,
+        },
+        '/Robot/arm_link': {
+          visualMeshCount: 2,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/arm_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/arm_link/visuals/arm_link/mesh',
+          primType: 'mesh',
+          ranges: {
+            positions: { offset: 0, count: 9, stride: 3 },
+            indices: { offset: 0, count: 3, stride: 1 },
+            transform: { offset: 0, count: 16, stride: 16 },
+          },
+        },
+        {
+          meshId: '/Robot/arm_link/visuals.proto_mesh_id1',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/arm_link/visuals/arm_cap/mesh',
+          primType: 'mesh',
+          ranges: {
+            positions: { offset: 9, count: 9, stride: 3 },
+            indices: { offset: 3, count: 3, stride: 1 },
+            transform: { offset: 16, count: 16, stride: 16 },
+          },
+        },
+      ],
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs: new Float32Array(0),
+      transforms,
+      rangesByMeshId: {},
+    },
+  };
+
+  const prepared = prepareUsdExportCacheFromSnapshot(snapshot, {
+    fileName: 'runtime_cache.usd',
+    targetWindow: {
+      renderInterface: {
+        getPreferredLinkWorldTransform: (linkPath: string) => {
+          if (linkPath === '/Robot/base_link') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              0, 0, 0, 1,
+            ];
+          }
+          if (linkPath === '/Robot/arm_link') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              1, 2, 3, 1,
+            ];
+          }
+          return null;
+        },
+        getWorldTransformForPrimPath: (primPath: string) => {
+          if (primPath === '/Robot/arm_link/visuals/arm_link/mesh') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              1.1, 2.2, 3.3, 1,
+            ];
+          }
+          if (primPath === '/Robot/arm_link/visuals/arm_cap/mesh') {
+            return [
+              1, 0, 0, 0,
+              0, 1, 0, 0,
+              0, 0, 1, 0,
+              1.4, 2.5, 3.6, 1,
+            ];
+          }
+          return null;
+        },
+      },
+    },
+  });
+
+  assert.ok(prepared);
+  assert.ok(Math.abs((prepared.robotData.links.arm_link.visual.origin.xyz.x || 0) - 0.1) < 1e-9);
+  assert.ok(Math.abs((prepared.robotData.links.arm_link.visual.origin.xyz.y || 0) - 0.2) < 1e-9);
+  assert.ok(Math.abs((prepared.robotData.links.arm_link.visual.origin.xyz.z || 0) - 0.3) < 1e-9);
+  assert.ok(prepared.robotData.links.arm_cap);
+  assert.ok(Math.abs((prepared.robotData.links.arm_cap.visual.origin.xyz.x || 0) - 0.4) < 1e-9);
+  assert.ok(Math.abs((prepared.robotData.links.arm_cap.visual.origin.xyz.y || 0) - 0.5) < 1e-9);
+  assert.ok(Math.abs((prepared.robotData.links.arm_cap.visual.origin.xyz.z || 0) - 0.6) < 1e-9);
+  assert.ok(prepared.meshFiles['arm_link_visual_1.obj']);
 });
 
 test('prepareUsdExportCacheFromSnapshot keeps primitive collisions as native geometry without phantom OBJ exports', () => {
@@ -942,7 +1402,7 @@ test('buildUsdExportBundleFromPreparedCache preserves current robot edits withou
   assert.equal(bundle.meshFiles.get('base_link_visual_0.obj'), prepared.meshFiles['base_link_visual_0.obj']);
 });
 
-test('buildUsdExportBundleFromPreparedCache keeps prepared USD geometry and synthetic world root when current store only has skeleton links', () => {
+test('buildUsdExportBundleFromPreparedCache keeps prepared USD geometry while stripping a synthetic world root before export', () => {
   const prepared = {
     stageSourcePath: '/robots/demo/go2.usd',
     robotData: {
@@ -1002,7 +1462,7 @@ test('buildUsdExportBundleFromPreparedCache keeps prepared USD geometry and synt
           type: JointType.FIXED,
           parentLinkId: 'world',
           childLinkId: 'base_link',
-          origin: { xyz: { x: 1, y: 2, z: 3 }, rpy: { r: 0.4, p: 0.5, y: 0.6 } },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
           axis: { x: 0, y: 0, z: 1 },
           dynamics: { damping: 0, friction: 0 },
           hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
@@ -1050,13 +1510,93 @@ test('buildUsdExportBundleFromPreparedCache keeps prepared USD geometry and synt
   });
 
   assert.ok(bundle);
-  assert.equal(bundle.robot.rootLinkId, 'world');
-  assert.ok(bundle.robot.links.world);
-  assert.ok(bundle.robot.joints.world_to_base_link);
+  assert.equal(bundle.robot.rootLinkId, 'base_link');
+  assert.equal(bundle.robot.links.world, undefined);
+  assert.equal(bundle.robot.joints.world_to_base_link, undefined);
   assert.equal(bundle.robot.links.base_link.visual.type, GeometryType.MESH);
   assert.equal(bundle.robot.links.base_link.visual.meshPath, 'base_link_visual_0.obj');
   assert.deepEqual(bundle.robot.links.base_link.visual.origin?.xyz, { x: 0.12, y: 0.34, z: 0.56 });
-  assert.deepEqual(bundle.robot.joints.world_to_base_link.origin.xyz, { x: 1, y: 2, z: 3 });
+});
+
+test('buildUsdExportBundleFromPreparedCache preserves non-identity synthetic world roots', () => {
+  const prepared = {
+    stageSourcePath: '/robots/demo/root_pose.usd',
+    robotData: {
+      name: 'root_pose',
+      rootLinkId: 'world',
+      links: {
+        world: {
+          id: 'world',
+          name: 'world',
+          visible: true,
+          visual: {
+            type: GeometryType.NONE,
+            dimensions: { x: 0, y: 0, z: 0 },
+            color: '#808080',
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+          collision: {
+            type: GeometryType.NONE,
+            dimensions: { x: 0, y: 0, z: 0 },
+            color: '#ef4444',
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+          inertial: {
+            mass: 0,
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+            inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+          },
+        },
+        base_link: {
+          id: 'base_link',
+          name: 'base_link',
+          visible: true,
+          visual: {
+            type: GeometryType.MESH,
+            dimensions: { x: 1, y: 1, z: 1 },
+            color: '#d6d9e4',
+            meshPath: 'base_link_visual_0.obj',
+            origin: { xyz: { x: 0.12, y: 0.34, z: 0.56 }, rpy: { r: 0.1, p: 0.2, y: 0.3 } },
+          },
+          collision: {
+            type: GeometryType.NONE,
+            dimensions: { x: 0, y: 0, z: 0 },
+            color: '#cccccc',
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+          inertial: {
+            mass: 1,
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+            inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+          },
+        },
+      },
+      joints: {
+        world_to_base_link: {
+          id: 'world_to_base_link',
+          name: 'world_to_base_link',
+          type: JointType.FIXED,
+          parentLinkId: 'world',
+          childLinkId: 'base_link',
+          origin: { xyz: { x: 0.5, y: -0.25, z: 0.75 }, rpy: { r: 0.1, p: -0.2, y: 0.3 } },
+          axis: { x: 0, y: 0, z: 1 },
+          dynamics: { damping: 0, friction: 0 },
+          hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+        },
+      },
+    },
+    meshFiles: {
+      'base_link_visual_0.obj': new Blob(['o prepared_mesh\nv 0 0 0\nf 1 1 1\n'], { type: 'text/plain' }),
+    },
+  };
+
+  const bundle = buildUsdExportBundleFromPreparedCache(prepared);
+
+  assert.ok(bundle);
+  assert.equal(bundle.robot.rootLinkId, 'world');
+  assert.ok(bundle.robot.links.world);
+  assert.ok(bundle.robot.joints.world_to_base_link);
+  assert.deepEqual(bundle.robot.joints.world_to_base_link.origin?.xyz, { x: 0.5, y: -0.25, z: 0.75 });
 });
 
 test('resolveUsdExportSceneSnapshot prefers cached store snapshot before live render snapshot', () => {

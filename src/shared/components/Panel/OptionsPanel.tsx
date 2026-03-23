@@ -523,6 +523,18 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
   const startPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const resizeDirection = useRef<'right' | 'bottom' | 'corner' | null>(null);
   const activePointerId = useRef<number | null>(null);
+  const bodyCursorRef = useRef('');
+  const bodyUserSelectRef = useRef('');
+
+  const captureBodyInteractionStyles = useCallback(() => {
+    bodyCursorRef.current = document.body.style.cursor;
+    bodyUserSelectRef.current = document.body.style.userSelect;
+  }, []);
+
+  const restoreBodyInteractionStyles = useCallback(() => {
+    document.body.style.cursor = bodyCursorRef.current;
+    document.body.style.userSelect = bodyUserSelectRef.current;
+  }, []);
 
   const handleResizeMove = useCallback((e: PointerEvent) => {
     if (!resizeDirection.current) return;
@@ -564,11 +576,10 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     document.removeEventListener('pointercancel', handleResizeEnd);
     window.removeEventListener('blur', handleResizeEnd);
 
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
+    restoreBodyInteractionStyles();
     resizeDirection.current = null;
     activePointerId.current = null;
-  }, [handleResizeMove]);
+  }, [handleResizeMove, restoreBodyInteractionStyles]);
 
   const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>, direction: 'right' | 'bottom' | 'corner') => {
     e.preventDefault();
@@ -599,9 +610,10 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     window.addEventListener('blur', handleResizeEnd);
 
     const cursor = direction === 'right' ? 'ew-resize' : direction === 'bottom' ? 'ns-resize' : 'nwse-resize';
+    captureBodyInteractionStyles();
     document.body.style.cursor = cursor;
     document.body.style.userSelect = 'none';
-  }, [handleResizeEnd, handleResizeMove]);
+  }, [captureBodyInteractionStyles, handleResizeEnd, handleResizeMove]);
 
   useEffect(() => {
     return () => {

@@ -1,6 +1,5 @@
 import type { RobotFile } from '../../types/robot.ts';
-
-export type SourceCodeDocumentFlavor = 'urdf' | 'mjcf' | 'usd' | 'equivalent-mjcf';
+import type { SourceCodeDocumentFlavor } from '@/features/code-editor/types';
 
 type SourceCodeFileLike = Pick<RobotFile, 'name' | 'format' | 'content'>;
 
@@ -19,6 +18,10 @@ export function getSourceCodeDocumentFlavor(
 
   if (file.format === 'mjcf') {
     return 'mjcf';
+  }
+
+  if (file.format === 'xacro') {
+    return 'xacro';
   }
 
   if (shouldUseEquivalentMjcfForUsdSource(file)) {

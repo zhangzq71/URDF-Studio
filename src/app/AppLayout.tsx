@@ -147,7 +147,7 @@ export function AppLayout({
   const {
     assets, motorLibrary, availableFiles, selectedFile, allFileContents,
     setAvailableFiles, setSelectedFile, setAllFileContents, originalUrdfContent, setOriginalUrdfContent,
-    uploadAsset, removeRobotFile, removeRobotFolder, clearRobotLibrary,
+    uploadAsset, removeRobotFile, removeRobotFolder, renameRobotFolder, clearRobotLibrary,
     getUsdPreparedExportCache, documentLoadState, setDocumentLoadState,
   } = useAssetsStore(
     useShallow((state) => ({
@@ -164,6 +164,7 @@ export function AppLayout({
       uploadAsset: state.uploadAsset,
       removeRobotFile: state.removeRobotFile,
       removeRobotFolder: state.removeRobotFolder,
+      renameRobotFolder: state.renameRobotFolder,
       clearRobotLibrary: state.clearRobotLibrary,
       getUsdPreparedExportCache: state.getUsdPreparedExportCache,
       documentLoadState: state.documentLoadState,
@@ -199,7 +200,7 @@ export function AppLayout({
   const {
     assemblyState, addComponent, removeComponent,
     addBridge, removeBridge, getMergedRobotData,
-    updateComponentName, updateComponentRobot,
+    updateComponentName, updateComponentRobot, renameComponentSourceFolder,
   } = useAssemblyStore(
     useShallow((state) => ({
       assemblyState: state.assemblyState,
@@ -210,6 +211,7 @@ export function AppLayout({
       getMergedRobotData: state.getMergedRobotData,
       updateComponentName: state.updateComponentName,
       updateComponentRobot: state.updateComponentRobot,
+      renameComponentSourceFolder: state.renameComponentSourceFolder,
     }))
   );
 
@@ -524,6 +526,7 @@ export function AppLayout({
     handleUploadAsset,
     handleDeleteLibraryFile,
     handleDeleteLibraryFolder,
+    handleRenameLibraryFolder,
     handleDeleteAllLibraryFiles,
     handleExportLibraryFile,
   } = useLibraryFileActions({
@@ -534,6 +537,8 @@ export function AppLayout({
     removeComponent,
     removeRobotFile,
     removeRobotFolder,
+    renameRobotFolder,
+    renameComponentSourceFolder,
     clearRobotLibrary,
     resetRobot,
     clearSelection,
@@ -745,6 +750,7 @@ export function AppLayout({
           onAddComponent={handleAddComponent}
           onDeleteLibraryFile={handleDeleteLibraryFile}
           onDeleteLibraryFolder={handleDeleteLibraryFolder}
+          onRenameLibraryFolder={handleRenameLibraryFolder}
           onDeleteAllLibraryFiles={handleDeleteAllLibraryFiles}
           onExportLibraryFile={handleExportLibraryFile}
           onCreateBridge={handleCreateBridge}

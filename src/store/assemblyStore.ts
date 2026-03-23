@@ -129,6 +129,28 @@ function createUniqueComponentName(baseName: string, existingNames: Set<string>)
   return candidate;
 }
 
+function normalizeAssemblySourcePath(path: string): string {
+  return path.trim().replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
+}
+
+function isSameOrNestedAssemblySourcePath(path: string, basePath: string): boolean {
+  const normalizedPath = normalizeAssemblySourcePath(path);
+  return normalizedPath === basePath || normalizedPath.startsWith(`${basePath}/`);
+}
+
+function replaceAssemblySourcePathPrefix(path: string, fromPath: string, toPath: string): string {
+  const normalizedPath = normalizeAssemblySourcePath(path);
+  if (normalizedPath === fromPath) {
+    return toPath;
+  }
+
+  if (normalizedPath.startsWith(`${fromPath}/`)) {
+    return `${toPath}/${normalizedPath.slice(fromPath.length + 1)}`;
+  }
+
+  return normalizedPath;
+}
+
 interface AssemblyActions {
   setAssembly: (state: AssemblyState | null) => void;
   initAssembly: (name?: string) => void;
@@ -139,6 +161,7 @@ interface AssemblyActions {
     context?: AssemblyContext
   ) => AssemblyComponent | null;
   removeComponent: (id: string) => void;
+  renameComponentSourceFolder: (fromPath: string, toPath: string, options?: UpdateOptions) => void;
   updateComponentName: (id: string, name: string, options?: UpdateOptions) => void;
   updateComponentRobot: (id: string, robot: Partial<RobotData>, options?: UpdateOptions) => void;
   toggleComponentVisibility: (id: string, visible?: boolean) => void;
@@ -299,6 +322,47 @@ export const useAssemblyStore = create<
             const bridge = s.assemblyState!.bridges[bridgeId];
             if (bridge.parentComponentId === id || bridge.childComponentId === id) {
               delete s.assemblyState!.bridges[bridgeId];
+            }
+          });
+        });
+      },
+
+      renameComponentSourceFolder: (fromPath, toPath, options) => {
+        const normalizedFromPath = normalizeAssemblySourcePath(fromPath);
+        const normalizedToPath = normalizeAssemblySourcePath(toPath);
+
+        if (!normalizedFromPath || !normalizedToPath || normalizedFromPath === normalizedToPath) {
+          return;
+        }
+
+        const currentAssembly = get().assemblyState;
+        if (!currentAssembly) {
+          return;
+        }
+
+        const hasMatchingComponent = Object.values(currentAssembly.components).some((component) => (
+          isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)
+        ));
+
+        if (!hasMatchingComponent) {
+          return;
+        }
+
+        if (!options?.skipHistory) {
+          saveToHistory(options?.label ?? 'Rename assembly component sources');
+        }
+
+        set((s) => {
+          const components = s.assemblyState?.components;
+          if (!components) return;
+
+          Object.values(components).forEach((component) => {
+            if (isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)) {
+              component.sourceFile = replaceAssemblySourcePathPrefix(
+                component.sourceFile,
+                normalizedFromPath,
+                normalizedToPath,
+              );
             }
           });
         });

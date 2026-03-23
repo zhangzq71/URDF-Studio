@@ -107,6 +107,33 @@ test('parseMJCF preserves root free joint transforms as floating joint origins',
     assert.deepEqual(robot.joints.child_joint?.origin?.xyz, { x: 0, y: 0.1, z: 0.2 });
 });
 
+test('parseMJCF folds non-zero joint anchors into the imported joint origin instead of scattering the child link frame', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="joint-anchor-offset">
+          <worldbody>
+            <body name="base_link" pos="1 0 0" quat="0.70710678 0 0 0.70710678">
+              <joint name="base_joint" type="hinge" pos="1 0 0" axis="0 0 1" />
+              <geom type="box" size="0.1 0.1 0.1" pos="1 0 0" />
+              <inertial mass="1" pos="1 0 0" diaginertia="1 1 1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+
+    const jointOrigin = robot.joints.base_joint?.origin?.xyz;
+    assert.ok(jointOrigin);
+    assert.ok(Math.abs(jointOrigin.x - 1) < 1e-6);
+    assert.ok(Math.abs(jointOrigin.y - 1) < 1e-6);
+    assert.ok(Math.abs(jointOrigin.z - 0) < 1e-6);
+
+    assert.deepEqual(robot.links.base_link.visual.origin?.xyz, { x: 0, y: 0, z: 0 });
+    assert.deepEqual(robot.links.base_link.inertial?.origin?.xyz, { x: 0, y: 0, z: 0 });
+});
+
 test('parseMJCF syncs visual colors into robot materials state', () => {
     installDomGlobals();
 

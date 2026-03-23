@@ -235,7 +235,6 @@ export const en: TranslationKeys = {
   // Additional UI
   collapseSidebar: "Collapse sidebar",
   switchUnit: "Switch Unit",
-  showJointControls: "Show Joint Controls",
   showVisual: "Show Visual",
   showCenterOfMass: "Show Center of Mass",
   showInertia: "Show Inertia",
@@ -382,6 +381,9 @@ export const en: TranslationKeys = {
   addedComponent: "Added component: {name}",
   noCollisionOptimizationApplied: "No collision optimization was applied.",
   collisionOptimizationApplied: "Applied {count} collision optimizations (Mesh {meshCount}, Primitive {primitiveCount})",
+  renamedFolder: "Renamed folder: {from} -> {to}",
+  assetLibraryRenameInvalid: "Invalid folder name. Please try again.",
+  assetLibraryRenameConflict: "Target folder already exists: {path}",
   removedFromAssetLibrary: "Removed from asset library: {name}",
   removedFolder: "Removed folder: {path}",
   deletedAllLibraryFiles: "Deleted all {count} file(s) from the asset library",

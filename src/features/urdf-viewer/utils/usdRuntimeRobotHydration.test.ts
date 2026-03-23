@@ -224,6 +224,147 @@ test('hydrateUsdViewerRobotResolutionFromRuntime syncs runtime link and mesh tra
   );
 });
 
+test('hydrateUsdViewerRobotResolutionFromRuntime composes authored approximation offsets with runtime prim transforms', () => {
+  const baseWorld = composeMatrix({ x: 0, y: 0, z: 0 });
+  const childWorld = composeMatrix({ x: 1, y: -2, z: 3 }, { r: 0.02, p: -0.04, y: 0.06 });
+  const visualPrimWorld = childWorld.clone().multiply(composeMatrix(
+    { x: 0.5, y: 0.25, z: -0.75 },
+    { r: 0.1, p: 0.05, y: -0.02 },
+  ));
+  const collisionPrimWorld = childWorld.clone().multiply(composeMatrix(
+    { x: -0.3, y: 0.4, z: 0.2 },
+    { r: -0.03, p: 0.08, y: 0.11 },
+  ));
+
+  const authoredVisualOrigin = {
+    xyz: { x: 0.2, y: -0.1, z: 0.35 },
+    rpy: { r: 0, p: 0.12, y: 0 },
+  };
+  const authoredCollisionOrigin = {
+    xyz: { x: -0.15, y: 0.05, z: 0.1 },
+    rpy: { r: 0.07, p: 0, y: -0.09 },
+  };
+
+  const resolution: ViewerRobotDataResolution = {
+    stageSourcePath: '/robots/demo/approx_box.usd',
+    linkIdByPath: {
+      '/Robot/base_link': 'base_link',
+      '/Robot/arm_link': 'arm_link',
+    },
+    linkPathById: {
+      base_link: '/Robot/base_link',
+      arm_link: '/Robot/arm_link',
+    },
+    jointPathById: {
+      arm_joint: '/Robot/joints/arm_joint',
+    },
+    childLinkPathByJointId: {
+      arm_joint: '/Robot/arm_link',
+    },
+    parentLinkPathByJointId: {
+      arm_joint: '/Robot/base_link',
+    },
+    robotData: {
+      name: 'approx_box_robot',
+      rootLinkId: 'base_link',
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visible: true,
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.NONE,
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.NONE,
+          },
+        },
+        arm_link: {
+          ...DEFAULT_LINK,
+          id: 'arm_link',
+          name: 'arm_link',
+          visible: true,
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            origin: authoredVisualOrigin,
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.BOX,
+            origin: authoredCollisionOrigin,
+          },
+        },
+      },
+      joints: {
+        arm_joint: {
+          ...DEFAULT_JOINT,
+          id: 'arm_joint',
+          name: 'arm_joint',
+          type: JointType.FIXED,
+          parentLinkId: 'base_link',
+          childLinkId: 'arm_link',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          axis: { x: 0, y: 0, z: 1 },
+        },
+      },
+    },
+  };
+
+  const snapshot = {
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/arm_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/arm_link/visuals/mesh_0',
+        },
+        {
+          meshId: '/Robot/arm_link/collisions.proto_mesh_id0',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/arm_link/collisions/mesh_0',
+        },
+      ],
+    },
+  };
+
+  const hydrated = hydrateUsdViewerRobotResolutionFromRuntime(resolution, snapshot as any, {
+    getPreferredLinkWorldTransform: (linkPath: string) => {
+      if (linkPath === '/Robot/base_link') return baseWorld.clone();
+      if (linkPath === '/Robot/arm_link') return childWorld.clone();
+      return null;
+    },
+    getWorldTransformForPrimPath: (primPath: string) => {
+      if (primPath === '/Robot/arm_link/visuals/mesh_0') return visualPrimWorld.clone();
+      if (primPath === '/Robot/arm_link/collisions/mesh_0') return collisionPrimWorld.clone();
+      return null;
+    },
+  });
+
+  assert.ok(hydrated);
+  assertMatrixClose(
+    hydrated.robotData.links.arm_link.visual.origin,
+    childWorld
+      .clone()
+      .invert()
+      .multiply(visualPrimWorld.clone())
+      .multiply(createOriginMatrix(authoredVisualOrigin)),
+    'visual origin should preserve authored approximation center offsets',
+  );
+  assertMatrixClose(
+    hydrated.robotData.links.arm_link.collision.origin,
+    childWorld
+      .clone()
+      .invert()
+      .multiply(collisionPrimWorld.clone())
+      .multiply(createOriginMatrix(authoredCollisionOrigin)),
+    'collision origin should preserve authored approximation center offsets',
+  );
+});
+
 test('hydrateUsdViewerRobotResolutionFromRuntime preserves authored root world transforms via a synthetic world root', () => {
   const rootWorld = composeMatrix(
     { x: 0.35, y: -0.4, z: 0.8 },

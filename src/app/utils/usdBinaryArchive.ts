@@ -1,9 +1,26 @@
 import { ensureUsdWasmRuntime } from '@/features/urdf-viewer/utils/usdWasmRuntime';
 
+type BinaryReadyUsdLayer = {
+  Export?: (...args: unknown[]) => unknown;
+};
+
+type BinaryReadyUsdStage = {
+  Export?: (...args: unknown[]) => unknown;
+  GetRootLayer?: () => BinaryReadyUsdLayer | null;
+  delete?: () => void;
+};
+
 type BinaryReadyUsdModule = Awaited<ReturnType<typeof ensureUsdWasmRuntime>>['USD'] & {
   FS_readFile?: (path: string, opts?: { encoding?: 'utf8'; flags?: string }) => Uint8Array | string;
   FS_writeFile?: (path: string, data: string | ArrayLike<number> | ArrayBufferView, opts?: { flags?: string }) => void;
+  UsdStage?: {
+    Open?: (path: string) => BinaryReadyUsdStage | null;
+  };
 };
+
+type BinaryReadyUsdRuntime = Pick<Awaited<ReturnType<typeof ensureUsdWasmRuntime>>, 'USD'>;
+
+const USDC_FILE_FORMAT_ARGS = { format: 'usdc' } as const;
 
 function isUsdLayerPath(path: string): boolean {
   return /\.usd$/i.test(path);
@@ -49,6 +66,75 @@ function toBinaryBlob(data: Uint8Array | string): Blob {
     : new Blob([data], { type: 'application/octet-stream' });
 }
 
+function readUsdMagic(data: Uint8Array | string): string {
+  if (typeof data === 'string') {
+    return data.slice(0, 8);
+  }
+
+  return new TextDecoder('latin1').decode(data.slice(0, 8));
+}
+
+function readUsdFileFromFs(module: BinaryReadyUsdModule, absolutePath: string): Uint8Array | string | null {
+  try {
+    const data = module.FS_readFile?.(absolutePath);
+    return data instanceof Uint8Array || typeof data === 'string' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function isUsdCrateFile(data: Uint8Array | string | null | undefined): boolean {
+  return data != null && readUsdMagic(data).startsWith('PXR-USDC');
+}
+
+function exportUsdLayerAsCrate(
+  module: BinaryReadyUsdModule,
+  stage: BinaryReadyUsdStage,
+  targetFsPath: string,
+): void {
+  const rootLayer = stage.GetRootLayer?.();
+
+  if (rootLayer && typeof rootLayer.Export === 'function') {
+    const rootLayerAttempts: Array<unknown[]> = [
+      [targetFsPath, '', USDC_FILE_FORMAT_ARGS],
+      [targetFsPath, USDC_FILE_FORMAT_ARGS],
+    ];
+
+    for (const args of rootLayerAttempts) {
+      try {
+        rootLayer.Export(...args);
+      } catch {
+        continue;
+      }
+
+      if (isUsdCrateFile(readUsdFileFromFs(module, targetFsPath))) {
+        return;
+      }
+    }
+  }
+
+  if (typeof stage.Export === 'function') {
+    const stageExportAttempts: Array<unknown[]> = [
+      [targetFsPath, false, USDC_FILE_FORMAT_ARGS],
+      [targetFsPath, false],
+    ];
+
+    for (const args of stageExportAttempts) {
+      try {
+        stage.Export(...args);
+      } catch {
+        continue;
+      }
+
+      if (isUsdCrateFile(readUsdFileFromFs(module, targetFsPath))) {
+        return;
+      }
+    }
+  }
+
+  throw new Error(`Failed to export binary USD crate layer: ${targetFsPath}`);
+}
+
 export async function convertUsdArchiveFilesToBinary(
   archiveFiles: Map<string, Blob>,
   options: {
@@ -57,14 +143,15 @@ export async function convertUsdArchiveFilesToBinary(
       total: number;
       filePath: string;
     }) => void;
+    loadRuntime?: () => Promise<BinaryReadyUsdRuntime>;
   } = {},
 ): Promise<Map<string, Blob>> {
-  const { onProgress } = options;
+  const { onProgress, loadRuntime } = options;
   if (typeof document === 'undefined') {
     return archiveFiles;
   }
 
-  const runtime = await ensureUsdWasmRuntime();
+  const runtime = await (loadRuntime?.() ?? ensureUsdWasmRuntime());
   const USD = runtime.USD as BinaryReadyUsdModule;
 
   if (
@@ -82,7 +169,6 @@ export async function convertUsdArchiveFilesToBinary(
   const totalUsdLayers = usdLayerPaths.length;
   const binaryFiles = new Map<string, Blob>();
   const cleanupFilePaths = new Set<string>();
-  const encoder = new TextEncoder();
 
   try {
     ensureVirtualDirectory(USD, sourceRoot);
@@ -96,7 +182,7 @@ export async function convertUsdArchiveFilesToBinary(
 
       const sourceFsPath = joinFsPath(sourceRoot, relativePath);
       ensureVirtualDirectory(USD, dirname(sourceFsPath));
-      USD.FS_writeFile(sourceFsPath, encoder.encode(await blob.text()));
+      USD.FS_writeFile(sourceFsPath, new Uint8Array(await blob.arrayBuffer()));
       cleanupFilePaths.add(sourceFsPath);
     }
 
@@ -116,10 +202,12 @@ export async function convertUsdArchiveFilesToBinary(
       }
 
       try {
-        stage.Export(targetFsPath, false);
+        // Prefer exporting the authored root layer directly so referenced layer
+        // structure stays intact instead of flattening the composed stage.
+        exportUsdLayerAsCrate(USD, stage, targetFsPath);
       } finally {
-        if (typeof (stage as { delete?: () => void }).delete === 'function') {
-          (stage as { delete: () => void }).delete();
+        if (typeof stage.delete === 'function') {
+          stage.delete();
         }
         USD.flushPendingDeletes?.();
       }

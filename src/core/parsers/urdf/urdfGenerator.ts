@@ -3,7 +3,14 @@
  * Generates URDF XML format from RobotState
  */
 
-import { RobotState, UrdfLink, UrdfJoint, GeometryType, AssemblyState } from '@/types';
+import {
+  RobotState,
+  UrdfLink,
+  UrdfJoint,
+  GeometryType,
+  AssemblyState,
+  type UrdfVisualMaterial,
+} from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
@@ -52,6 +59,36 @@ function resolveLinkExportMaterial(
     color: material?.color || (!material?.texture ? link.visual.color : undefined),
     texture: material?.texture,
   };
+}
+
+function generateUrdfMaterialXml(
+  material: UrdfVisualMaterial,
+  indent: string,
+  exportRobotName: string,
+  useRelativePaths: boolean,
+  preserveMeshPaths: boolean,
+): string {
+  const nameAttr = material.name ? ` name="${material.name}"` : '';
+  let xml = `${indent}<material${nameAttr}>\n`;
+
+  if (material.color) {
+    xml += `${indent}  <color rgba="${hexToRgba(material.color)}"/>\n`;
+  }
+
+  if (material.texture) {
+    const texturePath = preserveMeshPaths
+      ? material.texture.replace(/\\/g, '/')
+      : normalizeTexturePathForExport(material.texture);
+    const textureFilename = preserveMeshPaths
+      ? texturePath
+      : useRelativePaths
+        ? `textures/${texturePath || 'texture.png'}`
+        : `package://${exportRobotName}/textures/${texturePath || 'texture.png'}`;
+    xml += `${indent}  <texture filename="${textureFilename}" />\n`;
+  }
+
+  xml += `${indent}</material>\n`;
+  return xml;
 }
 
 const generateLimitTag = (joint: UrdfJoint, formatScalar: (n: number) => string): string | null => {
@@ -184,6 +221,10 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
     // Visual
     if (link.visual.type !== GeometryType.NONE) {
         const visualMaterial = resolveLinkExportMaterial(robot, link);
+        const hasExplicitVisualMaterialOverride = Boolean(visualMaterial.color || visualMaterial.texture);
+        const authoredMaterials = hasExplicitVisualMaterialOverride
+          ? undefined
+          : link.visual.authoredMaterials;
         xml += `    <visual>\n`;
         if (link.visual.origin) {
             xml += `      <origin xyz="${vecStr(link.visual.origin.xyz)}" rpy="${rotStr(link.visual.origin.rpy)}" />\n`;
@@ -217,23 +258,28 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
           link.visual.type === GeometryType.MESH
           && shouldOmitMeshMaterial(link.visual.meshPath)
         );
-        if ((shouldEmitVisualColor && visualMaterial.color) || visualMaterial.texture) {
-          xml += `      <material name="${link.id}_mat">\n`;
-          if (shouldEmitVisualColor && visualMaterial.color) {
-            xml += `        <color rgba="${hexToRgba(visualMaterial.color)}"/>\n`;
-          }
-          if (visualMaterial.texture) {
-            const texturePath = preserveMeshPaths
-              ? visualMaterial.texture.replace(/\\/g, '/')
-              : normalizeTexturePathForExport(visualMaterial.texture);
-            const textureFilename = preserveMeshPaths
-              ? texturePath
-              : useRelativePaths
-                ? `textures/${texturePath || 'texture.png'}`
-                : `package://${exportRobotName}/textures/${texturePath || 'texture.png'}`;
-            xml += `        <texture filename="${textureFilename}" />\n`;
-          }
-          xml += `      </material>\n`;
+        if (shouldEmitVisualColor && authoredMaterials && authoredMaterials.length > 0) {
+          authoredMaterials.forEach((material) => {
+            xml += generateUrdfMaterialXml(
+              material,
+              '      ',
+              exportRobotName,
+              useRelativePaths,
+              preserveMeshPaths,
+            );
+          });
+        } else if ((shouldEmitVisualColor && visualMaterial.color) || visualMaterial.texture) {
+          xml += generateUrdfMaterialXml(
+            {
+              name: `${link.id}_mat`,
+              color: shouldEmitVisualColor ? visualMaterial.color : undefined,
+              texture: visualMaterial.texture,
+            },
+            '      ',
+            exportRobotName,
+            useRelativePaths,
+            preserveMeshPaths,
+          );
         }
         xml += `    </visual>\n`;
     }

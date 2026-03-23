@@ -28,6 +28,7 @@ interface GeometryRendererProps {
   geometryId?: string;
   objectIndex?: number;
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
+  onMeshResolved?: () => void;
 }
 
 /**
@@ -50,6 +51,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   geometryId,
   objectIndex,
   colladaRootNormalizationHints,
+  onMeshResolved,
 }: GeometryRendererProps) {
   const data = geometryData || (isCollision ? link.collision : link.visual);
   const visibilityState = resolveGeometryVisibilityState({
@@ -258,7 +260,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       const assetBaseDir = getSourceFileDirectory(meshPath);
 
       if (ext === 'stl') {
-        geometryNode = <STLRenderer url={url} material={material} scale={dimensions} />;
+        geometryNode = <STLRenderer url={url} material={material} scale={dimensions} onResolved={onMeshResolved} />;
       } else if (ext === 'obj') {
         geometryNode = (
           <OBJRenderer
@@ -268,6 +270,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
             assets={assets}
             assetBaseDir={assetBaseDir}
             scale={dimensions}
+            onResolved={onMeshResolved}
           />
         );
       } else if (ext === 'dae') {
@@ -279,6 +282,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
             assetBaseDir={assetBaseDir}
             normalizeRoot={shouldNormalizeColladaGeometry(meshPath, origin, colladaRootNormalizationHints)}
             scale={dimensions}
+            onResolved={onMeshResolved}
           />
         );
       } else {

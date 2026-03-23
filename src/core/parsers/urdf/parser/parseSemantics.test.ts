@@ -274,12 +274,13 @@ test('generateURDF does not fall back to the default visual blue when a texture-
   );
 });
 
-test('generateURDF keeps go2 Collada exports package-relative without collapsing embedded mesh materials', () => {
+test('generateURDF keeps go2 Collada exports package-relative while preserving authored mesh materials', () => {
   const source = fs.readFileSync('test/unitree_ros/robots/go2_description/urdf/go2_description.urdf', 'utf8');
   const robot = parseURDF(source);
 
   assert.ok(robot);
   assert.equal(robot.materials?.base, undefined);
+  assert.equal(robot.links.base.visual.authoredMaterials?.length, 5);
 
   const urdf = generateURDF({
     ...robot,
@@ -291,7 +292,42 @@ test('generateURDF keeps go2 Collada exports package-relative without collapsing
 
   const baseVisual = urdf.match(/<link name="base">[\s\S]*?<visual>([\s\S]*?)<\/visual>/);
   assert.ok(baseVisual);
-  assert.doesNotMatch(baseVisual[1], /<material\b/);
+  assert.equal((baseVisual[1].match(/<material\b/g) || []).length, 5);
+});
+
+test('parseURDF and generateURDF preserve go2w multi-material mesh palettes for base and thigh links', () => {
+  const source = fs.readFileSync('test/unitree_ros/robots/go2w_description/urdf/go2w_description.urdf', 'utf8');
+  const robot = parseURDF(source);
+
+  assert.ok(robot);
+  assert.equal(robot.links.base.visual.authoredMaterials?.length, 5);
+  assert.equal(robot.links.FR_thigh.visual.authoredMaterials?.length, 2);
+  assert.equal(robot.links.FR_thigh.visual.meshPath, 'package://go2w_description/dae/thigh_mirror.dae');
+  assert.equal(robot.links.FL_thigh.visual.meshPath, 'package://go2w_description/dae/thigh.dae');
+  assert.equal(robot.joints.FR_thigh_joint.origin?.xyz.y, -0.0955);
+  assert.equal(robot.joints.FL_thigh_joint.origin?.xyz.y, 0.0955);
+
+  const exported = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  const baseVisual = exported.match(/<link name="base">[\s\S]*?<visual>([\s\S]*?)<\/visual>/);
+  assert.ok(baseVisual);
+  assert.equal((baseVisual[1].match(/<material\b/g) || []).length, 5);
+
+  const frontRightThighVisual = exported.match(/<link name="FR_thigh">[\s\S]*?<visual>([\s\S]*?)<\/visual>/);
+  assert.ok(frontRightThighVisual);
+  assert.equal((frontRightThighVisual[1].match(/<material\b/g) || []).length, 2);
+  assert.match(frontRightThighVisual[1], /<mesh filename="package:\/\/go2w_description\/meshes\/dae\/thigh_mirror\.dae" \/>/);
+  assert.match(exported, /<joint name="FR_thigh_joint"[\s\S]*?<origin xyz="0 -0\.0955 0" rpy="0 0 0" \/>/);
+
+  const reparsed = parseURDF(exported);
+  assert.ok(reparsed);
+  assert.equal(reparsed.links.base.visual.authoredMaterials?.length, 5);
+  assert.equal(reparsed.links.FR_thigh.visual.authoredMaterials?.length, 2);
+  assert.equal(reparsed.links.FR_thigh.visual.meshPath, 'package://go2w_description/meshes/dae/thigh_mirror.dae');
+  assert.equal(reparsed.joints.FR_thigh_joint.origin?.xyz.y, -0.0955);
 });
 
 test('parseURDF preserves mimic joint metadata through export', () => {

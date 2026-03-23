@@ -63,6 +63,29 @@ test('exports a USD stage snapshot without persisting to the server', async () =
   assert.equal(payload.downloadFileName, 'go2.viewer_roundtrip.usd');
 });
 
+test('passes persistToServer through to the export bridge when requested', async () => {
+  let receivedOptions: Record<string, unknown> | null = null;
+
+  await exportUsdStageSnapshot({
+    stageSourcePath: '/robots/go2/go2.usd',
+    persistToServer: true,
+    targetWindow: {
+      exportLoadedStageSnapshot: async (options) => {
+        receivedOptions = options || null;
+        return {
+          ok: true,
+          content: '#usda 1.0\n',
+          outputFileName: 'go2.viewer_roundtrip.usd',
+          outputVirtualPath: '/robots/go2/go2.viewer_roundtrip.usd',
+        };
+      },
+    },
+  });
+
+  assert.equal(receivedOptions?.persistToServer, true);
+  assert.equal(receivedOptions?.stageSourcePath, '/robots/go2/go2.usd');
+});
+
 test('normalizes bare stage source paths before invoking the export bridge', async () => {
   let receivedOptions: Record<string, unknown> | null = null;
 

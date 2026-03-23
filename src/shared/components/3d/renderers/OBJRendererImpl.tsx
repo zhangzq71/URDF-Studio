@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo } from 'react';
 import { useLoader } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -17,6 +17,7 @@ interface OBJRendererImplProps {
   assets: Record<string, string>;
   assetBaseDir?: string;
   scale?: ScaleProps;
+  onResolved?: () => void;
 }
 
 export function OBJRendererImpl({
@@ -25,6 +26,7 @@ export function OBJRendererImpl({
   assets,
   assetBaseDir,
   scale,
+  onResolved,
 }: OBJRendererImplProps) {
   const manager = useLoadingManager(assets, assetBaseDir);
   const obj = useLoader(OBJLoader, url, (loader) => {
@@ -57,6 +59,10 @@ export function OBJRendererImpl({
       mesh.material = material;
     });
   }, [material, overrideMeshes]);
+
+  useEffect(() => {
+    onResolved?.();
+  }, [clone, onResolved]);
 
   const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
 

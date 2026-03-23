@@ -235,7 +235,6 @@ export interface TranslationKeys {
   // Additional UI
   collapseSidebar: string;
   switchUnit: string;
-  showJointControls: string;
   showVisual: string;
   showCenterOfMass: string;
   showInertia: string;
@@ -382,6 +381,9 @@ export interface TranslationKeys {
   addedComponent: string;
   noCollisionOptimizationApplied: string;
   collisionOptimizationApplied: string;
+  renamedFolder: string;
+  assetLibraryRenameInvalid: string;
+  assetLibraryRenameConflict: string;
   removedFromAssetLibrary: string;
   removedFolder: string;
   deletedAllLibraryFiles: string;

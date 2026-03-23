@@ -1,4 +1,4 @@
-import { UrdfLink, GeometryType } from '@/types';
+import { UrdfLink, GeometryType, type UrdfVisualMaterial } from '@/types';
 import { DEFAULT_LINK } from '@/types/constants';
 import { parseVec3, parseRPY, parseColor, parseTexture } from './utils';
 import { parseGeometry } from './geometry';
@@ -6,6 +6,33 @@ import { parseGeometry } from './geometry';
 interface ParsedMaterialDefinition {
     color?: string;
     texture?: string;
+}
+
+function resolveMaterialDefinition(
+    materialEl: Element,
+    globalMaterials: Record<string, ParsedMaterialDefinition>,
+): ParsedMaterialDefinition & { name?: string } {
+    const inlineColor = parseColor(materialEl);
+    const inlineTexture = parseTexture(materialEl);
+    const materialName = materialEl.getAttribute("name")?.trim() || undefined;
+    const namedMaterial = materialName ? globalMaterials[materialName] : undefined;
+
+    return {
+        ...(materialName ? { name: materialName } : {}),
+        ...(namedMaterial?.color || inlineColor ? { color: namedMaterial?.color || inlineColor } : {}),
+        ...(namedMaterial?.texture || inlineTexture ? { texture: namedMaterial?.texture || inlineTexture } : {}),
+    };
+}
+
+function parseAuthoredMaterials(
+    materialEls: Element[],
+    globalMaterials: Record<string, ParsedMaterialDefinition>,
+): UrdfVisualMaterial[] | undefined {
+    const authoredMaterials = materialEls
+        .map((materialEl) => resolveMaterialDefinition(materialEl, globalMaterials))
+        .filter((material) => Boolean(material.name || material.color || material.texture));
+
+    return authoredMaterials.length > 0 ? authoredMaterials : undefined;
 }
 
 export const parseLinks = (
@@ -31,6 +58,7 @@ export const parseLinks = (
         let visualGeo: Partial<UrdfLink['visual']>;
         let visualColor: string | undefined = undefined;
         let visualTexture: string | undefined = undefined;
+        let authoredMaterials: UrdfVisualMaterial[] | undefined = undefined;
         let materialSource: 'inline' | 'named' | 'gazebo' | undefined = undefined;
 
         if (visualEl) {
@@ -41,6 +69,9 @@ export const parseLinks = (
                 (node): node is Element => node.tagName === 'material',
             );
             const hasMultipleMeshMaterials = visualGeo.type === GeometryType.MESH && materialEls.length > 1;
+            authoredMaterials = hasMultipleMeshMaterials
+                ? parseAuthoredMaterials(materialEls, globalMaterials)
+                : undefined;
 
             // URDF visuals can only express a single material override cleanly.
             // When imported mesh visuals carry multiple named material tags
@@ -49,19 +80,18 @@ export const parseLinks = (
             // material palette on export. Preserve the mesh materials instead.
             if (!hasMultipleMeshMaterials) {
                 const materialEl = materialEls[0] ?? null;
-                const inlineColor = parseColor(materialEl);
-                const inlineTexture = parseTexture(materialEl);
-                const matName = materialEl?.getAttribute("name");
-                const namedMaterial = matName ? globalMaterials[matName] : undefined;
+                const resolvedMaterial = materialEl
+                    ? resolveMaterialDefinition(materialEl, globalMaterials)
+                    : {};
 
-                if (namedMaterial) {
+                if (resolvedMaterial.name && globalMaterials[resolvedMaterial.name]) {
                     // Isaac Sim resolves same-name conflicts to the global definition.
-                    visualColor = namedMaterial.color || inlineColor;
-                    visualTexture = namedMaterial.texture || inlineTexture;
+                    visualColor = resolvedMaterial.color;
+                    visualTexture = resolvedMaterial.texture;
                     materialSource = 'named';
                 } else {
-                    visualColor = inlineColor;
-                    visualTexture = inlineTexture;
+                    visualColor = resolvedMaterial.color;
+                    visualTexture = resolvedMaterial.texture;
                     if (visualColor || visualTexture) {
                         materialSource = 'inline';
                     }
@@ -133,6 +163,7 @@ export const parseLinks = (
                     rpy: parseRPY(visualOriginEl?.getAttribute("rpy"))
                 },
                 color: visualColor,
+                ...(authoredMaterials ? { authoredMaterials } : {}),
                 materialSource
             },
             collision: {

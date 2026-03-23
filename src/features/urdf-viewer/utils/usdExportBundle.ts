@@ -23,6 +23,7 @@ import {
 } from './usdViewerRobotAdapter.ts';
 import { resolveUsdPrimitiveGeometryFromDescriptor as resolvePrimitiveGeometryFromDescriptor } from './usdPrimitiveGeometry.ts';
 import { toVirtualUsdPath } from './usdPreloadSources.ts';
+import { hydrateUsdViewerRobotResolutionFromRuntime } from './usdRuntimeRobotHydration.ts';
 import type { ViewerRobotDataResolution } from './viewerRobotData.ts';
 
 type MeshRange = UsdMeshRange;
@@ -34,6 +35,12 @@ type UsdExportSnapshot = UsdSceneSnapshot;
 
 type DescriptorRole = 'visual' | 'collision';
 
+type SnapshotGeomSubsetSection = {
+  start: number;
+  length: number;
+  materialId?: string | null;
+};
+
 type ExportDescriptor = {
   descriptor: SnapshotMeshDescriptor;
   meshId: string;
@@ -42,6 +49,9 @@ type ExportDescriptor = {
   role: DescriptorRole;
   exportPath: string;
   ordinal: number;
+  subsetIndex?: number;
+  subsetSection?: SnapshotGeomSubsetSection | null;
+  materialIdOverride?: string | null;
   displayColor?: [number, number, number] | null;
   bakeTransformIntoMesh?: boolean;
 };
@@ -58,6 +68,8 @@ type SnapshotHost = {
   renderInterface?: {
     getCachedRobotSceneSnapshot?: (stageSourcePath?: string | null) => unknown;
     getPreferredVisualMaterialForLink?: (linkPath: string, requestingMeshId?: string | null) => unknown;
+    getPreferredLinkWorldTransform?: (linkPath: string) => unknown;
+    getWorldTransformForPrimPath?: (primPath: string) => unknown;
   } | null;
 } | null | undefined;
 
@@ -146,9 +158,44 @@ function getDescriptorSemanticName(descriptor: SnapshotMeshDescriptor): string {
   return '';
 }
 
-function getDescriptorMaterialId(descriptor: SnapshotMeshDescriptor): string {
+function getDescriptorGeomSubsetSections(descriptor: SnapshotMeshDescriptor): SnapshotGeomSubsetSection[] {
+  const geometry = descriptor.geometry && typeof descriptor.geometry === 'object'
+    ? descriptor.geometry as {
+        geomSubsetSections?: Array<{
+          start?: unknown;
+          length?: unknown;
+          materialId?: unknown;
+        }> | null;
+      }
+    : null;
+  const rawSections = Array.isArray(geometry?.geomSubsetSections)
+    ? geometry.geomSubsetSections
+    : [];
+
+  return rawSections
+    .map((section) => {
+      const start = Number(section?.start);
+      const length = Number(section?.length);
+      if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0) {
+        return null;
+      }
+
+      return {
+        start: Math.max(0, Math.floor(start)),
+        length: Math.max(0, Math.floor(length)),
+        materialId: normalizeUsdPath(String(section?.materialId || '')) || null,
+      } satisfies SnapshotGeomSubsetSection;
+    })
+    .filter(Boolean) as SnapshotGeomSubsetSection[];
+}
+
+function getDescriptorMaterialId(
+  descriptor: SnapshotMeshDescriptor,
+  materialIdOverride?: string | null,
+): string {
   return normalizeUsdPath(
-    descriptor.materialId
+    materialIdOverride
+    || descriptor.materialId
     || descriptor.geometry?.materialId
     || '',
   );
@@ -370,9 +417,17 @@ function buildObjBlobFromDescriptor(
   }
 
   const vertexCount = Math.floor(positionValues.length / 3);
-  const triangleIndices = indexValues.length >= 3
+  const fullTriangleIndices = indexValues.length >= 3
     ? indexValues
     : Array.from({ length: vertexCount }, (_, index) => index);
+  const triangleIndices = descriptor.subsetSection
+    ? (() => {
+        const start = Math.max(0, Math.min(fullTriangleIndices.length, descriptor.subsetSection.start));
+        const end = Math.max(start, Math.min(fullTriangleIndices.length, start + descriptor.subsetSection.length));
+        const sliced = fullTriangleIndices.slice(start, end);
+        return sliced.length >= 3 ? sliced : [];
+      })()
+    : fullTriangleIndices;
 
   for (let index = 0; index + 2 < triangleIndices.length; index += 3) {
     const a = Number(triangleIndices[index]) + 1;
@@ -501,6 +556,80 @@ function mergeCurrentRobotWithSnapshotMeshPaths(
       ? { ...((currentRobot as RobotState).selection || { type: null, id: null }) }
       : { type: null, id: null },
   };
+}
+
+function isSyntheticWorldLink(link: UrdfLink | undefined): boolean {
+  if (!link) {
+    return false;
+  }
+
+  return link.visual.type === GeometryType.NONE
+    && link.collision.type === GeometryType.NONE
+    && (link.inertial?.mass || 0) <= 1e-9;
+}
+
+function stripSyntheticWorldRootForExport(robot: RobotState): RobotState {
+  if (robot.rootLinkId !== 'world' || !isSyntheticWorldLink(robot.links.world)) {
+    return robot;
+  }
+
+  const worldChildJoints = Object.values(robot.joints).filter((joint) => (
+    joint.parentLinkId === 'world'
+  ));
+  if (worldChildJoints.length !== 1) {
+    return robot;
+  }
+
+  const rootAnchorJoint = worldChildJoints[0];
+  if (rootAnchorJoint.type !== JointType.FIXED || !robot.links[rootAnchorJoint.childLinkId]) {
+    return robot;
+  }
+
+  if (hasNonIdentityOrigin(rootAnchorJoint.origin)) {
+    return robot;
+  }
+
+  const nextLinks = { ...robot.links };
+  delete nextLinks.world;
+
+  const nextJoints = { ...robot.joints };
+  delete nextJoints[rootAnchorJoint.id];
+
+  return {
+    ...robot,
+    rootLinkId: rootAnchorJoint.childLinkId,
+    links: nextLinks,
+    joints: nextJoints,
+  };
+}
+
+function resolveUsdExportResolution(
+  snapshot: UsdExportSnapshot,
+  options: {
+    fileName?: string;
+    resolution?: ViewerRobotDataResolution | null;
+    targetWindow?: SnapshotHost;
+  } = {},
+): ViewerRobotDataResolution | null {
+  if (options.resolution) {
+    return options.resolution;
+  }
+
+  const initialResolution = adaptUsdViewerSnapshotToRobotData(snapshot, {
+    fileName: options.fileName,
+  });
+  if (!initialResolution) {
+    return null;
+  }
+
+  const host = options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
+  const hydratedResolution = hydrateUsdViewerRobotResolutionFromRuntime(
+    initialResolution,
+    snapshot,
+    host?.renderInterface,
+  );
+
+  return hydratedResolution || initialResolution;
 }
 
 function ensureMeshDimensions(dimensions: UrdfVisual['dimensions'] | null | undefined): UrdfVisual['dimensions'] {
@@ -704,10 +833,16 @@ function applySnapshotMaterialRecordToLink(
 }
 
 function getDescriptorMaterialRecord(
-  descriptor: SnapshotMeshDescriptor,
+  descriptor: Pick<ExportDescriptor, 'descriptor' | 'materialIdOverride'> | SnapshotMeshDescriptor,
   materialLookup: Map<string, SnapshotMaterialRecord>,
 ): SnapshotMaterialRecord | null {
-  const materialId = getDescriptorMaterialId(descriptor);
+  const sourceDescriptor = 'descriptor' in descriptor
+    ? descriptor.descriptor
+    : descriptor;
+  const materialIdOverride = 'materialIdOverride' in descriptor
+    ? descriptor.materialIdOverride
+    : null;
+  const materialId = getDescriptorMaterialId(sourceDescriptor, materialIdOverride);
   if (!materialId) {
     return null;
   }
@@ -718,7 +853,7 @@ function getDescriptorMaterialRecord(
 function applyDescriptorMaterialToLink(
   robot: RobotState,
   linkId: string,
-  descriptor: SnapshotMeshDescriptor,
+  descriptor: ExportDescriptor,
   materialLookup: Map<string, SnapshotMaterialRecord>,
 ): boolean {
   const material = getDescriptorMaterialRecord(descriptor, materialLookup);
@@ -955,7 +1090,7 @@ function assignVisualDescriptorToLink(
     return;
   }
 
-  const descriptorMaterialRecord = getDescriptorMaterialRecord(entry.descriptor, materialLookup);
+  const descriptorMaterialRecord = getDescriptorMaterialRecord(entry, materialLookup);
   const preferredFallbackColor = allowPreferredMaterialFallback
     ? colorArrayToVertexColor(preferredMaterialRecord?.color)
     : null;
@@ -970,7 +1105,7 @@ function assignVisualDescriptorToLink(
       meshPath: undefined,
       origin: link.visual?.origin || { ...DEFAULT_LINK.visual.origin },
     };
-    const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry.descriptor, materialLookup);
+    const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry, materialLookup);
     if (!appliedMaterial && allowPreferredMaterialFallback) {
       applySnapshotMaterialRecordToLink(robot, linkId, preferredMaterialRecord);
     }
@@ -987,7 +1122,7 @@ function assignVisualDescriptorToLink(
   };
   entry.bakeTransformIntoMesh = !hasNonIdentityOrigin(link.visual.origin);
   descriptorByPath.set(entry.exportPath, entry);
-  const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry.descriptor, materialLookup);
+  const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry, materialLookup);
   if (!appliedMaterial && allowPreferredMaterialFallback) {
     applySnapshotMaterialRecordToLink(robot, linkId, preferredMaterialRecord);
   }
@@ -1174,20 +1309,41 @@ function createDescriptorExportMap(
 
     const role = getDescriptorRole(descriptor);
     const ordinal = parseDescriptorOrdinal(descriptor, index);
-    const exportPath = `${sanitizeFileToken(linkId)}_${role}_${ordinal}.obj`;
-    const entry: ExportDescriptor = {
-      descriptor,
-      meshId: normalizeUsdPath(descriptor.meshId || ''),
-      linkPath,
-      linkId,
-      role,
-      exportPath,
-      ordinal,
-    };
-
     const key = `${linkId}:${role}`;
     const current = descriptorsByLinkRole.get(key) || [];
-    current.push(entry);
+    const geomSubsetSections = role === 'visual'
+      ? getDescriptorGeomSubsetSections(descriptor)
+      : [];
+    const expandedEntries = geomSubsetSections.length > 0
+      ? geomSubsetSections.map((subsetSection, subsetIndex) => {
+          const hasMultipleSubsets = geomSubsetSections.length > 1;
+          return {
+            descriptor,
+            meshId: normalizeUsdPath(descriptor.meshId || ''),
+            linkPath,
+            linkId,
+            role,
+            exportPath: `${sanitizeFileToken(linkId)}_${role}_${ordinal}${hasMultipleSubsets ? `_section_${subsetIndex}` : ''}.obj`,
+            ordinal,
+            subsetIndex,
+            subsetSection,
+            materialIdOverride: subsetSection.materialId || null,
+          } satisfies ExportDescriptor;
+        })
+      : [{
+          descriptor,
+          meshId: normalizeUsdPath(descriptor.meshId || ''),
+          linkPath,
+          linkId,
+          role,
+          exportPath: `${sanitizeFileToken(linkId)}_${role}_${ordinal}.obj`,
+          ordinal,
+          subsetIndex: 0,
+          subsetSection: null,
+          materialIdOverride: null,
+        } satisfies ExportDescriptor];
+
+    current.push(...expandedEntries);
     descriptorsByLinkRole.set(key, current);
   });
 
@@ -1195,6 +1351,9 @@ function createDescriptorExportMap(
     entries.sort((left, right) => {
       if (left.ordinal !== right.ordinal) {
         return left.ordinal - right.ordinal;
+      }
+      if ((left.subsetIndex || 0) !== (right.subsetIndex || 0)) {
+        return (left.subsetIndex || 0) - (right.subsetIndex || 0);
       }
       return left.meshId.localeCompare(right.meshId);
     });
@@ -1218,7 +1377,7 @@ function createDescriptorExportMap(
   });
 
   return {
-    robot: baseRobot,
+    robot: stripSyntheticWorldRootForExport(baseRobot),
     descriptorByPath,
   };
 }
@@ -1260,11 +1419,10 @@ export function prepareUsdExportCacheFromSnapshot(
   options: {
     fileName?: string;
     resolution?: ViewerRobotDataResolution | null;
+    targetWindow?: SnapshotHost;
   } = {},
 ): (UsdPreparedExportCache & { resolution: ViewerRobotDataResolution }) | null {
-  const resolution = options.resolution || adaptUsdViewerSnapshotToRobotData(snapshot, {
-    fileName: options.fileName,
-  });
+  const resolution = resolveUsdExportResolution(snapshot, options);
 
   if (!resolution) {
     return null;
@@ -1312,9 +1470,9 @@ export function buildUsdExportBundleFromPreparedCache(
     ...preparedCache.robotData,
     selection: { type: null, id: null },
   });
-  const robot = options.currentRobot
+  const robot = stripSyntheticWorldRootForExport(options.currentRobot
     ? mergeCurrentRobotWithSnapshotMeshPaths(options.currentRobot, snapshotRobot)
-    : snapshotRobot;
+    : snapshotRobot);
 
   return {
     robot,
@@ -1336,11 +1494,11 @@ export function buildUsdExportBundleFromSnapshot(
   options: {
     fileName?: string;
     currentRobot?: RobotLike | null;
+    resolution?: ViewerRobotDataResolution | null;
+    targetWindow?: SnapshotHost;
   } = {},
 ): UsdExportBundle | null {
-  const resolution = adaptUsdViewerSnapshotToRobotData(snapshot, {
-    fileName: options.fileName,
-  });
+  const resolution = resolveUsdExportResolution(snapshot, options);
   if (!resolution) {
     return null;
   }

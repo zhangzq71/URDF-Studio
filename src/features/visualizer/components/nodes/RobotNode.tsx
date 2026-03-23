@@ -40,6 +40,7 @@ interface CommonVisualizerProps {
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
   onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
+  onMeshResolved?: () => void;
 }
 
 interface RobotNodeProps extends CommonVisualizerProps {
@@ -92,7 +93,8 @@ export const RobotNode = memo(function RobotNode({
   colladaRootNormalizationHints,
   onRegisterJointPivot,
   onRegisterJointMotion,
-  onRegisterCollisionRef
+  onRegisterCollisionRef,
+  onMeshResolved,
 }: RobotNodeProps) {
   const t = translations[lang];
 
@@ -213,6 +215,7 @@ export const RobotNode = memo(function RobotNode({
             onRegisterJointPivot={onRegisterJointPivot}
             onRegisterJointMotion={onRegisterJointMotion}
             onRegisterCollisionRef={onRegisterCollisionRef}
+            onMeshResolved={onMeshResolved}
           />
         ))}
       </group>
@@ -269,8 +272,9 @@ export const RobotNode = memo(function RobotNode({
             onLinkClick={handleLinkClick}
             setVisualRef={setVisualRef}
             objectIndex={0}
-            colladaRootNormalizationHints={colladaRootNormalizationHints}
-          />
+          colladaRootNormalizationHints={colladaRootNormalizationHints}
+          onMeshResolved={onMeshResolved}
+        />
 
           {collisionEntries.map((entry) => (
             <GeometryRenderer
@@ -374,8 +378,9 @@ export const RobotNode = memo(function RobotNode({
             onRegisterJointPivot={onRegisterJointPivot}
             onRegisterJointMotion={onRegisterJointMotion}
             onRegisterCollisionRef={onRegisterCollisionRef}
-            />
-          ))}
-    </group>
+            onMeshResolved={onMeshResolved}
+          />
+        ))}
+      </group>
   );
 });

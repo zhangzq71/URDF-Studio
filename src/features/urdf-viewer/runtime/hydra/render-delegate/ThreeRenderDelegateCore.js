@@ -1044,11 +1044,23 @@ export class ThreeRenderDelegateCore {
                 const axisToken = normalizeAxisToken(jointRecord?.axisToken || jointRecord?.axis || 'X');
                 const localPos1 = normalizeVector3(jointRecord?.localPos1 || [0, 0, 0], [0, 0, 0]);
                 const localRot1Wxyz = normalizeQuaternionWxyz(jointRecord?.localRot1Wxyz || jointRecord?.localRot1 || [1, 0, 0, 0], [1, 0, 0, 0]);
-                const originXyz = jointRecord?.originXyz && typeof jointRecord.originXyz.length === 'number'
-                    ? normalizeVector3(jointRecord.originXyz, [0, 0, 0])
+                const originXyz = ((jointRecord?.originXyz && typeof jointRecord.originXyz.length === 'number')
+                    ? jointRecord.originXyz
+                    : (jointRecord?.localPos0 && typeof jointRecord.localPos0.length === 'number')
+                        ? jointRecord.localPos0
+                        : null);
+                const originQuatWxyz = ((jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number')
+                    ? jointRecord.originQuatWxyz
+                    : (jointRecord?.localRot0Wxyz && typeof jointRecord.localRot0Wxyz.length === 'number')
+                        ? jointRecord.localRot0Wxyz
+                        : (jointRecord?.localRot0 && typeof jointRecord.localRot0.length === 'number')
+                            ? jointRecord.localRot0
+                            : null);
+                const normalizedOriginXyz = originXyz
+                    ? normalizeVector3(originXyz, [0, 0, 0])
                     : null;
-                const originQuatWxyz = jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number'
-                    ? normalizeQuaternionWxyz(jointRecord.originQuatWxyz, [1, 0, 0, 0])
+                const normalizedOriginQuatWxyz = originQuatWxyz
+                    ? normalizeQuaternionWxyz(originQuatWxyz, [1, 0, 0, 0])
                     : null;
                 const axisLocal = jointRecord?.axisLocal && typeof jointRecord.axisLocal.length === 'number'
                     ? normalizeVector3(jointRecord.axisLocal, rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz))
@@ -1089,12 +1101,12 @@ export class ThreeRenderDelegateCore {
                             existingEntry.jointType = jointType;
                             mutated = true;
                         }
-                        if ((!existingEntry.originXyz || typeof existingEntry.originXyz.length !== 'number') && originXyz) {
-                            existingEntry.originXyz = originXyz;
+                        if ((!existingEntry.originXyz || typeof existingEntry.originXyz.length !== 'number') && normalizedOriginXyz) {
+                            existingEntry.originXyz = normalizedOriginXyz;
                             mutated = true;
                         }
-                        if ((!existingEntry.originQuatWxyz || typeof existingEntry.originQuatWxyz.length !== 'number') && originQuatWxyz) {
-                            existingEntry.originQuatWxyz = originQuatWxyz;
+                        if ((!existingEntry.originQuatWxyz || typeof existingEntry.originQuatWxyz.length !== 'number') && normalizedOriginQuatWxyz) {
+                            existingEntry.originQuatWxyz = normalizedOriginQuatWxyz;
                             mutated = true;
                         }
                         if ((!existingEntry.axisLocal || typeof existingEntry.axisLocal.length !== 'number') && axisLocal) {
@@ -1135,8 +1147,8 @@ export class ThreeRenderDelegateCore {
                         lowerLimitDeg: limits.lower,
                         upperLimitDeg: limits.upper,
                         localPivotInLink: localPos1,
-                        originXyz,
-                        originQuatWxyz,
+                        originXyz: normalizedOriginXyz,
+                        originQuatWxyz: normalizedOriginQuatWxyz,
                     };
                     existingJointCatalogEntries.push(newEntry);
                     existingEntryByChildLinkPath.set(childLinkPath, newEntry);
@@ -1248,6 +1260,40 @@ export class ThreeRenderDelegateCore {
             }
             return sortByPreferredRoot(matches, preferredRootPath);
         };
+        const resolveTruthParentLinkPath = (childLinkPath, parentLinkName, preferredRootPath = null) => {
+            const parentName = String(parentLinkName || '').trim();
+            if (!parentName)
+                return null;
+            const matches = [];
+            const addMatch = (candidatePath) => {
+                if (!candidatePath)
+                    return;
+                if (!linkPathSet.has(candidatePath))
+                    return;
+                if (matches.includes(candidatePath))
+                    return;
+                matches.push(candidatePath);
+            };
+            const normalizedChildLinkPath = normalizeUsdPathToken(String(childLinkPath || ''));
+            let currentAncestorPath = normalizedChildLinkPath;
+            while (currentAncestorPath) {
+                const slashIndex = currentAncestorPath.lastIndexOf('/');
+                if (slashIndex <= 0)
+                    break;
+                currentAncestorPath = currentAncestorPath.slice(0, slashIndex);
+                if (getPathBasename(currentAncestorPath) === parentName) {
+                    addMatch(currentAncestorPath);
+                }
+            }
+            for (const candidatePath of runtimeLinkPathsByName.get(parentName) || []) {
+                addMatch(candidatePath);
+            }
+            const fallbackRootPath = preferredRootPath || getRootPathFromPrimPath(normalizedChildLinkPath);
+            if (parentName) {
+                addMatch(fallbackRootPath ? `${fallbackRootPath}/${parentName}` : `/${parentName}`);
+            }
+            return sortByPreferredRoot(matches, preferredRootPath || fallbackRootPath)[0] || null;
+        };
         const stageJointRecordByChildLinkPath = new Map();
         const stageLinkDynamicsRecordByLinkPath = new Map();
         const linkParentPathByChildLinkPath = new Map();
@@ -1269,11 +1315,23 @@ export class ThreeRenderDelegateCore {
                 const limits = normalizeStageJointLimits(jointTypeName || jointType, Number(jointRecord?.lowerLimitDeg), Number(jointRecord?.upperLimitDeg));
                 const localPos1 = normalizeVector3(jointRecord?.localPos1 || [0, 0, 0], [0, 0, 0]);
                 const localRot1Wxyz = normalizeQuaternionWxyz(jointRecord?.localRot1Wxyz || jointRecord?.localRot1 || [1, 0, 0, 0], [1, 0, 0, 0]);
-                const originXyz = jointRecord?.originXyz && typeof jointRecord.originXyz.length === 'number'
-                    ? normalizeVector3(jointRecord.originXyz, [0, 0, 0])
+                const originXyz = ((jointRecord?.originXyz && typeof jointRecord.originXyz.length === 'number')
+                    ? jointRecord.originXyz
+                    : (jointRecord?.localPos0 && typeof jointRecord.localPos0.length === 'number')
+                        ? jointRecord.localPos0
+                        : null);
+                const originQuatWxyz = ((jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number')
+                    ? jointRecord.originQuatWxyz
+                    : (jointRecord?.localRot0Wxyz && typeof jointRecord.localRot0Wxyz.length === 'number')
+                        ? jointRecord.localRot0Wxyz
+                        : (jointRecord?.localRot0 && typeof jointRecord.localRot0.length === 'number')
+                            ? jointRecord.localRot0
+                            : null);
+                const normalizedOriginXyz = originXyz
+                    ? normalizeVector3(originXyz, [0, 0, 0])
                     : null;
-                const originQuatWxyz = jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number'
-                    ? normalizeQuaternionWxyz(jointRecord.originQuatWxyz, [1, 0, 0, 0])
+                const normalizedOriginQuatWxyz = originQuatWxyz
+                    ? normalizeQuaternionWxyz(originQuatWxyz, [1, 0, 0, 0])
                     : null;
                 const axisLocal = jointRecord?.axisLocal && typeof jointRecord.axisLocal.length === 'number'
                     ? normalizeVector3(jointRecord.axisLocal, rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz))
@@ -1305,8 +1363,8 @@ export class ThreeRenderDelegateCore {
                         axisLocal,
                         lowerLimitDeg: limits.lower,
                         upperLimitDeg: limits.upper,
-                        originXyz,
-                        originQuatWxyz,
+                        originXyz: normalizedOriginXyz,
+                        originQuatWxyz: normalizedOriginQuatWxyz,
                         localPos1,
                         localRot1Wxyz,
                         parentLinkPath,
@@ -1426,8 +1484,10 @@ export class ThreeRenderDelegateCore {
                 const jointName = String(jointEntry.jointName || `${linkName}_joint`).trim() || `${linkName}_joint`;
                 const stageParentCandidates = resolveRuntimeLinkPathsFromSourcePath(jointEntry.body0Path, rootPath);
                 const parentLinkName = String(jointEntry.parentLinkName || '').trim();
+                const truthParentLinkPath = resolveTruthParentLinkPath(linkPath, parentLinkName, rootPath);
                 const parentLinkPath = linkParentPathByChildLinkPath.get(linkPath)
                     || stageParentCandidates[0]
+                    || truthParentLinkPath
                     || (parentLinkName ? (rootPath ? `${rootPath}/${parentLinkName}` : `/${parentLinkName}`) : null);
                 if (!linkParentPathByChildLinkPath.has(linkPath)) {
                     linkParentPathByChildLinkPath.set(linkPath, parentLinkPath || null);

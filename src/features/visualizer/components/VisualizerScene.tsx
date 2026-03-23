@@ -46,6 +46,7 @@ export const VisualizerScene = React.memo(({
     handleRegisterCollisionRef,
     transformControlsState,
     handleCollisionTransformEnd,
+    requestGroundRealignment,
   } = controller;
   const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
     const grouped: Record<string, UrdfJoint[]> = {};
@@ -107,6 +108,7 @@ export const VisualizerScene = React.memo(({
           onRegisterJointPivot={handleRegisterJointPivot}
           onRegisterJointMotion={handleRegisterJointMotion}
           onRegisterCollisionRef={handleRegisterCollisionRef}
+          onMeshResolved={requestGroundRealignment}
         />
       </GroundedGroup>
 

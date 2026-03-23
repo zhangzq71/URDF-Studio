@@ -57,6 +57,18 @@ export function beginInitialGroundAlignment(robot: THREE.Object3D | null | undef
     return true;
 }
 
+export function alignRobotToGroundBeforeFirstMount(robot: THREE.Object3D, targetZ = 0): boolean {
+    const minZ = getRobotGroundOffset(robot);
+    if (minZ === null) {
+        return false;
+    }
+
+    robot.position.z += targetZ - minZ;
+    robot.updateMatrixWorld(true);
+    setInitialGroundAlignment(robot, true);
+    return true;
+}
+
 /**
  * Align the rendered robot so its lowest visible visual geometry rests on the target plane.
  * This keeps the grid/canvas stable while switching assets with different authoring origins.

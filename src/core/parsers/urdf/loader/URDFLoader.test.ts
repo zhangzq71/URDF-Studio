@@ -38,6 +38,61 @@ function expectBoxEquals(actual: THREE.Box3, expected: THREE.Box3, epsilon = 1e-
     });
 }
 
+async function loadVisualSnapshot(params: {
+    urdfContent: string;
+    urdfDir: string;
+    assets: Record<string, string>;
+    robotLinks: ReturnType<typeof parseURDF>['links'];
+    linkName: string;
+}) {
+    const { urdfContent, urdfDir, assets, robotLinks, linkName } = params;
+    const manager = createLoadingManager(assets, urdfDir);
+    const meshLoader = createMeshLoader(
+        assets,
+        manager,
+        urdfDir,
+        { colladaRootNormalizationHints: buildColladaRootNormalizationHints(robotLinks) },
+    );
+
+    const loader = new URDFLoader(manager);
+    loader.loadMeshCb = meshLoader;
+
+    let robot: ReturnType<URDFLoader['parse']> | null = null;
+    const snapshotPromise = new Promise<{
+        visualChildren: number;
+        meshCount: number;
+        visualRoot: THREE.Object3D | null;
+    }>((resolve) => {
+        manager.onLoad = () => {
+            const link = robot?.links?.[linkName] as THREE.Object3D | undefined;
+            const visualGroup = link?.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+            const visualRoot = (visualGroup?.children[0] as THREE.Object3D | undefined) ?? null;
+            let meshCount = 0;
+            visualGroup?.traverse((child: any) => {
+                if (child.isMesh) {
+                    meshCount += 1;
+                }
+            });
+
+            resolve({
+                visualChildren: visualGroup?.children.length ?? 0,
+                meshCount,
+                visualRoot,
+            });
+        };
+    });
+
+    const loadCompletionKey = `__urdf_loader_snapshot__${linkName}`;
+    manager.itemStart(loadCompletionKey);
+    try {
+        robot = loader.parse(urdfContent);
+    } finally {
+        manager.itemEnd(loadCompletionKey);
+    }
+
+    return snapshotPromise;
+}
+
 test('URDFLoader applies local visual material to nested mesh groups', () => {
     const loader = new URDFLoader();
     loader.loadMeshCb = (_url, _manager, onLoad) => {
@@ -297,4 +352,128 @@ test('URDFLoader preserves Z-up semantics for b2 base_link Collada meshes before
     assert.ok(Math.abs(loadedMeshRoot.quaternion.z - referenceObject.quaternion.z) < 1e-6);
     assert.ok(Math.abs(loadedMeshRoot.quaternion.w - referenceObject.quaternion.w) < 1e-6);
     expectBoxEquals(getWorldBox(loadedMeshRoot), referenceBox);
+});
+
+test('LoadingManager onLoad waits for imported go2w exported thigh visuals to attach before finalization', async () => {
+    const sourceUrdfPath = 'test/unitree_ros/robots/go2w_description/urdf/go2w_description.urdf';
+    const sourceUrdfContent = fs.readFileSync(sourceUrdfPath, 'utf8');
+    const fullRobotState = parseURDF(sourceUrdfContent);
+    assert.ok(fullRobotState);
+
+    const meshPath = 'test/unitree_ros/robots/go2w_description/dae/thigh_mirror.dae';
+    const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
+    const importedUrdfDir = 'go2w_description (1)/';
+    const importedUrdfContent = `<?xml version="1.0"?>
+<robot name="go2w_description">
+  <link name="FR_thigh">
+    <visual>
+      <geometry>
+        <mesh filename="package://go2w_description/meshes/dae/thigh_mirror.dae" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`;
+
+    const assets = {
+        'go2w_description (1)/meshes/dae/thigh_mirror.dae': meshDataUrl,
+    };
+    const manager = createLoadingManager(assets, importedUrdfDir);
+    const meshLoader = createMeshLoader(
+        assets,
+        manager,
+        importedUrdfDir,
+        { colladaRootNormalizationHints: buildColladaRootNormalizationHints(fullRobotState.links) },
+    );
+
+    const loader = new URDFLoader(manager);
+    loader.loadMeshCb = meshLoader;
+
+    let robot: ReturnType<URDFLoader['parse']> | null = null;
+    const onLoadSnapshot = new Promise<{ visualChildren: number; hasVisualMesh: boolean }>((resolve) => {
+        manager.onLoad = () => {
+            const link = robot?.links?.FR_thigh as THREE.Object3D | undefined;
+            const visualGroup = link?.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+            let hasVisualMesh = false;
+            visualGroup?.traverse((child: any) => {
+                if (child.isMesh) {
+                    hasVisualMesh = true;
+                }
+            });
+
+            resolve({
+                visualChildren: visualGroup?.children.length ?? 0,
+                hasVisualMesh,
+            });
+        };
+    });
+
+    const loadCompletionKey = '__urdf_loader_async_mesh_setup__';
+    manager.itemStart(loadCompletionKey);
+    try {
+        robot = loader.parse(importedUrdfContent);
+    } finally {
+        manager.itemEnd(loadCompletionKey);
+    }
+
+    const snapshot = await onLoadSnapshot;
+    assert.ok(snapshot.visualChildren > 0, `expected visual children before onLoad finalization, received ${snapshot.visualChildren}`);
+    assert.equal(snapshot.hasVisualMesh, true);
+});
+
+test('folder import and exported zip roundtrip converge to the same go2w FR_thigh visual result', async () => {
+    const sourceUrdfPath = 'test/unitree_ros/robots/go2w_description/urdf/go2w_description.urdf';
+    const sourceUrdfContent = fs.readFileSync(sourceUrdfPath, 'utf8');
+    const fullRobotState = parseURDF(sourceUrdfContent);
+    assert.ok(fullRobotState);
+
+    const meshPath = 'test/unitree_ros/robots/go2w_description/dae/thigh_mirror.dae';
+    const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
+
+    const folderImportSnapshot = await loadVisualSnapshot({
+        urdfDir: 'go2w_description/urdf/',
+        urdfContent: `<?xml version="1.0"?>
+<robot name="go2w_description">
+  <link name="FR_thigh">
+    <visual>
+      <geometry>
+        <mesh filename="package://go2w_description/dae/thigh_mirror.dae" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+        assets: {
+            'go2w_description/dae/thigh_mirror.dae': meshDataUrl,
+        },
+        robotLinks: fullRobotState.links,
+        linkName: 'FR_thigh',
+    });
+
+    const exportedZipSnapshot = await loadVisualSnapshot({
+        urdfDir: 'go2w_description (1)/',
+        urdfContent: `<?xml version="1.0"?>
+<robot name="go2w_description">
+  <link name="FR_thigh">
+    <visual>
+      <geometry>
+        <mesh filename="package://go2w_description/meshes/dae/thigh_mirror.dae" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+        assets: {
+            'go2w_description (1)/meshes/dae/thigh_mirror.dae': meshDataUrl,
+        },
+        robotLinks: fullRobotState.links,
+        linkName: 'FR_thigh',
+    });
+
+    assert.ok(folderImportSnapshot.visualChildren > 0);
+    assert.ok(exportedZipSnapshot.visualChildren > 0);
+    assert.ok(folderImportSnapshot.meshCount > 0);
+    assert.ok(exportedZipSnapshot.meshCount > 0);
+    assert.equal(folderImportSnapshot.visualChildren, exportedZipSnapshot.visualChildren);
+    assert.equal(folderImportSnapshot.meshCount, exportedZipSnapshot.meshCount);
+    assert.ok(folderImportSnapshot.visualRoot);
+    assert.ok(exportedZipSnapshot.visualRoot);
+    expectBoxEquals(getWorldBox(folderImportSnapshot.visualRoot), getWorldBox(exportedZipSnapshot.visualRoot));
 });

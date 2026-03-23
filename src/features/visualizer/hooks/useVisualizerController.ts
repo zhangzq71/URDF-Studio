@@ -29,6 +29,7 @@ export const useVisualizerController = ({
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
   const tempRotationRef = useRef(new THREE.Euler(0, 0, 0, 'ZYX'));
+  const pendingGroundAlignmentRef = useRef<number | null>(null);
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   const clearHover = useSelectionStore((state) => state.clearHover);
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
@@ -118,6 +119,25 @@ export const useVisualizerController = ({
     });
   }, [onUpdate, robot, selectedCollisionRef]);
 
+  const requestGroundRealignment = useCallback(() => {
+    if (mode !== 'skeleton') return;
+    if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
+
+    if (typeof window === 'undefined') {
+      handleAutoFitGround();
+      return;
+    }
+
+    if (pendingGroundAlignmentRef.current !== null) {
+      window.clearTimeout(pendingGroundAlignmentRef.current);
+    }
+
+    pendingGroundAlignmentRef.current = window.setTimeout(() => {
+      pendingGroundAlignmentRef.current = null;
+      handleAutoFitGround();
+    }, 48);
+  }, [handleAutoFitGround, mode, robot]);
+
   useEffect(() => {
     if (mode !== 'skeleton') return;
     if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
@@ -130,6 +150,15 @@ export const useVisualizerController = ({
       timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [groundPlaneOffset, handleAutoFitGround, mode, robot.joints, robot.links]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingGroundAlignmentRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(pendingGroundAlignmentRef.current);
+        pendingGroundAlignmentRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -156,6 +185,7 @@ export const useVisualizerController = ({
     handleRegisterCollisionRef,
     transformControlsState,
     handleAutoFitGround,
+    requestGroundRealignment,
     handleCollisionTransformEnd,
   };
 };

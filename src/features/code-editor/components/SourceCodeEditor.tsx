@@ -1,8 +1,8 @@
 /**
  * SourceCodeEditor - Unified Monaco source window for editable and read-only code.
- * Supports URDF, MJCF, USD text, and equivalent MJCF previews in one reusable shell.
+ * Supports URDF, Xacro, MJCF, USD text, and equivalent MJCF previews in one reusable shell.
  */
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, startTransition } from 'react';
 import Editor from '@monaco-editor/react';
 import {
   AlertCircle,
@@ -23,10 +23,17 @@ import type { Theme } from '@/types';
 import type { Language } from '@/store';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
+import type { SourceCodeDocumentFlavor } from '../types';
 import type { MonacoInstance } from '../utils/monacoLoader';
-import '../utils/monacoLoader';
-
-export type SourceCodeDocumentFlavor = 'urdf' | 'mjcf' | 'usd' | 'equivalent-mjcf';
+import { ensureSourceCodeEditorLanguages } from '../utils/monacoLoader';
+import {
+  getDocumentLanguageId,
+  getXmlCompletionEntries,
+  isXmlLikeDocumentFlavor,
+  supportsDocumentValidation,
+} from '../utils/xmlLanguageSupport';
+import { getUrdfValidationDebounceMs } from '../utils/editorPerformance.ts';
+import { validateUrdfDocument, type ValidationError } from '../utils/urdfValidation';
 
 export interface SourceCodeEditorProps {
   code: string;
@@ -39,18 +46,11 @@ export interface SourceCodeEditorProps {
   readOnly?: boolean;
 }
 
-interface ValidationError {
-  line: number;
-  column?: number;
-  endLine?: number;
-  endColumn?: number;
-  message: string;
-}
-
 interface DocumentMeta {
-  language: 'xml' | 'plaintext';
+  language: ReturnType<typeof getDocumentLanguageId>;
   label: string;
   supportsValidation: boolean;
+  isXmlLike: boolean;
 }
 
 const editorTexts = {
@@ -78,6 +78,7 @@ const editorTexts = {
     jumpToProblem: 'Jump to first problem',
     saveShortcut: 'Ctrl+S',
     urdfLabel: 'URDF/XML',
+    xacroLabel: 'Xacro/XML',
     mjcfLabel: 'MJCF/XML',
     usdLabel: 'USD/ASCII',
     equivalentMjcfLabel: 'Equivalent MJCF',
@@ -89,6 +90,10 @@ const editorTexts = {
     jointMissingType: 'Joint "{0}" missing type attribute',
     jointMissingParent: 'Joint "{0}" missing <parent> element',
     jointMissingChild: 'Joint "{0}" missing <child> element',
+    unknownElement: 'Unknown <{0}> element under <{1}>',
+    unknownAttribute: '<{0}> has unknown "{1}" attribute',
+    missingRequiredAttribute: '<{0}> missing required "{1}" attribute',
+    invalidAttributeValue: '<{0}> attribute "{1}" has invalid value "{2}"',
     cannotParseXml: 'Cannot parse XML',
   },
   zh: {
@@ -115,6 +120,7 @@ const editorTexts = {
     jumpToProblem: '跳转到第一个问题',
     saveShortcut: 'Ctrl+S',
     urdfLabel: 'URDF/XML',
+    xacroLabel: 'Xacro/XML',
     mjcfLabel: 'MJCF/XML',
     usdLabel: 'USD/ASCII',
     equivalentMjcfLabel: '等效 MJCF',
@@ -126,50 +132,12 @@ const editorTexts = {
     jointMissingType: '关节 "{0}" 缺少 type 属性',
     jointMissingParent: '关节 "{0}" 缺少 <parent> 元素',
     jointMissingChild: '关节 "{0}" 缺少 <child> 元素',
+    unknownElement: '<{1}> 下存在未知元素 <{0}>',
+    unknownAttribute: '<{0}> 存在未知属性 "{1}"',
+    missingRequiredAttribute: '<{0}> 缺少必需属性 "{1}"',
+    invalidAttributeValue: '<{0}> 的属性 "{1}" 存在非法值 "{2}"',
     cannotParseXml: '无法解析 XML',
   },
-};
-
-const URDF_TAGS = [
-  'robot',
-  'link',
-  'joint',
-  'type',
-  'name',
-  'visual',
-  'geometry',
-  'box',
-  'cylinder',
-  'sphere',
-  'mesh',
-  'collision',
-  'inertial',
-  'mass',
-  'inertia',
-  'origin',
-  'xyz',
-  'rpy',
-  'parent',
-  'child',
-  'axis',
-  'limit',
-  'lower',
-  'upper',
-  'effort',
-  'velocity',
-  'dynamics',
-  'damping',
-  'friction',
-  'material',
-  'color',
-  'texture',
-  'rgba',
-];
-
-const URDF_SNIPPETS = {
-  link: '<link name="${1:link_name}">\n\t<visual>\n\t\t<geometry>\n\t\t\t<box size="${2:0.1 0.1 0.1}"/>\n\t\t</geometry>\n\t</visual>\n</link>',
-  joint:
-    '<joint name="${1:joint_name}" type="${2:revolute}">\n\t<parent link="${3:parent_link}"/>\n\t<child link="${4:child_link}"/>\n\t<origin xyz="0 0 0" rpy="0 0 0"/>\n\t<axis xyz="0 0 1"/>\n\t<limit lower="-1.57" upper="1.57" effort="100" velocity="1"/>\n</joint>',
 };
 
 const MIN_WIDTH = 400;
@@ -180,14 +148,6 @@ const HEADER_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover';
 const HEADER_PRIMARY_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors';
-
-const formatMsg = (msg: string, ...args: (string | number)[]): string => {
-  let result = msg;
-  args.forEach((arg, index) => {
-    result = result.replace(`{${index}}`, String(arg));
-  });
-  return result;
-};
 
 const formatContentSize = (content: string): string => {
   const bytes = new Blob([content]).size;
@@ -213,31 +173,44 @@ const getDocumentMeta = (
   documentFlavor: SourceCodeDocumentFlavor,
   t: (typeof editorTexts)['en'],
 ): DocumentMeta => {
+  const language = getDocumentLanguageId(documentFlavor);
+
   switch (documentFlavor) {
     case 'mjcf':
       return {
-        language: 'xml',
+        language,
         label: t.mjcfLabel,
-        supportsValidation: false,
+        supportsValidation: supportsDocumentValidation(documentFlavor),
+        isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
       };
     case 'usd':
       return {
-        language: 'plaintext',
+        language,
         label: t.usdLabel,
-        supportsValidation: false,
+        supportsValidation: supportsDocumentValidation(documentFlavor),
+        isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
       };
     case 'equivalent-mjcf':
       return {
-        language: 'xml',
+        language,
         label: t.equivalentMjcfLabel,
-        supportsValidation: false,
+        supportsValidation: supportsDocumentValidation(documentFlavor),
+        isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
+      };
+    case 'xacro':
+      return {
+        language,
+        label: t.xacroLabel,
+        supportsValidation: supportsDocumentValidation(documentFlavor),
+        isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
       };
     case 'urdf':
     default:
       return {
-        language: 'xml',
+        language,
         label: t.urdfLabel,
-        supportsValidation: true,
+        supportsValidation: supportsDocumentValidation(documentFlavor),
+        isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
       };
   }
 };
@@ -269,117 +242,6 @@ const attachFindWidgetTooltipSuppression = (
   };
 };
 
-const findElementLine = (xmlString: string, tagName: string, index: number): number => {
-  const lines = xmlString.split('\n');
-  let count = 0;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const regex = new RegExp(`<${tagName}[\\s>]`, 'g');
-    const matches = lines[i].match(regex);
-    if (matches) {
-      count += matches.length;
-      if (count > index) {
-        return i + 1;
-      }
-    }
-  }
-
-  return 1;
-};
-
-const validateURDF = (
-  xmlString: string,
-  t: (typeof editorTexts)['en'],
-): ValidationError[] => {
-  const errors: ValidationError[] = [];
-
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xmlString, 'text/xml');
-    const parseError = doc.querySelector('parsererror');
-
-    if (parseError) {
-      const errorText = parseError.textContent || 'XML parsing error';
-      const lineMatch = errorText.match(/line\s*(\d+)/i);
-      const columnMatch = errorText.match(/column\s*(\d+)/i);
-      errors.push({
-        line: lineMatch ? parseInt(lineMatch[1], 10) : 1,
-        column: columnMatch ? parseInt(columnMatch[1], 10) : 1,
-        message: `${t.xmlParseError}: ${errorText.split('\n')[0].substring(0, 100)}`,
-      });
-      return errors;
-    }
-
-    const robot = doc.querySelector('robot');
-    if (!robot) {
-      errors.push({ line: 1, column: 1, message: t.missingRobotRoot });
-      return errors;
-    }
-
-    if (!robot.getAttribute('name')) {
-      errors.push({
-        line: findElementLine(xmlString, 'robot', 0),
-        column: 1,
-        message: t.robotMissingName,
-      });
-    }
-
-    const links = doc.querySelectorAll('link');
-    links.forEach((link, index) => {
-      if (!link.getAttribute('name')) {
-        errors.push({
-          line: findElementLine(xmlString, 'link', index),
-          column: 1,
-          message: formatMsg(t.linkMissingName, index + 1),
-        });
-      }
-    });
-
-    const joints = doc.querySelectorAll('joint');
-    joints.forEach((joint, index) => {
-      const jointName = joint.getAttribute('name');
-      const jointType = joint.getAttribute('type');
-      const line = findElementLine(xmlString, 'joint', index);
-
-      if (!jointName) {
-        errors.push({
-          line,
-          column: 1,
-          message: formatMsg(t.jointMissingName, index + 1),
-        });
-      }
-
-      if (!jointType) {
-        errors.push({
-          line,
-          column: 1,
-          message: formatMsg(t.jointMissingType, jointName || String(index + 1)),
-        });
-      }
-
-      if (!joint.querySelector('parent')) {
-        errors.push({
-          line,
-          column: 1,
-          message: formatMsg(t.jointMissingParent, jointName || String(index + 1)),
-        });
-      }
-
-      if (!joint.querySelector('child')) {
-        errors.push({
-          line,
-          column: 1,
-          message: formatMsg(t.jointMissingChild, jointName || String(index + 1)),
-        });
-      }
-    });
-  } catch {
-    errors.push({ line: 1, column: 1, message: t.cannotParseXml });
-  }
-
-  return errors;
-};
-
 const getDocumentValidationErrors = (
   code: string,
   documentFlavor: SourceCodeDocumentFlavor,
@@ -389,7 +251,7 @@ const getDocumentValidationErrors = (
     return [];
   }
 
-  return validateURDF(code, t);
+  return validateUrdfDocument(code, t);
 };
 
 export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
@@ -451,23 +313,57 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     if (editorRef.current && code !== currentCode && !isDirty) {
       editorRef.current.setValue(code);
       setCurrentCode(code);
-      setValidationErrors(getDocumentValidationErrors(code, documentFlavor, t));
     }
   }, [code, currentCode, documentFlavor, isDirty, t]);
 
   useEffect(() => {
-    setValidationErrors(getDocumentValidationErrors(currentCode, documentFlavor, t));
-  }, [currentCode, documentFlavor, t]);
-
-  useEffect(() => {
-    if (!monacoInstance) {
+    if (!documentMeta.supportsValidation) {
+      setValidationErrors([]);
       return undefined;
     }
 
-    const disposable = monacoInstance.languages.registerCompletionItemProvider('xml', {
-      triggerCharacters: ['<'],
+    const timeout = window.setTimeout(() => {
+      const nextErrors = getDocumentValidationErrors(currentCode, documentFlavor, t);
+      startTransition(() => {
+        setValidationErrors(nextErrors);
+      });
+    }, getUrdfValidationDebounceMs(currentCode.length));
+
+    return () => window.clearTimeout(timeout);
+  }, [currentCode, documentFlavor, documentMeta.supportsValidation, t]);
+
+  useEffect(() => {
+    if (
+      !monacoInstance
+      || (documentMeta.language !== 'urdf' && documentMeta.language !== 'xacro')
+    ) {
+      return undefined;
+    }
+
+    const completionItemKind = monacoInstance.languages.CompletionItemKind;
+    const completionKindMap = {
+      tag: completionItemKind.Keyword,
+      attribute: completionItemKind.Property,
+      value: completionItemKind.EnumMember,
+      snippet: completionItemKind.Snippet,
+    } as const;
+
+    const disposable = monacoInstance.languages.registerCompletionItemProvider(documentMeta.language, {
+      triggerCharacters: ['<', ' ', ':', '"'],
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       provideCompletionItems: (model: any, position: any) => {
+        const textBeforeCursor = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+        const entries = getXmlCompletionEntries(documentFlavor, textBeforeCursor);
+
+        if (entries.length === 0) {
+          return { suggestions: [] };
+        }
+
         const word = model.getWordUntilPosition(position);
         const range = {
           startLineNumber: position.lineNumber,
@@ -477,38 +373,22 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         };
 
         return {
-          suggestions: [
-            ...URDF_TAGS.map((tag) => ({
-              label: tag,
-              kind: monacoInstance.languages.CompletionItemKind.Keyword,
-              insertText: tag,
-              range,
-            })),
-            {
-              label: 'link-snippet',
-              kind: monacoInstance.languages.CompletionItemKind.Snippet,
-              insertText: URDF_SNIPPETS.link,
-              insertTextRules:
-                monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              documentation: 'Basic URDF Link structure',
-              range,
-            },
-            {
-              label: 'joint-snippet',
-              kind: monacoInstance.languages.CompletionItemKind.Snippet,
-              insertText: URDF_SNIPPETS.joint,
-              insertTextRules:
-                monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              documentation: 'Basic URDF Joint structure',
-              range,
-            },
-          ],
+          suggestions: entries.map((entry) => ({
+            label: entry.label,
+            kind: completionKindMap[entry.kind],
+            insertText: entry.insertText,
+            insertTextRules: entry.insertAsSnippet
+              ? monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet
+              : undefined,
+            documentation: entry.documentation,
+            range,
+          })),
         };
       },
     });
 
     return () => disposable.dispose();
-  }, [monacoInstance]);
+  }, [documentFlavor, documentMeta.language, monacoInstance]);
 
   useEffect(() => {
     if (!monacoInstance || !editorRef.current) {
@@ -571,9 +451,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
       setCurrentCode(value);
       setIsDirty(isReadOnly ? false : value !== code);
-      setValidationErrors(getDocumentValidationErrors(value, documentFlavor, t));
     },
-    [code, documentFlavor, isReadOnly, t],
+    [code, isReadOnly],
   );
 
   const handleCopy = useCallback(() => {
@@ -750,7 +629,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           theme={theme === 'dark' ? 'vs-dark' : 'light'}
           onMount={(editor, monaco) => {
             editorRef.current = editor;
-            setMonacoInstance(monaco);
+            setMonacoInstance(ensureSourceCodeEditorLanguages(monaco));
             setIsEditorReady(true);
             requestAnimationFrame(() => {
               editor.layout();
@@ -767,8 +646,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
             wordWrap: 'on',
             automaticLayout: false,
             tabSize: 2,
-            formatOnPaste: !isReadOnly && documentMeta.language === 'xml',
-            formatOnType: !isReadOnly && documentMeta.language === 'xml',
+            formatOnPaste: !isReadOnly && documentMeta.isXmlLike,
+            formatOnType: !isReadOnly && documentMeta.isXmlLike,
             lineNumbersMinChars: 4,
             padding: { top: 12, bottom: 14 },
             renderLineHighlight: 'all',

@@ -18,15 +18,28 @@ export function useTreeEditorLayout({ collapsed }: UseTreeEditorLayoutOptions) {
   const isVerticalResizing = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
+  const bodyCursorRef = useRef('');
+  const bodyUserSelectRef = useRef('');
+
+  const captureBodyInteractionStyles = useCallback(() => {
+    bodyCursorRef.current = document.body.style.cursor;
+    bodyUserSelectRef.current = document.body.style.userSelect;
+  }, []);
+
+  const restoreBodyInteractionStyles = useCallback(() => {
+    document.body.style.cursor = bodyCursorRef.current;
+    document.body.style.userSelect = bodyUserSelectRef.current;
+  }, []);
 
   const handleMouseDown = useCallback((event: ReactMouseEvent) => {
     isResizing.current = true;
     setIsDragging(true);
     startX.current = event.clientX;
     startWidth.current = width;
+    captureBodyInteractionStyles();
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, [width]);
+  }, [captureBodyInteractionStyles, width]);
 
   const handleVerticalMouseDown = useCallback((event: ReactMouseEvent) => {
     event.stopPropagation();
@@ -34,9 +47,10 @@ export function useTreeEditorLayout({ collapsed }: UseTreeEditorLayoutOptions) {
     setIsDragging(true);
     startY.current = event.clientY;
     startHeight.current = fileBrowserHeight;
+    captureBodyInteractionStyles();
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
-  }, [fileBrowserHeight]);
+  }, [captureBodyInteractionStyles, fileBrowserHeight]);
 
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
@@ -57,18 +71,20 @@ export function useTreeEditorLayout({ collapsed }: UseTreeEditorLayoutOptions) {
       isResizing.current = false;
       isVerticalResizing.current = false;
       setIsDragging(false);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      restoreBodyInteractionStyles();
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', handleMouseUp);
+      restoreBodyInteractionStyles();
     };
-  }, []);
+  }, [restoreBodyInteractionStyles]);
 
   const actualWidth = collapsed ? 0 : width;
   const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;

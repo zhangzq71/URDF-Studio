@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { TranslationKeys } from '@/shared/i18n';
+import type { RenameRobotFolderResult } from '@/store/assetsStore';
 import type { AssemblyState, RobotData, RobotFile } from '@/types';
 
 type EmptyRobotState = Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>;
@@ -12,6 +13,8 @@ interface UseLibraryFileActionsParams {
   removeComponent: (id: string) => void;
   removeRobotFile: (path: string) => void;
   removeRobotFolder: (path: string) => void;
+  renameRobotFolder: (path: string, nextName: string) => RenameRobotFolderResult;
+  renameComponentSourceFolder: (fromPath: string, toPath: string, options?: { skipHistory?: boolean; label?: string }) => void;
   clearRobotLibrary: () => void;
   resetRobot: (data: { name: string } & EmptyRobotState) => void;
   clearSelection: () => void;
@@ -29,6 +32,8 @@ export function useLibraryFileActions({
   removeComponent,
   removeRobotFile,
   removeRobotFolder,
+  renameRobotFolder,
+  renameComponentSourceFolder,
   clearRobotLibrary,
   resetRobot,
   clearSelection,
@@ -119,6 +124,48 @@ export function useLibraryFileActions({
     t,
   ]);
 
+  const handleRenameLibraryFolder = useCallback((folderPath: string, nextName: string) => {
+    const result = renameRobotFolder(folderPath, nextName);
+    if (!result.ok) {
+      if (result.reason === 'conflict') {
+        const normalizedFolder = folderPath.replace(/\/+$/, '');
+        const sanitizedName = nextName.trim().replace(/[\\/]+/g, '');
+        const parentPath = normalizedFolder.includes('/')
+          ? normalizedFolder.split('/').slice(0, -1).join('/')
+          : '';
+        const targetPath = sanitizedName
+          ? (parentPath ? `${parentPath}/${sanitizedName}` : sanitizedName)
+          : normalizedFolder;
+        showToast(
+          t.assetLibraryRenameConflict.replace('{path}', targetPath),
+          'info',
+        );
+        return result;
+      }
+
+      showToast(t.assetLibraryRenameInvalid, 'info');
+      return result;
+    }
+
+    const normalizedFolder = folderPath.replace(/\/+$/, '');
+    if (normalizedFolder !== result.nextPath) {
+      renameComponentSourceFolder(normalizedFolder, result.nextPath, { skipHistory: true });
+      showToast(
+        t.renamedFolder
+          .replace('{from}', normalizedFolder)
+          .replace('{to}', result.nextPath),
+        'success',
+      );
+    }
+
+    return result;
+  }, [
+    renameComponentSourceFolder,
+    renameRobotFolder,
+    showToast,
+    t,
+  ]);
+
   const handleDeleteAllLibraryFiles = useCallback(() => {
     if (availableFiles.length === 0) return;
 
@@ -168,6 +215,7 @@ export function useLibraryFileActions({
     handleUploadAsset,
     handleDeleteLibraryFile,
     handleDeleteLibraryFolder,
+    handleRenameLibraryFolder,
     handleDeleteAllLibraryFiles,
     handleExportLibraryFile,
   };

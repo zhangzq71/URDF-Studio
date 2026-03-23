@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { MouseEvent as ReactMouseEvent, RefObject } from 'react';
 import type { RobotFile } from '@/types';
 import type { FileTreeNode } from '../utils';
 import { FileTreeNodeComponent, type LibraryDeleteTarget } from './FileTreeNode';
@@ -8,17 +8,23 @@ import type { TreeEditorTranslations } from './treeEditorTypes';
 interface TreeEditorFileBrowserContentProps {
   availableFiles: RobotFile[];
   canDeleteAllLibraryFiles: boolean;
+  editingFolderPath?: string | null;
   expandedFolders: Set<string>;
   fileTree: FileTreeNode[];
+  folderRenameDraft: string;
+  folderRenameInputRef: RefObject<HTMLInputElement | null>;
   height: number;
   isDragging: boolean;
   isOpen: boolean;
   isProMode: boolean;
   onAddComponent?: (file: RobotFile) => void;
+  onCancelFolderRename: () => void;
+  onCommitFolderRename: () => void;
   onDeleteAll: () => void;
   onDeleteFromLibrary?: (target: LibraryDeleteTarget) => void;
   onFileActivate?: (file: RobotFile) => void;
   onFileContextMenu: (event: ReactMouseEvent, file: RobotFile) => void;
+  onFolderRenameDraftChange: (value: string) => void;
   onFolderContextMenu: (event: ReactMouseEvent, folderPath: string) => void;
   onToggleOpen: () => void;
   previewFileName?: string;
@@ -30,17 +36,23 @@ interface TreeEditorFileBrowserContentProps {
 export function TreeEditorFileBrowserContent({
   availableFiles,
   canDeleteAllLibraryFiles,
+  editingFolderPath,
   expandedFolders,
   fileTree,
+  folderRenameDraft,
+  folderRenameInputRef,
   height,
   isDragging,
   isOpen,
   isProMode,
   onAddComponent,
+  onCancelFolderRename,
+  onCommitFolderRename,
   onDeleteAll,
   onDeleteFromLibrary,
   onFileActivate,
   onFileContextMenu,
+  onFolderRenameDraftChange,
   onFolderContextMenu,
   onToggleOpen,
   previewFileName,
@@ -107,10 +119,16 @@ export function TreeEditorFileBrowserContent({
                 key={node.path}
                 node={node}
                 depth={0}
+                editingFolderPath={editingFolderPath}
+                folderRenameDraft={folderRenameDraft}
+                folderRenameInputRef={folderRenameInputRef}
                 onLoadRobot={onFileActivate}
                 onAddAsComponent={isProMode ? onAddComponent : undefined}
+                onCancelFolderRename={onCancelFolderRename}
+                onCommitFolderRename={onCommitFolderRename}
                 onDeleteFromLibrary={onDeleteFromLibrary}
                 onFileContextMenu={onFileContextMenu}
+                onFolderRenameDraftChange={onFolderRenameDraftChange}
                 onFolderContextMenu={onFolderContextMenu}
                 expandedFolders={expandedFolders}
                 toggleFolder={toggleFolder}

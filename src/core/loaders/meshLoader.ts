@@ -328,6 +328,7 @@ export const createMeshLoader = (
 ) => {
     // Scoped state for this loader instance
     let _detectedUnitScale: number | null = null;
+    let pendingRequestCounter = 0;
     const assetIndex = options.assetIndex ?? buildAssetIndex(assets, urdfDir);
     const explicitScaleHints = options.explicitScaleMeshPaths
         ? buildExplicitlyScaledMeshPathHints(options.explicitScaleMeshPaths, urdfDir)
@@ -338,6 +339,9 @@ export const createMeshLoader = (
         _manager: THREE.LoadingManager,
         done: (result: THREE.Object3D, err?: Error) => void
     ) => {
+        const pendingRequestToken = `__urdf_studio_mesh_loader__${pendingRequestCounter++}:${path}`;
+        manager.itemStart(pendingRequestToken);
+
         try {
             const assetUrl = findAssetByIndex(path, assetIndex, urdfDir);
 
@@ -493,6 +497,8 @@ export const createMeshLoader = (
             console.error('[MeshLoader] Mesh loading error, using placeholder:', path, error);
             // Return placeholder instead of failing completely
             done(createPlaceholderMesh(path));
+        } finally {
+            manager.itemEnd(pendingRequestToken);
         }
     };
 };

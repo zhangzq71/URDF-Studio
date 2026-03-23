@@ -18,12 +18,14 @@ import {
 } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
-import { exportUsdStageSnapshot, getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
+import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import { addRobotAssetsToZip } from '../utils/exportArchiveAssets';
 import { resolveCurrentUsdExportMode } from '../utils/currentUsdExportMode';
 import { flushPendingHistory } from '../utils/pendingHistory';
 import { buildCurrentRobotExportData, buildCurrentRobotExportState } from './projectRobotStateUtils';
 import { resolveCurrentUsdExportBundle } from '../utils/usdExportContext';
+import { buildLiveUsdRoundtripArchive } from '../utils/liveUsdRoundtripExport';
+import { convertUsdArchiveFilesToBinary } from '../utils/usdBinaryArchive';
 import { resolveUrdfSourceExportContent } from './urdfSourceExportUtils';
 
 type ExportTarget =
@@ -654,7 +656,7 @@ export function useFileExport() {
     );
 
     if (config.format === 'usd') {
-      const reportProgress = createProgressReporter(options.onProgress, 3);
+      const reportProgress = createProgressReporter(options.onProgress, 4);
       reportProgress(1, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
         stageProgress: 0.2,
         indeterminate: true,
@@ -673,19 +675,44 @@ export function useFileExport() {
           indeterminate: true,
         });
 
-        const stageExport = await exportUsdStageSnapshot({
-          stageSourcePath: selectedFile.name,
+        const roundtripArchive = await buildLiveUsdRoundtripArchive({
+          sourceFile: selectedFile,
+          availableFiles,
+          assets,
+          allFileContents,
         });
 
-        reportProgress(3, t.exportProgressPackaging, t.exportProgressPackagingDetail, {
-          stageProgress: 1,
-          indeterminate: false,
+        reportProgress(3, t.exportProgressConvertingUsdLayers, t.exportProgressConvertingUsdLayersPreparingDetail, {
+          stageProgress: 0.04,
+          indeterminate: true,
         });
 
-        downloadBlob(
-          new Blob([stageExport.content], { type: 'text/plain;charset=utf-8' }),
-          stageExport.downloadFileName,
-        );
+        const binaryArchiveFiles = await convertUsdArchiveFilesToBinary(roundtripArchive.archiveFiles, {
+          onProgress: ({ current, total, filePath }) => {
+            reportProgress(
+              3,
+              t.exportProgressConvertingUsdLayers,
+              replaceTemplate(t.exportProgressConvertingUsdLayersDetail, {
+                current,
+                total,
+                file: trimProgressFileLabel(filePath) || t.exportProgressArchiveFallbackFile,
+              }),
+              {
+                stageProgress: total > 0 ? current / total : 1,
+                indeterminate: false,
+              },
+            );
+          },
+        });
+
+        const zip = new JSZip();
+        binaryArchiveFiles.forEach((blob, filePath) => {
+          zip.file(filePath, blob);
+        });
+
+        const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
+
+        downloadBlob(content, roundtripArchive.archiveFileName);
         return;
       }
 
@@ -729,11 +756,34 @@ export function useFileExport() {
         },
       });
 
+      reportProgress(3, t.exportProgressConvertingUsdLayers, t.exportProgressConvertingUsdLayersPreparingDetail, {
+        stageProgress: 0.04,
+        indeterminate: true,
+      });
+
+      const binaryArchiveFiles = await convertUsdArchiveFilesToBinary(usdExport.archiveFiles, {
+        onProgress: ({ current, total, filePath }) => {
+          reportProgress(
+            3,
+            t.exportProgressConvertingUsdLayers,
+            replaceTemplate(t.exportProgressConvertingUsdLayersDetail, {
+              current,
+              total,
+              file: trimProgressFileLabel(filePath) || t.exportProgressArchiveFallbackFile,
+            }),
+            {
+              stageProgress: total > 0 ? current / total : 1,
+              indeterminate: false,
+            },
+          );
+        },
+      });
+
       const zip = new JSZip();
-      usdExport.archiveFiles.forEach((blob, filePath) => {
+      binaryArchiveFiles.forEach((blob, filePath) => {
         zip.file(filePath, blob);
       });
-      const content = await generateZipBlobWithProgress(zip, reportProgress, 3);
+      const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
       downloadBlob(content, usdExport.archiveFileName);
       return;
     }
@@ -941,7 +991,9 @@ export function useFileExport() {
     createProgressReporter,
     createArchiveRoot,
     downloadBlob,
+    availableFiles,
     assets,
+    allFileContents,
     generateZipBlobWithProgress,
     generateBOM,
     buildUrdfSourceExportContent,

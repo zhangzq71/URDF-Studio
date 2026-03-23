@@ -7,7 +7,6 @@ import { resolveViewerJointAngleValue } from '@/shared/utils/jointPanelState';
 import type { JointPanelStore } from '@/shared/utils/jointPanelStore';
 
 interface JointsPanelProps {
-    showJointControls: boolean;
     showJointPanel: boolean;
     robot: any;
     jointPanelRef: React.RefObject<HTMLDivElement>;
@@ -32,7 +31,6 @@ interface JointsPanelProps {
 }
 
 export const JointsPanel: React.FC<JointsPanelProps> = ({
-    showJointControls,
     showJointPanel,
     robot,
     jointPanelRef,
@@ -56,7 +54,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     onUpdate,
 }) => {
     // Condition to show
-    const shouldShow = showJointControls && showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
+    const shouldShow = showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
     const [isAdvanced, setIsAdvanced] = useState(false);
     const onHoverRef = useRef(onHover);
     const { jointAngles, activeJoint } = useSyncExternalStore(

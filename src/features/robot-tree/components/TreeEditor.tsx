@@ -40,6 +40,10 @@ export interface TreeEditorProps {
   onAddComponent?: (file: RobotFile) => void;
   onDeleteLibraryFile?: (file: RobotFile) => void;
   onDeleteLibraryFolder?: (folderPath: string) => void;
+  onRenameLibraryFolder?: (
+    folderPath: string,
+    nextName: string,
+  ) => { ok: true; nextPath: string } | { ok: false; reason: 'missing' | 'invalid' | 'conflict' };
   onDeleteAllLibraryFiles?: () => void;
   onExportLibraryFile?: (file: RobotFile) => void | Promise<void>;
   onCreateBridge?: () => void;
@@ -75,6 +79,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onAddComponent,
   onDeleteLibraryFile,
   onDeleteLibraryFolder,
+  onRenameLibraryFolder,
   onDeleteAllLibraryFiles,
   onExportLibraryFile,
   onCreateBridge,
@@ -119,6 +124,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const [editingFolderPath, setEditingFolderPath] = useState<string | null>(null);
+  const [folderRenameDraft, setFolderRenameDraft] = useState('');
+  const folderRenameInputRef = useRef<HTMLInputElement>(null);
   const [fileContextMenu, setFileContextMenu] = useState<{
     x: number;
     y: number;
@@ -259,6 +267,17 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, [isEditingName]);
 
   useEffect(() => {
+    if (!editingFolderPath) return;
+
+    const id = window.requestAnimationFrame(() => {
+      folderRenameInputRef.current?.focus();
+      folderRenameInputRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(id);
+  }, [editingFolderPath]);
+
+  useEffect(() => {
     if (!fileContextMenu) return;
 
     const closeMenu = () => setFileContextMenu(null);
@@ -278,6 +297,26 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [fileContextMenu]);
+
+  const remapExpandedFolderPaths = useCallback((fromPath: string, toPath: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set<string>();
+      prev.forEach((path) => {
+        if (path === fromPath) {
+          next.add(toPath);
+          return;
+        }
+
+        if (path.startsWith(`${fromPath}/`)) {
+          next.add(`${toPath}/${path.slice(fromPath.length + 1)}`);
+          return;
+        }
+
+        next.add(path);
+      });
+      return next;
+    });
+  }, []);
 
   const startNameEditing = useCallback(() => {
     setNameDraft(currentName || '');
@@ -307,7 +346,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     event.stopPropagation();
 
     const supportsExport = file.format === 'urdf' || file.format === 'mjcf';
-    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 1 : 0);
+    const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 1 : 0) + (onDeleteLibraryFile ? 1 : 0);
     if (actionCount === 0) return;
 
     const menuWidth = 180;
@@ -320,14 +359,18 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       x: Math.min(event.clientX, maxX),
       y: Math.min(event.clientY, maxY),
     });
-  }, [isProMode]);
+  }, [isProMode, onDeleteLibraryFile]);
 
   const handleFolderContextMenu = useCallback((event: React.MouseEvent, folderPath: string) => {
     event.preventDefault();
     event.stopPropagation();
 
+    if (!onDeleteLibraryFolder && !onRenameLibraryFolder) {
+      return;
+    }
+
     const menuWidth = 180;
-    const menuHeight = 44;
+    const menuHeight = 76;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
 
@@ -336,7 +379,46 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       x: Math.min(event.clientX, maxX),
       y: Math.min(event.clientY, maxY),
     });
+  }, [onDeleteLibraryFolder, onRenameLibraryFolder]);
+
+  const handleStartFolderRename = useCallback((folderPath: string) => {
+    const folderName = folderPath.split('/').pop() ?? folderPath;
+    setFolderRenameDraft(folderName);
+    setEditingFolderPath(folderPath);
+    setFileContextMenu(null);
   }, []);
+
+  const handleCancelFolderRename = useCallback(() => {
+    setEditingFolderPath(null);
+    setFolderRenameDraft('');
+  }, []);
+
+  const handleCommitFolderRename = useCallback(() => {
+    if (!editingFolderPath || !onRenameLibraryFolder) {
+      handleCancelFolderRename();
+      return;
+    }
+
+    const result = onRenameLibraryFolder(editingFolderPath, folderRenameDraft);
+    if (result.ok) {
+      if (result.nextPath !== editingFolderPath) {
+        remapExpandedFolderPaths(editingFolderPath, result.nextPath);
+      }
+      handleCancelFolderRename();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      folderRenameInputRef.current?.focus();
+      folderRenameInputRef.current?.select();
+    });
+  }, [
+    editingFolderPath,
+    folderRenameDraft,
+    handleCancelFolderRename,
+    onRenameLibraryFolder,
+    remapExpandedFolderPaths,
+  ]);
 
   const handleAddFileToAssembly = useCallback(() => {
     if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onAddComponent) return;
@@ -349,6 +431,11 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     void onExportLibraryFile(fileContextMenu.target.file);
     setFileContextMenu(null);
   }, [fileContextMenu, onExportLibraryFile]);
+
+  const handleRenameFolderFromMenu = useCallback(() => {
+    if (!fileContextMenu || fileContextMenu.target.type !== 'folder') return;
+    handleStartFolderRename(fileContextMenu.target.path);
+  }, [fileContextMenu, handleStartFolderRename]);
 
   const handleDeleteFromLibrary = useCallback((target: LibraryDeleteTarget) => {
     if (target.type === 'file') {
@@ -416,6 +503,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             fileTree={fileTree}
             expandedFolders={expandedFolders}
             previewFileName={previewFileName}
+            editingFolderPath={editingFolderPath}
+            folderRenameDraft={folderRenameDraft}
+            folderRenameInputRef={folderRenameInputRef}
             canDeleteAllLibraryFiles={canDeleteAllLibraryFiles}
             t={t}
             onToggleOpen={() => setIsFileBrowserOpen(!isFileBrowserOpen)}
@@ -423,6 +513,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
               setFileContextMenu(null);
               setIsDeleteAllLibraryDialogOpen(true);
             }}
+            onFolderRenameDraftChange={setFolderRenameDraft}
+            onCommitFolderRename={handleCommitFolderRename}
+            onCancelFolderRename={handleCancelFolderRename}
             onLoadRobot={onLoadRobot}
             onPreviewFile={handlePreviewFile}
             onAddComponent={onAddComponent}
@@ -495,16 +588,22 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       <FileTreeContextMenu
         position={fileContextMenu ? { x: fileContextMenu.x, y: fileContextMenu.y } : null}
         addLabel={t.addComponent}
+        renameLabel={t.rename}
         exportLabel={t.export}
         deleteLabel={t.removeFromLibrary}
         onAdd={handleAddFileToAssembly}
+        onRename={handleRenameFolderFromMenu}
         onExport={handleExportLibraryFile}
         showAddAction={isProMode && fileContextMenu?.target.type === 'file'}
+        showRenameAction={Boolean(fileContextMenu?.target.type === 'folder' && onRenameLibraryFolder)}
         showExportAction={
           fileContextMenu?.target.type === 'file'
           && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
         }
-        showDeleteAction={fileContextMenu?.target.type === 'folder'}
+        showDeleteAction={Boolean(
+          (fileContextMenu?.target.type === 'folder' && onDeleteLibraryFolder)
+          || (fileContextMenu?.target.type === 'file' && onDeleteLibraryFile),
+        )}
         onDelete={() => {
           if (fileContextMenu?.target) {
             handleDeleteFromLibrary(fileContextMenu.target);

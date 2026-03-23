@@ -31,7 +31,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({ activeMode, setMod
 
     const toolbarContent = (
         <>
-            <div className="drag-handle cursor-move px-1 text-text-tertiary/50 flex items-center h-full mr-1 hover:text-text-tertiary transition-colors">
+            <div className="drag-handle cursor-move select-none px-1 text-text-tertiary/50 flex items-center h-full mr-1 hover:text-text-tertiary transition-colors">
                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
             </div>
             {tools.map((tool) => {

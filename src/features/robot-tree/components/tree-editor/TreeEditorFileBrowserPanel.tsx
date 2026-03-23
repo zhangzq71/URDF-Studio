@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react';
+import type { MouseEvent, RefObject } from 'react';
 import type { RobotFile } from '@/types';
 import type { FileTreeNode } from '../../utils';
 import type { LibraryDeleteTarget } from '../FileTreeNode';
@@ -15,10 +15,16 @@ interface TreeEditorFileBrowserPanelProps {
   fileTree: FileTreeNode[];
   expandedFolders: Set<string>;
   previewFileName?: string;
+  editingFolderPath?: string | null;
+  folderRenameDraft: string;
+  folderRenameInputRef: RefObject<HTMLInputElement | null>;
   canDeleteAllLibraryFiles: boolean;
   t: TreeEditorTranslations;
   onToggleOpen: () => void;
   onDeleteAll: () => void;
+  onFolderRenameDraftChange: (value: string) => void;
+  onCommitFolderRename: () => void;
+  onCancelFolderRename: () => void;
   onLoadRobot?: (file: RobotFile) => void;
   onPreviewFile?: (file: RobotFile) => void;
   onAddComponent?: (file: RobotFile) => void;
@@ -38,10 +44,16 @@ export function TreeEditorFileBrowserPanel({
   fileTree,
   expandedFolders,
   previewFileName,
+  editingFolderPath,
+  folderRenameDraft,
+  folderRenameInputRef,
   canDeleteAllLibraryFiles,
   t,
   onToggleOpen,
   onDeleteAll,
+  onFolderRenameDraftChange,
+  onCommitFolderRename,
+  onCancelFolderRename,
   onLoadRobot,
   onPreviewFile,
   onAddComponent,
@@ -60,9 +72,15 @@ export function TreeEditorFileBrowserPanel({
       isDragging={isDragging}
       isOpen={isOpen}
       isProMode={isProMode}
+      editingFolderPath={editingFolderPath}
+      folderRenameDraft={folderRenameDraft}
+      folderRenameInputRef={folderRenameInputRef}
       onAddComponent={onAddComponent}
       onDeleteAll={onDeleteAll}
       onDeleteFromLibrary={onDeleteFromLibrary}
+      onFolderRenameDraftChange={onFolderRenameDraftChange}
+      onCommitFolderRename={onCommitFolderRename}
+      onCancelFolderRename={onCancelFolderRename}
       onFileActivate={isProMode ? onPreviewFile : onLoadRobot}
       onFileContextMenu={onFileContextMenu}
       onFolderContextMenu={onFolderContextMenu}

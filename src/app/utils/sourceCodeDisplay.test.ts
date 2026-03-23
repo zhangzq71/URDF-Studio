@@ -57,3 +57,15 @@ test('keeps explicit MJCF files in MJCF mode', () => {
   assert.equal(shouldUseEquivalentMjcfForUsdSource(file), false);
   assert.equal(getSourceCodeDocumentFlavor(file), 'mjcf');
 });
+
+test('keeps explicit Xacro files in Xacro mode and editable', () => {
+  const file = {
+    name: 'robots/demo/arm.urdf.xacro',
+    format: 'xacro' as const,
+    content: '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="arm" />',
+  };
+
+  assert.equal(shouldUseEquivalentMjcfForUsdSource(file), false);
+  assert.equal(getSourceCodeDocumentFlavor(file), 'xacro');
+  assert.equal(isSourceCodeDocumentReadOnly('xacro'), false);
+});
