@@ -6,7 +6,7 @@
  */
 
 import * as THREE from 'three';
-import { createMatteMaterial } from '../utils/materials';
+import { COLLISION_OVERLAY_RENDER_ORDER, createCollisionOverlayMaterial, createMatteMaterial } from '../utils/materials';
 
 /**
  * Create a Three.js capsule geometry group.
@@ -282,19 +282,8 @@ export function processCapsuleGeometries(
                                     mesh.userData.isCollisionMesh = true;
                                     mesh.userData.parentLinkName = linkName;
 
-                                    const collisionMat = createMatteMaterial({
-                                        color: 0xa855f7,
-                                        opacity: 0.35,
-                                        transparent: true,
-                                        name: 'collision_capsule'
-                                    });
-                                    collisionMat.depthWrite = false;
-                                    collisionMat.depthTest = true;
-                                    collisionMat.polygonOffset = true;
-                                    collisionMat.polygonOffsetFactor = -1.0;
-                                    collisionMat.polygonOffsetUnits = -4.0;
-                                    mesh.material = collisionMat;
-                                    mesh.renderOrder = 999;
+                                    mesh.material = createCollisionOverlayMaterial('collision_capsule');
+                                    mesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
                                 }
                             });
 

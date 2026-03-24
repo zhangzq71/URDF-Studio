@@ -12,6 +12,7 @@ export type ExportFormat = 'mjcf' | 'urdf' | 'xacro' | 'usd';
 export interface MjcfExportConfig {
   meshdir: string;
   addFloatBase: boolean;
+  preferSharedMeshReuse: boolean;
   includeActuators: boolean;
   actuatorType: MjcfActuatorType;
   includeMeshes: boolean;
@@ -23,6 +24,7 @@ export interface UrdfExportConfig {
   includeExtended: boolean;
   includeBOM: boolean;
   useRelativePaths: boolean;
+  preferSourceVisualMeshes: boolean;
   includeMeshes: boolean;
   compressSTL: boolean;
   stlQuality: number;
@@ -65,6 +67,7 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
   mjcf: {
     meshdir: 'meshes/',
     addFloatBase: false,
+    preferSharedMeshReuse: true,
     includeActuators: true,
     actuatorType: 'position',
     includeMeshes: true,
@@ -75,6 +78,7 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
     includeExtended: false,
     includeBOM: false,
     useRelativePaths: true,
+    preferSourceVisualMeshes: true,
     includeMeshes: true,
     compressSTL: false,
     stlQuality: 50,
@@ -594,6 +598,15 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 <Row label={t.exportFloatBase} desc={t.exportFloatBaseDesc}>
                   <Toggle value={config.mjcf.addFloatBase} onChange={(v) => updateMjcf('addFloatBase', v)} />
                 </Row>
+                <Row
+                  label={t.exportPreferSharedMeshReuse}
+                  desc={t.exportPreferSharedMeshReuseDesc}
+                >
+                  <Toggle
+                    value={config.mjcf.preferSharedMeshReuse}
+                    onChange={(v) => updateMjcf('preferSharedMeshReuse', v)}
+                  />
+                </Row>
                 <Row label={t.exportIncludeActuators}>
                   <Toggle value={config.mjcf.includeActuators} onChange={(v) => updateMjcf('includeActuators', v)} />
                 </Row>
@@ -645,6 +658,17 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc}>
                   <Toggle value={config.urdf.useRelativePaths} onChange={(v) => updateUrdf('useRelativePaths', v)} />
                 </Row>
+                {!config.urdf.includeExtended && (
+                  <Row
+                    label={t.exportPreferSourceVisualMeshes}
+                    desc={t.exportPreferSourceVisualMeshesDesc}
+                  >
+                    <Toggle
+                      value={config.urdf.preferSourceVisualMeshes}
+                      onChange={(v) => updateUrdf('preferSourceVisualMeshes', v)}
+                    />
+                  </Row>
+                )}
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">

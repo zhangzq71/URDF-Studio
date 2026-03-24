@@ -4,11 +4,12 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getPrimaryTreeRenderRootLinkId, getTreeRenderRootLinkIds } from '@/core/robot';
-import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
+import type { AppMode, AssemblyState, RobotData, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import { Button, Dialog } from '@/shared/components/ui';
 import { useAssemblyStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
+import { buildChildJointsByParent, buildParentLinkByChild } from '../utils/treeSelectionScope';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
 import type { LibraryDeleteTarget } from './FileTreeNode';
 import { TreeEditorFileBrowserPanel } from './tree-editor/TreeEditorFileBrowserPanel';
@@ -138,8 +139,24 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
   const namePlaceholder = sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName;
   const showStructureFilePath = Boolean(currentFileName && (sidebarTab === 'structure' || isReadOnly));
+  const robotSelection = robot.selection ?? { type: null as const, id: null as const };
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
+  const treeRobot = useMemo<RobotData>(() => ({
+    name: robot.name,
+    links: robot.links,
+    joints: robot.joints,
+    rootLinkId: robot.rootLinkId,
+    materials: robot.materials,
+    closedLoopConstraints: robot.closedLoopConstraints,
+  }), [
+    robot.closedLoopConstraints,
+    robot.joints,
+    robot.links,
+    robot.materials,
+    robot.name,
+    robot.rootLinkId,
+  ]);
   const topLevelLibraryFoldersKey = useMemo(() => {
     const firstLevel = new Set<string>();
 
@@ -153,53 +170,15 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     return Array.from(firstLevel).sort().join('\u0000');
   }, [availableFiles]);
 
-  const childJointsByParent = useMemo<Record<string, RobotState['joints'][string][]>>(() => {
-    const grouped: Record<string, RobotState['joints'][string][]> = {};
-
-    Object.values(robot.joints).forEach((joint) => {
-      if (!grouped[joint.parentLinkId]) {
-        grouped[joint.parentLinkId] = [];
-      }
-      grouped[joint.parentLinkId].push(joint);
-    });
-
-    return grouped;
-  }, [robot.joints]);
-
-  const treeRootLinkIds = useMemo(() => getTreeRenderRootLinkIds(robot), [robot]);
-
-  const selectionBranchLinkIds = useMemo(() => {
-    const branchLinkIds = new Set<string>();
-    const { selection } = robot;
-    const parentLinkByChild = new Map<string, string>();
-    const jointsByIdentity = new Map<string, RobotState['joints'][string]>();
-
-    Object.values(robot.joints).forEach((joint) => {
-      parentLinkByChild.set(joint.childLinkId, joint.parentLinkId);
-      jointsByIdentity.set(joint.id, joint);
-      jointsByIdentity.set(joint.name, joint);
-    });
-
-    const markAncestors = (startLinkId: string | null | undefined) => {
-      let currentLinkId = startLinkId ?? null;
-
-      while (currentLinkId) {
-        branchLinkIds.add(currentLinkId);
-        currentLinkId = parentLinkByChild.get(currentLinkId) ?? null;
-      }
-    };
-
-    if (selection.type === 'link' && selection.id) {
-      markAncestors(selection.id);
-    } else if (selection.type === 'joint' && selection.id) {
-      const selectedJoint = jointsByIdentity.get(selection.id);
-      if (selectedJoint) {
-        markAncestors(selectedJoint.parentLinkId);
-      }
-    }
-
-    return branchLinkIds;
-  }, [robot.joints, robot.selection]);
+  const childJointsByParent = useMemo<Record<string, RobotState['joints'][string][]>>(
+    () => buildChildJointsByParent(robot.joints),
+    [robot.joints],
+  );
+  const parentLinkByChild = useMemo(() => buildParentLinkByChild(robot.joints), [robot.joints]);
+  const treeRootLinkIds = useMemo(
+    () => getTreeRenderRootLinkIds(robot),
+    [robot.joints, robot.links, robot.rootLinkId],
+  );
 
   const toggleFolder = useCallback((path: string) => {
     setExpandedFolders((prev) => {
@@ -543,19 +522,19 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             currentFileName={currentFileName}
             mode={mode}
             assemblyState={assemblyState}
-            robot={robot}
+            robot={treeRobot}
             treeRootLinkIds={treeRootLinkIds}
             childJointsByParent={childJointsByParent}
-            selectionBranchLinkIds={selectionBranchLinkIds}
+            parentLinkByChild={parentLinkByChild}
             t={t}
             onToggleOpen={() => setIsStructureOpen(!isStructureOpen)}
             onToggleGeometryDetails={() => setStructureTreeShowGeometryDetails(!structureTreeShowGeometryDetails)}
             onAddChildFromSelection={() => {
               let targetId = getPrimaryTreeRenderRootLinkId(robot) ?? robot.rootLinkId;
-              if (robot.selection.type === 'link' && robot.selection.id) {
-                targetId = robot.selection.id;
-              } else if (robot.selection.type === 'joint' && robot.selection.id) {
-                const selectedJoint = robot.joints[robot.selection.id];
+              if (robotSelection.type === 'link' && robotSelection.id) {
+                targetId = robotSelection.id;
+              } else if (robotSelection.type === 'joint' && robotSelection.id) {
+                const selectedJoint = robot.joints[robotSelection.id];
                 if (selectedJoint) {
                   targetId = selectedJoint.childLinkId;
                 }

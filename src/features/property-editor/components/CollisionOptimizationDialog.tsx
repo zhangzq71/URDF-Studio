@@ -503,18 +503,18 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
 
   const defaultWindowSize = useMemo(() => {
     if (typeof window === 'undefined') {
-      return { width: 820, height: 760 };
+      return { width: 1080, height: 820 };
     }
 
     return {
-      width: Math.min(840, Math.max(720, Math.round(window.innerWidth * 0.58))),
-      height: Math.min(760, Math.max(600, window.innerHeight - 120)),
+      width: Math.min(1180, Math.max(960, Math.round(window.innerWidth * 0.72))),
+      height: Math.min(860, Math.max(680, window.innerHeight - 96)),
     };
   }, []);
 
   const windowState = useDraggableWindow({
     defaultSize: defaultWindowSize,
-    minSize: { width: 520, height: 520 },
+    minSize: { width: 760, height: 640 },
     centerOnMount: true,
     enableMinimize: false,
     enableMaximize: false,
@@ -1064,8 +1064,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
         ? 'grid-cols-[minmax(0,1.7fr)_minmax(300px,360px)]'
         : 'grid-cols-[minmax(0,1.45fr)_minmax(280px,340px)]'
       : isUltraWideLayout
-        ? 'grid-cols-[minmax(360px,0.85fr)_minmax(720px,1.4fr)]'
-        : 'grid-cols-[minmax(320px,0.95fr)_minmax(0,1.15fr)]';
+        ? 'grid-cols-[minmax(500px,1.35fr)_minmax(320px,0.88fr)]'
+        : 'grid-cols-[minmax(420px,1.22fr)_minmax(300px,0.92fr)]';
   const settingsLayoutClass = isWideLayout
     ? 'grid grid-cols-[minmax(0,1.35fr)_minmax(280px,0.95fr)] items-start gap-2.5'
     : 'space-y-2.5';

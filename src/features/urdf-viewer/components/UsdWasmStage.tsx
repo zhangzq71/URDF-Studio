@@ -69,6 +69,7 @@ import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
 
 interface UsdWasmStageProps {
+  active?: boolean;
   sourceFile: RobotFile;
   availableFiles: RobotFile[];
   assets: Record<string, string>;
@@ -550,6 +551,7 @@ async function ensureCriticalUsdDependenciesLoaded(
 }
 
 export function UsdWasmStage({
+  active = true,
   sourceFile,
   availableFiles,
   assets,
@@ -604,6 +606,7 @@ export function UsdWasmStage({
   const driverRef = useRef<any>(null);
   const runtimeRef = useRef<UsdWasmRuntime | null>(null);
   const renderInterfaceRef = useRef<any>(null);
+  const activeRef = useRef(active);
   const resolvedRobotDataRef = useRef<ViewerRobotDataResolution | null>(null);
   const jointAxesResolutionRef = useRef<ViewerRobotDataResolution | null>(null);
   const baselineRobotLinksRef = useRef<Record<string, UrdfLink> | null>(null);
@@ -673,7 +676,11 @@ export function UsdWasmStage({
   const loadingStageLabel = loadingProgress?.phase && loadingProgress.phase !== 'ready'
     ? loadingPhaseLabels[loadingProgress.phase]
     : null;
-  const loadingDetail = loadingStageLabel || loadingDetailLabel;
+  const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   useEffect(() => {
     visibilityRef.current = { showVisual, showCollision };
@@ -694,9 +701,9 @@ export function UsdWasmStage({
   useEffect(() => {
     const linkRotationController = linkRotationControllerRef.current;
     linkRotationController.setPickSubType(jointRotationRuntime.pickSubType);
-    linkRotationController.setEnabled(jointRotationRuntime.enabled);
+    linkRotationController.setEnabled(active && jointRotationRuntime.enabled);
     markUsdHoverRaycastDirty(hoverNeedsRaycastRef, invalidate);
-  }, [invalidate, jointRotationRuntime.enabled, jointRotationRuntime.pickSubType]);
+  }, [active, invalidate, jointRotationRuntime.enabled, jointRotationRuntime.pickSubType]);
 
   useEffect(() => {
     if (
@@ -756,6 +763,34 @@ export function UsdWasmStage({
           ?? activeRenderInterface.getPreferredLinkWorldTransform?.(linkPath)
           ?? activeRenderInterface.getWorldTransformForPrimPath?.(linkPath)
           ?? null;
+      },
+      getMeshWorldMatrix: () => {
+        let fallbackMesh: THREE.Mesh | null = null;
+        let visibleMesh: THREE.Mesh | null = null;
+
+        meshMetaByObjectRef.current.forEach((meta, object) => {
+          if (
+            meta.role !== 'collision'
+            || meta.linkPath !== linkPath
+            || meta.objectIndex !== objectIndex
+            || !(object instanceof THREE.Mesh)
+          ) {
+            return;
+          }
+
+          fallbackMesh ||= object;
+          if (object.visible) {
+            visibleMesh ||= object;
+          }
+        });
+
+        const selectedMesh = visibleMesh ?? fallbackMesh;
+        if (!selectedMesh) {
+          return null;
+        }
+
+        selectedMesh.updateMatrixWorld(true);
+        return selectedMesh.matrixWorld.clone();
       },
     };
   }, [robotLinks]);
@@ -1072,6 +1107,8 @@ export function UsdWasmStage({
   }, [rootGroup]);
 
   const applyUsdCameraFrame = useCallback((bounds?: THREE.Box3 | null) => {
+    if (!activeRef.current) return false;
+
     const orbitControls = controls as ViewerControls | null;
     if (!orbitControls?.target) return false;
 
@@ -1573,6 +1610,16 @@ export function UsdWasmStage({
     emitRuntimeHoverState({ type: null, id: null, subType: undefined, objectIndex: undefined });
   }, [emitRuntimeHoverState]);
 
+  useEffect(() => {
+    if (active) {
+      return;
+    }
+
+    setIsDragging?.(false);
+    onTransformPending?.(false);
+    clearRuntimeHover();
+  }, [active, clearRuntimeHover, onTransformPending, setIsDragging]);
+
   const emitRuntimeMeshSelection = useCallback((pickedMeshMeta: RuntimeMeshMeta | null) => {
     if (!pickedMeshMeta) {
       return;
@@ -1757,7 +1804,6 @@ export function UsdWasmStage({
         hoverPointerInsideRef,
         hoverNeedsRaycastRef,
       });
-      setLoadingProgress(null);
       onHover?.(null, null);
       onRuntimeRobotResolvedRef.current?.(null);
       linkAxesControllerRef.current.clear(rootGroup);
@@ -1919,7 +1965,7 @@ export function UsdWasmStage({
             }
           });
           linkRotationController.setPickSubType(activeJointRotationRuntime.pickSubType);
-          linkRotationController.setEnabled(activeJointRotationRuntime.enabled);
+          linkRotationController.setEnabled(activeRef.current && activeJointRotationRuntime.enabled);
           linkRotationController.setStageSourcePath(stageSourcePath);
           linkRotationController.setRenderInterface(renderInterface);
           linkRotationController.prewarmInteractivePoseCaches();
@@ -1949,7 +1995,7 @@ export function UsdWasmStage({
         disposeAutoFrame = scheduleStabilizedAutoFrame({
           sample: sampleUsdAutoFrameBounds,
           applyFrame: ({ state }) => applyUsdCameraFrame(state),
-          isActive,
+          isActive: () => activeRef.current && isActive(),
           delays: [0, 96, 224],
           onSettled: () => {
             if (!isActive()) return;
@@ -2005,7 +2051,7 @@ export function UsdWasmStage({
   }, [refreshRuntimeDecorations]);
 
   useFrame(() => {
-    if (interactionPolicy.enableContinuousHover && hoverSelectionEnabled && onHover) {
+    if (activeRef.current && interactionPolicy.enableContinuousHover && hoverSelectionEnabled && onHover) {
       const pointer = hoverPointerClientRef.current;
       const cameraMoved = !camera.position.equals(lastHoverCameraPositionRef.current)
         || !camera.quaternion.equals(lastHoverCameraQuaternionRef.current);

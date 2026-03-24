@@ -89,6 +89,7 @@ export function useHoverDetection({
 
     // Track last camera position to detect camera movement
     const lastCameraPosRef = useRef(new THREE.Vector3());
+    const lastCameraQuaternionRef = useRef(new THREE.Quaternion());
     // Track last toolMode to detect mode changes
     const lastToolModeRef = useRef(toolMode);
     const useExternalHover = typeof onHover === 'function';
@@ -264,10 +265,12 @@ export function useHoverDetection({
 
         // OPTIMIZATION: Check if raycast is needed (mouse moved, camera changed, or toolMode changed)
         const cameraMoved = !camera.position.equals(lastCameraPosRef.current);
+        const cameraRotated = !camera.quaternion.equals(lastCameraQuaternionRef.current);
         const toolModeChanged = toolMode !== lastToolModeRef.current;
 
-        if (cameraMoved) {
+        if (cameraMoved || cameraRotated) {
             lastCameraPosRef.current.copy(camera.position);
+            lastCameraQuaternionRef.current.copy(camera.quaternion);
             needsRaycastRef.current = true;
         }
         if (toolModeChanged) {
@@ -360,7 +363,8 @@ export function useHoverDetection({
                 robot,
                 raycasterRef.current,
                 pickTargets,
-                activeInteractionSubType
+                activeInteractionSubType,
+                false
             );
 
             if (intersects.length > 0) {
@@ -430,7 +434,8 @@ export function useHoverDetection({
             robot,
             raycasterRef.current,
             pickTargets,
-            activeInteractionSubType
+            activeInteractionSubType,
+            false
         );
 
         let newHoveredLink: string | null = null;

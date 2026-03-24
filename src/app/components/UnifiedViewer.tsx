@@ -11,6 +11,10 @@ import { useURDFViewerController, URDFViewerPanels, URDFViewerScene, type ToolMo
 import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
 import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/urdf-viewer/utils/viewerResourceScope';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
+import {
+  createInitialUnifiedViewerMountState,
+  resolveUnifiedViewerMountState,
+} from '@/app/utils/unifiedViewerMountState';
 import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
 
@@ -111,6 +115,82 @@ function FilePreviewError({ lang }: { lang: Language }) {
   );
 }
 
+interface ViewerSceneConnectorProps {
+  controller: ReturnType<typeof useURDFViewerController>;
+  active: boolean;
+  activePreview?: FilePreviewState;
+  viewerResourceScope: ViewerResourceScope;
+  effectiveSourceFile: RobotFile | null | undefined;
+  effectiveSourceFilePath?: string;
+  effectiveUrdfContent: string;
+  onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  mode: 'detail' | 'hardware';
+  selection?: UnifiedViewerProps['selection'];
+  onHover?: UnifiedViewerProps['onHover'];
+  onMeshSelect?: UnifiedViewerProps['onMeshSelect'];
+  robot: RobotState;
+  focusTarget?: string | null;
+  onCollisionTransformPreview?: UnifiedViewerProps['onCollisionTransformPreview'];
+  onCollisionTransform?: UnifiedViewerProps['onCollisionTransform'];
+  isMeshPreview?: boolean;
+  viewerReloadKey?: number;
+  t: typeof translations.en;
+}
+
+const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
+  controller,
+  active,
+  activePreview,
+  viewerResourceScope,
+  effectiveSourceFile,
+  effectiveSourceFilePath,
+  effectiveUrdfContent,
+  onRobotDataResolved,
+  mode,
+  selection,
+  onHover,
+  onMeshSelect,
+  robot,
+  focusTarget,
+  onCollisionTransformPreview,
+  onCollisionTransform,
+  isMeshPreview = false,
+  viewerReloadKey = 0,
+  t,
+}: ViewerSceneConnectorProps) {
+  const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
+  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+
+  return (
+    <URDFViewerScene
+      controller={controller}
+      active={active}
+      sourceFile={effectiveSourceFile}
+      availableFiles={viewerResourceScope.availableFiles}
+      urdfContent={effectiveUrdfContent}
+      assets={viewerResourceScope.assets}
+      onRobotDataResolved={onRobotDataResolved}
+      sourceFilePath={effectiveSourceFilePath}
+      groundPlaneOffset={groundPlaneOffset}
+      mode={activePreview ? 'detail' : mode}
+      selection={activePreview ? emptySelection : selection}
+      hoveredSelection={activePreview ? undefined : hoveredSelection}
+      hoverSelectionEnabled={active && !activePreview}
+      onHover={active && !activePreview ? onHover : undefined}
+      onMeshSelect={active && !activePreview ? onMeshSelect : undefined}
+      robotLinks={activePreview ? undefined : robot.links}
+      robotJoints={activePreview ? undefined : robot.joints}
+      focusTarget={activePreview ? undefined : focusTarget}
+      onCollisionTransformPreview={activePreview ? undefined : onCollisionTransformPreview}
+      onCollisionTransform={activePreview ? undefined : onCollisionTransform}
+      isMeshPreview={activePreview ? false : isMeshPreview}
+      runtimeInstanceKey={viewerReloadKey}
+      toolMode={controller.toolMode}
+      t={t}
+    />
+  );
+});
+
 export const UnifiedViewer = React.memo(({
   robot,
   mode,
@@ -157,12 +237,17 @@ export const UnifiedViewer = React.memo(({
   const activePreview = mode === 'skeleton' ? undefined : filePreview;
   const isPreviewing = !!activePreview;
   const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
+  const [viewerSceneMode, setViewerSceneMode] = React.useState<'detail' | 'hardware'>(
+    mode === 'hardware' ? 'hardware' : 'detail',
+  );
+  const [mountState, setMountState] = React.useState(() => createInitialUnifiedViewerMountState({
+    mode,
+    isPreviewing,
+  }));
   const effectiveJointAngleState = isPreviewing ? undefined : jointAngleState;
   const effectiveJointMotionState = isPreviewing ? undefined : jointMotionState;
   const effectiveSyncJointChangesToApp = isPreviewing ? false : syncJointChangesToApp;
   const resolvedTheme = useResolvedTheme(theme);
-  const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
   const skeletonOptionsVisibleRef = React.useRef(showSkeletonOptionsPanel);
   const optionsVisibleAtPointerDownRef = React.useRef({
@@ -177,6 +262,19 @@ export const UnifiedViewer = React.memo(({
   useEffect(() => {
     skeletonOptionsVisibleRef.current = showSkeletonOptionsPanel;
   }, [showSkeletonOptionsPanel]);
+
+  useEffect(() => {
+    setMountState((current) => resolveUnifiedViewerMountState(current, {
+      mode,
+      isPreviewing,
+    }));
+  }, [isPreviewing, mode]);
+
+  useEffect(() => {
+    if (mode === 'detail' || mode === 'hardware') {
+      setViewerSceneMode(mode);
+    }
+  }, [mode]);
 
   const visualizerController = useVisualizerController({
     robot,
@@ -210,12 +308,7 @@ export const UnifiedViewer = React.memo(({
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
   const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
   const effectiveSourceFile = activePreview ? null : sourceFile;
-  const effectiveSelection = activePreview ? emptySelection : selection;
-  const effectiveHoveredSelection = activePreview ? undefined : hoveredSelection;
-  const hoverSelectionEnabled = !activePreview;
-  const effectiveFocusTarget = activePreview ? undefined : focusTarget;
-  const effectiveIsMeshPreview = activePreview ? false : isMeshPreview;
-  const controlLayerKey = isViewerMode ? 'viewer' : 'visualizer';
+  const controlLayerKey = 'shared';
   const workspaceEnvironment = 'studio' as const;
   const workspaceEnvironmentIntensity = isViewerMode
     ? (resolvedTheme === 'light' ? 0.24 : 0.22)
@@ -295,6 +388,9 @@ export const UnifiedViewer = React.memo(({
     visualizerController.clearSelection();
     restoreSkeletonOptionsIfNeeded();
   }, [restoreSkeletonOptionsIfNeeded, visualizerController]);
+
+  const viewerVisible = isViewerMode;
+  const visualizerVisible = !isViewerMode;
 
   useEffect(() => {
     if (!pendingViewerToolMode || !isViewerMode) {
@@ -389,43 +485,44 @@ export const UnifiedViewer = React.memo(({
         )
       }
     >
-      {isViewerMode ? (
-        <URDFViewerScene
-          controller={viewerController}
-          sourceFile={effectiveSourceFile}
-          availableFiles={viewerResourceScope.availableFiles}
-          urdfContent={effectiveUrdfContent}
-          assets={viewerResourceScope.assets}
-          onRobotDataResolved={onRobotDataResolved}
-          sourceFilePath={effectiveSourceFilePath}
-          groundPlaneOffset={groundPlaneOffset}
-          mode={activePreview ? 'detail' : (mode as 'detail' | 'hardware')}
-          selection={effectiveSelection}
-          hoveredSelection={effectiveHoveredSelection}
-          hoverSelectionEnabled={hoverSelectionEnabled}
-          onHover={activePreview ? undefined : onHover}
-          onMeshSelect={activePreview ? undefined : onMeshSelect}
-          robotLinks={activePreview ? undefined : robot.links}
-          robotJoints={activePreview ? undefined : robot.joints}
-          focusTarget={effectiveFocusTarget}
-          onCollisionTransformPreview={activePreview ? undefined : onCollisionTransformPreview}
-          onCollisionTransform={activePreview ? undefined : onCollisionTransform}
-          isMeshPreview={effectiveIsMeshPreview}
-          runtimeInstanceKey={viewerReloadKey}
-          toolMode={viewerController.toolMode}
-          t={t}
-        />
-      ) : (
-        <VisualizerScene
-          robot={robot}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          mode={mode}
-          assets={visualizerResourceScope.assets}
-          lang={lang}
-          controller={visualizerController}
-        />
-      )}
+      {mountState.viewerMounted ? (
+        <group visible={viewerVisible}>
+          <ViewerSceneConnector
+            controller={viewerController}
+            active={viewerVisible}
+            activePreview={activePreview}
+            viewerResourceScope={viewerResourceScope}
+            effectiveSourceFile={effectiveSourceFile}
+            effectiveSourceFilePath={effectiveSourceFilePath}
+            effectiveUrdfContent={effectiveUrdfContent}
+            onRobotDataResolved={onRobotDataResolved}
+            mode={viewerSceneMode}
+            selection={selection}
+            onHover={onHover}
+            onMeshSelect={onMeshSelect}
+            robot={robot}
+            focusTarget={focusTarget}
+            onCollisionTransformPreview={onCollisionTransformPreview}
+            onCollisionTransform={onCollisionTransform}
+            isMeshPreview={isMeshPreview}
+            viewerReloadKey={viewerReloadKey}
+            t={t}
+          />
+        </group>
+      ) : null}
+      {mountState.visualizerMounted ? (
+        <group visible={visualizerVisible}>
+          <VisualizerScene
+            robot={robot}
+            onSelect={onSelect}
+            onUpdate={onUpdate}
+            mode={mode}
+            assets={visualizerResourceScope.assets}
+            lang={lang}
+            controller={visualizerController}
+          />
+        </group>
+      ) : null}
     </WorkspaceCanvas>
   );
 });

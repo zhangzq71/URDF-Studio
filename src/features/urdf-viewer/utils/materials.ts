@@ -21,6 +21,7 @@ export function applyMatteMaterialToMesh(
     opacity: number = 1.0
 ): void {
     const processMaterial = (oldMat: THREE.Material): THREE.MeshStandardMaterial => {
+        const usesVertexColors = Boolean((oldMat as any).vertexColors);
         // Extract existing color if not overridden
         let matColor: THREE.Color;
         if (color !== undefined) {
@@ -40,7 +41,8 @@ export function applyMatteMaterialToMesh(
             transparent: opacity < 1.0 || oldMat.transparent,
             side: oldMat.side,
             map: existingMap,
-            name: oldMat.name
+            name: oldMat.name,
+            preserveExactColor: usesVertexColors,
         });
     };
 
@@ -153,15 +155,38 @@ export const collisionBaseMaterial = new THREE.MeshStandardMaterial({
     roughness: 0.8,
     metalness: 0.0,
     side: THREE.DoubleSide,
-    depthWrite: false,      // Critical: transparent objects should not write to depth buffer
-    depthTest: false,       // Disable depth test so collision always renders above visual mesh
+    depthWrite: false,      // Transparent overlays should not stamp the depth buffer
+    depthTest: false,       // Collision overlays must stay visible above visual meshes
     polygonOffset: true,    // Prevent Z-fighting with ground plane
     polygonOffsetFactor: -1.0,
     polygonOffsetUnits: -4.0,
 });
-// Set flags to prevent opacity modification and mark as collision material
-collisionBaseMaterial.userData.isCollisionMaterial = true;
-collisionBaseMaterial.userData.isSharedMaterial = true;  // Prevent opacity modification
+
+export const COLLISION_OVERLAY_RENDER_ORDER = 999;
+
+export function configureCollisionOverlayMaterial<T extends THREE.Material>(material: T): T {
+    material.transparent = true;
+    material.depthWrite = false;
+    material.depthTest = false;
+    material.polygonOffset = true;
+    material.polygonOffsetFactor = -1.0;
+    material.polygonOffsetUnits = -4.0;
+    material.userData.isCollisionMaterial = true;
+    return material;
+}
+
+export function createCollisionOverlayMaterial(name: string): THREE.MeshStandardMaterial {
+    return configureCollisionOverlayMaterial(createMatteMaterial({
+        color: 0xa855f7,
+        opacity: 0.35,
+        transparent: true,
+        name,
+    }));
+}
+
+configureCollisionOverlayMaterial(collisionBaseMaterial);
+// Prevent opacity modification on the shared singleton.
+collisionBaseMaterial.userData.isSharedMaterial = true;
 
 // Empty raycast function to disable raycast on collision meshes
 export const emptyRaycast = () => { };
@@ -236,6 +261,8 @@ export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Tex
  * @returns Enhanced MeshStandardMaterial
  */
 export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.Texture | null): THREE.Material => {
+    const usesVertexColors = Boolean((material as any).vertexColors);
+
     // Extract color from existing material
     // Priority: URDF color > existing material color > default gray
     let color: THREE.Color;
@@ -263,8 +290,14 @@ export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.T
         side: existingSide,
         map: existingMap,
         name: material.name,
-        preserveExactColor: Boolean(material.userData.urdfColorApplied),
+        preserveExactColor: Boolean(material.userData.urdfColorApplied) || usesVertexColors,
     });
+
+    if (usesVertexColors) {
+        newMat.vertexColors = true;
+        newMat.toneMapped = false;
+        newMat.userData.usesVertexColors = true;
+    }
 
     // Apply environment map if provided
     if (envMap) {

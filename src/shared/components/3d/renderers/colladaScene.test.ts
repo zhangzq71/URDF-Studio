@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
+import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 
-import { createMeshLoader } from '@/core/loaders';
+import { createMeshLoader, isCoplanarOffsetMaterial } from '@/core/loaders';
+import { normalizeColladaUpAxis } from '@/core/loaders/colladaUpAxis';
 
 import { cloneColladaScenePreservingRootTransform } from './colladaScene';
 
@@ -70,4 +72,28 @@ test('cloneColladaScenePreservingRootTransform bakes b2w base_link root transfor
   assert.ok(Math.abs(clone.quaternion.z) < 1e-6);
   assert.ok(Math.abs(clone.quaternion.w - 1) < 1e-6);
   expectBoxEquals(getWorldBox(clone), referenceBox);
+});
+
+test('cloneColladaScenePreservingRootTransform applies shared coplanar shell fixups to raw b2 base_link Collada scenes', () => {
+  const meshPath = 'test/unitree_ros/robots/b2_description/meshes/base_link.dae';
+  const colladaText = fs.readFileSync(meshPath, 'utf8');
+  const loader = new ColladaLoader();
+  const dae = loader.parse(normalizeColladaUpAxis(colladaText).content, THREE.LoaderUtils.extractUrlBase(meshPath));
+
+  const { clone } = cloneColladaScenePreservingRootTransform(dae.scene);
+  let firstMesh: THREE.Mesh | null = null;
+  clone.traverse((child) => {
+    if (!firstMesh && (child as THREE.Mesh).isMesh) {
+      firstMesh = child as THREE.Mesh;
+    }
+  });
+
+  assert.ok(firstMesh);
+  assert.ok(Array.isArray(firstMesh.material));
+  const materials = firstMesh.material as THREE.Material[];
+
+  assert.equal(materials[0]?.name, '磨砂铝合金.011');
+  assert.equal(materials[1]?.name, 'logo.001');
+  assert.equal(isCoplanarOffsetMaterial(materials[0]), true);
+  assert.equal(isCoplanarOffsetMaterial(materials[1]), false);
 });

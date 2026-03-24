@@ -478,6 +478,10 @@ export interface TranslationKeys {
   exportIncludeBOMDesc: string;
   exportIncludeSkeleton: string;
   exportIncludeSkeletonDesc: string;
+  exportPreferSharedMeshReuse: string;
+  exportPreferSharedMeshReuseDesc: string;
+  exportPreferSourceVisualMeshes: string;
+  exportPreferSourceVisualMeshesDesc: string;
   exportOutputSection: string;
   exportOptionsSection: string;
   exportDoExport: string;

@@ -12,8 +12,8 @@ import { useAppShellState, useFileImport, useFileExport, useImportInputBinding }
 import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import { resolveRobotFileData } from '@/core/parsers';
-import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
-import { translations } from '@/shared/i18n';
+import type { MotorSpec, RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
+import { translations, type Language } from '@/shared/i18n';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import {
   installRegressionDebugApi,
@@ -30,6 +30,79 @@ const AIModal = lazy(() =>
 const ExportDialog = lazy(() =>
   loadExportDialogModule().then((module) => ({ default: module.ExportDialog }))
 );
+
+function AIModalConnector({
+  isOpen,
+  onClose,
+  motorLibrary,
+  lang,
+  sidebarTab,
+  onApplyChanges,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  motorLibrary: Record<string, MotorSpec[]>;
+  lang: Language;
+  sidebarTab: string;
+  onApplyChanges: (data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => void;
+}) {
+  const selection = useSelectionStore((state) => state.selection);
+  const setSelection = useSelectionStore((state) => state.setSelection);
+  const focusOn = useSelectionStore((state) => state.focusOn);
+  const robotName = useRobotStore((state) => state.name);
+  const robotLinks = useRobotStore((state) => state.links);
+  const robotJoints = useRobotStore((state) => state.joints);
+  const rootLinkId = useRobotStore((state) => state.rootLinkId);
+  const assemblyState = useAssemblyStore((state) => state.assemblyState);
+  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
+
+  const mergedWorkspaceRobot = useMemo(() => {
+    if (!assemblyState || sidebarTab !== 'workspace') {
+      return null;
+    }
+
+    return getMergedRobotData();
+  }, [assemblyState, getMergedRobotData, sidebarTab]);
+
+  const robot: RobotState = useMemo(() => {
+    if (mergedWorkspaceRobot) {
+      return {
+        ...mergedWorkspaceRobot,
+        selection,
+      };
+    }
+
+    return {
+      name: robotName,
+      links: robotLinks,
+      joints: robotJoints,
+      rootLinkId,
+      selection,
+    };
+  }, [
+    mergedWorkspaceRobot,
+    robotJoints,
+    robotLinks,
+    robotName,
+    rootLinkId,
+    selection,
+  ]);
+
+  return (
+    <AIModal
+      isOpen={isOpen}
+      onClose={onClose}
+      robot={robot}
+      motorLibrary={motorLibrary}
+      lang={lang}
+      onApplyChanges={onApplyChanges}
+      onSelectItem={(type, id) => {
+        setSelection({ type, id });
+        focusOn(id);
+      }}
+    />
+  );
+}
 
 function waitForNextPaint(): Promise<void> {
   if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
@@ -65,8 +138,6 @@ function AppContent() {
 
   // Selection Store
   const setSelection = useSelectionStore((state) => state.setSelection);
-  const selection = useSelectionStore((state) => state.selection);
-  const focusOn = useSelectionStore((state) => state.focusOn);
 
   // Assets Store
   const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
@@ -82,15 +153,7 @@ function AppContent() {
   const motorLibrary = useAssetsStore((state) => state.motorLibrary);
 
   // Robot Store
-  const robotName = useRobotStore((state) => state.name);
-  const robotLinks = useRobotStore((state) => state.links);
-  const robotJoints = useRobotStore((state) => state.joints);
-  const rootLinkId = useRobotStore((state) => state.rootLinkId);
   const setRobot = useRobotStore((state) => state.setRobot);
-
-  // Assembly Store
-  const assemblyState = useAssemblyStore((state) => state.assemblyState);
-  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
 
   const {
     toast,
@@ -109,40 +172,6 @@ function AppContent() {
     viewConfig,
     setViewConfig,
   } = useAppShellState();
-
-  // Build robot state for AI modal
-  // In workspace mode, AI inspection/select should target merged assembly ids.
-  const mergedWorkspaceRobot = useMemo(() => {
-    if (!assemblyState || sidebarTab !== 'workspace') {
-      return null;
-    }
-
-    return getMergedRobotData();
-  }, [assemblyState, getMergedRobotData, sidebarTab]);
-
-  const robot: RobotState = useMemo(() => {
-    if (mergedWorkspaceRobot) {
-      return {
-        ...mergedWorkspaceRobot,
-        selection,
-      };
-    }
-
-    return {
-      name: robotName,
-      links: robotLinks,
-      joints: robotJoints,
-      rootLinkId,
-      selection,
-    };
-  }, [
-    robotName,
-    robotLinks,
-    robotJoints,
-    rootLinkId,
-    selection,
-    mergedWorkspaceRobot,
-  ]);
 
   const isSelectedUsdHydrating = selectedFile?.format === 'usd'
     && documentLoadState.status === 'hydrating'
@@ -282,40 +311,21 @@ function AppContent() {
 
   // AI changes handler
   const handleApplyAIChanges = useCallback((data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => {
+    const currentRobot = useRobotStore.getState();
     setRobot({
-      name: data.name || robotName,
-      links: data.links || robotLinks,
-      joints: data.joints || robotJoints,
-      rootLinkId: data.rootLinkId || rootLinkId,
+      name: data.name || currentRobot.name,
+      links: data.links || currentRobot.links,
+      joints: data.joints || currentRobot.joints,
+      rootLinkId: data.rootLinkId || currentRobot.rootLinkId,
     });
     setAppMode('skeleton');
-  }, [robotName, robotLinks, robotJoints, rootLinkId, setRobot, setAppMode]);
+  }, [setAppMode, setRobot]);
 
   useImportInputBinding({
     importInputRef,
     importFolderInputRef,
     onImport: handleImport,
   });
-
-  useEffect(() => {
-    const warmup = () => {
-      void loadAIModalModule();
-      void loadExportDialogModule();
-    };
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: typeof window.requestIdleCallback;
-      cancelIdleCallback?: typeof window.cancelIdleCallback;
-    };
-
-    if (typeof idleWindow.requestIdleCallback === 'function') {
-      const idleId = idleWindow.requestIdleCallback(warmup, { timeout: 2200 });
-      return () => idleWindow.cancelIdleCallback?.(idleId);
-    }
-
-    const timer = window.setTimeout(warmup, 1200);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   const handleOpenAIModal = useCallback(() => {
     if (isSelectedUsdHydrating) {
@@ -375,17 +385,13 @@ function AppContent() {
       <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
       {shouldRenderAIModal && (
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
-          <AIModal
+          <AIModalConnector
             isOpen={isAIModalOpen}
             onClose={() => setIsAIModalOpen(false)}
-            robot={robot}
             motorLibrary={motorLibrary}
             lang={lang}
+            sidebarTab={sidebarTab}
             onApplyChanges={handleApplyAIChanges}
-            onSelectItem={(type, id) => {
-              setSelection({ type, id });
-              focusOn(id);
-            }}
           />
         </Suspense>
       )}

@@ -42,6 +42,7 @@ const EMPTY_ANALYSIS: CoplanarMaterialAnalysis = Object.freeze({
 });
 
 const geometryAnalysisCache = new WeakMap<THREE.BufferGeometry, Map<string, CoplanarMaterialAnalysis>>();
+const _geometryCenter = new THREE.Vector3();
 
 const toFiniteGroupValue = (value: number) => {
     if (!Number.isFinite(value) || value < 0) {
@@ -200,6 +201,13 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
         return EMPTY_ANALYSIS;
     }
 
+    geometry.computeBoundingBox();
+    const geometryBoundingBox = geometry.boundingBox;
+    if (!geometryBoundingBox) {
+        return EMPTY_ANALYSIS;
+    }
+    geometryBoundingBox.getCenter(_geometryCenter);
+
     const signature = buildGroupsSignature(groups);
     const cachedBySignature = geometryAnalysisCache.get(geometry);
     const cached = cachedBySignature?.get(signature);
@@ -211,6 +219,8 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
     const indexArray = geometry.index?.array ?? null;
     const triangleOwners = new Map<string, Set<number>>();
     const trianglesPerMaterial = new Map<number, number>();
+    const centroidDistanceSumPerMaterial = new Map<number, number>();
+    const measuredTrianglesPerMaterial = new Map<number, number>();
     const overlappingMaterials = new Map<number, Set<number>>();
     const nearCoplanarTriangleBuckets = new Map<string, TriangleDescriptor[]>();
     const materialsToOffset = new Set<number>();
@@ -270,6 +280,20 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
                 continue;
             }
 
+            const centroidDistance = Math.hypot(
+                triangle.centroidX - _geometryCenter.x,
+                triangle.centroidY - _geometryCenter.y,
+                triangle.centroidZ - _geometryCenter.z,
+            );
+            centroidDistanceSumPerMaterial.set(
+                materialIndex,
+                (centroidDistanceSumPerMaterial.get(materialIndex) ?? 0) + centroidDistance,
+            );
+            measuredTrianglesPerMaterial.set(
+                materialIndex,
+                (measuredTrianglesPerMaterial.get(materialIndex) ?? 0) + 1,
+            );
+
             const bucketX = getTriangleBucketCoordinate(triangle.centroidX);
             const bucketY = getTriangleBucketCoordinate(triangle.centroidY);
             const bucketZ = getTriangleBucketCoordinate(triangle.centroidZ);
@@ -320,7 +344,25 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
     }
 
     const visitedMaterials = new Set<number>();
+    const getAverageCentroidDistance = (materialIndex: number) => {
+        const triangleCount = measuredTrianglesPerMaterial.get(materialIndex) ?? 0;
+        if (triangleCount <= 0) {
+            return Number.POSITIVE_INFINITY;
+        }
+
+        return (centroidDistanceSumPerMaterial.get(materialIndex) ?? 0) / triangleCount;
+    };
     const pickAnchorMaterialIndex = (componentMaterialIndices: number[]) => componentMaterialIndices.reduce((bestMaterialIndex, materialIndex) => {
+        const bestAverageCentroidDistance = getAverageCentroidDistance(bestMaterialIndex);
+        const averageCentroidDistance = getAverageCentroidDistance(materialIndex);
+        if (averageCentroidDistance < (bestAverageCentroidDistance - 1e-6)) {
+            return materialIndex;
+        }
+
+        if (Math.abs(averageCentroidDistance - bestAverageCentroidDistance) > 1e-6) {
+            return bestMaterialIndex;
+        }
+
         const bestTriangleCount = trianglesPerMaterial.get(bestMaterialIndex) ?? 0;
         const triangleCount = trianglesPerMaterial.get(materialIndex) ?? 0;
         if (triangleCount > bestTriangleCount) {
@@ -362,6 +404,7 @@ const analyzeCoplanarMaterialGroups = (geometry: THREE.BufferGeometry): Coplanar
         }
 
         const anchorMaterialIndex = pickAnchorMaterialIndex(componentMaterialIndices);
+
         for (const candidateMaterialIndex of componentMaterialIndices) {
             if (candidateMaterialIndex !== anchorMaterialIndex) {
                 materialsToOffset.add(candidateMaterialIndex);
@@ -449,3 +492,6 @@ export const mitigateCoplanarMaterialZFighting = (mesh: THREE.Mesh): CoplanarMat
 
 export const isCoplanarOffsetMaterial = (material: THREE.Material | null | undefined) =>
     material?.userData?.[COPLANAR_OFFSET_FLAG] === true;
+
+export const markMaterialAsCoplanarOffset = <T extends THREE.Material>(material: T): T =>
+    ensureOffsetMaterial(material) as T;

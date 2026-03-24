@@ -10,6 +10,32 @@ export interface UsdExtractedGeometryTransform {
 
 const tempEuler = new THREE.Euler(0, 0, 0, 'ZYX');
 
+export function extractUsdProxyLocalTransformFromWorldMatrices({
+  linkWorldMatrix,
+  meshWorldMatrix,
+}: {
+  linkWorldMatrix: THREE.Matrix4;
+  meshWorldMatrix: THREE.Matrix4;
+}): UsdExtractedGeometryTransform {
+  const proxyLocalMatrix = linkWorldMatrix
+    .clone()
+    .invert()
+    .multiply(meshWorldMatrix.clone());
+
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  proxyLocalMatrix.decompose(position, quaternion, scale);
+
+  tempEuler.setFromQuaternion(quaternion, 'ZYX');
+
+  return {
+    position: { x: position.x, y: position.y, z: position.z },
+    rotation: { r: tempEuler.x, p: tempEuler.y, y: tempEuler.z },
+    scale: { x: scale.x, y: scale.y, z: scale.z },
+  };
+}
+
 export function extractUsdGeometryTransformFromWorldMatrix({
   currentGeometry,
   currentMeshWorldMatrix,

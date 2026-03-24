@@ -73,8 +73,11 @@ export function SceneLighting({
 
   useEffect(() => {
     gl.shadowMap.enabled = shouldUseShadows;
+    gl.shadowMap.autoUpdate = shouldUseShadows;
     if (shouldUseShadows) {
       gl.shadowMap.type = THREE.PCFSoftShadowMap;
+    } else {
+      gl.shadowMap.needsUpdate = false;
     }
 
     scene.receiveShadow = true;

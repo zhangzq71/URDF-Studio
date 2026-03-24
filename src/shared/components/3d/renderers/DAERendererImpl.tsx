@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { useLoadingManager } from '../meshLoadingManager';
 import { cloneColladaScenePreservingRootTransform } from './colladaScene';
+import { isCoplanarOffsetMaterial, markMaterialAsCoplanarOffset } from '@/core/loaders';
 import { normalizeColladaUpAxis } from '@/core/loaders/colladaUpAxis';
 
 interface ScaleProps {
@@ -20,6 +21,46 @@ interface DAERendererImplProps {
   normalizeRoot?: boolean;
   scale?: ScaleProps;
   onResolved?: () => void;
+}
+
+const ORIGINAL_MATERIAL_KEY = '__urdfStudioDaeOriginalMaterial';
+const GENERATED_OVERRIDE_MATERIAL_KEY = '__urdfStudioDaeGeneratedOverrideMaterial';
+
+function disposeGeneratedOverrideMaterials(materialOrMaterials: THREE.Material | THREE.Material[]) {
+  const materials = Array.isArray(materialOrMaterials) ? materialOrMaterials : [materialOrMaterials];
+  materials.forEach((nextMaterial) => {
+    if (nextMaterial?.userData?.[GENERATED_OVERRIDE_MATERIAL_KEY] === true) {
+      nextMaterial.dispose();
+    }
+  });
+}
+
+function buildOverrideMaterial(
+  sourceMaterial: THREE.Material | THREE.Material[],
+  baseMaterial: THREE.Material,
+) {
+  const sourceMaterials = Array.isArray(sourceMaterial) ? sourceMaterial : [sourceMaterial];
+  const hasCoplanarOffsets = sourceMaterials.some((nextMaterial) => isCoplanarOffsetMaterial(nextMaterial));
+  if (!hasCoplanarOffsets) {
+    return baseMaterial;
+  }
+
+  const nextMaterials = sourceMaterials.map((nextMaterial) => {
+    const overrideMaterial = baseMaterial.clone();
+    overrideMaterial.userData = {
+      ...(overrideMaterial.userData ?? {}),
+      [GENERATED_OVERRIDE_MATERIAL_KEY]: true,
+    };
+
+    if (isCoplanarOffsetMaterial(nextMaterial)) {
+      return markMaterialAsCoplanarOffset(overrideMaterial);
+    }
+
+    overrideMaterial.needsUpdate = true;
+    return overrideMaterial;
+  });
+
+  return Array.isArray(sourceMaterial) ? nextMaterials : nextMaterials[0];
 }
 
 export function DAERendererImpl({
@@ -45,8 +86,22 @@ export function DAERendererImpl({
 
   useLayoutEffect(() => {
     overrideMeshes.forEach((mesh) => {
-      mesh.material = material;
+      const originalMaterial = (mesh.userData?.[ORIGINAL_MATERIAL_KEY] as THREE.Material | THREE.Material[] | undefined)
+        ?? mesh.material;
+      mesh.userData = {
+        ...(mesh.userData ?? {}),
+        [ORIGINAL_MATERIAL_KEY]: originalMaterial,
+      };
+
+      disposeGeneratedOverrideMaterials(mesh.material);
+      mesh.material = buildOverrideMaterial(originalMaterial, material);
     });
+
+    return () => {
+      overrideMeshes.forEach((mesh) => {
+        disposeGeneratedOverrideMaterials(mesh.material);
+      });
+    };
   }, [material, overrideMeshes]);
 
   useEffect(() => {

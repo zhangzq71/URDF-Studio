@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, Eye, EyeOff, FileCode, Plus, Shapes, Shield } from 'lucide-react';
 import { translations } from '@/shared/i18n';
-import type { AppMode, AssemblyState, RobotState } from '@/types';
+import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
 import { AssemblyTreeView } from '../AssemblyTreeView';
 import { TreeNode } from '../TreeNode';
 
@@ -15,10 +15,10 @@ interface TreeEditorStructureSectionProps {
   currentFileName?: string;
   mode: AppMode;
   assemblyState?: AssemblyState | null;
-  robot: RobotState;
+  robot: RobotData;
   treeRootLinkIds: string[];
   childJointsByParent: Record<string, RobotState['joints'][string][]>;
-  selectionBranchLinkIds: Set<string>;
+  parentLinkByChild: Record<string, string>;
   t: TreeEditorTranslations;
   onToggleOpen: () => void;
   onToggleGeometryDetails: () => void;
@@ -51,7 +51,7 @@ export function TreeEditorStructureSection({
   robot,
   treeRootLinkIds,
   childJointsByParent,
-  selectionBranchLinkIds,
+  parentLinkByChild,
   t,
   onToggleOpen,
   onToggleGeometryDetails,
@@ -158,7 +158,6 @@ export function TreeEditorStructureSection({
               {isAssemblyView && assemblyState ? (
                 <AssemblyTreeView
                   assemblyState={assemblyState}
-                  robot={robot}
                   showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
                   onSelect={onSelect}
                   onSelectGeometry={onSelectGeometry}
@@ -177,24 +176,28 @@ export function TreeEditorStructureSection({
                 />
               ) : (
                 treeRootLinkIds.map((treeRootLinkId) => (
-                  <TreeNode
+                  <div
                     key={treeRootLinkId}
-                    linkId={treeRootLinkId}
-                    robot={robot}
-                    showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
-                    childJointsByParent={childJointsByParent}
-                    selectionBranchLinkIds={selectionBranchLinkIds}
-                    onSelect={onSelect}
-                    onSelectGeometry={onSelectGeometry}
-                    onFocus={onFocus}
-                    onAddChild={onAddChild}
-                    onAddCollisionBody={onAddCollisionBody}
-                    onDelete={onDelete}
-                    onUpdate={onUpdate}
-                    mode={mode}
-                    t={t}
-                    readOnly={isReadOnly}
-                  />
+                    style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}
+                  >
+                    <TreeNode
+                      linkId={treeRootLinkId}
+                      robot={robot}
+                      showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
+                      childJointsByParent={childJointsByParent}
+                      parentLinkByChild={parentLinkByChild}
+                      onSelect={onSelect}
+                      onSelectGeometry={onSelectGeometry}
+                      onFocus={onFocus}
+                      onAddChild={onAddChild}
+                      onAddCollisionBody={onAddCollisionBody}
+                      onDelete={onDelete}
+                      onUpdate={onUpdate}
+                      mode={mode}
+                      t={t}
+                      readOnly={isReadOnly}
+                    />
+                  </div>
                 ))
               )}
             </div>

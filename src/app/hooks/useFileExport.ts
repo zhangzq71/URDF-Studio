@@ -27,6 +27,7 @@ import { resolveCurrentUsdExportBundle } from '../utils/usdExportContext';
 import { buildLiveUsdRoundtripArchive } from '../utils/liveUsdRoundtripExport';
 import { convertUsdArchiveFilesToBinary } from '../utils/usdBinaryArchive';
 import { resolveUrdfSourceExportContent } from './urdfSourceExportUtils';
+import { buildGeneratedUrdfOptions } from '../utils/generatedUrdfOptions';
 
 type ExportTarget =
   | { type: 'current' }
@@ -50,6 +51,11 @@ interface ExportContext {
 
 interface HandleExportWithConfigOptions {
   onProgress?: (progress: ExportProgressState) => void;
+}
+
+interface UrdfSourceExportPreference {
+  useRelativePaths?: boolean;
+  preferSourceVisualMeshes?: boolean;
 }
 
 type ExportProgressReporter = (
@@ -387,8 +393,17 @@ export function useFileExport() {
   const buildUrdfSourceExportContent = useCallback((
     target: ExportTarget,
     exportName: string,
-    useRelativePaths: boolean = false,
+    options: UrdfSourceExportPreference = {},
   ): string | null => {
+    const {
+      useRelativePaths = false,
+      preferSourceVisualMeshes = true,
+    } = options;
+
+    if (!preferSourceVisualMeshes) {
+      return null;
+    }
+
     if (target.type === 'library-file') {
       if (target.file.format !== 'urdf') {
         return null;
@@ -411,6 +426,7 @@ export function useFileExport() {
       selectedFileContent: selectedFile.content,
       originalUrdfContent,
       useRelativePaths,
+      preferSourceVisualMeshes,
     });
   }, [
     buildRobotForExport,
@@ -491,20 +507,6 @@ export function useFileExport() {
     sidebarTab,
   ]);
 
-  const buildGeneratedUrdfOptions = useCallback((
-    extraMeshFiles?: Map<string, Blob>,
-    options: {
-      extended?: boolean;
-      useRelativePaths?: boolean;
-    } = {},
-  ) => ({
-    ...(options.extended ? { extended: true } : {}),
-    ...(options.useRelativePaths ? { useRelativePaths: true } : {}),
-    ...(extraMeshFiles && extraMeshFiles.size > 0
-      ? { omitMeshMaterialPaths: extraMeshFiles.keys() }
-      : {}),
-  }), []);
-
   // Generate BOM (Bill of Materials) CSV
   const generateBOM = useCallback((robot: RobotState): string => {
     const headers = [t.jointName, t.type, t.motorType, t.motorId, t.direction, t.armature, t.lower, t.upper];
@@ -536,11 +538,12 @@ export function useFileExport() {
     const { robot, exportName, extraMeshFiles } = exportContext;
     const zip = new JSZip();
     const archiveRoot = createArchiveRoot(zip, exportName);
+    const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles);
 
     archiveRoot.file(
       `${exportName}.urdf`,
       buildUrdfSourceExportContent(target, exportName)
-        ?? generateURDF(robot, buildGeneratedUrdfOptions(extraMeshFiles)),
+        ?? generateURDF(robot, generatedUrdfOptions),
     );
     await addMeshesToZip(robot, archiveRoot, undefined, extraMeshFiles);
 
@@ -550,7 +553,6 @@ export function useFileExport() {
     resolveExportContext,
     createArchiveRoot,
     buildUrdfSourceExportContent,
-    buildGeneratedUrdfOptions,
     addMeshesToZip,
     downloadBlob,
   ]);
@@ -605,17 +607,17 @@ export function useFileExport() {
       assets,
       extraMeshFiles,
     });
+    const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles);
 
     const zip = new JSZip();
     const archiveRoot = createArchiveRoot(zip, exportName);
     const hardwareFolder = archiveRoot.folder("hardware");
 
     // 1. Generate Standard URDF
-    const generatedUrdfOptions = buildGeneratedUrdfOptions(extraMeshFiles);
     archiveRoot.file(`${exportName}.urdf`, buildUrdfSourceExportContent(target, exportName) ?? generateURDF(robot, generatedUrdfOptions));
 
     // 2. Generate Extended URDF (with hardware info)
-    const extendedXml = generateURDF(robot, buildGeneratedUrdfOptions(extraMeshFiles, { extended: true }));
+    const extendedXml = generateURDF(robot, await buildGeneratedUrdfOptions(extraMeshFiles, { extended: true }));
     archiveRoot.file(`${exportName}_extended.urdf`, extendedXml);
 
     // 3. Generate BOM
@@ -642,7 +644,6 @@ export function useFileExport() {
     assets,
     createArchiveRoot,
     buildUrdfSourceExportContent,
-    buildGeneratedUrdfOptions,
     generateBOM,
     addMeshesToZip,
     addArchiveFilesToZip,
@@ -845,7 +846,16 @@ export function useFileExport() {
     }
 
     if (config.format === 'mjcf') {
-      const { meshdir, addFloatBase, includeActuators, actuatorType, includeMeshes, compressSTL, stlQuality } = config.mjcf;
+      const {
+        meshdir,
+        addFloatBase,
+        preferSharedMeshReuse,
+        includeActuators,
+        actuatorType,
+        includeMeshes,
+        compressSTL,
+        stlQuality,
+      } = config.mjcf;
       reportProgress(2, t.exportProgressPreparingSimulationMeshes, t.exportProgressPreparingSimulationMeshesDetail, {
         stageProgress: 0.04,
         indeterminate: true,
@@ -855,6 +865,7 @@ export function useFileExport() {
         robot,
         assets,
         extraMeshFiles,
+        preferSharedMeshReuse,
       });
 
       reportProgress(3, t.exportProgressGeneratingFiles, t.exportProgressGeneratingMjcfDetail, {
@@ -911,15 +922,20 @@ export function useFileExport() {
       downloadBlob(content, `${exportName}_mjcf.zip`);
     } else if (config.format === 'urdf') {
       const { includeExtended, includeBOM, useRelativePaths, includeMeshes, compressSTL, stlQuality } = config.urdf;
+      const preferSourceVisualMeshes = config.urdf.preferSourceVisualMeshes;
+      const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles, { useRelativePaths });
       reportProgress(2, t.exportProgressGeneratingFiles, t.exportProgressGeneratingUrdfDetail, {
         stageProgress: 0.85,
         indeterminate: false,
       });
 
       const urdfContent = includeExtended
-        ? generateURDF(robot, buildGeneratedUrdfOptions(extraMeshFiles, { extended: true, useRelativePaths }))
-        : buildUrdfSourceExportContent(target, exportName, useRelativePaths)
-          ?? generateURDF(robot, buildGeneratedUrdfOptions(extraMeshFiles, { useRelativePaths }));
+        ? generateURDF(robot, await buildGeneratedUrdfOptions(extraMeshFiles, { extended: true, useRelativePaths }))
+        : buildUrdfSourceExportContent(target, exportName, {
+          useRelativePaths,
+          preferSourceVisualMeshes,
+        })
+          ?? generateURDF(robot, generatedUrdfOptions);
       archiveRoot.file(`${exportName}.urdf`, urdfContent);
       if (includeBOM) {
         const hardwareFolder = archiveRoot.folder('hardware');
@@ -962,13 +978,14 @@ export function useFileExport() {
       downloadBlob(content, `${exportName}_urdf.zip`);
     } else if (config.format === 'xacro') {
       const { rosVersion, rosHardwareInterface, useRelativePaths, includeMeshes, compressSTL, stlQuality } = config.xacro;
+      const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles, { useRelativePaths });
       reportProgress(2, t.exportProgressGeneratingFiles, t.exportProgressGeneratingXacroDetail, {
         stageProgress: 0.85,
         indeterminate: false,
       });
 
-      const xacroBaseUrdf = buildUrdfSourceExportContent(target, exportName, useRelativePaths)
-        ?? generateURDF(robot, buildGeneratedUrdfOptions(extraMeshFiles, { useRelativePaths }));
+      const xacroBaseUrdf = buildUrdfSourceExportContent(target, exportName, { useRelativePaths })
+        ?? generateURDF(robot, generatedUrdfOptions);
       const xacroContent = injectGazeboTags(xacroBaseUrdf, robot, rosVersion, rosHardwareInterface);
       archiveRoot.file(`${exportName}.urdf.xacro`, xacroContent);
       if (includeMeshes) {
@@ -1011,7 +1028,6 @@ export function useFileExport() {
     addMeshesToZip,
     addArchiveFilesToZip,
     addSkeletonToZip,
-    buildGeneratedUrdfOptions,
     currentUsdExportMode,
     createProgressReporter,
     createArchiveRoot,

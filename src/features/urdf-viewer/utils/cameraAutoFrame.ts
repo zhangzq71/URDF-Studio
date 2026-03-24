@@ -4,6 +4,7 @@ export interface AutoFrameRobotChangeOptions {
   lastAutoFramedScopeKey: string | null;
   focusTarget: string | null | undefined;
   mode?: 'detail' | 'hardware';
+  active?: boolean;
 }
 
 export function resolveCameraAutoFrameScopeKey(
@@ -21,7 +22,9 @@ export function shouldAutoFrameRobotChange({
   lastAutoFramedScopeKey,
   focusTarget,
   mode,
+  active = true,
 }: AutoFrameRobotChangeOptions): boolean {
+  if (!active) return false;
   if (!autoFrameOnRobotChange) return false;
   if (!currentScopeKey) return false;
   if (focusTarget) return false;

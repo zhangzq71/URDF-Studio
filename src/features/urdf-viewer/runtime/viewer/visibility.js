@@ -1,4 +1,4 @@
-import { collisionBaseMaterial } from "../../utils/materials.ts";
+import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial } from "../../utils/materials.ts";
 
 const VISUAL_SEGMENT_PATTERN = /(?:^|\/)visuals?(?:$|[/.])/i;
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
@@ -32,7 +32,7 @@ function setCollisionMeshStyle(mesh, enabled, showVisualMeshes) {
 
     if (enabled) {
         mesh.material = collisionBaseMaterial;
-        mesh.renderOrder = 999;
+        mesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
         return;
     }
 

@@ -1,13 +1,16 @@
 import React from 'react';
 import * as THREE from 'three';
+import { Html } from '@react-three/drei';
 import type { RobotState, UrdfJoint } from '@/types';
+import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
-import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
+import { LoadingHud, UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE, buildLoadingHudState } from '@/shared/components/3d';
 import { buildColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { RobotNode } from './nodes';
 import { ClosedLoopConstraintsOverlay } from './constraints';
 import { JointTransformControls } from './controls';
 import type { VisualizerController } from '../hooks/useVisualizerController';
+import { collectVisualizerMeshLoadKeys } from '../utils/visualizerMeshLoading';
 
 const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode }>(
   function GroundedGroup({ children }, ref) {
@@ -34,6 +37,7 @@ export const VisualizerScene = React.memo(({
   lang,
   controller,
 }: VisualizerSceneProps) => {
+  const t = translations[lang];
   const collisionTransformControlRef = React.useRef<any>(null);
   const {
     robotRootRef,
@@ -65,6 +69,48 @@ export const VisualizerScene = React.memo(({
     () => buildColladaRootNormalizationHints(robot.links),
     [robot.links]
   );
+  const expectedMeshLoadKeys = React.useMemo(() => collectVisualizerMeshLoadKeys({
+    robot,
+    mode,
+    showGeometry: state.showGeometry,
+    showCollision: state.showCollision,
+    assets,
+  }), [assets, mode, robot, state.showCollision, state.showGeometry]);
+  const expectedMeshLoadSignature = React.useMemo(
+    () => expectedMeshLoadKeys.join('\u0000'),
+    [expectedMeshLoadKeys],
+  );
+  const expectedMeshLoadKeySet = React.useMemo(
+    () => new Set(expectedMeshLoadKeys),
+    [expectedMeshLoadKeys],
+  );
+  const [meshLoadingState, setMeshLoadingState] = React.useState<{
+    signature: string;
+    resolvedKeys: Set<string>;
+  }>({
+    signature: expectedMeshLoadSignature,
+    resolvedKeys: new Set<string>(),
+  });
+  const resolvedMeshCount = meshLoadingState.signature === expectedMeshLoadSignature
+    ? meshLoadingState.resolvedKeys.size
+    : 0;
+  const isMeshLoading = expectedMeshLoadKeys.length > 0 && resolvedMeshCount < expectedMeshLoadKeys.length;
+  const loadingHudState = React.useMemo(() => buildLoadingHudState({
+    loadedCount: resolvedMeshCount,
+    totalCount: expectedMeshLoadKeys.length,
+    fallbackDetail: t.loadingRobotPreparing,
+  }), [expectedMeshLoadKeys.length, resolvedMeshCount, t.loadingRobotPreparing]);
+  const loadingStageLabel = resolvedMeshCount === 0
+    ? t.loadingRobotPreparing
+    : t.loadingRobotStreamingMeshes;
+  const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
+
+  React.useEffect(() => {
+    setMeshLoadingState({
+      signature: expectedMeshLoadSignature,
+      resolvedKeys: new Set<string>(),
+    });
+  }, [expectedMeshLoadSignature]);
 
   const handleCollisionDraggingChanged = React.useCallback(
     (event: { value?: boolean }) => {
@@ -73,6 +119,33 @@ export const VisualizerScene = React.memo(({
     },
     [handleCollisionTransformEnd]
   );
+
+  const handleMeshResolved = React.useCallback((meshLoadKey: string) => {
+    requestGroundRealignment();
+    setMeshLoadingState((current) => {
+      const resolvedKeys = current.signature === expectedMeshLoadSignature
+        ? current.resolvedKeys
+        : new Set<string>();
+
+      if (!expectedMeshLoadKeySet.has(meshLoadKey) || resolvedKeys.has(meshLoadKey)) {
+        if (current.signature === expectedMeshLoadSignature) {
+          return current;
+        }
+
+        return {
+          signature: expectedMeshLoadSignature,
+          resolvedKeys,
+        };
+      }
+
+      const nextResolvedKeys = new Set(resolvedKeys);
+      nextResolvedKeys.add(meshLoadKey);
+      return {
+        signature: expectedMeshLoadSignature,
+        resolvedKeys: nextResolvedKeys,
+      };
+    });
+  }, [expectedMeshLoadKeySet, expectedMeshLoadSignature, requestGroundRealignment]);
 
   return (
     <>
@@ -108,9 +181,23 @@ export const VisualizerScene = React.memo(({
           onRegisterJointPivot={handleRegisterJointPivot}
           onRegisterJointMotion={handleRegisterJointMotion}
           onRegisterCollisionRef={handleRegisterCollisionRef}
-          onMeshResolved={requestGroundRealignment}
+          onMeshResolved={handleMeshResolved}
         />
       </GroundedGroup>
+      {isMeshLoading ? (
+        <Html fullscreen>
+          <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
+            <LoadingHud
+              title={t.loadingRobot}
+              detail={loadingDetail}
+              progress={loadingHudState.progress}
+              statusLabel={loadingHudState.statusLabel}
+              stageLabel={loadingStageLabel}
+              delayMs={0}
+            />
+          </div>
+        </Html>
+      ) : null}
 
         <JointTransformControls
         mode={mode}

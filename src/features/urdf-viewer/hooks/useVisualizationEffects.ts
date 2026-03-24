@@ -3,7 +3,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { MathUtils as SharedMathUtils } from '@/shared/utils';
 import { getCollisionGeometryByObjectIndex } from '@/core/robot';
-import { collisionBaseMaterial, emptyRaycast } from '../utils/materials';
+import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial, emptyRaycast } from '../utils/materials';
 import { shouldSyncDirectLinkChildVisibility } from '../utils/runtimeVisibility';
 import {
     createJointAxisVisualization,
@@ -241,7 +241,7 @@ export function useVisualizationEffects({
                                 inner.__origMaterial = collisionBaseMaterial;
                             }
                             inner.material = collisionBaseMaterial;
-                            inner.renderOrder = 999;
+                            inner.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
                         }
                     } else {
                         inner.visible = false;

@@ -20,6 +20,7 @@ export interface UseCameraFocusOptions {
     mode?: 'detail' | 'hardware';
     autoFrameOnRobotChange?: boolean;
     autoFrameScopeKey?: string | null;
+    active?: boolean;
 }
 
 function collectLinkBodies(
@@ -82,6 +83,7 @@ export function useCameraFocus({
     mode,
     autoFrameOnRobotChange = false,
     autoFrameScopeKey,
+    active = true,
 }: UseCameraFocusOptions): void {
     const { camera, controls, invalidate } = useThree();
     const controlsWithTarget = controls as unknown as ({
@@ -124,6 +126,14 @@ export function useCameraFocus({
     }, [camera, controlsWithTarget, invalidate]);
 
     useEffect(() => {
+        if (active) {
+            return;
+        }
+
+        cancelFocusAnimation();
+    }, [active, cancelFocusAnimation]);
+
+    useEffect(() => {
         if (!controlsWithTarget) return;
 
         // When the user starts orbiting, camera animation must yield immediately.
@@ -141,11 +151,13 @@ export function useCameraFocus({
 
     // Handle focus target change
     useEffect(() => {
+        if (!active) return;
         if (!focusTarget || !robot || !resolvedFocusObject) return;
         frameObject(resolvedFocusObject, new THREE.Box3().setFromObject(resolvedFocusObject));
-    }, [focusTarget, frameObject, resolvedFocusObject, robot]);
+    }, [active, focusTarget, frameObject, resolvedFocusObject, robot]);
 
     useEffect(() => {
+        if (!active) return;
         if (!robot) return;
         if (!shouldAutoFrameRobotChange({
             autoFrameOnRobotChange,
@@ -153,6 +165,7 @@ export function useCameraFocus({
             lastAutoFramedScopeKey: autoFramedScopeKeyRef.current,
             focusTarget: resolvedFocusObject ? focusTarget : null,
             mode,
+            active,
         })) {
             return;
         }
@@ -175,14 +188,15 @@ export function useCameraFocus({
 
                 return frameObject(robot, state);
             },
-            isActive: () => !resolvedFocusObject && mode !== 'hardware' && !userInterruptedAutoFrameRef.current,
+            isActive: () => active && !resolvedFocusObject && mode !== 'hardware' && !userInterruptedAutoFrameRef.current,
             delays: [0, 96, 224],
         });
-    }, [autoFrameOnRobotChange, currentAutoFrameScopeKey, focusTarget, frameObject, mode, resolvedFocusObject, robot]);
+    }, [active, autoFrameOnRobotChange, currentAutoFrameScopeKey, focusTarget, frameObject, mode, resolvedFocusObject, robot]);
 
     // Animate camera focus
     useFrame((state, delta) => {
         void state;
+        if (!active) return;
         // Skip in hardware mode to improve performance
         if (mode === 'hardware') return;
 

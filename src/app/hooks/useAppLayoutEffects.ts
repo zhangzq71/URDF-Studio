@@ -5,9 +5,6 @@ import type { RobotState } from '@/types';
 import { preloadSourceCodeEditor } from '@/app/utils/sourceCodeEditorLoader';
 import { useActiveHistory } from './useActiveHistory';
 
-const SOURCE_EDITOR_WARMUP_IDLE_TIMEOUT_MS = 400;
-const SOURCE_EDITOR_WARMUP_FALLBACK_MS = 120;
-
 interface LayoutSelection {
   type: 'link' | 'joint' | null;
   id: string | null;
@@ -69,27 +66,6 @@ export function useAppLayoutEffects({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [canRedo, canUndo, redo, undo]);
-
-  useEffect(() => {
-    const warmup = () => {
-      void preloadSourceCodeEditor();
-    };
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: typeof window.requestIdleCallback;
-      cancelIdleCallback?: typeof window.cancelIdleCallback;
-    };
-
-    if (typeof idleWindow.requestIdleCallback === 'function') {
-      const idleId = idleWindow.requestIdleCallback(warmup, {
-        timeout: SOURCE_EDITOR_WARMUP_IDLE_TIMEOUT_MS,
-      });
-      return () => idleWindow.cancelIdleCallback?.(idleId);
-    }
-
-    const timer = window.setTimeout(warmup, SOURCE_EDITOR_WARMUP_FALLBACK_MS);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     if (!selection.id || !selection.type) return;

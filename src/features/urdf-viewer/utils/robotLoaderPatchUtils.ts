@@ -2,7 +2,7 @@ import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { URDFJoint as RuntimeURDFJoint } from '@/core/parsers/urdf/loader';
 import { disposeObject3D, disposeMaterial } from './dispose';
-import { collisionBaseMaterial, createMatteMaterial } from './materials';
+import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial, createMatteMaterial } from './materials';
 import { SHARED_MATERIALS } from '../constants';
 import { DEFAULT_RPY, DEFAULT_VEC3 } from './robotLoaderDiff';
 import type { UrdfJoint, UrdfVisual as LinkGeometry } from '@/types';
@@ -142,7 +142,7 @@ export function markCollisionObject(obj: THREE.Object3D, linkName: string): void
     child.userData.isVisual = false;
     child.userData.isVisualMesh = false;
     child.material = collisionBaseMaterial;
-    child.renderOrder = 999;
+    child.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
 
     disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
   });

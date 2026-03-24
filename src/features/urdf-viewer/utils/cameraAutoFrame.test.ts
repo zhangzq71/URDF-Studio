@@ -54,3 +54,17 @@ test('skips auto-frame in hardware mode', () => {
     false,
   );
 });
+
+test('skips auto-frame when the viewer layer is inactive', () => {
+  assert.equal(
+    shouldAutoFrameRobotChange({
+      autoFrameOnRobotChange: true,
+      currentScopeKey: 'robots/example.urdf',
+      lastAutoFramedScopeKey: null,
+      focusTarget: null,
+      mode: 'detail',
+      active: false,
+    }),
+    false,
+  );
+});

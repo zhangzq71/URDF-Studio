@@ -340,7 +340,7 @@ export function CollisionOptimizationCandidateList({
                 {isChecked ? <CheckSquare2 className="h-3.25 w-3.25" /> : <Square className="h-3.25 w-3.25" />}
               </button>
 
-              <div className="grid gap-1 xl:grid-cols-[minmax(0,1.22fr)_3.5rem_minmax(9.75rem,0.78fr)]">
+              <div className="grid gap-1.25 lg:grid-cols-[minmax(0,1.18fr)_4rem_minmax(11rem,0.9fr)] xl:grid-cols-[minmax(0,1.24fr)_4.25rem_minmax(12rem,0.92fr)]">
                 <div className="space-y-1">
                   {sources.map((source) => (
                     <FlowSourceChip

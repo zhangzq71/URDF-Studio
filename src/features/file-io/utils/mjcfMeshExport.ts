@@ -11,6 +11,7 @@ export interface PrepareMjcfMeshExportAssetsOptions {
   robot: RobotState;
   assets: Record<string, string>;
   extraMeshFiles?: Map<string, Blob>;
+  preferSharedMeshReuse?: boolean;
 }
 
 export interface PreparedMjcfMeshExportAssets {
@@ -22,6 +23,15 @@ export interface PreparedMjcfMeshExportAssets {
 
 function isMjcfNativeMeshPath(meshPath: string): boolean {
   return /\.(?:obj|stl)$/i.test(meshPath);
+}
+
+function collectMeshPathAliases(meshPath: string): string[] {
+  const aliases = [meshPath];
+  const normalizedPath = normalizeMeshPathForExport(meshPath);
+  if (normalizedPath && normalizedPath !== meshPath) {
+    aliases.push(normalizedPath);
+  }
+  return aliases;
 }
 
 function buildConvertedMeshExportPath(meshPath: string, usedPaths: Set<string>): string {
@@ -105,10 +115,34 @@ function colorToHex(color: THREE.Color | undefined): string | undefined {
   return `#${toChannel(color.r)}${toChannel(color.g)}${toChannel(color.b)}`;
 }
 
+function isColorLike(color: unknown): color is THREE.Color {
+  if (!color || typeof color !== 'object') {
+    return false;
+  }
+
+  const candidate = color as Partial<THREE.Color> & { isColor?: boolean };
+  return (candidate.isColor === true || typeof candidate.getHexString === 'function')
+    && typeof candidate.r === 'number'
+    && typeof candidate.g === 'number'
+    && typeof candidate.b === 'number';
+}
+
 function getMaterialColor(material: THREE.Material): THREE.Color | undefined {
-  return 'color' in material && material.color instanceof THREE.Color
+  return 'color' in material && isColorLike(material.color)
     ? material.color
     : undefined;
+}
+
+function isBufferGeometryLike(geometry: unknown): geometry is THREE.BufferGeometry {
+  if (!geometry || typeof geometry !== 'object') {
+    return false;
+  }
+
+  const candidate = geometry as Partial<THREE.BufferGeometry> & { isBufferGeometry?: boolean };
+  return Boolean(candidate.isBufferGeometry)
+    && typeof candidate.clone === 'function'
+    && typeof candidate.getAttribute === 'function'
+    && typeof candidate.getIndex === 'function';
 }
 
 function cloneAttributeSubset(
@@ -138,11 +172,18 @@ function cloneAttributeSubset(
   return cloned;
 }
 
+function getUsableGeometryIndex(
+  geometry: THREE.BufferGeometry,
+): THREE.BufferAttribute | null {
+  const index = geometry.getIndex();
+  return index && index.count > 0 ? index : null;
+}
+
 function buildIndexedGeometrySubset(
   sourceGeometry: THREE.BufferGeometry,
   relevantGroups: readonly THREE.Group[],
 ): THREE.BufferGeometry | null {
-  const sourceIndex = sourceGeometry.getIndex();
+  const sourceIndex = getUsableGeometryIndex(sourceGeometry);
   if (!sourceIndex || relevantGroups.length === 0) {
     return null;
   }
@@ -234,7 +275,7 @@ function extractGeometryForMaterial(
     return null;
   }
 
-  if (sourceGeometry.getIndex()) {
+  if (getUsableGeometryIndex(sourceGeometry)) {
     return buildIndexedGeometrySubset(sourceGeometry, relevantGroups);
   }
 
@@ -246,7 +287,7 @@ function createBakedVariantMesh(
   material: THREE.Material,
   materialIndex?: number,
 ): THREE.Mesh | null {
-  if (!(mesh.geometry instanceof THREE.BufferGeometry)) {
+  if (!isBufferGeometryLike(mesh.geometry)) {
     return null;
   }
 
@@ -489,10 +530,116 @@ function containsPlaceholderMesh(object: any): boolean {
   return hasPlaceholder;
 }
 
+function getInlineMeshBlob(
+  extraMeshFiles: Map<string, Blob> | undefined,
+  meshPath: string,
+): Blob | null {
+  if (!extraMeshFiles?.size) {
+    return null;
+  }
+
+  for (const candidatePath of collectMeshPathAliases(meshPath)) {
+    const blob = extraMeshFiles.get(candidatePath);
+    if (blob) {
+      return blob;
+    }
+  }
+
+  return null;
+}
+
+async function hashMeshBytes(bytes: Uint8Array): Promise<string> {
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((value) => value.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  let hash = 2166136261;
+  for (const value of bytes) {
+    hash ^= value;
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+async function buildNativeMeshFingerprint(
+  meshPath: string,
+  meshBlob: Blob,
+): Promise<string> {
+  const normalizedPath = normalizeMeshPathForExport(meshPath) || meshPath;
+  const extensionMatch = normalizedPath.match(/\.([^.]+)$/);
+  const extension = extensionMatch?.[1]?.toLowerCase() || '';
+  const bytes = new Uint8Array(await meshBlob.arrayBuffer());
+  const hash = await hashMeshBytes(bytes);
+  return `${extension}:${bytes.byteLength}:${hash}`;
+}
+
+function markSharedMeshReuse(
+  sourceMeshPath: string,
+  canonicalMeshPath: string,
+  meshPathOverrides: Map<string, string>,
+  convertedSourceMeshPaths: Set<string>,
+): void {
+  collectMeshPathAliases(sourceMeshPath).forEach((candidatePath) => {
+    meshPathOverrides.set(candidatePath, canonicalMeshPath);
+    convertedSourceMeshPaths.add(candidatePath);
+  });
+}
+
+async function prepareSharedNativeMeshReuse(
+  referencedMeshPaths: Set<string>,
+  extraMeshFiles: Map<string, Blob> | undefined,
+  meshPathOverrides: Map<string, string>,
+  convertedSourceMeshPaths: Set<string>,
+): Promise<void> {
+  if (!extraMeshFiles?.size) {
+    return;
+  }
+
+  const canonicalPathByFingerprint = new Map<string, string>();
+
+  for (const meshPath of referencedMeshPaths) {
+    if (!isMjcfNativeMeshPath(meshPath)) {
+      continue;
+    }
+
+    const meshBlob = getInlineMeshBlob(extraMeshFiles, meshPath);
+    if (!meshBlob) {
+      continue;
+    }
+
+    const fingerprint = await buildNativeMeshFingerprint(meshPath, meshBlob);
+    const canonicalMeshPath = canonicalPathByFingerprint.get(fingerprint);
+    if (!canonicalMeshPath) {
+      canonicalPathByFingerprint.set(fingerprint, meshPath);
+      continue;
+    }
+
+    if (canonicalMeshPath === meshPath) {
+      continue;
+    }
+
+    markSharedMeshReuse(
+      meshPath,
+      canonicalMeshPath,
+      meshPathOverrides,
+      convertedSourceMeshPaths,
+    );
+  }
+}
+
 export async function prepareMjcfMeshExportAssets(
   options: PrepareMjcfMeshExportAssetsOptions,
 ): Promise<PreparedMjcfMeshExportAssets> {
-  const { robot, assets, extraMeshFiles } = options;
+  const {
+    robot,
+    assets,
+    extraMeshFiles,
+    preferSharedMeshReuse = true,
+  } = options;
   const meshPathOverrides = new Map<string, string>();
   const archiveFiles = new Map<string, Blob>();
   const convertedSourceMeshPaths = new Set<string>();
@@ -516,6 +663,15 @@ export async function prepareMjcfMeshExportAssets(
   const objExporter = new OBJExporter();
 
   try {
+    if (preferSharedMeshReuse) {
+      await prepareSharedNativeMeshReuse(
+        referencedMeshPaths,
+        extraMeshFiles,
+        meshPathOverrides,
+        convertedSourceMeshPaths,
+      );
+    }
+
     for (const meshPath of referencedMeshPaths) {
       if (isMjcfNativeMeshPath(meshPath)) {
         continue;
@@ -605,3 +761,10 @@ export async function prepareMjcfMeshExportAssets(
     visualMeshVariants,
   };
 }
+
+export const __mjcfMeshExportInternals = {
+  isBufferGeometryLike,
+  isColorLike,
+  getMaterialColor,
+  createBakedVariantMesh,
+};

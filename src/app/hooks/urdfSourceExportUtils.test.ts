@@ -93,3 +93,25 @@ test('resolveUrdfSourceExportContent falls back to the selected URDF text when t
   assert.match(exportedContent, /<color rgba="0 0 1 1" \/>/);
   assert.doesNotMatch(exportedContent, /<color rgba="1 0 0 1" \/>/);
 });
+
+test('resolveUrdfSourceExportContent can opt out of reusing original go2 visual mesh sources', () => {
+  const sourceFilePath = 'test/unitree_ros/robots/go2_description/urdf/go2_description.urdf';
+  const originalUrdfContent = fs.readFileSync(sourceFilePath, 'utf8');
+  const currentRobot = parseURDF(originalUrdfContent);
+
+  assert.ok(currentRobot);
+
+  const exportedContent = resolveUrdfSourceExportContent({
+    currentRobot: {
+      ...currentRobot,
+      selection: { type: null, id: null },
+    },
+    exportRobotName: currentRobot.name,
+    selectedFileName: sourceFilePath,
+    selectedFileContent: originalUrdfContent,
+    originalUrdfContent,
+    preferSourceVisualMeshes: false,
+  });
+
+  assert.equal(exportedContent, null);
+});

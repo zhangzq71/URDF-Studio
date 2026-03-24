@@ -17,6 +17,15 @@ function isVisibleInHierarchy(object: THREE.Object3D): boolean {
   return true;
 }
 
+function hasPickableMaterial(material: THREE.Material | THREE.Material[] | undefined): boolean {
+  if (!material) {
+    return true;
+  }
+
+  const materials = Array.isArray(material) ? material : [material];
+  return materials.some((entry) => entry.visible !== false);
+}
+
 export function isCollisionPickObject(object: THREE.Object3D | null): boolean {
   let current: THREE.Object3D | null = object;
   while (current) {
@@ -51,6 +60,8 @@ export function collectPickTargets(
       if (!mesh.geometry) return;
       if (mesh.userData?.isGizmo) return;
       if (!isVisibleInHierarchy(mesh)) return;
+      if (typeof (mesh as unknown as { raycast?: unknown }).raycast !== 'function') return;
+      if (!hasPickableMaterial(mesh.material)) return;
 
       seen.add(mesh.id);
       targets.push(mesh);
@@ -65,12 +76,13 @@ export function findPickIntersections(
   raycaster: THREE.Raycaster,
   pickTargets: THREE.Object3D[],
   mode: PickTargetMode,
+  fallbackOnMiss = true,
 ): THREE.Intersection[] {
   const directHits = pickTargets.length > 0
     ? raycaster.intersectObjects(pickTargets, false).filter((hit) => matchesIntersectionMode(hit, mode))
     : [];
 
-  if (directHits.length > 0 || !robot) {
+  if (directHits.length > 0 || !fallbackOnMiss || !robot) {
     return directHits;
   }
 

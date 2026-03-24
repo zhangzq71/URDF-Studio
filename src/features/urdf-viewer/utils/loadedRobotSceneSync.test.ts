@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 
 import { URDFLink, URDFVisual } from '@/core/parsers/urdf/loader/URDFClasses';
 
+import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial } from './materials';
 import { parseURDFMaterials } from './urdfMaterials';
 import { syncLoadedRobotScene } from './loadedRobotSceneSync';
 
@@ -140,4 +141,43 @@ test('syncLoadedRobotScene upgrades MJCF visual meshes to the shared matte viewe
   assert.equal(mjcfMesh.material.roughness, 0.68);
   assert.equal(mjcfMesh.material.metalness, 0.02);
   assert.equal(mjcfMesh.material.envMapIntensity, 0.3);
+});
+
+test('syncLoadedRobotScene keeps collision meshes as always-on-top overlays', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.name = 'base_collision';
+  (collisionGroup as any).isURDFCollider = true;
+
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+
+  collisionGroup.add(collisionMesh);
+  link.add(collisionGroup);
+  robot.add(link);
+  (robot as any).links = { base_link: link };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: true,
+    showVisual: true,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.linkMeshMap.get('base_link:collision')?.includes(collisionMesh), true);
+  assert.equal(collisionMesh.material, collisionBaseMaterial);
+  assert.equal(collisionMesh.userData.parentLinkName, 'base_link');
+  assert.equal(collisionMesh.userData.isCollisionMesh, true);
+  assert.equal(collisionMesh.userData.isVisualMesh, false);
+  assert.equal(collisionMesh.visible, true);
+  assert.equal(collisionMesh.renderOrder, COLLISION_OVERLAY_RENDER_ORDER);
+  assert.equal(collisionBaseMaterial.depthTest, false);
+  assert.equal(collisionBaseMaterial.depthWrite, false);
 });
