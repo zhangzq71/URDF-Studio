@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import type { RobotFile } from '@/types';
 import {
   isUrdfSelfContainedInImportBundle,
+  pickPreferredMjcfImportFile,
   pickPreferredImportFile,
 } from './importPreferredFile';
 
@@ -14,6 +15,10 @@ const { window } = new JSDOM();
 
 if (!globalThis.DOMParser) {
   globalThis.DOMParser = window.DOMParser;
+}
+
+if (!globalThis.XMLSerializer) {
+  globalThis.XMLSerializer = window.XMLSerializer as typeof XMLSerializer;
 }
 
 function readFixture(relativePath: string): string {
@@ -102,4 +107,69 @@ test('isUrdfSelfContainedInImportBundle detects missing package roots', () => {
   const meshFile = createRobotFile('vendor_bundle/meshes/base_link.stl', 'mesh');
 
   assert.equal(isUrdfSelfContainedInImportBundle(urdfFile, [urdfFile, meshFile]), false);
+});
+
+test('pickPreferredMjcfImportFile prefers direct robot definitions over wrapper scenes without relying on names', () => {
+  const robotFile = createRobotFile(
+    'demo_bundle/robot_model.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="robot">
+  <worldbody>
+    <body name="base_link">
+      <geom name="base_geom" type="box" size="0.1 0.1 0.1" />
+    </body>
+  </worldbody>
+</mujoco>`,
+  );
+  const wrapperFile = createRobotFile(
+    'demo_bundle/a.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="launcher">
+  <include file="robot_model.xml" />
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 1" />
+  </worldbody>
+</mujoco>`,
+  );
+
+  const preferredFile = pickPreferredMjcfImportFile([wrapperFile, robotFile], [wrapperFile, robotFile]);
+
+  assert.equal(preferredFile?.name, 'demo_bundle/robot_model.xml');
+});
+
+test('pickPreferredImportFile does not prefer MJCF solely because the bundle path mentions mujoco', () => {
+  const urdfFile = createRobotFile(
+    'demo_mujoco/urdf/demo.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="demo_mujoco">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://demo_mujoco/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const mjcfFile = createRobotFile(
+    'demo_mujoco/xml/demo.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="demo">
+  <worldbody>
+    <body name="base_link" />
+  </worldbody>
+</mujoco>`,
+  );
+  const meshFile = createRobotFile('demo_mujoco/meshes/base_link.stl', 'mesh');
+
+  const preferredFile = pickPreferredImportFile(
+    [urdfFile, mjcfFile, meshFile],
+    [urdfFile, mjcfFile, meshFile],
+  );
+
+  assert.equal(preferredFile?.name, 'demo_mujoco/urdf/demo.urdf');
 });

@@ -88,3 +88,88 @@ test('resolveMJCFSource scopes attached compiler settings to the imported subtre
   assertQuaternionClose(hostGeom.quat, [0.70710678, 0.70710678, 0, 0]);
   assertQuaternionClose(childBody.quat, [0.70710678, 0.70710678, 0, 0]);
 });
+
+test('resolveMJCFSource keeps the selected file even when a sibling scene includes it', () => {
+  installDomGlobals();
+
+  const files: RobotFile[] = [
+    {
+      name: '/tmp/mjcf-selected/robot.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="robot">
+          <actuator>
+            <motor name="joint_motor" joint="joint" />
+          </actuator>
+        </mujoco>
+      `,
+    },
+    {
+      name: '/tmp/mjcf-selected/scene.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="scene">
+          <include file="robot.xml" />
+          <worldbody>
+            <geom name="floor" type="plane" size="0 0 1" />
+          </worldbody>
+        </mujoco>
+      `,
+    },
+  ];
+
+  const resolved = resolveMJCFSource(files[0]!, files);
+
+  assert.equal(resolved.sourceFile.name, '/tmp/mjcf-selected/robot.xml');
+  assert.equal(resolved.effectiveFile.name, '/tmp/mjcf-selected/robot.xml');
+  assert.match(resolved.content, /joint_motor/);
+  assert.doesNotMatch(resolved.content, /name="floor"/);
+});
+
+test('resolveMJCFSource does not resolve includes through ambiguous basename matches', () => {
+  installDomGlobals();
+
+  const files: RobotFile[] = [
+    {
+      name: '/tmp/mjcf-ambiguous/wrapper.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="wrapper">
+          <include file="model.xml" />
+          <worldbody>
+            <geom name="floor" type="plane" size="0 0 1" />
+          </worldbody>
+        </mujoco>
+      `,
+    },
+    {
+      name: '/tmp/mjcf-ambiguous/left/model.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="left">
+          <worldbody>
+            <body name="left_root" />
+          </worldbody>
+        </mujoco>
+      `,
+    },
+    {
+      name: '/tmp/mjcf-ambiguous/right/model.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="right">
+          <worldbody>
+            <body name="right_root" />
+          </worldbody>
+        </mujoco>
+      `,
+    },
+  ];
+
+  const resolved = resolveMJCFSource(files[0]!, files);
+
+  assert.equal(resolved.effectiveFile.name, '/tmp/mjcf-ambiguous/wrapper.xml');
+  assert.match(resolved.content, /name="floor"/);
+  assert.doesNotMatch(resolved.content, /left_root/);
+  assert.doesNotMatch(resolved.content, /right_root/);
+});

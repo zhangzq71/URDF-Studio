@@ -9,13 +9,7 @@ type MJCFFileMap = Record<string, string>;
 interface IndexedMJCFFileMap {
   fileMap: MJCFFileMap;
   mjcfFiles: RobotFile[];
-  normalizedEntries: Array<{
-    original: string;
-    normalized: string;
-    basename: string;
-  }>;
   byNormalized: Map<string, string>;
-  byBasename: Map<string, string[]>;
 }
 
 const indexedFileMapCache = new WeakMap<RobotFile[], IndexedMJCFFileMap>();
@@ -64,25 +58,18 @@ function getIndexedMJCFFileMap(files: RobotFile[]): IndexedMJCFFileMap {
     return {
       original,
       normalized,
-      basename: normalized.split('/').pop() || normalized,
     };
   });
   const byNormalized = new Map<string, string>();
-  const byBasename = new Map<string, string[]>();
 
   normalizedEntries.forEach((entry) => {
     byNormalized.set(entry.normalized, entry.original);
-    const existing = byBasename.get(entry.basename) || [];
-    existing.push(entry.original);
-    byBasename.set(entry.basename, existing);
   });
 
   const indexed = {
     fileMap,
     mjcfFiles,
-    normalizedEntries,
     byNormalized,
-    byBasename,
   } satisfies IndexedMJCFFileMap;
   indexedFileMapCache.set(files, indexed);
   return indexed;
@@ -122,19 +109,6 @@ function resolveFileInMap(filename: string, indexedFileMap: IndexedMJCFFileMap, 
   const directMatch = indexedFileMap.byNormalized.get(normalizedFilename);
   if (directMatch) {
     return directMatch;
-  }
-
-  const suffixMatch = indexedFileMap.normalizedEntries.find((key) => key.normalized.endsWith(`/${normalizedFilename}`));
-  if (suffixMatch) {
-    return suffixMatch.original;
-  }
-
-  const justFilename = normalizedFilename.split('/').pop() || '';
-  if (justFilename) {
-    const basenameMatches = indexedFileMap.byBasename.get(justFilename);
-    if (basenameMatches?.length) {
-      return basenameMatches[0];
-    }
   }
 
   return null;
@@ -283,43 +257,6 @@ function prefixAttachedModelDocument(doc: Document, prefix: string): void {
       }
     }
   });
-}
-
-function gatherIncludeTargets(content: string): string[] {
-  const doc = parseXml(content);
-  if (!doc) {
-    return [];
-  }
-
-  return Array.from(doc.querySelectorAll('include[file]'))
-    .map((includeEl) => includeEl.getAttribute('file')?.trim() || '')
-    .filter(Boolean);
-}
-
-function hasRenderableMJCFContent(content: string): boolean {
-  const doc = parseXml(content);
-  if (!doc) {
-    return false;
-  }
-
-  const mujocoEl = doc.querySelector('mujoco');
-  if (!mujocoEl) {
-    return false;
-  }
-
-  const worldbodies = mujocoEl.querySelectorAll(':scope > worldbody');
-  for (const worldbody of worldbodies) {
-    if (worldbody.querySelector(':scope > body')) {
-      return true;
-    }
-
-    const directGeoms = worldbody.querySelectorAll(':scope > geom');
-    if (directGeoms.length > 0) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function expandIncludesRecursive(
@@ -514,45 +451,6 @@ function expandMJCFSource(
   return expandAttachedModelsRecursive(included, indexedFileMap, basePath, expansionStack);
 }
 
-function findDirectParentFile(targetFile: RobotFile, files: RobotFile[], indexedFileMap: IndexedMJCFFileMap): RobotFile | null {
-  const targetPath = normalizePath(targetFile.name);
-
-  for (const candidate of files) {
-    if (candidate.name === targetFile.name || candidate.format !== 'mjcf') {
-      continue;
-    }
-
-    const includeTargets = gatherIncludeTargets(candidate.content);
-    const candidateBasePath = getBasePath(candidate.name);
-    const resolvedTargets = includeTargets
-      .map((includePath) => resolveFileInMap(includePath, indexedFileMap, candidateBasePath))
-      .filter((value): value is string => Boolean(value))
-      .map((value) => normalizePath(value));
-
-    if (resolvedTargets.includes(targetPath)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-function findCanonicalSiblingFile(targetFile: RobotFile, files: RobotFile[], indexedFileMap: IndexedMJCFFileMap): RobotFile | null {
-  const basePath = getBasePath(targetFile.name);
-  const directoryName = basePath.split('/').pop() || '';
-  const siblingFiles = files.filter((file) => file.format === 'mjcf' && getBasePath(file.name) === basePath);
-  const renderableSiblings = siblingFiles.filter((file) => {
-    const expanded = expandMJCFSource(file.content, indexedFileMap, getBasePath(file.name), [normalizePath(file.name)]);
-    return hasRenderableMJCFContent(expanded);
-  });
-
-  const canonicalName = directoryName ? `${directoryName}.xml` : '';
-  return renderableSiblings.find((file) => file.name.split('/').pop() === canonicalName)
-    || renderableSiblings.find((file) => file.name.split('/').pop() === 'scene.xml')
-    || renderableSiblings[0]
-    || null;
-}
-
 export interface ResolvedMJCFSource {
   content: string;
   sourceFile: RobotFile;
@@ -568,39 +466,12 @@ export function resolveMJCFSource(file: RobotFile, files: RobotFile[]): Resolved
   }
 
   const indexedFileMap = getIndexedMJCFFileMap(files);
-  const mjcfFiles = indexedFileMap.mjcfFiles;
   const selectedBasePath = getBasePath(file.name);
-  const selectedExpanded = expandMJCFSource(file.content, indexedFileMap, selectedBasePath, [normalizePath(file.name)]);
-
-  if (hasRenderableMJCFContent(selectedExpanded)) {
-    const resolved = {
-      content: selectedExpanded,
-      sourceFile: file,
-      effectiveFile: file,
-      basePath: selectedBasePath,
-    };
-    memo.set(file, resolved);
-    return resolved;
-  }
-
-  const parentFile = findDirectParentFile(file, mjcfFiles, indexedFileMap) || findCanonicalSiblingFile(file, mjcfFiles, indexedFileMap);
-  if (!parentFile) {
-    const resolved = {
-      content: selectedExpanded,
-      sourceFile: file,
-      effectiveFile: file,
-      basePath: selectedBasePath,
-    };
-    memo.set(file, resolved);
-    return resolved;
-  }
-
-  const parentBasePath = getBasePath(parentFile.name);
   const resolved = {
-    content: expandMJCFSource(parentFile.content, indexedFileMap, parentBasePath, [normalizePath(parentFile.name)]),
+    content: expandMJCFSource(file.content, indexedFileMap, selectedBasePath, [normalizePath(file.name)]),
     sourceFile: file,
-    effectiveFile: parentFile,
-    basePath: parentBasePath,
+    effectiveFile: file,
+    basePath: selectedBasePath,
   };
   memo.set(file, resolved);
   return resolved;

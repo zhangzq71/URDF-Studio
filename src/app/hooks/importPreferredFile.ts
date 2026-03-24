@@ -3,8 +3,6 @@ import { parseMJCF } from '@/core/parsers';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 
-const AUXILIARY_MJCF_NAME_PATTERN = /(actuator|actuators|keyframe|position|velocity|motor|ctrl|filtered)/i;
-const MJCF_IMPORT_CONTEXT_PATTERN = /(^|[/_-])(mujoco|mjcf)(?=[/_.-]|$)/i;
 const PACKAGE_REFERENCE_PATTERN = /package:\/\/([^/\s"'<>]+)/g;
 
 function normalizeImportPath(path: string): string {
@@ -45,40 +43,68 @@ export function isUrdfSelfContainedInImportBundle(file: RobotFile, filePool: Rob
   return referencedPackages.every((packageName) => hasImportedPackageRoot(packageName, filePool));
 }
 
-function hasMjcfImportContext(files: RobotFile[]): boolean {
-  return files.some((file) => MJCF_IMPORT_CONTEXT_PATTERN.test(normalizeImportPath(file.name)));
+function parseMjcfDocument(content: string): Document | null {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(content, 'text/xml');
+    return doc.querySelector('parsererror') ? null : doc;
+  } catch {
+    return null;
+  }
 }
 
-function sortMjcfCandidates(left: RobotFile, right: RobotFile): number {
-  const leftBase = left.name.split('/').pop() ?? left.name;
-  const rightBase = right.name.split('/').pop() ?? right.name;
-  const leftDir = left.name.split('/').slice(-2, -1)[0] ?? '';
-  const rightDir = right.name.split('/').slice(-2, -1)[0] ?? '';
-  const leftIsScene = /scene/i.test(leftBase);
-  const rightIsScene = /scene/i.test(rightBase);
-  if (leftIsScene !== rightIsScene) {
-    return leftIsScene ? 1 : -1;
+type MjcfCandidateStructure = {
+  directBodyCount: number;
+  actuatorCount: number;
+  attachCount: number;
+  includeCount: number;
+  assetModelCount: number;
+  sceneHelperCount: number;
+};
+
+function collectMjcfCandidateStructure(content: string): MjcfCandidateStructure {
+  const doc = parseMjcfDocument(content);
+  const mujocoEl = doc?.querySelector('mujoco');
+  const worldbodyEl = mujocoEl?.querySelector(':scope > worldbody');
+
+  return {
+    directBodyCount: worldbodyEl?.querySelectorAll(':scope > body').length ?? 0,
+    actuatorCount: mujocoEl?.querySelectorAll(':scope > actuator > *').length ?? 0,
+    attachCount: mujocoEl?.querySelectorAll('attach[model]').length ?? 0,
+    includeCount: mujocoEl?.querySelectorAll(':scope > include[file]').length ?? 0,
+    assetModelCount: mujocoEl?.querySelectorAll(':scope > asset > model[file]').length ?? 0,
+    sceneHelperCount: (worldbodyEl?.querySelectorAll(':scope > geom').length ?? 0)
+      + (worldbodyEl?.querySelectorAll(':scope > light').length ?? 0)
+      + (worldbodyEl?.querySelectorAll(':scope > camera').length ?? 0),
+  };
+}
+
+function compareMjcfCandidateStructure(left: MjcfCandidateStructure, right: MjcfCandidateStructure): number {
+  if (left.directBodyCount !== right.directBodyCount) {
+    return right.directBodyCount - left.directBodyCount;
   }
 
-  const leftIsAuxiliary = AUXILIARY_MJCF_NAME_PATTERN.test(leftBase);
-  const rightIsAuxiliary = AUXILIARY_MJCF_NAME_PATTERN.test(rightBase);
-  if (leftIsAuxiliary !== rightIsAuxiliary) {
-    return leftIsAuxiliary ? 1 : -1;
+  if (left.actuatorCount !== right.actuatorCount) {
+    return right.actuatorCount - left.actuatorCount;
   }
 
-  const leftMatchesDir = leftBase.toLowerCase() === `${leftDir.toLowerCase()}.xml`
-    || leftBase.toLowerCase() === `${leftDir.toLowerCase()}.mjcf`;
-  const rightMatchesDir = rightBase.toLowerCase() === `${rightDir.toLowerCase()}.xml`
-    || rightBase.toLowerCase() === `${rightDir.toLowerCase()}.mjcf`;
-  if (leftMatchesDir !== rightMatchesDir) {
-    return leftMatchesDir ? -1 : 1;
+  if (left.attachCount !== right.attachCount) {
+    return right.attachCount - left.attachCount;
   }
 
-  if (leftBase.length !== rightBase.length) {
-    return leftBase.length - rightBase.length;
+  if (left.includeCount !== right.includeCount) {
+    return left.includeCount - right.includeCount;
   }
 
-  return leftBase.localeCompare(rightBase);
+  if (left.assetModelCount !== right.assetModelCount) {
+    return left.assetModelCount - right.assetModelCount;
+  }
+
+  if (left.sceneHelperCount !== right.sceneHelperCount) {
+    return left.sceneHelperCount - right.sceneHelperCount;
+  }
+
+  return 0;
 }
 
 export function pickPreferredMjcfImportFile(
@@ -88,20 +114,42 @@ export function pickPreferredMjcfImportFile(
   const mjcfFiles = files.filter((file) => file.format === 'mjcf');
   if (mjcfFiles.length === 0) return null;
 
-  const sortedMjcfCandidates = [...mjcfFiles].sort(sortMjcfCandidates);
-
-  for (const candidate of sortedMjcfCandidates) {
+  const parseableCandidates = mjcfFiles.flatMap((candidate) => {
     try {
       const resolved = resolveMJCFSource(candidate, filePool);
-      if (parseMJCF(resolved.content) !== null) {
-        return candidate;
+      if (parseMJCF(resolved.content) === null) {
+        return [];
       }
+
+      return [{
+        file: candidate,
+        structure: collectMjcfCandidateStructure(candidate.content),
+      }];
     } catch {
-      continue;
+      return [];
     }
+  });
+
+  parseableCandidates.sort((left, right) => {
+    const structureComparison = compareMjcfCandidateStructure(left.structure, right.structure);
+    if (structureComparison !== 0) {
+      return structureComparison;
+    }
+
+    const leftBase = left.file.name.split('/').pop() ?? left.file.name;
+    const rightBase = right.file.name.split('/').pop() ?? right.file.name;
+    if (leftBase.length !== rightBase.length) {
+      return leftBase.length - rightBase.length;
+    }
+
+    return leftBase.localeCompare(rightBase);
+  });
+
+  if (parseableCandidates.length > 0) {
+    return parseableCandidates[0]!.file;
   }
 
-  return sortedMjcfCandidates[0] ?? null;
+  return mjcfFiles[0] ?? null;
 }
 
 export function pickPreferredImportFile(
@@ -114,10 +162,7 @@ export function pickPreferredImportFile(
 
   const shouldPreferMjcfOverUrdf = preferredUrdf !== null
     && preferredMjcf !== null
-    && (
-      hasMjcfImportContext(robotDefinitionFiles)
-      || !isUrdfSelfContainedInImportBundle(preferredUrdf, filePool)
-    );
+    && !isUrdfSelfContainedInImportBundle(preferredUrdf, filePool);
 
   if (shouldPreferMjcfOverUrdf && preferredMjcf) {
     return preferredMjcf;
