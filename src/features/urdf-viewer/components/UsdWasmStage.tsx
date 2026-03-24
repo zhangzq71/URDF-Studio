@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import * as THREE from 'three';
 import { getCollisionGeometryEntries } from '@/core/robot';
 import { getLowestMeshZ } from '@/shared/utils';
-import type { RobotFile, UrdfLink, UsdSceneSnapshot } from '@/types';
+import type { RobotFile, UrdfLink } from '@/types';
 import { disposeObject3D } from '@/shared/utils/three/dispose';
 import { UsdCollisionTransformControls, type UsdCollisionTransformTarget } from './UsdCollisionTransformControls';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
@@ -31,15 +31,9 @@ import {
 import {
   buildUsdBundlePreloadEntries,
 } from '../utils/usdPreloadSources';
-import {
-  adaptUsdViewerSnapshotToRobotData,
-  type UsdViewerRobotSceneSnapshot,
-} from '../utils/usdViewerRobotAdapter';
 import { hydrateUsdViewerRobotResolutionFromRuntime } from '../utils/usdRuntimeRobotHydration';
-import {
-  createSyntheticUsdViewerRobotResolution,
-  resolveUsdRuntimeLinkPathForMesh,
-} from '../utils/usdRuntimeMeshMapping';
+import { resolveUsdSceneRobotResolution } from '../utils/usdSceneRobotResolution';
+import { resolveUsdRuntimeLinkPathForMesh } from '../utils/usdRuntimeMeshMapping';
 import { createUsdViewerRuntimeRobot } from '../utils/usdViewerRuntimeRobot';
 import {
   buildUsdLinkDynamicsRecordMap,
@@ -62,6 +56,8 @@ import {
   resolveUsdStageInteractionPolicy,
   resolveUsdStageJointRotationRuntime,
 } from '../utils/usdInteractionPolicy';
+import { prepareUsdVisualMesh } from '../utils/usdVisualRendering';
+import { createEmbeddedUsdViewerLoadParams } from '../utils/usdViewerRenderParams';
 import { resolveUsdStageJointPreview, type UsdStageJointInfoLike } from '../utils/usdStageJointPreview';
 import {
   armSelectionMissGuard,
@@ -361,18 +357,6 @@ function syncUsdVisualColorOverride(mesh: THREE.Mesh, colorOverride: string | nu
   meshUserData.__usdVisualOverrideMaterial = overrideMaterial;
   meshUserData.__usdVisualColorOverride = colorOverride;
   mesh.material = overrideMaterial;
-}
-
-function enhanceUsdVisualMesh(mesh: THREE.Mesh): void {
-  if (mesh.userData.__usdVisualMeshPrepared === true) {
-    return;
-  }
-
-  // Keep Hydra-authored USD materials intact and disable app-side shadows so
-  // the in-app result stays closer to the standalone USD viewer.
-  mesh.castShadow = false;
-  mesh.receiveShadow = false;
-  mesh.userData.__usdVisualMeshPrepared = true;
 }
 
 function toVirtualUsdPath(path: string): string {
@@ -867,7 +851,7 @@ export function UsdWasmStage({
       mesh.userData.usdMeshId = meshId;
 
       if (role === 'visual') {
-        enhanceUsdVisualMesh(mesh);
+        prepareUsdVisualMesh(mesh);
       }
 
       const meta: RuntimeMeshMeta = {
@@ -1476,6 +1460,7 @@ export function UsdWasmStage({
   const onRobotDataResolvedRef = useRef(onRobotDataResolved);
   const onRuntimeActiveJointChangeRef = useRef(onRuntimeActiveJointChange);
   const onRuntimeRobotResolvedRef = useRef(onRuntimeRobotResolved);
+  const currentStageSourcePath = useMemo(() => toVirtualUsdPath(sourceFile.name), [sourceFile.name]);
 
   useEffect(() => {
     refreshRuntimeDecorationsRef.current = refreshRuntimeDecorations;
@@ -1522,6 +1507,53 @@ export function UsdWasmStage({
   useEffect(() => {
     onRuntimeRobotResolvedRef.current = onRuntimeRobotResolved;
   }, [onRuntimeRobotResolved]);
+
+  const publishResolvedRobotData = useCallback((options: { allowWarmup?: boolean } = {}) => {
+    const renderInterface = renderInterfaceRef.current;
+    if (!renderInterface) {
+      return null;
+    }
+
+    const {
+      snapshot,
+      resolution: initialRobotResolution,
+    } = resolveUsdSceneRobotResolution({
+      renderInterface,
+      driver: driverRef.current,
+      stageSourcePath: currentStageSourcePath,
+      fileName: sourceFile.name,
+      allowWarmup: options.allowWarmup ?? false,
+    });
+
+    const usdSceneSnapshot = snapshot;
+    const resolvedRobotData = hydrateUsdViewerRobotResolutionFromRuntime(
+      initialRobotResolution,
+      usdSceneSnapshot,
+      renderInterface,
+    ) || initialRobotResolution;
+
+    resolvedRobotDataRef.current = resolvedRobotData;
+    jointAxesResolutionRef.current = createUsdJointAxesDisplayResolution(
+      resolvedRobotData,
+      initialRobotResolution,
+    );
+    baselineRobotLinksRef.current = resolvedRobotData
+      ? structuredClone(resolvedRobotData.robotData.links)
+      : null;
+    rebuildRuntimeMeshIndexRef.current();
+    markUsdHoverRaycastDirty(hoverNeedsRaycastRef, invalidate);
+
+    onRobotDataResolvedRef.current?.({
+      ...resolvedRobotData,
+      usdSceneSnapshot,
+    });
+
+    syncRuntimeJointPanelRobotRef.current();
+    emitRuntimeJointAnglesChangeRef.current();
+    refreshRuntimeDecorationsRef.current();
+
+    return resolvedRobotData;
+  }, [currentStageSourcePath, invalidate, sourceFile.name]);
 
   const emitRuntimeHoverState = useCallback((nextState: URDFViewerProps['hoveredSelection']) => {
     if (areSelectionStatesEqual(lastRuntimeHoverRef.current, nextState)) {
@@ -1690,6 +1722,8 @@ export function UsdWasmStage({
     let disposeAutoFrame = () => {};
 
     let disposed = false;
+    const isCurrentLoadActive = () => !disposed && loadTokenRef.current === currentLoadToken;
+
     setIsLoading(true);
     setErrorMessage(null);
     setLoadingProgress({
@@ -1761,12 +1795,22 @@ export function UsdWasmStage({
     };
 
     const loadUsdStageIntoScene = async () => {
-      const isActive = () => !disposed && loadTokenRef.current === currentLoadToken;
+      const isActive = isCurrentLoadActive;
 
       runtimeWindow.camera = camera;
       runtimeWindow._controls = controls as ViewerControls;
       runtimeWindow.scene = scene;
       runtimeWindow.usdRoot = rootGroup;
+
+      // Let React commit the loading HUD before the next USD parse blocks the main thread.
+      await new Promise<void>((resolve) => {
+        if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+          resolve();
+          return;
+        }
+        window.requestAnimationFrame(() => resolve());
+      });
+      if (!isActive()) return;
 
       clearCurrentStage();
 
@@ -1778,16 +1822,12 @@ export function UsdWasmStage({
         runtimeWindow.USD = runtime.USD;
 
         const preloadEntries = buildUsdBundlePreloadEntries(sourceFile, availableFiles, assets);
-        const stageSourcePath = toVirtualUsdPath(sourceFile.name);
+        const stageSourcePath = currentStageSourcePath;
         await preloadUsdDependencies(runtime, preloadEntries, isActive);
         await ensureCriticalUsdDependenciesLoaded(runtime, stageSourcePath, preloadEntries, isActive);
         if (!isActive()) return;
 
-        const params = new URLSearchParams();
-        params.set('threads', String(runtime.threadCount));
-        params.set('fastLoad', '1');
-        params.set('aggressiveInitialDraw', '1');
-        params.set('strictOneShot', '1');
+        const params = createEmbeddedUsdViewerLoadParams(runtime.threadCount);
 
         const loadState = await runtime.loadUsdStage({
           USD: runtime.USD,
@@ -1900,46 +1940,7 @@ export function UsdWasmStage({
         }
 
         if (renderInterface) {
-          let snapshot = renderInterface.getCachedRobotSceneSnapshot?.(stageSourcePath);
-          if (!snapshot && typeof renderInterface.warmupRobotSceneSnapshotFromDriver === 'function') {
-            renderInterface.warmupRobotSceneSnapshotFromDriver(driverRef.current, {
-              stageSourcePath,
-              force: false,
-              emitRobotMetadataEvent: true,
-            });
-            snapshot = renderInterface.getCachedRobotSceneSnapshot?.(stageSourcePath);
-          }
-
-          const usdSceneSnapshot = (snapshot as UsdSceneSnapshot | null) ?? null;
-          const initialRobotResolution = adaptUsdViewerSnapshotToRobotData(snapshot as UsdViewerRobotSceneSnapshot, {
-            fileName: sourceFile.name,
-          }) || createSyntheticUsdViewerRobotResolution({
-            fileName: sourceFile.name,
-            stageSourcePath,
-            snapshot: usdSceneSnapshot,
-            meshIds: Object.keys(renderInterface.meshes || {}),
-          });
-          const resolvedRobotData = hydrateUsdViewerRobotResolutionFromRuntime(
-            initialRobotResolution,
-            usdSceneSnapshot,
-            renderInterface,
-          ) || initialRobotResolution;
-          resolvedRobotDataRef.current = resolvedRobotData;
-          jointAxesResolutionRef.current = createUsdJointAxesDisplayResolution(
-            resolvedRobotData,
-            initialRobotResolution,
-          );
-          baselineRobotLinksRef.current = resolvedRobotData
-            ? structuredClone(resolvedRobotData.robotData.links)
-            : null;
-          rebuildRuntimeMeshIndexRef.current();
-          markUsdHoverRaycastDirty(hoverNeedsRaycastRef, invalidate);
-          if (resolvedRobotData && isActive()) {
-            onRobotDataResolvedRef.current?.({
-              ...resolvedRobotData,
-              usdSceneSnapshot,
-            });
-          }
+          publishResolvedRobotData({ allowWarmup: true });
         }
 
         syncRuntimeJointPanelRobotRef.current();
@@ -1994,6 +1995,8 @@ export function UsdWasmStage({
     sampleUsdAutoFrameBounds,
     rootGroup,
     scene,
+    currentStageSourcePath,
+    publishResolvedRobotData,
     sourceFile,
   ]);
 
@@ -2088,7 +2091,7 @@ export function UsdWasmStage({
               progress={loadingHudState.progress}
               statusLabel={loadingHudState.statusLabel}
               stageLabel={loadingStageLabel}
-              delayMs={120}
+              delayMs={0}
             />
           </div>
         </Html>

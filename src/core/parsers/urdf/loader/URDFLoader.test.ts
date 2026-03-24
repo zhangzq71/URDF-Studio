@@ -19,6 +19,10 @@ globalThis.Element = dom.window.Element as typeof Element;
 globalThis.XMLSerializer = dom.window.XMLSerializer as typeof XMLSerializer;
 globalThis.ProgressEvent = dom.window.ProgressEvent as typeof ProgressEvent;
 
+function toFixedColorArray(color: THREE.Color, digits = 4) {
+    return color.toArray().map((value) => Number(value.toFixed(digits)));
+}
+
 function getWorldBox(object: THREE.Object3D) {
     object.updateMatrixWorld(true);
     return new THREE.Box3().setFromObject(object);
@@ -129,7 +133,10 @@ test('URDFLoader applies local visual material to nested mesh groups', () => {
     assert.ok(nestedMesh);
     const material = nestedMesh.material as THREE.MeshPhongMaterial;
     assert.equal(material.name, 'base_link_mat');
-    assert.deepEqual(material.color.toArray().map((value) => Number(value.toFixed(4))), [0.1, 0.2, 0.3]);
+    assert.deepEqual(
+        toFixedColorArray(material.color),
+        toFixedColorArray(new THREE.Color().setRGB(0.1, 0.2, 0.3, THREE.SRGBColorSpace)),
+    );
 });
 
 test('URDFLoader preserves named mesh materials for multi-material DAE groups', () => {
@@ -213,7 +220,51 @@ test('URDFLoader overrides single named OBJ materials when URDF provides the exp
     assert.ok(nestedMesh);
     const material = nestedMesh.material as THREE.MeshPhongMaterial;
     assert.equal(material.name, 'exported_color');
-    assert.deepEqual(material.color.toArray().map((value) => Number(value.toFixed(2))), [0.82, 0.15, 0.15]);
+    assert.deepEqual(
+        toFixedColorArray(material.color, 2),
+        toFixedColorArray(new THREE.Color().setRGB(0.82, 0.15, 0.15, THREE.SRGBColorSpace), 2),
+    );
+});
+
+test('URDFLoader parses Unitree B1 orange visuals as sRGB colors', () => {
+    const loader = new URDFLoader();
+    loader.loadMeshCb = (_url, _manager, onLoad) => {
+        const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshPhongMaterial({ color: new THREE.Color(1, 1, 1) }),
+        );
+        onLoad(mesh);
+    };
+
+    const robot = loader.parse(`<?xml version="1.0"?>
+<robot name="b1_color_probe">
+  <material name="orange">
+    <color rgba="1 0.4235294118 0.0392156863 1" />
+  </material>
+  <link name="trunk">
+    <visual>
+      <geometry>
+        <mesh filename="trunkb.dae" />
+      </geometry>
+      <material name="orange" />
+    </visual>
+  </link>
+</robot>`, '/tmp/');
+
+    let nestedMesh: THREE.Mesh | null = null;
+    robot.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && !nestedMesh) {
+            nestedMesh = child as THREE.Mesh;
+        }
+    });
+
+    assert.ok(nestedMesh);
+    const material = nestedMesh.material as THREE.MeshPhongMaterial;
+    const expected = new THREE.Color().setRGB(1, 0.4235294118, 0.0392156863, THREE.SRGBColorSpace);
+    const incorrectLinear = new THREE.Color(1, 0.4235294118, 0.0392156863);
+
+    assert.deepEqual(toFixedColorArray(material.color), toFixedColorArray(expected));
+    assert.notDeepEqual(toFixedColorArray(material.color), toFixedColorArray(incorrectLinear));
 });
 
 test('URDFLoader preserves Z-up semantics for b2w base_link Collada meshes before link attachment', async () => {
@@ -476,4 +527,65 @@ test('folder import and exported zip roundtrip converge to the same go2w FR_thig
     assert.ok(folderImportSnapshot.visualRoot);
     assert.ok(exportedZipSnapshot.visualRoot);
     expectBoxEquals(getWorldBox(folderImportSnapshot.visualRoot), getWorldBox(exportedZipSnapshot.visualRoot));
+});
+
+test('URDFLoader preserves Unitree A2 base_link mesh offsets without translating the link frame', async () => {
+    const urdfPath = 'test/unitree_ros/robots/a2_description/urdf/a2.urdf';
+    const urdfContent = fs.readFileSync(urdfPath, 'utf8');
+    const parsed = parseURDF(urdfContent);
+    assert.ok(parsed);
+
+    const meshPath = 'test/unitree_ros/robots/a2_description/meshes/base_link.STL';
+    const meshDataUrl = `data:model/stl;base64,${Buffer.from(fs.readFileSync(meshPath)).toString('base64')}`;
+    const urdfDir = 'test/unitree_ros/robots/a2_description/urdf/';
+    const assets = {
+        [meshPath]: meshDataUrl,
+        'base_link.STL': meshDataUrl,
+    };
+
+    const manager = createLoadingManager(assets, urdfDir);
+    const meshLoader = createMeshLoader(
+        assets,
+        manager,
+        urdfDir,
+        { colladaRootNormalizationHints: buildColladaRootNormalizationHints(parsed.links) },
+    );
+
+    const loader = new URDFLoader(manager);
+    loader.loadMeshCb = meshLoader;
+
+    let robot: ReturnType<URDFLoader['parse']> | null = null;
+    const onLoadPromise = new Promise<void>((resolve) => {
+        manager.onLoad = () => resolve();
+    });
+
+    const loadCompletionKey = '__urdf_loader_a2_base_link_snapshot__';
+    manager.itemStart(loadCompletionKey);
+    try {
+        robot = loader.parse(urdfContent, urdfDir);
+    } finally {
+        manager.itemEnd(loadCompletionKey);
+    }
+
+    await onLoadPromise;
+
+    const baseLink = robot?.links?.base_link as THREE.Object3D | undefined;
+    assert.ok(baseLink, 'expected A2 import to expose base_link');
+    assert.equal(baseLink.position.x, 0);
+    assert.equal(baseLink.position.y, 0);
+    assert.equal(baseLink.position.z, 0);
+
+    const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+    assert.ok(visualGroup, 'expected base_link to keep its visual group');
+    assert.equal(visualGroup.position.x, 0);
+    assert.equal(visualGroup.position.y, 0);
+    assert.equal(visualGroup.position.z, 0);
+
+    const visualRoot = visualGroup.children[0] as THREE.Object3D | undefined;
+    assert.ok(visualRoot, 'expected base_link visual mesh to load');
+
+    const center = getWorldBox(visualRoot).getCenter(new THREE.Vector3());
+    assert.ok(Math.abs(center.x - 0.029698431491851807) < 1e-6);
+    assert.ok(Math.abs(center.y - 0.0000037103891372680664) < 1e-6);
+    assert.ok(Math.abs(center.z - 0.02502359077334404) < 1e-6);
 });

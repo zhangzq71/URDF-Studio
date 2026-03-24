@@ -467,3 +467,85 @@ test('normalizeRobotSceneSnapshot serializes preferred live visual materials by 
         globalThis.window = previousWindow;
     }
 });
+
+test('normalizeRobotSceneSnapshot prefers richer stage-built metadata over incomplete raw scene metadata', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = {
+        location: { search: '' },
+    };
+    try {
+        const delegate = new ThreeRenderDelegateInterface({
+            stage: () => ({
+                GetRootLayer: () => ({
+                    ExportToString: () => '#usda 1.0\n',
+                }),
+                GetUsedLayers: () => [],
+                GetDefaultPrim: () => ({
+                    GetPath: () => ({ pathString: '/Robot' }),
+                }),
+            }),
+            driver: () => null,
+            allowDriverStageLookup: false,
+        });
+        delegate.buildRobotMetadataSnapshotForStage = () => ({
+            stageSourcePath: '/tmp/b2-helper-links.usda',
+            generatedAtMs: 2,
+            source: 'usd-stage-cpp',
+            linkParentPairs: [
+                ['/Robot/base_link', null],
+                ['/Robot/base_link/imu_link', '/Robot/base_link'],
+            ],
+            jointCatalogEntries: [{
+                jointPath: '/Robot/joints/joint_imu',
+                jointName: 'joint_imu',
+                jointTypeName: 'PhysicsFixedJoint',
+                linkPath: '/Robot/base_link/imu_link',
+                parentLinkPath: '/Robot/base_link',
+                originXyz: [0, 0, 0.05],
+                originQuatWxyz: [1, 0, 0, 0],
+                axis: [1, 0, 0],
+            }],
+            linkDynamicsEntries: [],
+            meshCountsByLinkPath: {},
+        });
+
+        const snapshot = delegate.normalizeRobotSceneSnapshot({
+            generatedAtMs: 1,
+            stage: {
+                stageSourcePath: '/tmp/b2-helper-links.usda',
+                defaultPrimPath: '/Robot',
+            },
+            robotTree: {
+                linkParentPairs: [['/Robot/base_link', null]],
+                jointCatalogEntries: [],
+                rootLinkPaths: ['/Robot/base_link'],
+            },
+            physics: {
+                linkDynamicsEntries: [],
+            },
+            robotMetadataSnapshot: {
+                stageSourcePath: '/tmp/b2-helper-links.usda',
+                generatedAtMs: 1,
+                source: 'robot-scene-snapshot',
+                linkParentPairs: [['/Robot/base_link', null]],
+                jointCatalogEntries: [],
+                linkDynamicsEntries: [],
+                meshCountsByLinkPath: {},
+            },
+            render: {
+                meshDescriptors: [],
+                materials: [],
+            },
+        }, {
+            stageSourcePath: '/tmp/b2-helper-links.usda',
+        });
+
+        assert.ok(snapshot);
+        assert.equal(snapshot.robotMetadataSnapshot.jointCatalogEntries.length, 1);
+        assert.ok(snapshot.robotTree.linkParentPairs.some(([childPath, parentPath]) => childPath === '/Robot/base_link/imu_link' && parentPath === '/Robot/base_link'));
+        assert.equal(delegate.getCachedRobotMetadataSnapshot('/tmp/b2-helper-links.usda')?.jointCatalogEntries?.length, 1);
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});

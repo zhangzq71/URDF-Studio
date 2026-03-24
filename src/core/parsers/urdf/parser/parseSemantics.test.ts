@@ -330,6 +330,39 @@ test('parseURDF and generateURDF preserve go2w multi-material mesh palettes for 
   assert.equal(reparsed.joints.FR_thigh_joint.origin?.xyz.y, -0.0955);
 });
 
+test('parseURDF does not infer materials for visuals that omit authored material tags', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="missing_materials_stay_missing">
+  <material name="black">
+    <color rgba="0 0 0 1" />
+  </material>
+  <link name="front_thigh">
+    <visual>
+      <geometry>
+        <mesh filename="thigh.dae" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <link name="rear_thigh">
+    <visual>
+      <geometry>
+        <mesh filename="thigh.dae" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+  assert.equal(robot.links.front_thigh.visual.color, '#000000');
+  assert.equal(robot.links.front_thigh.visual.materialSource, 'named');
+  assert.equal(robot.materials?.front_thigh?.color, '#000000');
+
+  assert.equal(robot.links.rear_thigh.visual.color, undefined);
+  assert.equal(robot.links.rear_thigh.visual.materialSource, undefined);
+  assert.equal(robot.materials?.rear_thigh, undefined);
+});
+
 test('parseURDF preserves mimic joint metadata through export', () => {
   const robot = parseURDF(`<?xml version="1.0"?>
 <robot name="mimic_parse">
@@ -362,6 +395,49 @@ test('parseURDF preserves mimic joint metadata through export', () => {
   });
 
   assert.match(urdf, /<mimic joint="master_joint" multiplier="1\.5" offset="0\.25" \/>/);
+});
+
+test('generateURDF only writes hardware brand in extended exports and parseURDF restores it', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="hardware_brand">
+  <link name="base_link" />
+  <link name="tip_link" />
+  <joint name="hip_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="tip_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1" upper="1" effort="10" velocity="5" />
+  </joint>
+</robot>`);
+
+  assert.ok(robot);
+
+  robot.joints.hip_joint.hardware = {
+    armature: 0.000111842,
+    brand: 'Unitree',
+    motorType: 'Go1-M8010-6',
+    motorId: 'hip-0',
+    motorDirection: 1,
+  };
+
+  const standardUrdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+  assert.doesNotMatch(standardUrdf, /<hardware>[\s\S]*?<brand>Unitree<\/brand>/);
+
+  const extendedUrdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  }, { extended: true });
+
+  assert.match(extendedUrdf, /<hardware>[\s\S]*?<brand>Unitree<\/brand>/);
+
+  const reparsed = parseURDF(extendedUrdf);
+  assert.ok(reparsed);
+  assert.equal(reparsed.joints.hip_joint.hardware.brand, 'Unitree');
+  assert.equal(reparsed.joints.hip_joint.hardware.motorType, 'Go1-M8010-6');
 });
 
 test('parseURDF rejects robot documents without any links', () => {

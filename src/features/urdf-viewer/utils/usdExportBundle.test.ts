@@ -963,7 +963,7 @@ test('buildUsdExportBundleFromSnapshot splits geom subsets into separate export 
           type: GeometryType.MESH,
           dimensions: { x: 1, y: 1, z: 1 },
           color: '#3b82f6',
-          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          origin: { xyz: { x: 0.12, y: -0.34, z: 0.56 }, rpy: { r: Math.PI / 2, p: 0, y: 0 } },
         },
         collision: {
           type: GeometryType.NONE,
@@ -1000,6 +1000,10 @@ test('buildUsdExportBundleFromSnapshot splits geom subsets into separate export 
   assert.ok(syntheticVisualLink, 'expected an extra fixed visual attachment link for the second subset');
   assert.equal(syntheticVisualLink!.visual.meshPath, 'base_link_visual_0_section_1.obj');
   assert.equal(syntheticVisualLink!.visual.color, '#00ff00');
+  assert.equal(syntheticVisualLink!.visual.origin.xyz.x, bundle.robot.links.base_link.visual.origin.xyz.x);
+  assert.equal(syntheticVisualLink!.visual.origin.xyz.y, bundle.robot.links.base_link.visual.origin.xyz.y);
+  assert.equal(syntheticVisualLink!.visual.origin.xyz.z, bundle.robot.links.base_link.visual.origin.xyz.z);
+  assert.equal(syntheticVisualLink!.visual.origin.rpy.r, bundle.robot.links.base_link.visual.origin.rpy.r);
 
   const firstSubsetObj = await bundle.meshFiles.get('base_link_visual_0_section_0.obj')?.text();
   const secondSubsetObj = await bundle.meshFiles.get('base_link_visual_0_section_1.obj')?.text();

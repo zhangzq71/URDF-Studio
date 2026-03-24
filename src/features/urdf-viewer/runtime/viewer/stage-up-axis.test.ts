@@ -67,6 +67,27 @@ test('uses fallback axis when neither metadata source is available', () => {
   );
 });
 
+test('defaults to y-axis fallback when no metadata source is available', () => {
+  assert.equal(
+    resolveStageUpAxis({
+      reportedUpAxis: null,
+      stage: null,
+    }),
+    'y',
+  );
+});
+
+test('falls back to y-axis when no explicit up-axis metadata exists and fallback is null', () => {
+  assert.equal(
+    resolveStageUpAxis({
+      reportedUpAxis: null,
+      stage: null,
+      fallbackUpAxis: null,
+    }),
+    'y',
+  );
+});
+
 test('computes generic source->target up-axis alignment rotations', () => {
   assert.equal(
     resolveAxisAlignmentRotationX({ sourceUpAxis: 'z', targetUpAxis: 'z' }),

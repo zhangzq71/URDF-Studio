@@ -216,3 +216,28 @@ test('createStableViewerResourceScope recognizes duplicate-suffixed top-level bu
     'textures (1)/b2w.png': 'blob:b2w-texture',
   });
 });
+
+test('createStableViewerResourceScope keeps sibling mesh assets for xml-based MJCF bundles before robot links stabilize', () => {
+  const scoped = createStableViewerResourceScope(null, {
+    assets: {
+      'robots/b2_description_mujoco/xml/b2.xml': 'blob:b2-xml',
+      'robots/b2_description_mujoco/xml/scene.xml': 'blob:b2-scene',
+      'robots/b2_description_mujoco/meshes/base_link.obj': 'blob:b2-base',
+      'robots/go1/meshes/base.dae': 'blob:go1-base',
+    },
+    availableFiles: [],
+    sourceFile: {
+      name: 'robots/b2_description_mujoco/xml/b2.xml',
+      content: '<mujoco model="b2" />',
+      format: 'mjcf',
+    },
+    sourceFilePath: 'robots/b2_description_mujoco/xml/b2.xml',
+    robotLinks: {},
+  });
+
+  assert.deepEqual(scoped.assets, {
+    'robots/b2_description_mujoco/xml/b2.xml': 'blob:b2-xml',
+    'robots/b2_description_mujoco/xml/scene.xml': 'blob:b2-scene',
+    'robots/b2_description_mujoco/meshes/base_link.obj': 'blob:b2-base',
+  });
+});

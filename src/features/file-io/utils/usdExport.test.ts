@@ -294,6 +294,21 @@ function assertQuaternionClose(actualWxyz: number[], expected: THREE.Quaternion,
   assert.ok(delta <= epsilon, `expected quaternions to match within ${epsilon}, got ${delta}`);
 }
 
+function includesQuaternionClose(
+  actualWxyzTuples: number[][],
+  expected: THREE.Quaternion,
+  epsilon = 1e-5,
+): boolean {
+  return actualWxyzTuples.some((tuple) => {
+    try {
+      assertQuaternionClose(tuple, expected, epsilon);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 test('exports robot state into a layered USD package', async () => {
   const payload = await exportRobotToUsd({
     robot: createTwoLinkRobot(),
@@ -416,6 +431,47 @@ test('serializes joint origin quaternions using URDF ZYX rpy semantics', async (
     new THREE.Quaternion().setFromEuler(new THREE.Euler(0.31, -0.47, 0.83, 'ZYX')),
   );
   assert.match(physicsLayer, /custom float3 urdf:axisLocal = \(0, 0, -1\)/);
+});
+
+test('serializes visual and collision origins using URDF ZYX rpy semantics', async () => {
+  const robot = createTwoLinkRobot();
+  robot.links.base_link.visual.origin = {
+    xyz: { x: 0.12, y: -0.34, z: 0.56 },
+    rpy: { r: 0.37, p: -0.52, y: 0.91 },
+  };
+  robot.links.base_link.collision = {
+    ...robot.links.base_link.collision,
+    origin: {
+      xyz: { x: -0.22, y: 0.18, z: -0.14 },
+      rpy: { r: -0.41, p: 0.63, y: -0.27 },
+    },
+  };
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'two_link_robot',
+    assets: createTwoLinkAssets(),
+  });
+
+  const baseLayer = await readArchiveText(
+    payload,
+    'two_link_robot/usd/configuration/two_link_robot_description_base.usd',
+  );
+  const exportedOrientations = extractTuples(baseLayer, 'quatf xformOp:orient');
+
+  const expectedVisualQuaternion = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(0.37, -0.52, 0.91, 'ZYX'));
+  const expectedCollisionQuaternion = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(-0.41, 0.63, -0.27, 'ZYX'));
+
+  assert.ok(
+    includesQuaternionClose(exportedOrientations, expectedVisualQuaternion),
+    'expected exported visual origin quaternion to use URDF ZYX rpy semantics',
+  );
+  assert.ok(
+    includesQuaternionClose(exportedOrientations, expectedCollisionQuaternion),
+    'expected exported collision origin quaternion to use URDF ZYX rpy semantics',
+  );
 });
 
 test('serializes internal material metadata and display colors into the base layer', async () => {
@@ -707,4 +763,46 @@ test('exports 8-digit hex display colors without emitting Three.js invalid color
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test('reports phased USD export progress for links, geometry, scene serialization, and assets', async () => {
+  const progressUpdates: Array<{
+    phase: string;
+    completed: number;
+    total: number;
+    label?: string;
+  }> = [];
+
+  await exportRobotToUsd({
+    robot: createTwoLinkRobot(),
+    exportName: 'two_link_robot_progress',
+    assets: createTwoLinkAssets(),
+    onProgress: (progress) => {
+      progressUpdates.push({ ...progress });
+    },
+  });
+
+  const phaseOrder = ['links', 'geometry', 'scene', 'assets'];
+  let previousPhaseIndex = -1;
+
+  phaseOrder.forEach((phase) => {
+    const firstIndex = progressUpdates.findIndex((progress) => progress.phase === phase);
+    assert.ok(firstIndex >= 0, `expected progress updates for phase ${phase}`);
+    assert.ok(firstIndex > previousPhaseIndex, `expected phase ${phase} to start after the previous phase`);
+    previousPhaseIndex = firstIndex;
+
+    const phaseUpdates = progressUpdates.filter((progress) => progress.phase === phase);
+    const finalUpdate = phaseUpdates.at(-1);
+    assert.ok(finalUpdate, `expected final progress update for phase ${phase}`);
+    assert.equal(
+      finalUpdate.completed,
+      finalUpdate.total,
+      `expected phase ${phase} to finish at total progress`,
+    );
+  });
+
+  assert.ok(
+    progressUpdates.some((progress) => progress.phase === 'links' && progress.label === 'base_link'),
+    'expected link progress labels to include the current link name',
+  );
 });

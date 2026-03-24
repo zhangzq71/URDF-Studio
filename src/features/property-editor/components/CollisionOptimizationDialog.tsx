@@ -11,6 +11,7 @@ import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 import { GeometryType } from '@/types';
+import { convertGeometryType } from '../utils';
 import type {
   CollisionOptimizationAnalysis,
   CollisionOptimizationBaseAnalysis,
@@ -26,6 +27,8 @@ import {
   buildCollisionOptimizationAnalysisAsync,
   buildCollisionOptimizationOperations,
   countSameLinkOverlapWarnings,
+  createCollisionOptimizationCandidateKey,
+  createCollisionOptimizationCandidateKeyFromTargets,
   prepareCollisionOptimizationBaseAnalysis,
   type CollisionOptimizationCandidate,
   type CollisionOptimizationOperation,
@@ -87,6 +90,170 @@ function createRelationKey(componentId: string | undefined, sourceLinkId: string
 
 function createManualMergePairKey(primaryTargetId: string, secondaryTargetId: string): string {
   return `${primaryTargetId}::${secondaryTargetId}`;
+}
+
+function cloneGeometryOrigin(geometry: CollisionTargetRef['geometry']) {
+  const origin = geometry.origin ?? {
+    xyz: { x: 0, y: 0, z: 0 },
+    rpy: { r: 0, p: 0, y: 0 },
+  };
+
+  return {
+    xyz: { ...origin.xyz },
+    rpy: { ...origin.rpy },
+  };
+}
+
+function buildSuggestedGeometry(
+  geometry: CollisionTargetRef['geometry'],
+  type: GeometryType,
+  meshAnalysis?: CollisionOptimizationAnalysis['meshAnalysisByTargetId'][string],
+): CollisionTargetRef['geometry'] {
+  const converted = convertGeometryType(geometry, type, meshAnalysis ?? undefined);
+  return {
+    ...geometry,
+    type,
+    dimensions: { ...converted.dimensions },
+    origin: {
+      xyz: { ...converted.origin.xyz },
+      rpy: { ...converted.origin.rpy },
+    },
+    meshPath: type === GeometryType.MESH ? geometry.meshPath : undefined,
+  };
+}
+
+function getCandidateOverrideOptions(candidate: CollisionOptimizationCandidate): GeometryType[] {
+  if (candidate.secondaryTarget) {
+    return [GeometryType.CAPSULE, GeometryType.CYLINDER];
+  }
+
+  if (candidate.currentType === GeometryType.MESH) {
+    return [
+      GeometryType.MESH,
+      GeometryType.CAPSULE,
+      GeometryType.CYLINDER,
+      GeometryType.BOX,
+      GeometryType.SPHERE,
+    ];
+  }
+
+  if (candidate.currentType === GeometryType.CYLINDER) {
+    return [GeometryType.CYLINDER, GeometryType.CAPSULE];
+  }
+
+  if (candidate.currentType === GeometryType.BOX) {
+    return [GeometryType.BOX, GeometryType.CAPSULE, GeometryType.CYLINDER];
+  }
+
+  return candidate.suggestedType ? [candidate.suggestedType] : [];
+}
+
+function applyCandidateTypeOverride(
+  candidate: CollisionOptimizationCandidate,
+  overrideType: GeometryType | undefined,
+  meshAnalysisByTargetId: CollisionOptimizationAnalysis['meshAnalysisByTargetId'] | undefined,
+): CollisionOptimizationCandidate {
+  if (!overrideType) {
+    return candidate;
+  }
+
+  if (candidate.secondaryTarget) {
+    if (
+      (overrideType !== GeometryType.CAPSULE && overrideType !== GeometryType.CYLINDER)
+      || !candidate.nextGeometry
+    ) {
+      return candidate;
+    }
+
+    if (overrideType === candidate.suggestedType) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      suggestedType: overrideType,
+      reason: overrideType === GeometryType.CAPSULE
+        ? 'coaxial-merge-to-capsule'
+        : 'coaxial-merge-to-cylinder',
+      nextGeometry: {
+        ...candidate.nextGeometry,
+        type: overrideType,
+        dimensions: { ...candidate.nextGeometry.dimensions },
+        origin: cloneGeometryOrigin(candidate.nextGeometry),
+      },
+      mutations: candidate.mutations?.map((mutation) => (
+        mutation.type === 'update' && mutation.nextGeometry
+          ? {
+              ...mutation,
+              nextGeometry: {
+                ...mutation.nextGeometry,
+                type: overrideType,
+                dimensions: { ...mutation.nextGeometry.dimensions },
+                origin: cloneGeometryOrigin(mutation.nextGeometry),
+              },
+            }
+          : mutation
+      )),
+    };
+  }
+
+  if (overrideType === candidate.currentType) {
+    return {
+      ...candidate,
+      eligible: false,
+      suggestedType: null,
+      status: 'disabled',
+      reason: undefined,
+      nextGeometry: undefined,
+      mutations: undefined,
+      affectedTargetIds: undefined,
+    };
+  }
+
+  if (candidate.currentType === GeometryType.MESH) {
+    const meshAnalysis = meshAnalysisByTargetId?.[candidate.target.id];
+    if (!meshAnalysis) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      eligible: true,
+      suggestedType: overrideType,
+      status: 'ready',
+      reason: 'mesh-manual-fit',
+      nextGeometry: buildSuggestedGeometry(candidate.target.geometry, overrideType, meshAnalysis),
+    };
+  }
+
+  if (candidate.currentType === GeometryType.CYLINDER && overrideType === GeometryType.CAPSULE) {
+    return {
+      ...candidate,
+      eligible: true,
+      suggestedType: GeometryType.CAPSULE,
+      status: 'ready',
+      reason: 'cylinder-to-capsule',
+      nextGeometry: buildSuggestedGeometry(candidate.target.geometry, GeometryType.CAPSULE),
+    };
+  }
+
+  if (
+    candidate.currentType === GeometryType.BOX
+    && (overrideType === GeometryType.CAPSULE || overrideType === GeometryType.CYLINDER)
+  ) {
+    return {
+      ...candidate,
+      eligible: true,
+      suggestedType: overrideType,
+      status: 'ready',
+      reason: overrideType === GeometryType.CAPSULE
+        ? 'rod-box-to-capsule'
+        : 'rod-box-to-cylinder',
+      nextGeometry: buildSuggestedGeometry(candidate.target.geometry, overrideType),
+    };
+  }
+
+  return candidate;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -294,9 +461,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     eligible: t.collisionOptimizerStatsOptimizable,
     warnings: t.collisionOptimizerStatsWarnings,
     collisionIndex: t.collisionOptimizerCollisionIndex,
+    current: t.collisionOptimizerCurrent,
     primary: t.collisionOptimizerPrimary,
     component: t.collisionOptimizerComponent,
     jointPair: t.collisionOptimizerJointPair,
+    suggested: t.collisionOptimizerSuggested,
     viewList: t.collisionOptimizerViewList,
     viewGraph: t.collisionOptimizerViewGraph,
     frontView: t.collisionOptimizerFrontView,
@@ -322,7 +491,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const [isComputingCandidates, setIsComputingCandidates] = useState(false);
   const [baseAnalysis, setBaseAnalysis] = useState<CollisionOptimizationBaseAnalysis | null>(null);
   const [analysis, setAnalysis] = useState<CollisionOptimizationAnalysis | null>(null);
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [checkedCandidateKeys, setCheckedCandidateKeys] = useState<Set<string>>(new Set());
+  const [candidateTypeOverrides, setCandidateTypeOverrides] = useState<Record<string, GeometryType | undefined>>({});
   const [stackedPanel, setStackedPanel] = useState<'candidates' | 'settings'>('candidates');
   const [candidatesViewMode, setCandidatesViewMode] = useState<CollisionOptimizationCandidatesViewMode>('list');
   const [manualMergePairs, setManualMergePairs] = useState<CollisionOptimizationManualMergePair[]>([]);
@@ -431,7 +601,8 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     setBaseAnalysis(null);
     setAnalysis(null);
     hasCustomCheckedSelectionRef.current = false;
-    setCheckedIds(new Set());
+    setCheckedCandidateKeys(new Set());
+    setCandidateTypeOverrides({});
     setManualMergePairs([]);
     setManualConnection(null);
 
@@ -521,35 +692,12 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       return;
     }
 
-    setCheckedIds(new Set(
+    setCheckedCandidateKeys(new Set(
       analysis.candidates
         .filter((candidate) => candidate.eligible && candidate.autoSelect !== false)
-        .map((candidate) => candidate.target.id),
+        .map((candidate) => createCollisionOptimizationCandidateKey(candidate)),
     ));
   }, [analysis]);
-
-  const activeOperations = useMemo(
-    () => buildCollisionOptimizationOperations(analysis?.candidates ?? [], checkedIds),
-    [analysis?.candidates, checkedIds],
-  );
-
-  const overridesByTargetId = useMemo<Record<string, CollisionOptimizationOperation['nextGeometry']>>(
-    () => activeOperations.reduce<Record<string, CollisionOptimizationOperation['nextGeometry']>>((accumulator, operation) => {
-      accumulator[operation.id] = operation.nextGeometry;
-      return accumulator;
-    }, {}),
-    [activeOperations],
-  );
-
-  const warningBefore = useMemo(
-    () => analysis ? countSameLinkOverlapWarnings(analysis.targets, analysis.meshAnalysisByTargetId) : 0,
-    [analysis],
-  );
-
-  const warningAfter = useMemo(
-    () => analysis ? countSameLinkOverlapWarnings(analysis.targets, analysis.meshAnalysisByTargetId, overridesByTargetId) : 0,
-    [analysis, overridesByTargetId],
-  );
 
   const totalCollisionCount = analysis?.targets.length ?? 0;
   const meshCollisionCount = useMemo(
@@ -560,7 +708,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     () => new Set(manualMergePairs.map((pair) => createManualMergePairKey(pair.primaryTargetId, pair.secondaryTargetId))),
     [manualMergePairs],
   );
-  const displayCandidates = useMemo(() => {
+  const rawDisplayCandidates = useMemo(() => {
     if (!analysis) {
       return [];
     }
@@ -584,32 +732,124 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
 
     return [...singles, ...pairCandidatesByKey.values()];
   }, [analysis, manualPairKeySet]);
+  const displayCandidates = useMemo(
+    () => rawDisplayCandidates.map((candidate) =>
+      applyCandidateTypeOverride(
+        candidate,
+        candidateTypeOverrides[createCollisionOptimizationCandidateKey(candidate)],
+        analysis?.meshAnalysisByTargetId,
+      )
+    ),
+    [analysis?.meshAnalysisByTargetId, candidateTypeOverrides, rawDisplayCandidates],
+  );
+  const selectedCandidates = useMemo(
+    () => displayCandidates.filter((candidate) => checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate))),
+    [checkedCandidateKeys, displayCandidates],
+  );
+  const selectedCandidateCount = selectedCandidates.length;
+  const activeOperations = useMemo(
+    () => buildCollisionOptimizationOperations(
+      selectedCandidates,
+      new Set(selectedCandidates.map((candidate) => candidate.target.id)),
+    ),
+    [selectedCandidates],
+  );
+  const overridesByTargetId = useMemo<Record<string, CollisionOptimizationOperation['nextGeometry']>>(
+    () => activeOperations.reduce<Record<string, CollisionOptimizationOperation['nextGeometry']>>((accumulator, operation) => {
+      accumulator[operation.id] = operation.nextGeometry;
+      return accumulator;
+    }, {}),
+    [activeOperations],
+  );
   const eligibleCount = useMemo(
     () => displayCandidates.filter((candidate) => candidate.eligible).length,
     [displayCandidates],
   );
+  const warningBefore = useMemo(
+    () => analysis ? countSameLinkOverlapWarnings(analysis.targets, analysis.meshAnalysisByTargetId) : 0,
+    [analysis],
+  );
+  const warningAfter = useMemo(
+    () => analysis ? countSameLinkOverlapWarnings(analysis.targets, analysis.meshAnalysisByTargetId, overridesByTargetId) : 0,
+    [analysis, overridesByTargetId],
+  );
 
-  const toggleCandidate = useCallback((targetId: string) => {
+  useEffect(() => {
+    const validCandidateKeys = new Set(
+      displayCandidates.map((candidate) => createCollisionOptimizationCandidateKey(candidate)),
+    );
+
+    setCheckedCandidateKeys((previous) => {
+      let changed = false;
+      const next = new Set<string>();
+      previous.forEach((key) => {
+        if (validCandidateKeys.has(key)) {
+          next.add(key);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : previous;
+    });
+
+    setCandidateTypeOverrides((previous) => {
+      let changed = false;
+      const next: Record<string, GeometryType | undefined> = {};
+      Object.entries(previous).forEach(([key, value]) => {
+        if (validCandidateKeys.has(key)) {
+          next[key] = value;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : previous;
+    });
+  }, [displayCandidates]);
+
+  const toggleCandidate = useCallback((candidateKey: string) => {
     hasCustomCheckedSelectionRef.current = true;
-    setCheckedIds((previous) => {
+    setCheckedCandidateKeys((previous) => {
       const next = new Set(previous);
-      if (next.has(targetId)) {
-        next.delete(targetId);
+      if (next.has(candidateKey)) {
+        next.delete(candidateKey);
       } else {
-        next.add(targetId);
+        next.add(candidateKey);
       }
       return next;
     });
   }, []);
 
+  const setCandidateOverride = useCallback((candidate: CollisionOptimizationCandidate, nextType: GeometryType) => {
+    const candidateKey = createCollisionOptimizationCandidateKey(candidate);
+    setCandidateTypeOverrides((previous) => ({
+      ...previous,
+      [candidateKey]: nextType,
+    }));
+    if (!candidate.secondaryTarget && nextType === candidate.currentType) {
+      hasCustomCheckedSelectionRef.current = true;
+      setCheckedCandidateKeys((previous) => {
+        if (!previous.has(candidateKey)) {
+          return previous;
+        }
+        const next = new Set(previous);
+        next.delete(candidateKey);
+        return next;
+      });
+    }
+  }, []);
+
   const handleSelectAll = useCallback(() => {
     hasCustomCheckedSelectionRef.current = true;
-    setCheckedIds(new Set(displayCandidates.filter((candidate) => candidate.eligible).map((candidate) => candidate.target.id)));
+    setCheckedCandidateKeys(new Set(
+      displayCandidates
+        .filter((candidate) => candidate.eligible)
+        .map((candidate) => createCollisionOptimizationCandidateKey(candidate)),
+    ));
   }, [displayCandidates]);
 
   const handleClearAll = useCallback(() => {
     hasCustomCheckedSelectionRef.current = true;
-    setCheckedIds(new Set());
+    setCheckedCandidateKeys(new Set());
   }, []);
 
   const canCreateManualPair = useCallback((sourceTargetId: string, targetTargetId: string) => {
@@ -701,9 +941,9 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     });
 
     hasCustomCheckedSelectionRef.current = true;
-    setCheckedIds((previous) => {
+    setCheckedCandidateKeys((previous) => {
       const next = new Set(previous);
-      next.add(primaryTarget.id);
+      next.add(createCollisionOptimizationCandidateKeyFromTargets(primaryTarget.id, secondaryTarget.id));
       return next;
     });
     onSelectTarget?.(primaryTarget);
@@ -759,7 +999,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const isSelectedScopeWithoutSelection = scope === 'selected'
     && (!selection?.id || selection.subType !== 'collision' || selection.type !== 'link');
 
-  const footerLabel = `${copy.selectedCount} ${activeOperations.length} / ${eligibleCount}`;
+  const footerLabel = `${copy.selectedCount} ${selectedCandidateCount} / ${eligibleCount}`;
   const hasOverlapWarnings = warningBefore > 0 || warningAfter > 0;
   const showCandidatesPanel = !isStackedLayout || stackedPanel === 'candidates';
   const showSettingsPanel = !isStackedLayout || stackedPanel === 'settings';
@@ -784,11 +1024,19 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     clearAll: copy.clearAll,
     collisionIndex: copy.collisionIndex,
     component: copy.component,
+    current: copy.current,
+    depth: t.depth,
+    height: t.height,
     jointPair: copy.jointPair,
+    mergeTo: copy.mergeTo,
     noCandidates: copy.noCandidates,
     primary: copy.primary,
+    radius: t.radius,
     selectedCount: copy.selectedCount,
-  }), [copy]);
+    suggested: copy.suggested,
+    totalLength: t.totalLength,
+    width: t.width,
+  }), [copy, t.depth, t.height, t.radius, t.totalLength, t.width]);
   const graphLabels = useMemo(() => ({
     autoPair: copy.autoPair,
     collisionIndex: copy.collisionIndex,
@@ -912,9 +1160,9 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                 selection={selection}
                 scope={scope}
                 viewMode={candidatesViewMode}
-                checkedTargetIds={checkedIds}
+                checkedCandidateKeys={checkedCandidateKeys}
                 eligibleCount={eligibleCount}
-                activeSelectionCount={activeOperations.length}
+                activeSelectionCount={selectedCandidateCount}
                 isAnalyzing={isAnalyzing}
                 isSelectedScopeWithoutSelection={isSelectedScopeWithoutSelection}
                 manualMergePairs={manualMergePairs}
@@ -924,6 +1172,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                 graphLabels={graphLabels}
                 formatGeometryType={formatGeometryType}
                 getStatusLabel={getStatusLabel}
+                getCandidateOverrideOptions={getCandidateOverrideOptions}
                 canCreateManualPair={canCreateManualPair}
                 onScopeChange={setScope}
                 onViewModeChange={setCandidatesViewMode}
@@ -931,6 +1180,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                 onClearAll={handleClearAll}
                 onClearManualPairs={handleClearManualPairs}
                 onToggleCandidate={toggleCandidate}
+                onSetCandidateOverride={setCandidateOverride}
                 onSelectTarget={onSelectTarget}
                 onManualConnectionStart={handleManualConnectionStart}
                 onManualConnectionMove={handleManualConnectionMove}

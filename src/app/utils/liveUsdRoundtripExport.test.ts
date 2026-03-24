@@ -51,3 +51,43 @@ test('buildLiveUsdRoundtripArchive keeps the original B2 file name instead of vi
     '#usda 1.0\n',
   );
 });
+
+test('buildLiveUsdRoundtripArchive preserves root-level bundle paths without adding a basename folder', async () => {
+  const sourceFile: RobotFile = {
+    name: 'b2.usd',
+    content: '#usda 1.0\n',
+    format: 'usd',
+  };
+
+  const archive = await buildLiveUsdRoundtripArchive({
+    sourceFile,
+    availableFiles: [
+      sourceFile,
+      {
+        name: 'configuration/b2_description_base.usd',
+        content: '#usda 1.0\n',
+        format: 'usd',
+      },
+    ],
+    assets: {},
+    allFileContents: {},
+    targetWindow: {
+      exportLoadedStageSnapshot: async () => ({
+        ok: true,
+        content: '#usda 1.0\n',
+        outputFileName: 'b2.viewer_roundtrip.usd',
+        outputVirtualPath: '/b2.viewer_roundtrip.usd',
+      }),
+    },
+  });
+
+  assert.equal(archive.archiveFileName, 'b2.zip');
+  assert.deepEqual(
+    Array.from(archive.archiveFiles.keys()).sort(),
+    [
+      'b2.usd',
+      'configuration/b2_description_base.usd',
+    ],
+  );
+  assert.equal(await archive.archiveFiles.get('b2.usd')?.text(), '#usda 1.0\n');
+});

@@ -234,3 +234,161 @@ test('keeps collision proxy geoms out of runtime visuals when a dedicated visual
     assert.deepEqual(visualGroups, ['base_visual']);
     assert.deepEqual(collisionGroups, ['base_collision']);
 });
+
+test('offsets coincident visual mesh geoms within the same body to reduce z-fighting', async () => {
+    const createCachedVisualMesh = (name: string, color: number) => {
+        const group = new THREE.Group();
+        const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.1, 0.1, 0.1),
+            new THREE.MeshStandardMaterial({ color, name }),
+        );
+        mesh.name = name;
+        group.add(mesh);
+        return group;
+    };
+
+    const rootGroup = new THREE.Group();
+    await buildMJCFHierarchy({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'base_link',
+                        pos: [0, 0, 0],
+                        geoms: [
+                            {
+                                name: 'body_shell',
+                                type: 'mesh',
+                                mesh: 'shell',
+                                group: 1,
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                            {
+                                name: 'body_trim',
+                                type: 'mesh',
+                                mesh: 'trim',
+                                group: 1,
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                            {
+                                name: 'body_logo',
+                                type: 'mesh',
+                                mesh: 'logo',
+                                group: 1,
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                        ],
+                        joints: [],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map([
+            ['shell', { name: 'shell', file: 'shell.obj' }],
+            ['trim', { name: 'trim', file: 'trim.obj' }],
+            ['logo', { name: 'logo', file: 'logo.obj' }],
+        ]),
+        assets: {},
+        meshCache: new Map([
+            ['shell.obj', createCachedVisualMesh('shell', 0xffffff)],
+            ['trim.obj', createCachedVisualMesh('trim', 0x000000)],
+            ['logo.obj', createCachedVisualMesh('logo', 0x888888)],
+        ]),
+        compilerSettings: {
+            angleUnit: 'radian',
+            meshdir: '',
+            texturedir: '',
+            eulerSequence: 'xyz',
+        },
+        materialMap: new Map(),
+        textureMap: new Map(),
+        sourceFileDir: '',
+    });
+
+    const visualMeshes: THREE.Mesh[] = [];
+    rootGroup.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && child.userData.isVisualMesh) {
+            visualMeshes.push(child as THREE.Mesh);
+        }
+    });
+
+    assert.equal(visualMeshes.length, 3);
+    assert.equal(visualMeshes[0]?.renderOrder ?? 0, 0);
+    assert.equal(visualMeshes[1]?.renderOrder ?? 0, 1);
+    assert.equal(visualMeshes[2]?.renderOrder ?? 0, 2);
+
+    const offsetMaterials = visualMeshes.slice(1).map((mesh) => mesh.material as THREE.MeshStandardMaterial);
+    offsetMaterials.forEach((material, index) => {
+        assert.equal(material.polygonOffset, true);
+        assert.equal(material.userData?.mjcfCoincidentVisualStackIndex, index + 1);
+    });
+});
+
+test('reports geom build progress while constructing the hierarchy', async () => {
+    const rootGroup = new THREE.Group();
+    const progressUpdates: Array<[number, number]> = [];
+
+    await buildMJCFHierarchy({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'base_link',
+                        pos: [0, 0, 0],
+                        geoms: [
+                            {
+                                name: 'base_visual',
+                                type: 'box',
+                                size: [0.1, 0.1, 0.1],
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                            {
+                                name: 'base_collision',
+                                type: 'sphere',
+                                size: [0.12],
+                            },
+                        ],
+                        joints: [],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map(),
+        assets: {},
+        meshCache: new Map(),
+        compilerSettings: {
+            angleUnit: 'radian',
+            meshdir: '',
+            texturedir: '',
+            eulerSequence: 'xyz',
+        },
+        materialMap: new Map(),
+        textureMap: new Map(),
+        sourceFileDir: '',
+        onProgress: ({ processedGeoms, totalGeoms }) => {
+            progressUpdates.push([processedGeoms, totalGeoms]);
+        },
+    });
+
+    assert.deepEqual(progressUpdates, [
+        [0, 2],
+        [1, 2],
+        [2, 2],
+    ]);
+});

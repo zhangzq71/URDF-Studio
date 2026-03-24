@@ -238,6 +238,48 @@ test('createMeshLoader offsets duplicated coplanar material subsets in b2 base_l
     });
 });
 
+test('createMeshLoader offsets near-coplanar shell materials in b2 calf.dae', async () => {
+    const meshPath = 'test/unitree_ros/robots/b2_description/meshes/calf.dae';
+    const urdfContent = fs.readFileSync('test/unitree_ros/robots/b2_description/urdf/b2_description.urdf', 'utf8');
+    const colladaRootNormalizationHints = buildColladaRootNormalizationHints(parseURDF(urdfContent).links);
+    const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
+    const manager = new THREE.LoadingManager();
+    const loadMesh = createMeshLoader(
+        {
+            [meshPath]: meshDataUrl,
+            'package://b2_description/meshes/calf.dae': meshDataUrl,
+            'calf.dae': meshDataUrl,
+        },
+        manager,
+        '',
+        { colladaRootNormalizationHints },
+    );
+
+    const loadedObject = await new Promise<THREE.Object3D>((resolve, reject) => {
+        loadMesh('package://b2_description/meshes/calf.dae', manager, (result, err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve(result);
+        });
+    });
+
+    const meshes = getAllMeshes(loadedObject);
+    const adjustedMaterials = meshes.flatMap((mesh) => {
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        return materials.filter((material) => isCoplanarOffsetMaterial(material));
+    });
+
+    assert.ok(adjustedMaterials.length > 0, 'expected b2 calf to receive coplanar material offsets');
+    adjustedMaterials.forEach((material) => {
+        assert.equal(material.polygonOffset, true);
+        assert.equal(material.polygonOffsetFactor, -2);
+        assert.equal(material.polygonOffsetUnits, -2);
+    });
+});
+
 test('findAssetByPath resolves package-prefixed b2w mesh paths against imported zip assets', () => {
     const assets = {
         'meshes/RR_thigh.dae': 'blob:rr-thigh',

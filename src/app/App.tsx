@@ -31,6 +31,18 @@ const ExportDialog = lazy(() =>
   loadExportDialogModule().then((module) => ({ default: module.ExportDialog }))
 );
 
+function waitForNextPaint(): Promise<void> {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
 type ExportDialogTarget =
   | { type: 'current' }
   | { type: 'library-file'; file: RobotFile };
@@ -39,7 +51,7 @@ function AppContent() {
   // Refs for file inputs
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
-  const loadRobotByNameRef = useRef<((file: RobotFile, options?: { forceReload?: boolean }) => void) | null>(null);
+  const loadRobotByNameRef = useRef<((file: RobotFile, options?: { forceReload?: boolean }) => Promise<void> | void) | null>(null);
   const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
   const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({ type: 'current' });
   const [viewerReloadKey, setViewerReloadKey] = useState(0);
@@ -146,7 +158,7 @@ function AppContent() {
 
   // Keep one internal loader so debug automation can force a reload of the
   // currently selected file without changing normal click behavior.
-  const loadRobotFile = useCallback((file: RobotFile, options?: { forceReload?: boolean }) => {
+  const loadRobotFile = useCallback(async (file: RobotFile, options?: { forceReload?: boolean }) => {
     if (
       !options?.forceReload
       && selectedFile
@@ -165,6 +177,16 @@ function AppContent() {
       format: file.format,
       error: null,
     });
+
+    setViewerReloadKey((value) => value + 1);
+    setSelectedFile(file);
+    setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
+    setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+    setSelection({ type: null, id: null });
+    setAppMode('detail');
+
+    await waitForNextPaint();
+
     const importResult = resolveRobotFileData(file, {
       availableFiles: liveAssetsState.availableFiles,
       assets: liveAssetsState.assets,
@@ -172,10 +194,6 @@ function AppContent() {
     });
 
     if (importResult.status === 'ready' || importResult.status === 'needs_hydration') {
-      setViewerReloadKey((value) => value + 1);
-      setSelectedFile(file);
-      setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-      setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
       if (importResult.status === 'ready') {
         setRobot(
           importResult.robotData,
@@ -190,8 +208,6 @@ function AppContent() {
         format: file.format,
         error: null,
       });
-      setSelection({ type: null, id: null });
-      setAppMode('detail');
     } else {
       setDocumentLoadState({
         status: 'error',

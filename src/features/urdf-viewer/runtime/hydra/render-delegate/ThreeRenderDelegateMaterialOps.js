@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Color, FrontSide, LinearSRGBColorSpace, Quaternion, SRGBColorSpace, Vector2 } from 'three';
+import { Color, FrontSide, LinearSRGBColorSpace, Quaternion, SRGBColorSpace, Vector2, Vector3 } from 'three';
 import * as Shared from './shared.js';
 import { ThreeRenderDelegateCore } from './ThreeRenderDelegateCore.js';
 import { createUnifiedHydraPhysicalMaterial, HYDRA_UNIFIED_MATERIAL_DEFAULTS } from './material-defaults.js';
@@ -1438,7 +1438,29 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                 const resolvedLocalVisualMatrix = stageLinkWorldMatrix.clone().invert().multiply(resolvedVisualWorldMatrix.clone());
                 const resolvedLocalLooksBroken = looksDegenerate(resolvedLocalVisualMatrix);
                 const urdfLocalLooksAuthored = looksAuthored(urdfVisualEntry.localMatrix);
-                const shouldFallback = resolvedLocalLooksBroken && urdfLocalLooksAuthored;
+                let shouldFallback = resolvedLocalLooksBroken && urdfLocalLooksAuthored;
+                if (!shouldFallback) {
+                    const resolvedLocalPosition = new Vector3();
+                    const resolvedLocalQuaternion = new Quaternion();
+                    const resolvedLocalScale = new Vector3();
+                    resolvedLocalVisualMatrix.decompose(resolvedLocalPosition, resolvedLocalQuaternion, resolvedLocalScale);
+                    const urdfLocalPosition = new Vector3();
+                    const urdfLocalQuaternion = new Quaternion();
+                    const urdfLocalScale = new Vector3();
+                    urdfVisualEntry.localMatrix.decompose(urdfLocalPosition, urdfLocalQuaternion, urdfLocalScale);
+                    const localMatrixDelta = getMatrixMaxElementDelta(resolvedLocalVisualMatrix, urdfVisualEntry.localMatrix);
+                    const translationDelta = resolvedLocalPosition.distanceTo(urdfLocalPosition);
+                    const urdfLocalHasRotation = !isIdentityQuaternion(urdfLocalQuaternion);
+                    const resolvedLocalHasRotation = !isIdentityQuaternion(resolvedLocalQuaternion);
+                    // Some USD stages resolve a semantic visual prim with the same pivot as the
+                    // URDF visual, but inject an extra basis rotation once the real mesh arrives.
+                    // Prefer the URDF local pose when the authored local offset is effectively the
+                    // same translation and only the stage-local rotation diverges.
+                    shouldFallback = localMatrixDelta > 1e-4
+                        && translationDelta <= 1e-3
+                        && !urdfLocalHasRotation
+                        && resolvedLocalHasRotation;
+                }
                 this._urdfVisualFallbackDecisionCache.set(meshId, shouldFallback);
                 return shouldFallback;
             }

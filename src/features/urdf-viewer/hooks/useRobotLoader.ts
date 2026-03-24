@@ -45,6 +45,29 @@ function resolveRobotSourceFormat(content: string, sourceFormat: 'auto' | 'urdf'
     return isMJCFContent(content) ? 'mjcf' : 'urdf';
 }
 
+function waitForLoadingHudPaint(invalidate?: () => void): Promise<void> {
+    invalidate?.();
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+        });
+    });
+}
+
+type RobotLoadingPhase = 'preparing-scene' | 'streaming-meshes' | 'finalizing-scene' | 'ready';
+
+interface RobotLoadingProgress {
+    phase: RobotLoadingPhase;
+    loadedCount?: number | null;
+    totalCount?: number | null;
+    progressPercent?: number | null;
+}
+
 export interface UseRobotLoaderOptions {
     urdfContent: string;
     assets: Record<string, string>;
@@ -64,10 +87,7 @@ export interface UseRobotLoaderResult {
     robot: THREE.Object3D | null;
     error: string | null;
     isLoading: boolean;
-    loadingProgress: {
-        loadedCount: number;
-        totalCount: number;
-    } | null;
+    loadingProgress: RobotLoadingProgress | null;
     robotVersion: number;
     robotRef: RefObject<THREE.Object3D | null>;
     linkMeshMapRef: RefObject<Map<string, THREE.Mesh[]>>;
@@ -90,10 +110,7 @@ export function useRobotLoader({
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [loadingProgress, setLoadingProgress] = useState<{
-        loadedCount: number;
-        totalCount: number;
-    } | null>(null);
+    const [loadingProgress, setLoadingProgress] = useState<RobotLoadingProgress | null>(null);
     const [robotVersion, setRobotVersion] = useState(0);
     const { invalidate } = useThree();
 
@@ -332,9 +349,17 @@ export function useRobotLoader({
         const loadRobot = async () => {
             try {
                 setIsLoading(true);
-                setLoadingProgress(null);
+                setLoadingProgress({
+                    phase: 'preparing-scene',
+                    progressPercent: 0,
+                });
                 setError(null);
                 clearDeferredSceneSyncTimers();
+                await waitForLoadingHudPaint(invalidate);
+
+                if (abortController.aborted || !isMountedRef.current) {
+                    return;
+                }
 
                 // NOTE: We do NOT cleanup the previous robot here immediately.
                 // We wait until the new robot is ready to avoid flickering/rendering disposed objects.
@@ -451,7 +476,18 @@ export function useRobotLoader({
 
                 // Check if content is MJCF (MuJoCo XML)
                 if (isMJCFAsset) {
-                    robotModel = await loadMJCFToThreeJS(urdfContent, assets, sourceFileDir);
+                    robotModel = await loadMJCFToThreeJS(urdfContent, assets, sourceFileDir, (nextProgress) => {
+                        if (abortController.aborted || !isMountedRef.current) {
+                            return;
+                        }
+
+                        setLoadingProgress(nextProgress.phase === 'ready' ? null : {
+                            phase: nextProgress.phase,
+                            loadedCount: nextProgress.loadedCount ?? null,
+                            totalCount: nextProgress.totalCount ?? null,
+                            progressPercent: nextProgress.progressPercent ?? null,
+                        });
+                    });
 
                     if (abortController.aborted) {
                         if (robotModel) {
@@ -473,17 +509,26 @@ export function useRobotLoader({
 
                         const adjustedTotalCount = Math.max(0, itemsTotal - 1);
                         if (adjustedTotalCount <= 0) {
-                            setLoadingProgress(null);
                             return;
                         }
 
                         setLoadingProgress({
+                            phase: 'streaming-meshes',
                             loadedCount: Math.min(itemsLoaded, adjustedTotalCount),
                             totalCount: adjustedTotalCount,
+                            progressPercent: null,
                         });
                     };
                     manager.onLoad = () => {
                         if (!robotModel) return;
+                        if (!abortController.aborted && isMountedRef.current) {
+                            setLoadingProgress((current) => ({
+                                phase: 'finalizing-scene',
+                                loadedCount: current?.totalCount ?? current?.loadedCount ?? null,
+                                totalCount: current?.totalCount ?? null,
+                                progressPercent: current?.totalCount ? 100 : 96,
+                            }));
+                        }
                         finalizeLoadedRobot(robotModel);
                     };
                     // Use new local URDFLoader
@@ -532,6 +577,10 @@ export function useRobotLoader({
                 }
 
                 if (robotModel && isMountedRef.current) {
+                    setLoadingProgress((current) => current ?? {
+                        phase: 'finalizing-scene',
+                        progressPercent: 96,
+                    });
                     finalizeLoadedRobot(robotModel);
                 } else if (robotModel) {
                      // Aborted or unmounted after load but before we could use it

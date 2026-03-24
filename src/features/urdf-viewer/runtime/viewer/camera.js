@@ -1,4 +1,16 @@
 import { Box3, Vector3 } from "three";
+export function collectCameraFitSelection(rootObject) {
+    const visibleMeshes = [];
+    rootObject?.traverse?.((child) => {
+        if (!child?.isMesh || child.visible === false)
+            return;
+        visibleMeshes.push(child);
+    });
+    if (visibleMeshes.length > 0) {
+        return visibleMeshes;
+    }
+    return rootObject ? [rootObject] : [];
+}
 export function fitCameraToSelection(camera, controls, selection, fitOffset = 1.5, params) {
     const size = new Vector3();
     const center = new Vector3();
@@ -41,9 +53,10 @@ export function fitCameraToSelection(camera, controls, selection, fitOffset = 1.
 }
 export function scheduleCameraRefit(camera, controls, selection, params, maxAttempts = 8, delayMs = 250) {
     let attempts = 0;
+    const resolveSelection = () => typeof selection === "function" ? selection() : selection;
     const tryFit = () => {
         attempts++;
-        const didFit = fitCameraToSelection(camera, controls, selection, 1.5, params);
+        const didFit = fitCameraToSelection(camera, controls, resolveSelection(), 1.5, params);
         if (!didFit && attempts < maxAttempts) {
             setTimeout(tryFit, delayMs);
         }

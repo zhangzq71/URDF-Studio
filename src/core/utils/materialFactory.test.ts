@@ -40,6 +40,7 @@ test('createMatteMaterial can preserve exact authored white when requested', () 
   });
 
   assertColorClose(material.color, new THREE.Color(0xffffff));
+  assert.equal(material.toneMapped, false);
 });
 
 test('createMatteMaterial derives opacity from 8-digit hex colors without changing the authored rgb channels', () => {
@@ -51,4 +52,5 @@ test('createMatteMaterial derives opacity from 8-digit hex colors without changi
   assertColorClose(material.color, new THREE.Color('#123456'));
   assert.ok(Math.abs(material.opacity - (128 / 255)) <= 1e-6);
   assert.equal(material.transparent, true);
+  assert.equal(material.toneMapped, false);
 });

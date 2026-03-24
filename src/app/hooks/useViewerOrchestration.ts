@@ -1,6 +1,10 @@
 import { useCallback, type RefObject } from 'react';
-import { useSelectionStore } from '@/store';
+import { useSelectionStore, useUIStore } from '@/store';
 import type { RobotState } from '@/types';
+import {
+  resolveDetailLinkTabAfterGeometrySelection,
+  resolveDetailLinkTabAfterViewerMeshSelect,
+} from '@/features/property-editor/utils/detailLinkTab';
 
 interface UseViewerOrchestrationOptions {
   setSelection: (selection: RobotState['selection']) => void;
@@ -46,6 +50,11 @@ export function useViewerOrchestration({
   const handleSelectGeometry = useCallback((linkId: string, subType: 'visual' | 'collision', objectIndex = 0) => {
     if (transformPendingRef.current) return;
     setSelection({ type: 'link', id: linkId, subType, objectIndex });
+    const uiState = useUIStore.getState();
+    const nextTab = resolveDetailLinkTabAfterGeometrySelection(subType);
+    if (uiState.detailLinkTab !== nextTab) {
+      uiState.setDetailLinkTab(nextTab);
+    }
   }, [setSelection, transformPendingRef]);
 
   const handleViewerSelect = useCallback((type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
@@ -59,6 +68,11 @@ export function useViewerOrchestration({
     if (transformPendingRef.current) return;
     const nextSelection = { type: 'link' as const, id: linkId, subType: objectType, objectIndex };
     setSelection(nextSelection);
+    const uiState = useUIStore.getState();
+    const nextTab = resolveDetailLinkTabAfterViewerMeshSelect(uiState.detailLinkTab, objectType);
+    if (uiState.detailLinkTab !== nextTab) {
+      uiState.setDetailLinkTab(nextTab);
+    }
     pulseSelection(nextSelection);
   }, [pulseSelection, setSelection, transformPendingRef]);
 

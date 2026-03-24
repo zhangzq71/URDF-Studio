@@ -1,15 +1,15 @@
 /**
  * LinkProperties - Property editing panel for Link elements.
  * Renders different content based on the current editor mode:
- * - Skeleton/Hardware: Name input
- * - Detail: Visual/Collision geometry tabs
- * - Hardware: Inertial properties (mass, CoM, inertia tensor)
+ * - Skeleton: Name input
+ * - Detail: Visual/Collision/Joint tabs
+ * - Hardware: Joint editing for the selected link's related joints
  */
-import React, { useState, useEffect, useMemo } from 'react';
-import { Eye, Box } from 'lucide-react';
-import type { RobotState, AppMode, UrdfLink } from '@/types';
+import React, { useMemo } from 'react';
+import { Eye, Box, Waypoints } from 'lucide-react';
+import type { DetailLinkTab, RobotState, AppMode, MotorSpec, UrdfLink } from '@/types';
 import { translations } from '@/shared/i18n';
-import type { Language } from '@/store';
+import { useUIStore, type Language } from '@/store';
 import {
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
@@ -29,9 +29,8 @@ import {
   StaticSection,
 } from './FormControls';
 import { GeometryEditor } from './GeometryEditor';
+import { LinkJointEditor } from './LinkJointEditor';
 import { TransformFields } from './TransformFields';
-
-type DetailGeometryTab = 'visual' | 'collision';
 
 const DEFAULT_INERTIAL = {
   mass: 0,
@@ -77,9 +76,9 @@ const DetailGeometryTabPanel = ({
   children,
   tab,
 }: {
-  activeTab: DetailGeometryTab;
+  activeTab: DetailLinkTab;
   children: React.ReactNode;
-  tab: DetailGeometryTab;
+  tab: DetailLinkTab;
 }) => (
   <div
     style={{ display: activeTab === tab ? undefined : 'none' }}
@@ -95,7 +94,7 @@ interface LinkPropertiesProps {
   mode: AppMode;
   selection: { id: string | null; type: string; subType?: 'visual' | 'collision' };
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
-  onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+  motorLibrary: Record<string, MotorSpec[]>;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
   t: typeof translations['en'];
@@ -103,27 +102,17 @@ interface LinkPropertiesProps {
 }
 
 export const LinkProperties: React.FC<LinkPropertiesProps> = ({
-  data, robot, mode, selection, onUpdate, onSelect, assets, onUploadAsset, t, lang
+  data, robot, mode, selection, onUpdate, motorLibrary, assets, onUploadAsset, t, lang
 }) => {
-  // Tab state for Visual vs Collision
-  const [linkTab, setLinkTab] = useState<DetailGeometryTab>('visual');
+  const linkTab = useUIStore((state) => state.detailLinkTab);
+  const setDetailLinkTab = useUIStore((state) => state.setDetailLinkTab);
   const inertial = data.inertial ?? DEFAULT_INERTIAL;
   const densityResult = useMemo(() => computeLinkDensity(data), [data]);
   const derivedInertial = useMemo(() => computeInertialDerivedValues(data.inertial), [data.inertial]);
   const densityLabel = t.density;
 
-  // Sync internal tab state with global selection subType
-  useEffect(() => {
-    if (selection.subType) {
-      setLinkTab(selection.subType);
-    }
-  }, [selection.subType]);
-
-  const handleTabChange = (tab: DetailGeometryTab) => {
-    setLinkTab(tab);
-    if (selection.id && onSelect) {
-      onSelect('link', selection.id, tab);
-    }
+  const handleTabChange = (tab: DetailLinkTab) => {
+    setDetailLinkTab(tab);
   };
   const inertiaTensorFields = ['ixx', 'ixy', 'ixz', 'iyy', 'iyz', 'izz'] as const;
   const diagonalInertiaLabels = ['I1', 'I2', 'I3'] as const;
@@ -258,12 +247,12 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
 
   return (
     <>
-      {/* Name (Skeleton & Hardware Mode) */}
-      {mode !== 'detail' && (
+      {/* Name (Skeleton Mode) */}
+      {mode === 'skeleton' && (
         nameField
       )}
 
-      {/* Detail Mode: Visual & Collision Tabs */}
+      {/* Detail Mode: Visual / Collision / Joint Tabs */}
       {mode === 'detail' && (
         <div>
           {/* Tab Navigation - Folder Style */}
@@ -280,6 +269,12 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
               isActive={linkTab === 'collision'}
               label={t.collisionGeometry}
               onClick={() => handleTabChange('collision')}
+            />
+            <DetailGeometryTabButton
+              icon={Waypoints}
+              isActive={linkTab === 'joint'}
+              label={t.joints}
+              onClick={() => handleTabChange('joint')}
             />
           </div>
 
@@ -314,11 +309,33 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
               isTabbed={true}
             />
           </DetailGeometryTabPanel>
+
+          <DetailGeometryTabPanel activeTab={linkTab} tab="joint">
+            <LinkJointEditor
+              linkId={data.id}
+              robot={robot}
+              mode={mode}
+              motorLibrary={motorLibrary}
+              onUpdate={onUpdate}
+              t={t}
+              lang={lang}
+            />
+          </DetailGeometryTabPanel>
         </div>
       )}
       {mode === 'detail' && linkTab === 'visual' && inertialSection}
 
-      {mode === 'hardware' && inertialSection}
+      {mode === 'hardware' && (
+        <LinkJointEditor
+          linkId={data.id}
+          robot={robot}
+          mode={mode}
+          motorLibrary={motorLibrary}
+          onUpdate={onUpdate}
+          t={t}
+          lang={lang}
+        />
+      )}
     </>
   );
 };

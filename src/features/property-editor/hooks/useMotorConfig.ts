@@ -2,10 +2,11 @@
  * Hook for managing motor configuration state.
  * Handles motor brand selection, source detection, and motor switching.
  */
-import { useState, useEffect } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import type { MotorSpec } from '@/types';
 
 interface JointHardware {
+  brand?: string;
   motorType?: string;
   armature?: number;
   motorId?: string;
@@ -24,6 +25,38 @@ export interface JointDataForMotor {
   limit?: JointLimit;
 }
 
+type MotorSource = 'None' | 'Library' | 'Custom';
+
+const NONE_MOTOR_TYPE = 'None';
+
+const findBrandForMotorType = (
+  motorLibrary: Record<string, MotorSpec[]>,
+  motorType: string | undefined,
+): string => {
+  if (!motorType || motorType === NONE_MOTOR_TYPE) {
+    return '';
+  }
+
+  for (const [brand, motors] of Object.entries(motorLibrary)) {
+    if (motors.some((motor) => motor.name === motorType)) {
+      return brand;
+    }
+  }
+
+  return '';
+};
+
+const inferMotorSource = (
+  motorLibrary: Record<string, MotorSpec[]>,
+  motorType: string | undefined,
+): MotorSource => {
+  if (!motorType || motorType === NONE_MOTOR_TYPE) {
+    return 'None';
+  }
+
+  return findBrandForMotorType(motorLibrary, motorType) ? 'Library' : 'Custom';
+};
+
 export function useMotorConfig({
   motorLibrary,
   data,
@@ -36,109 +69,147 @@ export function useMotorConfig({
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }) {
   const [motorBrand, setMotorBrand] = useState<string>('');
+  const [displayMotorSource, setDisplayMotorSource] = useState<MotorSource>('None');
+  const [displayMotorType, setDisplayMotorType] = useState<string>(NONE_MOTOR_TYPE);
+  const [, startTransition] = useTransition();
 
-  // Initialize default brand if empty or invalid
-  useEffect(() => {
-    if (Object.keys(motorLibrary).length > 0) {
-      if (!motorBrand || !motorLibrary[motorBrand]) {
-        setMotorBrand(Object.keys(motorLibrary)[0]);
-      }
-    }
-  }, [motorLibrary, motorBrand]);
+  const availableBrands = Object.keys(motorLibrary);
+  const defaultBrand = availableBrands[0] ?? '';
+  const persistedMotorType = data?.hardware?.motorType || NONE_MOTOR_TYPE;
+  const persistedMotorBrand = findBrandForMotorType(motorLibrary, persistedMotorType);
+  const persistedMotorSource = inferMotorSource(motorLibrary, persistedMotorType);
 
-  // Infer brand from current motor type when selection changes
+  // Sync local display state from the persisted joint only when the selection
+  // or the external joint data changes, so brand/model dropdowns remain
+  // responsive while the store update is being processed.
   useEffect(() => {
-    if (data) {
-      const type = data.hardware?.motorType;
-      if (type) {
-        for (const [brand, motors] of Object.entries(motorLibrary)) {
-          if (motors.some(m => m.name === type)) {
-            setMotorBrand(brand);
-            break;
-          }
-        }
+    if (!defaultBrand) {
+      if (motorBrand) {
+        setMotorBrand('');
       }
+      if (displayMotorSource !== 'None') {
+        setDisplayMotorSource('None');
+      }
+      if (displayMotorType !== NONE_MOTOR_TYPE) {
+        setDisplayMotorType(NONE_MOTOR_TYPE);
+      }
+      return;
     }
-  }, [selectionId, data, motorLibrary]);
+
+    const nextBrand = persistedMotorSource === 'Library'
+      ? (persistedMotorBrand || defaultBrand)
+      : ((!motorBrand || !motorLibrary[motorBrand]) ? defaultBrand : motorBrand);
+
+    if (displayMotorSource !== persistedMotorSource) {
+      setDisplayMotorSource(persistedMotorSource);
+    }
+    if (displayMotorType !== persistedMotorType) {
+      setDisplayMotorType(persistedMotorType);
+    }
+    if (nextBrand !== motorBrand) {
+      setMotorBrand(nextBrand);
+    }
+  }, [
+    defaultBrand,
+    motorLibrary,
+    persistedMotorBrand,
+    persistedMotorSource,
+    persistedMotorType,
+    selectionId,
+  ]);
 
   // Derived values
-  const currentMotorType = data?.hardware?.motorType || 'None';
+  const currentMotorType = displayMotorType || NONE_MOTOR_TYPE;
 
-  let motorSource = 'Custom';
-  if (currentMotorType === 'None') {
-    motorSource = 'None';
-  } else {
-    let foundInLib = false;
-    for (const motors of Object.values(motorLibrary)) {
-      if (motors.some(m => m.name === currentMotorType)) {
-        foundInLib = true;
-        break;
-      }
-    }
-    if (foundInLib) motorSource = 'Library';
-  }
-
-  const currentLibMotor = motorSource === 'Library' && motorBrand
+  const currentLibMotor = displayMotorSource === 'Library' && motorBrand
     ? motorLibrary[motorBrand]?.find(m => m.name === currentMotorType)
     : null;
 
+  const commitJointUpdates = (updates: {
+    hardware?: JointHardware;
+    limit?: JointLimit;
+  }) => {
+    if (!selectionId) {
+      return;
+    }
+
+    startTransition(() => {
+      onUpdate('joint', selectionId, Object.assign({}, data, updates));
+    });
+  };
+
   // Handlers
   const handleSourceChange = (newSource: string) => {
+    const nextSource = newSource as MotorSource;
     const newHardware = { ...data?.hardware };
     const newLimit = { ...data?.limit };
 
-    if (newSource === 'None') {
-      newHardware.motorType = 'None';
+    if (nextSource === 'None') {
+      setDisplayMotorSource('None');
+      setDisplayMotorType(NONE_MOTOR_TYPE);
+      newHardware.brand = '';
+      newHardware.motorType = NONE_MOTOR_TYPE;
       newHardware.armature = 0;
-    } else if (newSource === 'Library') {
-      const brands = Object.keys(motorLibrary);
-      if (brands.length > 0) {
-        const defaultBrand = brands[0];
-        setMotorBrand(defaultBrand);
-        const motor = motorLibrary[defaultBrand][0];
-        if (motor) {
-          newHardware.motorType = motor.name;
-          newHardware.armature = motor.armature;
-          newLimit.velocity = motor.velocity;
-          newLimit.effort = motor.effort;
-        }
+    } else if (nextSource === 'Library') {
+      const nextBrand = motorLibrary[motorBrand] ? motorBrand : defaultBrand;
+      const motor = nextBrand ? motorLibrary[nextBrand]?.[0] : undefined;
+
+      setDisplayMotorSource('Library');
+      if (nextBrand) {
+        setMotorBrand(nextBrand);
       }
-    } else if (newSource === 'Custom') {
-      if (currentMotorType === 'None' || motorSource === 'Library') {
-        newHardware.motorType = 'my_motor';
+
+      if (motor) {
+        setDisplayMotorType(motor.name);
+        newHardware.brand = nextBrand;
+        newHardware.motorType = motor.name;
+        newHardware.armature = motor.armature;
+        newLimit.velocity = motor.velocity;
+        newLimit.effort = motor.effort;
+      }
+    } else if (nextSource === 'Custom') {
+      const nextMotorType = persistedMotorType === NONE_MOTOR_TYPE || persistedMotorSource === 'Library'
+        ? 'my_motor'
+        : persistedMotorType;
+      setDisplayMotorSource('Custom');
+      setDisplayMotorType(nextMotorType);
+      newHardware.brand = '';
+      if (persistedMotorType === NONE_MOTOR_TYPE || persistedMotorSource === 'Library') {
+        newHardware.motorType = nextMotorType;
       }
     }
 
-    const updates = { hardware: newHardware, limit: newLimit };
-    onUpdate('joint', selectionId!, Object.assign({}, data, updates));
+    commitJointUpdates({ hardware: newHardware, limit: newLimit });
   };
 
   const handleBrandChange = (newBrand: string) => {
     setMotorBrand(newBrand);
     const motor = motorLibrary[newBrand]?.[0];
     if (motor) {
-      const updates = {
-        hardware: { ...data?.hardware, motorType: motor.name, armature: motor.armature },
+      setDisplayMotorSource('Library');
+      setDisplayMotorType(motor.name);
+      commitJointUpdates({
+        hardware: { ...data?.hardware, brand: newBrand, motorType: motor.name, armature: motor.armature },
         limit: { ...data?.limit, velocity: motor.velocity, effort: motor.effort }
-      };
-      onUpdate('joint', selectionId!, Object.assign({}, data, updates));
+      });
     }
   };
 
   const handleLibraryMotorChange = (motorName: string) => {
     const motor = motorLibrary[motorBrand]?.find(m => m.name === motorName);
     if (motor) {
-      const updates = {
-        hardware: { ...data?.hardware, motorType: motor.name, armature: motor.armature },
+      setDisplayMotorSource('Library');
+      setDisplayMotorType(motor.name);
+      commitJointUpdates({
+        hardware: { ...data?.hardware, brand: motorBrand, motorType: motor.name, armature: motor.armature },
         limit: { ...data?.limit, velocity: motor.velocity, effort: motor.effort }
-      };
-      onUpdate('joint', selectionId!, Object.assign({}, data, updates));
+      });
     }
   };
 
   return {
     motorBrand,
-    motorSource,
+    motorSource: displayMotorSource,
     currentMotorType,
     currentLibMotor,
     handleSourceChange,

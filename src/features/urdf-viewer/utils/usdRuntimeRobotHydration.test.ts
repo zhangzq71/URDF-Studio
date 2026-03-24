@@ -224,6 +224,94 @@ test('hydrateUsdViewerRobotResolutionFromRuntime syncs runtime link and mesh tra
   );
 });
 
+test('hydrateUsdViewerRobotResolutionFromRuntime preserves the B2 leg mesh basis when the runtime link frame is identity', () => {
+  const thighLinkWorld = composeMatrix({
+    x: 0.32850000262260437,
+    y: 0.19172999262809753,
+    z: 0,
+  });
+  const thighVisualWorld = composeMatrix(
+    {
+      x: 0.32850000262260437,
+      y: 0.19172999262809753,
+      z: 0,
+    },
+    {
+      r: Math.PI / 2,
+      p: 0,
+      y: 0,
+    },
+  );
+
+  const resolution: ViewerRobotDataResolution = {
+    stageSourcePath: '/robots/unitree/b2.usd',
+    linkIdByPath: {
+      '/b2_description/FL_thigh': 'FL_thigh',
+    },
+    linkPathById: {
+      FL_thigh: '/b2_description/FL_thigh',
+    },
+    jointPathById: {},
+    childLinkPathByJointId: {},
+    parentLinkPathByJointId: {},
+    robotData: {
+      name: 'b2',
+      rootLinkId: 'FL_thigh',
+      links: {
+        FL_thigh: {
+          ...DEFAULT_LINK,
+          id: 'FL_thigh',
+          name: 'FL_thigh',
+          visible: true,
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.MESH,
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.NONE,
+          },
+        },
+      },
+      joints: {},
+    },
+  };
+
+  const snapshot = {
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/b2_description/FL_thigh/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/b2_description/FL_thigh/visuals/FL_thigh/mesh',
+        },
+      ],
+    },
+  };
+
+  const hydrated = hydrateUsdViewerRobotResolutionFromRuntime(resolution, snapshot as any, {
+    getPreferredLinkWorldTransform: (linkPath: string) => {
+      if (linkPath === '/b2_description/FL_thigh') {
+        return thighLinkWorld.clone();
+      }
+      return null;
+    },
+    getWorldTransformForPrimPath: (primPath: string) => {
+      if (primPath === '/b2_description/FL_thigh/visuals/FL_thigh/mesh') {
+        return thighVisualWorld.clone();
+      }
+      return null;
+    },
+  });
+
+  assertMatrixClose(
+    hydrated.robotData.links.FL_thigh.visual.origin,
+    thighLinkWorld.clone().invert().multiply(thighVisualWorld.clone()),
+    'B2 thigh visual origin should retain the mesh-local RotX(90deg) basis',
+  );
+});
+
 test('hydrateUsdViewerRobotResolutionFromRuntime composes authored approximation offsets with runtime prim transforms', () => {
   const baseWorld = composeMatrix({ x: 0, y: 0, z: 0 });
   const childWorld = composeMatrix({ x: 1, y: -2, z: 3 }, { r: 0.02, p: -0.04, y: 0.06 });

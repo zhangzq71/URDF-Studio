@@ -485,7 +485,11 @@ export function resolveUrdfTruthFileNameForStagePath(stageSourcePath) {
         b2: 'b2_description.urdf',
         b2w: 'b2w_description.urdf',
     };
-    for (const [token, urdfFileName] of Object.entries(knownMapping)) {
+    if (stem && knownMapping[stem]) {
+        return knownMapping[stem];
+    }
+    const knownEntries = Object.entries(knownMapping).sort((left, right) => right[0].length - left[0].length);
+    for (const [token, urdfFileName] of knownEntries) {
         if (normalizedPath.includes(token))
             return urdfFileName;
     }

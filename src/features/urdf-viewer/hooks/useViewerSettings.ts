@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 
+const ORIGIN_OVERLAY_STORAGE_KEY = 'urdf_viewer_origin_overlay_v2';
+
 export interface ViewerSettings {
     showCollision: boolean;
     setShowCollision: React.Dispatch<React.SetStateAction<boolean>>;
@@ -66,10 +68,10 @@ export function useViewerSettings(): ViewerSettings {
     const [showOrigins, setShowOrigins] = useState(false);
     const [showOriginsOverlay, setShowOriginsOverlay] = useState(() => {
         if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_origin_overlay');
-            return saved !== 'false';
+            const saved = localStorage.getItem(ORIGIN_OVERLAY_STORAGE_KEY);
+            return saved === 'true';
         }
-        return true;
+        return false;
     });
     const [originSize, setOriginSize] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -139,7 +141,7 @@ export function useViewerSettings(): ViewerSettings {
     }, [jointAxisSize]);
 
     useEffect(() => {
-        localStorage.setItem('urdf_viewer_origin_overlay', showOriginsOverlay.toString());
+        localStorage.setItem(ORIGIN_OVERLAY_STORAGE_KEY, showOriginsOverlay.toString());
     }, [showOriginsOverlay]);
 
     useEffect(() => {

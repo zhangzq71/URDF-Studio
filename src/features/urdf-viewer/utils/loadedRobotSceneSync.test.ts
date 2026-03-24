@@ -11,6 +11,12 @@ import { syncLoadedRobotScene } from './loadedRobotSceneSync';
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
 
+function toLinearTuple(r: number, g: number, b: number): number[] {
+  return new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace)
+    .toArray()
+    .map((value) => Number(value.toFixed(4)));
+}
+
 test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte materials', () => {
   const urdfMaterials = parseURDFMaterials(`<?xml version="1.0"?>
 <robot name="demo">
@@ -82,13 +88,56 @@ test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte mate
   assert.equal(mesh.userData.isCollisionMesh, false);
   assert.deepEqual(
     primaryMaterial.color.toArray().map((value) => Number(value.toFixed(4))),
-    [0.9, 0.95, 0.95],
+    toLinearTuple(0.9, 0.95, 0.95),
   );
   assert.deepEqual(
     secondaryMaterial.color.toArray().map((value) => Number(value.toFixed(4))),
-    [0.05, 0.05, 0.05],
+    toLinearTuple(0.05, 0.05, 0.05),
   );
   assert.equal(primaryMaterial.roughness, 0.68);
   assert.equal(primaryMaterial.metalness, 0.02);
   assert.equal(primaryMaterial.envMapIntensity, 0.3);
+  assert.equal(primaryMaterial.toneMapped, false);
+  assert.equal(secondaryMaterial.toneMapped, false);
+});
+
+test('syncLoadedRobotScene upgrades MJCF visual meshes to the shared matte viewer materials', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const visual = new URDFVisual();
+  visual.name = 'base_visual';
+
+  const mjcfMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshPhongMaterial({ name: 'mjcf_body', color: new THREE.Color('#7f7f7f') }),
+  );
+
+  visual.add(mjcfMesh);
+  link.add(visual);
+  robot.add(link);
+  (robot as any).links = { base_link: link };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.linkMeshMap.get('base_link:visual')?.includes(mjcfMesh), true);
+  assert.equal(mjcfMesh.material instanceof THREE.MeshStandardMaterial, true);
+  if (!(mjcfMesh.material instanceof THREE.MeshStandardMaterial)) {
+    assert.fail('expected MJCF visual material to upgrade to MeshStandardMaterial');
+  }
+
+  assert.equal(result.changed, true);
+  assert.equal(mjcfMesh.userData.parentLinkName, 'base_link');
+  assert.equal(mjcfMesh.userData.isVisualMesh, true);
+  assert.equal(mjcfMesh.userData.isCollisionMesh, false);
+  assert.equal(mjcfMesh.material.roughness, 0.68);
+  assert.equal(mjcfMesh.material.metalness, 0.02);
+  assert.equal(mjcfMesh.material.envMapIntensity, 0.3);
 });

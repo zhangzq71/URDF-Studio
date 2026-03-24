@@ -20,6 +20,7 @@ import {
 } from '../../../types/index.ts';
 import {
   adaptUsdViewerSnapshotToRobotData,
+  resolveUsdMeshApproximationGeometry,
 } from './usdViewerRobotAdapter.ts';
 import { resolveUsdPrimitiveGeometryFromDescriptor as resolvePrimitiveGeometryFromDescriptor } from './usdPrimitiveGeometry.ts';
 import { toVirtualUsdPath } from './usdPreloadSources.ts';
@@ -57,6 +58,7 @@ type ExportDescriptor = {
 };
 
 type RobotLike = RobotData | RobotState;
+const ORIGIN_EPSILON = 1e-9;
 
 export interface UsdExportBundle {
   robot: RobotState;
@@ -382,6 +384,66 @@ function hasNonIdentityOrigin(
     || Math.abs(origin.rpy?.r || 0) > 1e-9
     || Math.abs(origin.rpy?.p || 0) > 1e-9
     || Math.abs(origin.rpy?.y || 0) > 1e-9;
+}
+
+function cloneVisualOrigin(
+  origin: NonNullable<UrdfVisual['origin']> | null | undefined,
+): NonNullable<UrdfVisual['origin']> {
+  return {
+    xyz: {
+      x: origin?.xyz?.x || 0,
+      y: origin?.xyz?.y || 0,
+      z: origin?.xyz?.z || 0,
+    },
+    rpy: {
+      r: origin?.rpy?.r || 0,
+      p: origin?.rpy?.p || 0,
+      y: origin?.rpy?.y || 0,
+    },
+  };
+}
+
+function originsApproximatelyEqual(
+  left: NonNullable<UrdfVisual['origin']> | null | undefined,
+  right: NonNullable<UrdfVisual['origin']> | null | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return Math.abs((left.xyz?.x || 0) - (right.xyz?.x || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.xyz?.y || 0) - (right.xyz?.y || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.xyz?.z || 0) - (right.xyz?.z || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.rpy?.r || 0) - (right.rpy?.r || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.rpy?.p || 0) - (right.rpy?.p || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.rpy?.y || 0) - (right.rpy?.y || 0)) <= ORIGIN_EPSILON;
+}
+
+function stripSyntheticMeshApproximationOrigin(
+  geometry: UrdfVisual | null | undefined,
+  descriptor: SnapshotMeshDescriptor,
+  snapshot: UsdExportSnapshot,
+): UrdfVisual | null | undefined {
+  if (!geometry?.origin || geometry.type === GeometryType.NONE) {
+    return geometry;
+  }
+
+  if (resolvePrimitiveGeometryFromDescriptor(descriptor, geometry)) {
+    return geometry;
+  }
+
+  const approximation = resolveUsdMeshApproximationGeometry(snapshot, descriptor);
+  if (!approximation?.origin || !originsApproximatelyEqual(geometry.origin, approximation.origin)) {
+    return geometry;
+  }
+
+  return {
+    ...geometry,
+    origin: {
+      xyz: { x: 0, y: 0, z: 0 },
+      rpy: { r: 0, p: 0, y: 0 },
+    },
+  };
 }
 
 function buildObjBlobFromDescriptor(
@@ -1077,6 +1139,7 @@ function createSyntheticVisualAttachmentLink(
 }
 
 function assignVisualDescriptorToLink(
+  snapshot: UsdExportSnapshot,
   robot: RobotState,
   linkId: string,
   entry: ExportDescriptor,
@@ -1112,13 +1175,14 @@ function assignVisualDescriptorToLink(
     return;
   }
 
+  const visual = stripSyntheticMeshApproximationOrigin(link.visual, entry.descriptor, snapshot) || link.visual;
   link.visual = {
     ...DEFAULT_LINK.visual,
-    ...(link.visual || {}),
+    ...(visual || {}),
     type: GeometryType.MESH,
     meshPath: entry.exportPath,
-    dimensions: ensureMeshDimensions(link.visual?.dimensions),
-    origin: link.visual?.origin || { ...DEFAULT_LINK.visual.origin },
+    dimensions: ensureMeshDimensions(visual?.dimensions),
+    origin: visual?.origin || { ...DEFAULT_LINK.visual.origin },
   };
   entry.bakeTransformIntoMesh = !hasNonIdentityOrigin(link.visual.origin);
   descriptorByPath.set(entry.exportPath, entry);
@@ -1129,6 +1193,7 @@ function assignVisualDescriptorToLink(
 }
 
 function assignCollisionDescriptorToLink(
+  snapshot: UsdExportSnapshot,
   robot: RobotState,
   linkId: string,
   entry: ExportDescriptor,
@@ -1164,14 +1229,16 @@ function assignCollisionDescriptorToLink(
     return;
   }
 
+  const sanitizedCollision = stripSyntheticMeshApproximationOrigin(currentCollision, entry.descriptor, snapshot)
+    || currentCollision;
   if (collisionIndex === 0) {
     link.collision = {
       ...DEFAULT_LINK.collision,
-      ...(link.collision || {}),
+      ...(sanitizedCollision || {}),
       type: GeometryType.MESH,
       meshPath: entry.exportPath,
-      dimensions: ensureMeshDimensions(link.collision?.dimensions),
-      origin: link.collision?.origin || { ...DEFAULT_LINK.collision.origin },
+      dimensions: ensureMeshDimensions(sanitizedCollision?.dimensions),
+      origin: sanitizedCollision?.origin || { ...DEFAULT_LINK.collision.origin },
     };
     entry.bakeTransformIntoMesh = !hasNonIdentityOrigin(link.collision.origin);
     descriptorByPath.set(entry.exportPath, entry);
@@ -1179,7 +1246,7 @@ function assignCollisionDescriptorToLink(
   }
 
   const bodies = [...(link.collisionBodies || [])];
-  const currentBody = bodies[collisionIndex - 1];
+  const currentBody = sanitizedCollision;
   bodies[collisionIndex - 1] = {
     ...DEFAULT_LINK.collision,
     ...(currentBody || {}),
@@ -1194,6 +1261,7 @@ function assignCollisionDescriptorToLink(
 }
 
 function assignLinkDescriptors(
+  snapshot: UsdExportSnapshot,
   robot: RobotState,
   linkId: string,
   linkPath: string,
@@ -1243,8 +1311,24 @@ function assignLinkDescriptors(
       }
     }
 
+    if (entry.subsetSection && targetLinkId !== linkId) {
+      const sourceOrigin = robot.links[linkId]?.visual?.origin;
+      const targetLink = robot.links[targetLinkId];
+      if (
+        targetLink
+        && hasNonIdentityOrigin(sourceOrigin)
+        && !hasNonIdentityOrigin(targetLink.visual.origin)
+      ) {
+        targetLink.visual = {
+          ...targetLink.visual,
+          origin: cloneVisualOrigin(sourceOrigin),
+        };
+      }
+    }
+
     usedVisualLinkIds.add(targetLinkId);
     assignVisualDescriptorToLink(
+      snapshot,
       robot,
       targetLinkId,
       entry,
@@ -1256,7 +1340,7 @@ function assignLinkDescriptors(
   });
 
   collisionDescriptors.forEach((entry, index) => {
-    assignCollisionDescriptorToLink(robot, linkId, entry, descriptorByPath, index);
+    assignCollisionDescriptorToLink(snapshot, robot, linkId, entry, descriptorByPath, index);
   });
 }
 
@@ -1364,6 +1448,7 @@ function createDescriptorExportMap(
 
   Object.entries(resolution.linkIdByPath).forEach(([linkPath, linkId]) => {
     assignLinkDescriptors(
+      snapshot,
       baseRobot,
       linkId,
       linkPath,

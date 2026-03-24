@@ -21,6 +21,7 @@ import {
 import type { ViewerRobotDataResolution } from './viewerRobotData';
 import {
   buildNormalizedUsdPathSet,
+  getUsdDescriptorSectionChildToken,
   getUsdDescriptorSemanticChildLinkName,
   resolveUsdDescriptorTargetLinkPath,
 } from './usdDescriptorLinkResolution';
@@ -37,6 +38,17 @@ type RobotSceneSnapshot = UsdSceneSnapshot;
 type ResolvedUsdGeometry = Pick<UrdfVisual, 'type' | 'dimensions'> & {
   origin?: UrdfVisual['origin'];
 };
+
+interface DescriptorEntry {
+  descriptor: MeshDescriptor;
+  ordinal: number;
+  groupKey: string;
+}
+
+interface DescriptorGroup {
+  groupKey: string;
+  entries: DescriptorEntry[];
+}
 
 export type { ViewerRobotDataResolution } from './viewerRobotData';
 export type UsdViewerRobotDataResolution = ViewerRobotDataResolution;
@@ -185,6 +197,31 @@ function parseDescriptorOrdinal(descriptor: MeshDescriptor, fallbackIndex: numbe
   return fallbackIndex;
 }
 
+function getUsdDescriptorAttachmentGroupKey(descriptor: MeshDescriptor): string {
+  return getUsdDescriptorSectionChildToken(descriptor) || '__default__';
+}
+
+function groupDescriptorEntries(entries: DescriptorEntry[]): DescriptorGroup[] {
+  const groups = new Map<string, DescriptorEntry[]>();
+
+  entries.forEach((entry) => {
+    const bucket = groups.get(entry.groupKey) || [];
+    bucket.push(entry);
+    groups.set(entry.groupKey, bucket);
+  });
+
+  return Array.from(groups.entries())
+    .map(([groupKey, groupedEntries]) => ({
+      groupKey,
+      entries: groupedEntries.slice().sort((left, right) => left.ordinal - right.ordinal),
+    }))
+    .sort((left, right) => {
+      const leftOrdinal = left.entries[0]?.ordinal ?? 0;
+      const rightOrdinal = right.entries[0]?.ordinal ?? 0;
+      return leftOrdinal - rightOrdinal;
+    });
+}
+
 function createUniqueId(base: string, used: Set<string>, fallbackPath: string): string {
   const normalizedBase = String(base || 'link').replace(/[^\w]+/g, '_') || 'link';
   if (!used.has(normalizedBase)) {
@@ -312,7 +349,7 @@ function resolveUsdMeshApproximationFromBuffers(
   };
 }
 
-function resolveUsdMeshApproximationGeometry(
+export function resolveUsdMeshApproximationGeometry(
   snapshot: RobotSceneSnapshot,
   descriptor: MeshDescriptor,
 ): ResolvedUsdGeometry | null {
@@ -491,18 +528,22 @@ function deriveMeshCountsByLinkPath(
     return existing || {};
   }
 
-  const derived: Record<string, MeshCountsEntry> = {};
+  const derivedGroupsByLinkPath = new Map<string, {
+    visualGroups: Set<string>;
+    collisionGroupPrimitiveTypes: Map<string, string>;
+  }>();
   const normalizedKnownLinkPaths = buildNormalizedUsdPathSet(knownLinkPaths);
 
-  const ensureEntry = (linkPath: string): MeshCountsEntry => {
-    if (!derived[linkPath]) {
-      derived[linkPath] = {
-        visualMeshCount: 0,
-        collisionMeshCount: 0,
-        collisionPrimitiveCounts: {},
+  const ensureEntry = (linkPath: string) => {
+    let entry = derivedGroupsByLinkPath.get(linkPath);
+    if (!entry) {
+      entry = {
+        visualGroups: new Set<string>(),
+        collisionGroupPrimitiveTypes: new Map<string, string>(),
       };
+      derivedGroupsByLinkPath.set(linkPath, entry);
     }
-    return derived[linkPath];
+    return entry;
   };
 
   for (const descriptor of descriptors) {
@@ -514,19 +555,32 @@ function deriveMeshCountsByLinkPath(
 
     const entry = ensureEntry(linkPath);
     const sectionName = normalizeDescriptorSectionName(descriptor.sectionName);
+    const groupKey = getUsdDescriptorAttachmentGroupKey(descriptor);
     if (sectionName === 'collisions') {
-      entry.collisionMeshCount = Number(entry.collisionMeshCount || 0) + 1;
-      const primitiveType = String(descriptor.primType || '').trim().toLowerCase();
-      if (primitiveType) {
-        const collisionPrimitiveCounts = entry.collisionPrimitiveCounts || {};
-        collisionPrimitiveCounts[primitiveType] = Number(collisionPrimitiveCounts[primitiveType] || 0) + 1;
-        entry.collisionPrimitiveCounts = collisionPrimitiveCounts;
+      if (!entry.collisionGroupPrimitiveTypes.has(groupKey)) {
+        const primitiveType = String(descriptor.primType || '').trim().toLowerCase() || 'mesh';
+        entry.collisionGroupPrimitiveTypes.set(groupKey, primitiveType);
       }
       continue;
     }
 
-    entry.visualMeshCount = Number(entry.visualMeshCount || 0) + 1;
+    entry.visualGroups.add(groupKey);
   }
+
+  const derived = Object.fromEntries(
+    Array.from(derivedGroupsByLinkPath.entries()).map(([linkPath, entry]) => {
+      const collisionPrimitiveCounts: Record<string, number> = {};
+      entry.collisionGroupPrimitiveTypes.forEach((primitiveType) => {
+        collisionPrimitiveCounts[primitiveType] = Number(collisionPrimitiveCounts[primitiveType] || 0) + 1;
+      });
+
+      return [linkPath, {
+        visualMeshCount: entry.visualGroups.size,
+        collisionMeshCount: entry.collisionGroupPrimitiveTypes.size,
+        collisionPrimitiveCounts,
+      } satisfies MeshCountsEntry];
+    }),
+  ) as Record<string, MeshCountsEntry>;
 
   if (!existing || Object.keys(existing).length === 0) {
     return derived;
@@ -806,8 +860,8 @@ export function adaptUsdViewerSnapshotToRobotData(
   const materials: Record<string, { color?: string; texture?: string }> = {};
   const materialLookup = getSnapshotMaterialLookup(snapshot);
   const descriptors = Array.from(snapshot.render?.meshDescriptors || []);
-  const visualDescriptorsByLinkPath = new Map<string, Array<{ descriptor: MeshDescriptor; ordinal: number }>>();
-  const collisionDescriptorsByLinkPath = new Map<string, Array<{ descriptor: MeshDescriptor; ordinal: number }>>();
+  const visualDescriptorsByLinkPath = new Map<string, DescriptorEntry[]>();
+  const collisionDescriptorsByLinkPath = new Map<string, DescriptorEntry[]>();
   const visualDescriptorTargetLinkIds = new Map<string, string>();
 
   const getDescriptorEntryKey = (descriptor: MeshDescriptor, ordinal: number) => (
@@ -831,6 +885,7 @@ export function adaptUsdViewerSnapshotToRobotData(
     entries.push({
       descriptor,
       ordinal: parseDescriptorOrdinal(descriptor, entries.length),
+      groupKey: getUsdDescriptorAttachmentGroupKey(descriptor),
     });
     targetMap.set(linkPath, entries);
   });
@@ -890,18 +945,21 @@ export function adaptUsdViewerSnapshotToRobotData(
       return;
     }
 
-    if (entries[0]) {
+    const groupedEntries = groupDescriptorEntries(entries);
+    const primaryGroup = groupedEntries[0];
+    primaryGroup?.entries.forEach(({ descriptor, ordinal }) => {
       visualDescriptorTargetLinkIds.set(
-        getDescriptorEntryKey(entries[0].descriptor, entries[0].ordinal),
+        getDescriptorEntryKey(descriptor, ordinal),
         parentLinkId,
       );
-    }
+    });
 
-    if (entries.length <= 1) {
-      return;
-    }
+    groupedEntries.slice(1).forEach((group, index) => {
+      const descriptor = group.entries[0]?.descriptor;
+      if (!descriptor) {
+        return;
+      }
 
-    entries.slice(1).forEach(({ descriptor, ordinal }, index) => {
       const semanticName = getDescriptorSemanticName(descriptor);
       const childLinkId = createUniqueId(
         semanticName || `${parentLinkId}_geom_${index + 1}`,
@@ -947,22 +1005,28 @@ export function adaptUsdViewerSnapshotToRobotData(
         ...(color ? { color } : {}),
         ...(texture ? { texture } : {}),
       };
-      visualDescriptorTargetLinkIds.set(
-        getDescriptorEntryKey(descriptor, ordinal),
-        childLinkId,
-      );
+
+      group.entries.forEach(({ descriptor: groupDescriptor, ordinal }) => {
+        visualDescriptorTargetLinkIds.set(
+          getDescriptorEntryKey(groupDescriptor, ordinal),
+          childLinkId,
+        );
+      });
     });
   });
 
+  const visualGeometryAssignedLinkIds = new Set<string>();
   visualDescriptorsByLinkPath.forEach((entries) => {
     entries.forEach(({ descriptor, ordinal }) => {
       const targetLinkId = visualDescriptorTargetLinkIds.get(getDescriptorEntryKey(descriptor, ordinal));
-      if (!targetLinkId || !links[targetLinkId]) {
+      if (!targetLinkId || !links[targetLinkId] || visualGeometryAssignedLinkIds.has(targetLinkId)) {
         return;
       }
 
-      const nextGeometry: ResolvedUsdGeometry | null = resolveUsdPrimitiveGeometryFromDescriptor(descriptor, links[targetLinkId].visual)
-        ?? resolveUsdMeshApproximationGeometry(snapshot, descriptor);
+      const nextGeometry: ResolvedUsdGeometry | null = resolveUsdPrimitiveGeometryFromDescriptor(
+        descriptor,
+        links[targetLinkId].visual,
+      );
       if (!nextGeometry) {
         return;
       }
@@ -972,6 +1036,7 @@ export function adaptUsdViewerSnapshotToRobotData(
         ...nextGeometry,
         meshPath: undefined,
       };
+      visualGeometryAssignedLinkIds.add(targetLinkId);
     });
   });
 
@@ -982,7 +1047,12 @@ export function adaptUsdViewerSnapshotToRobotData(
       return;
     }
 
-    entries.forEach(({ descriptor }, index) => {
+    groupDescriptorEntries(entries).forEach((group, index) => {
+      const descriptor = group.entries[0]?.descriptor;
+      if (!descriptor) {
+        return;
+      }
+
       const currentCollision = index === 0
         ? link.collision
         : link.collisionBodies?.[index - 1];

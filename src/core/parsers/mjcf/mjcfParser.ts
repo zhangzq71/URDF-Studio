@@ -123,7 +123,20 @@ function shouldPreserveSyntheticWorldRoot(worldBody: MJCFBody): boolean {
     }
 
     const [onlyChild] = worldBody.children;
-    return onlyChild.joints.length > 0;
+    if (onlyChild.joints.length > 0) {
+        return true;
+    }
+
+    if (isNonZeroPosition(onlyChild.pos)) {
+        return true;
+    }
+
+    const rootRotation = onlyChild.euler || toRPYObjectFromQuat(onlyChild.quat);
+    return !!rootRotation && (
+        Math.abs(rootRotation.r) > 1e-9
+        || Math.abs(rootRotation.p) > 1e-9
+        || Math.abs(rootRotation.y) > 1e-9
+    );
 }
 
 function convertAngle(value: number, settings: MJCFCompilerSettings): number {

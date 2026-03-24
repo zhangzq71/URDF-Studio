@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
 
 // ============================================================
 // URDF Material Parser - Extract rgba colors from URDF XML
@@ -131,7 +132,7 @@ export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string,
 
       if (urdfMaterial?.rgba) {
         const [r, g, b, a] = urdfMaterial.rgba;
-        const color = new THREE.Color(r, g, b);
+        const color = createThreeColorFromSRGB(r, g, b);
         const cloned = mat.clone();
 
         if ((cloned as any).color?.copy) {

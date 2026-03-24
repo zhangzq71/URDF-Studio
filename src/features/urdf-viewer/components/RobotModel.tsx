@@ -42,7 +42,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     showCoMOverlay = true,
     centerOfMassSize = 0.01,
     showOrigins = false,
-    showOriginsOverlay = true,
+    showOriginsOverlay = false,
     originSize = 1.0,
     showJointAxes = false,
     showJointAxesOverlay = true,
@@ -163,6 +163,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         justSelectedRef,
         isOrbitDragging,
         isSelectionLockedRef,
+        selection,
         highlightGeometry
     });
 
@@ -254,8 +255,16 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     const loadingHudState = buildViewerLoadingHudState({
         loadedCount: loadingProgress?.loadedCount,
         totalCount: loadingProgress?.totalCount,
+        progressPercent: loadingProgress?.progressPercent,
         fallbackDetail: t.loadingRobotPreparing,
     });
+    const loadingStageLabel = loadingProgress?.phase === 'preparing-scene'
+        ? t.loadingRobotPreparing
+        : loadingProgress?.phase === 'streaming-meshes'
+            ? t.loadingRobotStreamingMeshes
+            : loadingProgress?.phase === 'finalizing-scene'
+                ? t.loadingRobotFinalizingScene
+                : null;
 
     if (error) {
         return (
@@ -275,9 +284,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                     <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
                         <ViewerLoadingHud
                             title={t.loadingRobot}
-                            detail={t.loadingRobotPreparing}
+                            detail={loadingHudState.detail}
                             progress={loadingHudState.progress}
                             statusLabel={loadingHudState.statusLabel}
+                            stageLabel={loadingStageLabel}
+                            delayMs={0}
                         />
                     </div>
                 </Html>

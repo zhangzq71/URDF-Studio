@@ -34,6 +34,48 @@ const getAxisFromObjectBranch = (object: THREE.Object3D | null | undefined): 'X'
   return null;
 };
 
+const VISIBLE_AXIS_CACHE_POINTER_EPSILON = 0.0025;
+
+type VisibleAxisCacheEntry = {
+  axis: 'X' | 'Y' | 'Z' | null;
+  x: number;
+  y: number;
+};
+
+const getCachedVisibleAxisHit = (
+  controls: any,
+  pointer: { x: number; y: number } | null | undefined
+): 'X' | 'Y' | 'Z' | null => {
+  const cached = controls?.userData?.urdfLastVisibleAxisHit as VisibleAxisCacheEntry | undefined;
+  if (!cached || !pointer) return null;
+
+  if (
+    Math.abs(cached.x - pointer.x) > VISIBLE_AXIS_CACHE_POINTER_EPSILON
+    || Math.abs(cached.y - pointer.y) > VISIBLE_AXIS_CACHE_POINTER_EPSILON
+  ) {
+    return null;
+  }
+
+  return cached.axis;
+};
+
+const cacheVisibleAxisHit = (
+  controls: any,
+  pointer: { x: number; y: number } | null | undefined,
+  axis: 'X' | 'Y' | 'Z' | null
+) => {
+  if (!pointer) return;
+
+  controls.userData = {
+    ...controls.userData,
+    urdfLastVisibleAxisHit: {
+      axis,
+      x: pointer.x,
+      y: pointer.y,
+    } satisfies VisibleAxisCacheEntry,
+  };
+};
+
 const getPointerScreenPosition = (
   pointer: { x: number; y: number },
   rect: DOMRect
@@ -409,6 +451,7 @@ export const patchVisibleHoverHitFallback = (controls: any) => {
     // Hover should only react to the currently visible gizmo geometry,
     // not the oversized invisible picker volume used for dragging.
     controls.axis = resolveVisibleAxisHit(controls, pointer);
+    cacheVisibleAxisHit(controls, pointer, controls.axis);
   };
 
   controls.userData = {
@@ -434,8 +477,11 @@ export const patchVisiblePointerDownFallback = (controls: any) => {
       (pointer == null || pointer.button === undefined || pointer.button === 0) &&
       (controls.mode === 'translate' || controls.mode === 'rotate')
     ) {
-      const visibleAxis = pointer ? resolveVisibleAxisHit(controls, pointer) : null;
+      const visibleAxis =
+        getCachedVisibleAxisHit(controls, pointer)
+        ?? (pointer ? resolveVisibleAxisHit(controls, pointer) : null);
       controls.axis = visibleAxis;
+      cacheVisibleAxisHit(controls, pointer, visibleAxis);
 
       if (!visibleAxis) {
         return;

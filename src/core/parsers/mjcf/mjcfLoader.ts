@@ -45,13 +45,30 @@ interface MJCFJoint {
     pos?: [number, number, number];
 }
 
+export interface MJCFLoadProgress {
+    phase: 'preparing-scene' | 'streaming-meshes' | 'finalizing-scene' | 'ready';
+    progressPercent?: number | null;
+    loadedCount?: number | null;
+    totalCount?: number | null;
+}
+
 /** Load MJCF XML content and create a Three.js scene graph. */
 export async function loadMJCFToThreeJS(
     xmlContent: string,
     assets: Record<string, string>,
     sourceFileDir = '',
+    onProgress?: (progress: MJCFLoadProgress) => void,
 ): Promise<THREE.Object3D | null> {
+    const emitProgress = (progress: MJCFLoadProgress) => {
+        onProgress?.(progress);
+    };
+
     try {
+        emitProgress({
+            phase: 'preparing-scene',
+            progressPercent: 0,
+        });
+
         const parsedModel = parseMJCFModel(xmlContent);
         if (!parsedModel) {
             return null;
@@ -61,9 +78,19 @@ export async function loadMJCFToThreeJS(
         const compilerSettings = parsedModel.compilerSettings;
         console.log(`[MJCFLoader] Compiler settings: angle=${compilerSettings.angleUnit}, meshdir=${compilerSettings.meshdir}`);
 
+        emitProgress({
+            phase: 'preparing-scene',
+            progressPercent: 16,
+        });
+
         await resolveMJCFMeshBackedPrimitiveGeoms(parsedModel, {
             assets,
             sourceFileDir,
+        });
+
+        emitProgress({
+            phase: 'preparing-scene',
+            progressPercent: 28,
         });
 
         const meshMap = parsedModel.meshMap;
@@ -87,12 +114,34 @@ export async function loadMJCFToThreeJS(
             materialMap,
             textureMap,
             sourceFileDir,
+            onProgress: ({ processedGeoms, totalGeoms }) => {
+                const normalizedPercent = totalGeoms > 0
+                    ? 28 + (processedGeoms / totalGeoms) * 60
+                    : 88;
+
+                emitProgress({
+                    phase: 'streaming-meshes',
+                    loadedCount: processedGeoms,
+                    totalCount: totalGeoms,
+                    progressPercent: normalizedPercent,
+                });
+            },
+        });
+
+        emitProgress({
+            phase: 'finalizing-scene',
+            progressPercent: 96,
         });
 
         (rootGroup as any).links = linksMap;
         (rootGroup as any).joints = jointsMap;
 
         console.log(`[MJCFLoader] Loaded model "${modelName}" with ${Object.keys(linksMap).length} links and ${Object.keys(jointsMap).length} joints`);
+
+        emitProgress({
+            phase: 'ready',
+            progressPercent: 100,
+        });
 
         return rootGroup;
     } catch (error) {

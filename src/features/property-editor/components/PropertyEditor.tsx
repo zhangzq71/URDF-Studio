@@ -5,8 +5,8 @@
  */
 import React from 'react';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import type { RobotState, AppMode, UrdfLink, MotorSpec, Theme } from '@/types';
-import { resolveJointKey, resolveLinkKey } from '@/core/robot';
+import { JointType, type RobotState, type AppMode, type UrdfLink, type MotorSpec, type Theme } from '@/types';
+import { getChildJointsByParentLink, getParentJointByChildLink, resolveJointKey, resolveLinkKey } from '@/core/robot';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
 import { useResizablePanel } from '../hooks/useResizablePanel';
@@ -61,9 +61,32 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       },
     };
   }, [resolvedSelectionId, robot]);
-  const data = resolvedSelectionId
-    ? (isLink ? resolvedRobot.links[resolvedSelectionId] : resolvedRobot.joints[resolvedSelectionId])
+  const resolvedHardwareJoint = React.useMemo(() => {
+    if (mode !== 'hardware' || !isLink || !resolvedSelectionId) {
+      return null;
+    }
+
+    const childJoints = getChildJointsByParentLink(resolvedRobot).get(resolvedSelectionId) ?? [];
+    const parentJoint = getParentJointByChildLink(resolvedRobot).get(resolvedSelectionId) ?? null;
+
+    return (
+      childJoints.find((joint) => joint.type !== JointType.FIXED)
+      ?? childJoints[0]
+      ?? (parentJoint?.type !== JointType.FIXED ? parentJoint : null)
+      ?? parentJoint
+      ?? null
+    );
+  }, [isLink, mode, resolvedRobot, resolvedSelectionId]);
+  const effectiveIsLink = !(mode === 'hardware' && isLink && resolvedHardwareJoint);
+  const effectiveSelectionId = resolvedHardwareJoint?.id ?? resolvedSelectionId;
+  const data = effectiveSelectionId
+    ? (effectiveIsLink ? resolvedRobot.links[effectiveSelectionId] : resolvedRobot.joints[effectiveSelectionId])
     : null;
+  const effectiveSelection = React.useMemo(() => (
+    resolvedHardwareJoint
+      ? { type: 'joint' as const, id: resolvedHardwareJoint.id }
+      : resolvedRobot.selection
+  ), [resolvedHardwareJoint, resolvedRobot.selection]);
   const t = translations[lang];
 
   const { displayWidth, isDragging, handleResizeMouseDown } = useResizablePanel(collapsed);
@@ -105,8 +128,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             )}
             {data && (
               <div className="ml-1.5 flex min-w-0 flex-1 items-center gap-1.5">
-                <span className={`rounded-md px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.1em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
-                  {selection.type}
+                <span className={`rounded-md px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.1em] shrink-0 ${effectiveIsLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
+                  {effectiveSelection.type}
                 </span>
                 <h2 className={`${PROPERTY_EDITOR_PANEL_TITLE_CLASS} truncate`}>{data.name}</h2>
               </div>
@@ -120,14 +143,14 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
             </div>
           ) : (
             <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-1 space-y-1.5">
-              {isLink ? (
+              {effectiveIsLink ? (
                 <LinkProperties
                   data={data as UrdfLink}
                   robot={resolvedRobot}
                   mode={mode}
                   selection={resolvedRobot.selection}
                   onUpdate={onUpdate}
-                  onSelect={onSelect}
+                  motorLibrary={motorLibrary}
                   assets={assets}
                   onUploadAsset={onUploadAsset}
                   t={t}
@@ -137,7 +160,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 <JointProperties
                   data={data}
                   mode={mode}
-                  selection={resolvedRobot.selection}
+                  selection={effectiveSelection}
                   onUpdate={onUpdate}
                   motorLibrary={motorLibrary}
                   t={t}

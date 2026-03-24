@@ -84,6 +84,9 @@ export interface TranslationKeys {
   name: string;
   visualGeometry: string;
   collisionGeometry: string;
+  parentJoint: string;
+  childJoint: string;
+  noLinkedJoints: string;
   type: string;
   jointTypeFixed: string;
   jointTypeFixedDescription: string;
@@ -495,6 +498,9 @@ export interface TranslationKeys {
   exportProgressBuildingUsdScene: string;
   exportProgressUsdScenePreparingDetail: string;
   exportProgressUsdSceneDetail: string;
+  exportProgressUsdSceneGeometryDetail: string;
+  exportProgressUsdSceneSerializingDetail: string;
+  exportProgressUsdSceneAssetsDetail: string;
   exportProgressConvertingUsdLayers: string;
   exportProgressConvertingUsdLayersPreparingDetail: string;
   exportProgressConvertingUsdLayersDetail: string;

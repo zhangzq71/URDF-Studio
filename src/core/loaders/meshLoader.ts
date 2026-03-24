@@ -372,6 +372,10 @@ export const createMeshLoader = (
                 });
 
                 // Use default material - urdf-loader will override with URDF-defined materials if present
+                // Keep the authored STL local frame intact. Some vendor robots
+                // intentionally place the mesh off the link-frame origin (for
+                // example Unitree A2 base_link), and auto-centering here would
+                // break joint alignment relative to the body shell.
                 meshObject = new THREE.Mesh(geometry, DEFAULT_MESH_MATERIAL.clone());
 
                 // Unit Detection Logic

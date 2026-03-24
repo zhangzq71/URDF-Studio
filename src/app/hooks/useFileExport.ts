@@ -35,6 +35,12 @@ type ExportTarget =
 const DEFAULT_EXPORT_TARGET: ExportTarget = { type: 'current' };
 const PROGRESS_MIN_UPDATE_INTERVAL_MS = 120;
 const PROGRESS_MIN_DELTA = 0.02;
+const USD_EXPORT_STAGE_PROGRESS_RANGES = {
+  links: { start: 0.08, end: 0.34 },
+  geometry: { start: 0.34, end: 0.62 },
+  scene: { start: 0.62, end: 0.92 },
+  assets: { start: 0.92, end: 0.99 },
+} as const;
 
 interface ExportContext {
   robot: RobotState;
@@ -682,31 +688,16 @@ export function useFileExport() {
           allFileContents,
         });
 
-        reportProgress(3, t.exportProgressConvertingUsdLayers, t.exportProgressConvertingUsdLayersPreparingDetail, {
-          stageProgress: 0.04,
+        reportProgress(3, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
+          stageProgress: 0.64,
           indeterminate: true,
         });
 
-        const binaryArchiveFiles = await convertUsdArchiveFilesToBinary(roundtripArchive.archiveFiles, {
-          onProgress: ({ current, total, filePath }) => {
-            reportProgress(
-              3,
-              t.exportProgressConvertingUsdLayers,
-              replaceTemplate(t.exportProgressConvertingUsdLayersDetail, {
-                current,
-                total,
-                file: trimProgressFileLabel(filePath) || t.exportProgressArchiveFallbackFile,
-              }),
-              {
-                stageProgress: total > 0 ? current / total : 1,
-                indeterminate: false,
-              },
-            );
-          },
-        });
-
         const zip = new JSZip();
-        binaryArchiveFiles.forEach((blob, filePath) => {
+        // Preserve authored text layers for live-stage roundtrip exports.
+        // Converting these layers to binary crates currently breaks re-import
+        // for root-scoped vendor bundles such as Unitree B2.
+        roundtripArchive.archiveFiles.forEach((blob, filePath) => {
           zip.file(filePath, blob);
         });
 
@@ -739,17 +730,51 @@ export function useFileExport() {
           enabled: config.usd.compressMeshes,
           quality: config.usd.meshQuality,
         },
-        onProgress: ({ processedLinks, totalLinks, currentLinkName }) => {
+        onProgress: (progress) => {
+          const range = USD_EXPORT_STAGE_PROGRESS_RANGES[progress.phase];
+          const normalizedPhaseProgress = progress.total > 0
+            ? progress.completed / progress.total
+            : 1;
+          const stageProgress = range.start
+            + ((range.end - range.start) * normalizedPhaseProgress);
+
+          let detail = t.exportProgressUsdScenePreparingDetail;
+          switch (progress.phase) {
+            case 'links':
+              detail = replaceTemplate(t.exportProgressUsdSceneDetail, {
+                current: progress.completed,
+                total: progress.total,
+                name: progress.label || t.exportProgressArchiveFallbackFile,
+              });
+              break;
+            case 'geometry':
+              detail = replaceTemplate(t.exportProgressUsdSceneGeometryDetail, {
+                current: progress.completed,
+                total: progress.total,
+              });
+              break;
+            case 'scene':
+              detail = replaceTemplate(t.exportProgressUsdSceneSerializingDetail, {
+                current: progress.completed,
+                total: progress.total,
+              });
+              break;
+            case 'assets':
+              detail = replaceTemplate(t.exportProgressUsdSceneAssetsDetail, {
+                current: progress.completed,
+                total: progress.total,
+              });
+              break;
+            default:
+              break;
+          }
+
           reportProgress(
             2,
             t.exportProgressBuildingUsdScene,
-            replaceTemplate(t.exportProgressUsdSceneDetail, {
-              current: processedLinks,
-              total: totalLinks,
-              name: currentLinkName,
-            }),
+            detail,
             {
-              stageProgress: totalLinks > 0 ? processedLinks / totalLinks : 1,
+              stageProgress,
               indeterminate: false,
             },
           );

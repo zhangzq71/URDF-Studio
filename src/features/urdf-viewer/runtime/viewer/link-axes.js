@@ -29,7 +29,7 @@ function normalizeLinkAxesOptions(optionsOrShowLinkAxes) {
     if (typeof optionsOrShowLinkAxes === "boolean") {
         return {
             axisSize: 1,
-            overlay: true,
+            overlay: false,
             showLinkAxes: optionsOrShowLinkAxes,
         };
     }
@@ -40,7 +40,7 @@ function normalizeLinkAxesOptions(optionsOrShowLinkAxes) {
     return {
         axisSize: Number.isFinite(axisSize) ? Math.max(axisSize, 1e-4) : 1,
         linkFrameResolver: typeof options.linkFrameResolver === "function" ? options.linkFrameResolver : null,
-        overlay: options.overlay !== false,
+        overlay: options.overlay === true,
         showLinkAxes: options.showLinkAxes === true,
     };
 }

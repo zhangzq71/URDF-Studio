@@ -74,16 +74,18 @@ function resolveRoundtripVirtualPath(
   );
 }
 
-function getArchiveRootDirectory(bundleDirectory: string, sourceFileName: string): string {
+function getArchiveRootDirectory(bundleDirectory: string): string {
   const normalizedBundleDirectory = normalizePathKey(bundleDirectory).replace(/\/+$/, '');
-  if (normalizedBundleDirectory) {
-    const segments = normalizedBundleDirectory.split('/').filter(Boolean);
-    if (segments.length > 0) {
-      return segments[segments.length - 1] || '';
-    }
+  if (!normalizedBundleDirectory) {
+    // Root-scoped USD bundles frequently author asset references like
+    // "@/configuration/foo.usd@". Wrapping those files under an extra
+    // basename folder on export breaks re-import because the authored
+    // absolute bundle paths no longer line up.
+    return '';
   }
 
-  return getPathBasename(sourceFileName).replace(/\.[^/.]+$/, '');
+  const segments = normalizedBundleDirectory.split('/').filter(Boolean);
+  return segments[segments.length - 1] || '';
 }
 
 function toArchiveRelativePath(virtualPath: string, bundleDirectory: string, archiveRoot: string): string {
@@ -107,7 +109,7 @@ export async function buildUsdRoundtripArchive({
   allFileContents = {},
 }: BuildUsdRoundtripArchiveOptions): Promise<UsdRoundtripArchive> {
   const bundleDirectory = inferUsdBundleVirtualDirectory(sourceFile.name);
-  const archiveRoot = getArchiveRootDirectory(bundleDirectory, sourceFile.name);
+  const archiveRoot = getArchiveRootDirectory(bundleDirectory);
   const outputVirtualPath = resolveRoundtripVirtualPath(sourceFile.name, stageExport);
   const sourceRootPath = normalizePathKey(sourceFile.name);
   const outputRootPath = normalizePathKey(outputVirtualPath);

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
 import { GeometryType, type RobotState } from '../../../types';
+import { computeLinkWorldMatrices } from '@/core/robot/kinematics';
 
 import { generateMujocoXML } from './mjcfGenerator.ts';
 import { classifyMJCFGeom } from './mjcfGeomClassification.ts';
@@ -37,6 +38,32 @@ function findBodyByName(body: { name: string; children: any[] }, name: string): 
     }
 
     return null;
+}
+
+function assertMatricesClose(
+    source: RobotState,
+    roundtrip: RobotState,
+    linkIds: string[],
+    tolerance = 1e-6,
+): void {
+    const sourceMatrices = computeLinkWorldMatrices(source);
+    const roundtripMatrices = computeLinkWorldMatrices(roundtrip);
+
+    linkIds.forEach((linkId) => {
+        const sourceMatrix = sourceMatrices[linkId];
+        const roundtripMatrix = roundtripMatrices[linkId];
+
+        assert.ok(sourceMatrix, `expected source world matrix for ${linkId}`);
+        assert.ok(roundtripMatrix, `expected roundtrip world matrix for ${linkId}`);
+
+        sourceMatrix.elements.forEach((value, index) => {
+            const delta = Math.abs(value - roundtripMatrix.elements[index]!);
+            assert.ok(
+                delta <= tolerance,
+                `expected ${linkId} world matrix element ${index} to roundtrip (delta=${delta})`,
+            );
+        });
+    });
 }
 
 test('generated MJCF marks collision meshes as collision-only geoms', () => {
@@ -273,6 +300,128 @@ test('generated MJCF exports floating root joints as freejoints while preserving
     assert.ok(roundtrip);
     assert.equal(roundtrip?.joints.floating_base_joint?.type, 'floating');
     assert.deepEqual(roundtrip?.joints.floating_base_joint?.origin?.xyz, { x: 0, y: 0, z: 0.5 });
+});
+
+test('generated MJCF preserves fixed synthetic world root transforms through parser roundtrip', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'fixed-world-root-roundtrip',
+        rootLinkId: 'world',
+        selection: { type: null, id: null },
+        links: {
+            world: {
+                id: 'world',
+                name: 'world',
+                visible: true,
+                visual: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#808080',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 0,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+                },
+            },
+            base: {
+                id: 'base',
+                name: 'base',
+                visible: true,
+                visual: {
+                    type: GeometryType.BOX,
+                    dimensions: { x: 0.4, y: 0.2, z: 0.1 },
+                    color: '#808080',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+            FR_thigh: {
+                id: 'FR_thigh',
+                name: 'FR_thigh',
+                visible: true,
+                visual: {
+                    type: GeometryType.BOX,
+                    dimensions: { x: 0.1, y: 0.3, z: 0.08 },
+                    color: '#808080',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: Math.PI / 2, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {
+            world_to_base: {
+                id: 'world_to_base',
+                name: 'world_to_base',
+                type: 'fixed',
+                parentLinkId: 'world',
+                childLinkId: 'base',
+                origin: {
+                    xyz: { x: 0.12, y: -0.08, z: 0.445 },
+                    rpy: { r: 0.25, p: -0.1, y: 0.4 },
+                },
+                axis: { x: 0, y: 0, z: 1 },
+                dynamics: { damping: 0, friction: 0 },
+            },
+            FR_thigh_joint: {
+                id: 'FR_thigh_joint',
+                name: 'FR_thigh_joint',
+                type: 'revolute',
+                parentLinkId: 'base',
+                childLinkId: 'FR_thigh',
+                origin: {
+                    xyz: { x: 0.1934, y: -0.0465, z: 0 },
+                    rpy: { r: 0, p: 0, y: 0 },
+                },
+                axis: { x: 0, y: 1, z: 0 },
+                limit: { lower: -1, upper: 1, effort: 10, velocity: 10 },
+                dynamics: { damping: 0, friction: 0 },
+            },
+        },
+        materials: {},
+    };
+
+    const generated = generateMujocoXML(robot, {
+        includeSceneHelpers: false,
+        meshdir: 'meshes/',
+    });
+    const roundtrip = parseMJCF(generated);
+
+    assert.ok(roundtrip, 'expected generated MJCF to parse');
+    assert.equal(roundtrip?.rootLinkId, 'world');
+    assert.deepEqual(roundtrip?.joints.world_to_base?.origin?.xyz, { x: 0.12, y: -0.08, z: 0.445 });
+    assertMatricesClose(robot, roundtrip!, ['world', 'base', 'FR_thigh']);
 });
 
 test('generated MJCF does not inject a duplicate freejoint when the root is already floating', () => {

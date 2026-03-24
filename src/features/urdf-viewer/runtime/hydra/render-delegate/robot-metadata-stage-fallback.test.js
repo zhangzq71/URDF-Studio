@@ -364,3 +364,183 @@ test('buildRobotMetadataSnapshotForStage resolves truth-backed parent links agai
     assert.equal(thighJoint.parentLinkPath, '/Robot/base_link/FL_hip');
     assert.ok(snapshot.linkParentPairs.some(([childPath, parentPath]) => childPath === '/Robot/base_link/FL_hip/FL_thigh' && parentPath === '/Robot/base_link/FL_hip'));
 });
+
+test('buildRobotMetadataSnapshotForStage prefers explicit stage joint and dynamics metadata over conflicting URDF truth', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { driver: null };
+
+    try {
+        const delegate = createFallbackMetadataDelegate();
+        const truth = {
+            jointByChildLinkName: new Map([
+                ['link1', {
+                    jointName: 'truth_joint_link1',
+                    jointType: 'fixed',
+                    parentLinkName: 'base_link',
+                    axisLocal: [1, 0, 0],
+                    lowerLimitDeg: 0,
+                    upperLimitDeg: 0,
+                    originXyz: [9, 9, 9],
+                    originQuatWxyz: [1, 0, 0, 0],
+                }],
+            ]),
+            inertialByLinkName: new Map([
+                ['link1', {
+                    mass: 99,
+                    centerOfMassLocal: [9, 9, 9],
+                    diagonalInertia: [9, 9, 9],
+                    principalAxesLocalWxyz: [1, 0, 0, 0],
+                }],
+            ]),
+        };
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/two_link_robot.usd', truth);
+        assert.ok(snapshot);
+
+        const joint = snapshot.jointCatalogEntries.find((entry) => entry.linkPath === '/Robot/base_link/link1');
+        assert.ok(joint);
+        assert.equal(joint.jointName, 'joint_link1');
+        assert.equal(joint.jointType, 'revolute');
+        assert.deepEqual(joint.axisLocal, [0, 0, -1]);
+        assert.deepEqual(joint.originXyz, [1, 2, 3]);
+
+        const dynamics = snapshot.linkDynamicsEntries.find((entry) => entry.linkPath === '/Robot/base_link/link1');
+        assert.ok(dynamics);
+        assert.equal(dynamics.mass, 1.25);
+        assert.deepEqual(dynamics.centerOfMassLocal, [0.1, 0.2, 0.3]);
+        assert.deepEqual(dynamics.diagonalInertia, [1, 2, 3]);
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('buildRobotMetadataSnapshotForStage seeds helper links from driver joint records even when they have no render meshes', () => {
+    const previousWindow = globalThis.window;
+    let receivedSortedLinkPaths = null;
+    globalThis.window = {
+        driver: {
+            GetRobotMetadataSnapshot(sortedLinkPaths, stageSourcePath) {
+                receivedSortedLinkPaths = Array.from(sortedLinkPaths || []);
+                assert.equal(stageSourcePath, '/robots/helper_links.usd');
+                return {
+                    stageSourcePath,
+                    source: 'usd-stage-cpp',
+                    linkParentPairs: [],
+                    jointCatalogEntries: [],
+                    linkDynamicsEntries: [],
+                };
+            },
+            GetPhysicsJointRecords() {
+                return [
+                    {
+                        jointPath: '/Robot/joints/joint_imu',
+                        jointName: 'joint_imu',
+                        jointTypeName: 'PhysicsFixedJoint',
+                        body0Path: '/Robot/base_link',
+                        body1Path: '/Robot/base_link/imu_link',
+                        axisToken: 'X',
+                        localPos0: [0, 0, 0.05],
+                        localRot0Wxyz: [1, 0, 0, 0],
+                        localPos1: [0, 0, 0],
+                        localRot1Wxyz: [1, 0, 0, 0],
+                    },
+                ];
+            },
+        },
+    };
+
+    try {
+        const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+        delegate.meshes = {
+            '/Robot/base_link/visuals.proto_mesh_id0': {},
+        };
+        delegate._protoMeshMetadataByMeshId = new Map();
+        delegate._robotMetadataSnapshotByStageSource = new Map();
+        delegate._robotMetadataBuildPromisesByStageSource = new Map();
+        delegate._nowPerfMs = () => 1234;
+        delegate.getNormalizedStageSourcePath = () => '/robots/helper_links.usd';
+        delegate.getStage = () => null;
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/helper_links.usd', null);
+        assert.ok(snapshot);
+        assert.deepEqual(receivedSortedLinkPaths, [
+            '/Robot/base_link',
+            '/Robot/base_link/imu_link',
+        ]);
+        assert.ok(snapshot.linkParentPairs.some(([childPath, parentPath]) => childPath === '/Robot/base_link/imu_link' && parentPath === '/Robot/base_link'));
+        assert.ok(snapshot.jointCatalogEntries.some((entry) => entry.linkPath === '/Robot/base_link/imu_link'));
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('startRobotMetadataWarmupForStage refreshes cached scene snapshots with resolved metadata', async () => {
+    const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+    delegate._robotMetadataSnapshotByStageSource = new Map();
+    delegate._robotMetadataBuildPromisesByStageSource = new Map();
+    delegate._robotSceneSnapshotByStageSource = new Map([
+        ['/robots/helper_links.usd', {
+            stageSourcePath: '/robots/helper_links.usd',
+            robotTree: {
+                linkParentPairs: [['/Robot/base_link', null]],
+                jointCatalogEntries: [],
+                rootLinkPaths: ['/Robot/base_link'],
+            },
+            physics: {
+                linkDynamicsEntries: [],
+            },
+            robotMetadataSnapshot: {
+                stageSourcePath: '/robots/helper_links.usd',
+                generatedAtMs: 1,
+                source: 'robot-scene-snapshot',
+                linkParentPairs: [['/Robot/base_link', null]],
+                jointCatalogEntries: [],
+                linkDynamicsEntries: [],
+                meshCountsByLinkPath: {},
+            },
+        }],
+    ]);
+    delegate._nowPerfMs = () => 456;
+    delegate.getNormalizedStageSourcePath = () => '/robots/helper_links.usd';
+    delegate.buildRobotMetadataSnapshotForStage = () => ({
+        stageSourcePath: '/robots/helper_links.usd',
+        generatedAtMs: 456,
+        source: 'usd-stage-cpp',
+        linkParentPairs: [
+            ['/Robot/base_link', null],
+            ['/Robot/base_link/imu_link', '/Robot/base_link'],
+        ],
+        jointCatalogEntries: [{
+            jointPath: '/Robot/joints/joint_imu',
+            jointName: 'joint_imu',
+            jointTypeName: 'PhysicsFixedJoint',
+            linkPath: '/Robot/base_link/imu_link',
+            parentLinkPath: '/Robot/base_link',
+            originXyz: [0, 0, 0.05],
+            originQuatWxyz: [1, 0, 0, 0],
+            axis: [1, 0, 0],
+        }],
+        linkDynamicsEntries: [],
+        meshCountsByLinkPath: {},
+    });
+    delegate.emitRobotMetadataSnapshotReady = () => {};
+    let emittedSceneSnapshot = null;
+    delegate.emitRobotSceneSnapshotReady = (snapshot) => {
+        emittedSceneSnapshot = snapshot;
+    };
+
+    const snapshot = await delegate.startRobotMetadataWarmupForStage('/robots/helper_links.usd', {
+        force: true,
+        skipIdleWait: true,
+    });
+
+    assert.ok(snapshot);
+    assert.equal(snapshot.jointCatalogEntries.length, 1);
+    const cachedSceneSnapshot = delegate._robotSceneSnapshotByStageSource.get('/robots/helper_links.usd');
+    assert.ok(cachedSceneSnapshot);
+    assert.ok(cachedSceneSnapshot.robotTree.linkParentPairs.some(([childPath, parentPath]) => childPath === '/Robot/base_link/imu_link' && parentPath === '/Robot/base_link'));
+    assert.equal(cachedSceneSnapshot.robotMetadataSnapshot.jointCatalogEntries.length, 1);
+    assert.equal(emittedSceneSnapshot?.robotMetadataSnapshot?.jointCatalogEntries?.length, 1);
+});

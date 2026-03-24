@@ -67,6 +67,7 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
 
         let hardware = {
             armature: 0,
+            brand: '',
             motorType: 'None',
             motorId: '',
             motorDirection: 1 as 1 | -1
@@ -74,6 +75,7 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
 
         if (hardwareEl) {
             hardware = {
+                brand: hardwareEl.querySelector("brand")?.textContent || '',
                 motorType: hardwareEl.querySelector("motorType")?.textContent || 'None',
                 motorId: hardwareEl.querySelector("motorId")?.textContent || '',
                 motorDirection: (parseInt(hardwareEl.querySelector("motorDirection")?.textContent || "1") as 1 | -1),

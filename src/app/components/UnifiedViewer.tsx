@@ -10,6 +10,7 @@ import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/fe
 import { useURDFViewerController, URDFViewerPanels, URDFViewerScene, type ToolMode, type ViewerJointMotionStateValue } from '@/features/urdf-viewer';
 import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
 import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/urdf-viewer/utils/viewerResourceScope';
+import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
 import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
 
@@ -156,6 +157,9 @@ export const UnifiedViewer = React.memo(({
   const activePreview = mode === 'skeleton' ? undefined : filePreview;
   const isPreviewing = !!activePreview;
   const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
+  const effectiveJointAngleState = isPreviewing ? undefined : jointAngleState;
+  const effectiveJointMotionState = isPreviewing ? undefined : jointMotionState;
+  const effectiveSyncJointChangesToApp = isPreviewing ? false : syncJointChangesToApp;
   const resolvedTheme = useResolvedTheme(theme);
   const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
@@ -183,10 +187,10 @@ export const UnifiedViewer = React.memo(({
   });
   const viewerController = useURDFViewerController({
     onJointChange,
-    syncJointChangesToApp,
+    syncJointChangesToApp: effectiveSyncJointChangesToApp,
     showJointPanel,
-    jointAngleState,
-    jointMotionState,
+    jointAngleState: effectiveJointAngleState,
+    jointMotionState: effectiveJointMotionState,
     onSelect,
     onMeshSelect,
     onHover,
@@ -195,6 +199,12 @@ export const UnifiedViewer = React.memo(({
     setShowVisual,
     onTransformPendingChange,
     active: isViewerMode,
+    jointStateScopeKey: resolveViewerJointScopeKey({
+      previewFileName: activePreview?.fileName,
+      sourceFile,
+      sourceFilePath,
+      robotName: robot.name,
+    }),
   });
 
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;

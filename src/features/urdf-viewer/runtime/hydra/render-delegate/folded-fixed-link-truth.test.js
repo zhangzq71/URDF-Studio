@@ -3,16 +3,30 @@ import assert from 'node:assert/strict';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 
 import { ThreeRenderDelegateCore } from './ThreeRenderDelegateCore.js';
+import { ThreeRenderDelegateMaterialOps } from './ThreeRenderDelegateMaterialOps.js';
 import { resolveSemanticChildLinkTargetFromResolvedPrimPath } from './shared-basic.js';
 
 function createTranslationMatrix(x, y, z) {
     return new Matrix4().makeTranslation(x, y, z);
 }
 
+function createRotationXMatrix(radians) {
+    return new Matrix4().makeRotationX(radians);
+}
+
 function decomposeTranslation(matrix) {
     const position = new Vector3();
     matrix.decompose(position, new Quaternion(), new Vector3());
     return position.toArray().map((value) => Number(value.toFixed(6)));
+}
+
+function assertMatrixClose(actual, expected, message) {
+    actual.elements.forEach((value, index) => {
+        assert.ok(
+            Math.abs(value - expected.elements[index]) < 1e-6,
+            `${message} (element ${index}): expected ${expected.elements[index]}, got ${value}`,
+        );
+    });
 }
 
 function createFoldedChildDelegate(overrides = {}) {
@@ -163,4 +177,108 @@ test('uses semantic child link transforms for folded collision prims in URDF tru
 
     assert.deepEqual(decomposeTranslation(matrix), [4, 5, 6]);
     assert.equal(delegate.getUrdfCollisionEntryForMeshId('/Robot/torso_link/collisions.proto_mesh_id0'), headCollisionEntry);
+});
+
+test('prefers the resolved stage link frame even when it is identity', () => {
+    const stageIdentity = new Matrix4().identity();
+    const visualBasis = createRotationXMatrix(Math.PI / 2);
+    const delegate = createFoldedChildDelegate({
+        getWorldTransformForPrimPath(linkPath) {
+            return linkPath === '/Robot/FL_thigh' ? stageIdentity.clone() : null;
+        },
+        getVisualLinkFrameTransform(linkPath) {
+            return linkPath === '/Robot/FL_thigh' ? visualBasis.clone() : null;
+        },
+    });
+
+    const resolved = delegate.getStageOrVisualLinkWorldTransform('/Robot/FL_thigh');
+
+    assert.ok(resolved);
+    assertMatrixClose(
+        resolved,
+        stageIdentity,
+        'identity stage link frames should not be replaced by authored visual mesh basis transforms',
+    );
+});
+
+test('falls back to the visual link frame only when the stage link frame is unavailable', () => {
+    const visualBasis = createRotationXMatrix(Math.PI / 2);
+    const delegate = createFoldedChildDelegate({
+        getWorldTransformForPrimPath() {
+            return null;
+        },
+        getVisualLinkFrameTransform(linkPath) {
+            return linkPath === '/Robot/FL_thigh' ? visualBasis.clone() : null;
+        },
+    });
+
+    const resolved = delegate.getStageOrVisualLinkWorldTransform('/Robot/FL_thigh');
+
+    assert.ok(resolved);
+    assertMatrixClose(
+        resolved,
+        visualBasis,
+        'visual link frame fallback should remain available when the stage link transform cannot be resolved',
+    );
+});
+
+test('falls back to the URDF visual pose when the resolved semantic visual prim injects an extra local basis rotation', () => {
+    const linkWorld = createTranslationMatrix(1, 2, 3);
+    const resolvedVisualWorld = linkWorld.clone().multiply(createRotationXMatrix(Math.PI / 2));
+    const delegate = Object.create(ThreeRenderDelegateMaterialOps.prototype);
+    Object.assign(delegate, {
+        _urdfVisualFallbackDecisionCache: new Map(),
+        config: {},
+        getUrdfTruthLinkContextForMeshId() {
+            return {
+                proto: {
+                    linkPath: '/Robot/FL_thigh',
+                    protoIndex: 0,
+                    sectionName: 'visuals',
+                    protoType: 'mesh',
+                },
+                ownerLinkPath: '/Robot/FL_thigh',
+                effectiveLinkName: 'FL_thigh',
+                effectiveLinkPath: '/Robot/FL_thigh',
+                resolvedPrimPath: '/Robot/FL_thigh/visuals/FL_thigh/mesh',
+            };
+        },
+        getUrdfVisualEntryForMeshId() {
+            return {
+                localMatrix: new Matrix4().identity(),
+            };
+        },
+        getUrdfLinkWorldTransformFromJointChain(linkPath) {
+            return linkPath === '/Robot/FL_thigh' ? linkWorld.clone() : null;
+        },
+        getPreferredLinkWorldTransform(linkPath) {
+            return linkPath === '/Robot/FL_thigh' ? linkWorld.clone() : null;
+        },
+        getResolvedVisualTransformPrimPathForMeshId() {
+            return '/Robot/FL_thigh/visuals/FL_thigh/mesh';
+        },
+        getWorldTransformForPrimPath(primPath) {
+            if (primPath === '/Robot/FL_thigh') {
+                return linkWorld.clone();
+            }
+            if (primPath === '/Robot/FL_thigh/visuals/FL_thigh/mesh') {
+                return resolvedVisualWorld.clone();
+            }
+            return null;
+        },
+    });
+
+    assert.equal(
+        delegate.shouldUseUrdfVisualFallbackForMesh('/Robot/FL_thigh/visuals.proto_mesh_id0'),
+        true,
+    );
+
+    const matrix = delegate.getVisualWorldTransformFromUrdfTruth('/Robot/FL_thigh/visuals.proto_mesh_id0');
+
+    assert.ok(matrix);
+    assertMatrixClose(
+        matrix,
+        linkWorld,
+        'semantic visual prim fallback should preserve the URDF local pose when the stage injects only a basis rotation',
+    );
 });
