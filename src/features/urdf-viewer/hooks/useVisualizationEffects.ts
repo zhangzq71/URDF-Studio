@@ -116,7 +116,7 @@ export function useVisualizationEffects({
     showCoMOverlay = true,
     centerOfMassSize,
     showOrigins,
-    showOriginsOverlay = true,
+    showOriginsOverlay = false,
     originSize,
     showJointAxes,
     showJointAxesOverlay = true,

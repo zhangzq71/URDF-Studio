@@ -53,11 +53,19 @@ interface BuildMJCFHierarchyOptions {
     materialMap: Map<string, MJCFMaterial>;
     textureMap: Map<string, MJCFTexture>;
     sourceFileDir?: string;
+    onProgress?: (progress: { processedGeoms: number; totalGeoms: number }) => void;
 }
 
 export interface MJCFHierarchyResult {
     linksMap: Record<string, THREE.Object3D>;
     jointsMap: Record<string, THREE.Object3D>;
+}
+
+const COINCIDENT_VISUAL_DECIMALS = 6;
+const MJCF_COINCIDENT_VISUAL_STACK_FLAG = '__mjcfCoincidentVisualStacking';
+
+function countBodyGeoms(body: MJCFHierarchyBody): number {
+    return body.geoms.length + body.children.reduce((sum, child) => sum + countBodyGeoms(child), 0);
 }
 
 function mjcfQuatToThreeQuat(mjcfQuat: [number, number, number, number]): THREE.Quaternion {
@@ -73,6 +81,109 @@ function convertAngle(value: number, settings: MJCFCompilerSettings): number {
 
 function convertJointLimitValue(value: number, _jointType: string, _settings: MJCFCompilerSettings): number {
     return value;
+}
+
+function formatTransformComponent(value: number | undefined): string {
+    return Number(value ?? 0).toFixed(COINCIDENT_VISUAL_DECIMALS);
+}
+
+function buildCoincidentVisualTransformSignature(geom: Pick<MJCFHierarchyGeom, 'pos' | 'quat'>): string {
+    const pos = geom.pos ?? [0, 0, 0];
+    const quat = geom.quat ?? [1, 0, 0, 0];
+
+    return [
+        formatTransformComponent(pos[0]),
+        formatTransformComponent(pos[1]),
+        formatTransformComponent(pos[2]),
+        formatTransformComponent(quat[0]),
+        formatTransformComponent(quat[1]),
+        formatTransformComponent(quat[2]),
+        formatTransformComponent(quat[3]),
+    ].join('|');
+}
+
+function buildCoincidentVisualMeshStackIndices(
+    geomRoles: Array<{ geom: MJCFHierarchyGeom; renderVisual: boolean }>,
+): Map<number, number> {
+    const groupedVisualMeshes = new Map<string, number[]>();
+
+    geomRoles.forEach(({ geom, renderVisual }, geomIndex) => {
+        if (!renderVisual || !geom.mesh) {
+            return;
+        }
+
+        const signature = buildCoincidentVisualTransformSignature(geom);
+        const indices = groupedVisualMeshes.get(signature);
+        if (indices) {
+            indices.push(geomIndex);
+            return;
+        }
+
+        groupedVisualMeshes.set(signature, [geomIndex]);
+    });
+
+    const stackIndices = new Map<number, number>();
+    groupedVisualMeshes.forEach((indices) => {
+        if (indices.length < 2) {
+            return;
+        }
+
+        indices.forEach((geomIndex, stackedIndex) => {
+            stackIndices.set(geomIndex, stackedIndex);
+        });
+    });
+
+    return stackIndices;
+}
+
+function cloneCoincidentVisualOffsetMaterial(material: THREE.Material, stackIndex: number): THREE.Material {
+    const existingStackIndex = Number(material.userData?.mjcfCoincidentVisualStackIndex);
+    if (material.userData?.[MJCF_COINCIDENT_VISUAL_STACK_FLAG] === true && existingStackIndex === stackIndex) {
+        return material;
+    }
+
+    const nextMaterial = material.clone();
+    nextMaterial.userData = {
+        ...(nextMaterial.userData ?? {}),
+        [MJCF_COINCIDENT_VISUAL_STACK_FLAG]: true,
+        mjcfCoincidentVisualStackIndex: stackIndex,
+    };
+    nextMaterial.polygonOffset = true;
+    nextMaterial.polygonOffsetFactor = Math.min(Number(nextMaterial.polygonOffsetFactor) || 0, -(stackIndex + 1));
+    nextMaterial.polygonOffsetUnits = Math.min(Number(nextMaterial.polygonOffsetUnits) || 0, -(stackIndex * 2));
+    nextMaterial.needsUpdate = true;
+
+    return nextMaterial;
+}
+
+function applyCoincidentVisualMeshStacking(meshRoot: THREE.Object3D, stackIndex: number): void {
+    if (stackIndex <= 0) {
+        return;
+    }
+
+    meshRoot.userData.mjcfCoincidentVisualStackIndex = stackIndex;
+    meshRoot.traverse((child: any) => {
+        if (!child.isMesh) {
+            return;
+        }
+
+        child.renderOrder = Math.max(Number(child.renderOrder) || 0, stackIndex);
+        child.userData = {
+            ...(child.userData ?? {}),
+            mjcfCoincidentVisualStackIndex: stackIndex,
+        };
+
+        if (Array.isArray(child.material)) {
+            child.material = child.material.map((material: THREE.Material) =>
+                cloneCoincidentVisualOffsetMaterial(material, stackIndex),
+            );
+            return;
+        }
+
+        if (child.material) {
+            child.material = cloneCoincidentVisualOffsetMaterial(child.material as THREE.Material, stackIndex);
+        }
+    });
 }
 
 function resolveRuntimeJointType(joint: MJCFHierarchyJoint): 'revolute' | 'continuous' | 'prismatic' | 'ball' | 'floating' {
@@ -220,130 +331,153 @@ async function applyMaterialAssetToMesh(
     });
 }
 export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Promise<MJCFHierarchyResult> {
-    const { bodies, rootGroup, meshMap, assets, meshCache, compilerSettings, materialMap, textureMap, sourceFileDir = '' } = options;
+    const {
+        bodies,
+        rootGroup,
+        meshMap,
+        assets,
+        meshCache,
+        compilerSettings,
+        materialMap,
+        textureMap,
+        sourceFileDir = '',
+        onProgress,
+    } = options;
     const linksMap: Record<string, THREE.Object3D> = {};
     const jointsMap: Record<string, THREE.Object3D> = {};
+    const totalGeoms = bodies.reduce((sum, body) => sum + countBodyGeoms(body), 0);
+    let processedGeoms = 0;
+
+    if (totalGeoms > 0) {
+        onProgress?.({ processedGeoms, totalGeoms });
+    }
 
     async function addGeomsToGroup(
         geoms: MJCFHierarchyGeom[],
         targetGroup: THREE.Group
     ): Promise<void> {
         const geomRoles = assignMJCFBodyGeomRoles(geoms);
+        const coincidentVisualMeshStackIndices = buildCoincidentVisualMeshStackIndices(geomRoles);
 
-        for (const { geom, renderVisual: isVisualGeom, renderCollision: isCollisionGeom } of geomRoles) {
+        for (const [geomIndex, { geom, renderVisual: isVisualGeom, renderCollision: isCollisionGeom }] of geomRoles.entries()) {
+            try {
+                const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache, sourceFileDir);
+                if (!mesh) continue;
 
-            const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache, sourceFileDir);
-            if (!mesh) continue;
+                const materialDef = geom.material
+                    ? materialMap.get(geom.material)
+                    : undefined;
+                if (materialDef) {
+                    await applyMaterialAssetToMesh(
+                        mesh,
+                        materialDef,
+                        textureMap,
+                        assets,
+                        sourceFileDir,
+                        geom.material,
+                    );
+                }
 
-            const materialDef = geom.material
-                ? materialMap.get(geom.material)
-                : undefined;
-            if (materialDef) {
-                await applyMaterialAssetToMesh(
-                    mesh,
-                    materialDef,
-                    textureMap,
-                    assets,
-                    sourceFileDir,
-                    geom.material,
+                const shouldApplyGeomRgba = Boolean(
+                    geom.rgba
+                    && (geom.hasExplicitRgba || !materialDef),
                 );
-            }
-
-            const shouldApplyGeomRgba = Boolean(
-                geom.rgba
-                && (geom.hasExplicitRgba || !materialDef),
-            );
-            if (shouldApplyGeomRgba) {
-                applyRgbaToMesh(mesh, geom.rgba);
-            }
-
-            mesh.name = geom.name || geom.type || 'geom';
-
-            const applyGeomTransformToContainer = (container: THREE.Object3D) => {
-                if (geom.pos) {
-                    container.position.set(geom.pos[0], geom.pos[1], geom.pos[2]);
+                if (shouldApplyGeomRgba) {
+                    applyRgbaToMesh(mesh, geom.rgba);
                 }
 
-                if (geom.quat) {
-                    container.quaternion.copy(mjcfQuatToThreeQuat(geom.quat));
+                mesh.name = geom.name || geom.type || 'geom';
+
+                const applyGeomTransformToContainer = (container: THREE.Object3D) => {
+                    if (geom.pos) {
+                        container.position.set(geom.pos[0], geom.pos[1], geom.pos[2]);
+                    }
+
+                    if (geom.quat) {
+                        container.quaternion.copy(mjcfQuatToThreeQuat(geom.quat));
+                    }
+                };
+
+                if (isVisualGeom) {
+                    const visualGroup = new URDFVisual();
+                    visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
+                    visualGroup.urdfName = visualGroup.name;
+                    visualGroup.userData.isVisualGroup = true;
+                    applyGeomTransformToContainer(visualGroup);
+
+                    // Mark all meshes in this object as visual
+                    mesh.userData.isVisual = true;
+                    mesh.userData.isVisualMesh = true;
+                    mesh.traverse((child: any) => {
+                        if (child.isMesh) {
+                            child.userData.isVisual = true;
+                            child.userData.isVisualMesh = true;
+                        }
+                    });
+                    applyCoincidentVisualMeshStacking(mesh, coincidentVisualMeshStackIndices.get(geomIndex) ?? 0);
+                    visualGroup.add(mesh);
+                    targetGroup.add(visualGroup);
                 }
-            };
 
-            if (isVisualGeom) {
-                const visualGroup = new URDFVisual();
-                visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
-                visualGroup.urdfName = visualGroup.name;
-                visualGroup.userData.isVisualGroup = true;
-                applyGeomTransformToContainer(visualGroup);
+                if (isCollisionGeom) {
+                    // Log collision geom creation for debugging
+                    console.debug(`[MJCFLoader] Adding collision geom: type="${geom.type}", size=[${geom.size?.join(', ') || 'none'}], pos=[${geom.pos?.join(', ') || 'none'}]`);
 
-                // Mark all meshes in this object as visual
-                mesh.userData.isVisual = true;
-                mesh.userData.isVisualMesh = true;
-                mesh.traverse((child: any) => {
-                    if (child.isMesh) {
-                        child.userData.isVisual = true;
-                        child.userData.isVisualMesh = true;
-                    }
-                });
-                visualGroup.add(mesh);
-                targetGroup.add(visualGroup);
-            }
+                    // Clone if already added to visual, otherwise use directly
+                    const collisionMesh = isVisualGeom ? mesh.clone(true) : mesh;
+                    const collisionGroup = new URDFCollider();
+                    collisionGroup.name = geom.name || `collision_${geom.type || 'geom'}`;
+                    collisionGroup.urdfName = collisionGroup.name;
+                    collisionGroup.userData.isCollisionGroup = true;
+                    collisionGroup.visible = false;
+                    applyGeomTransformToContainer(collisionGroup);
 
-            if (isCollisionGeom) {
-                // Log collision geom creation for debugging
-                console.debug(`[MJCFLoader] Adding collision geom: type="${geom.type}", size=[${geom.size?.join(', ') || 'none'}], pos=[${geom.pos?.join(', ') || 'none'}]`);
+                    collisionMesh.userData.isCollisionMesh = true;
+                    collisionMesh.userData.isCollision = true;
+                    collisionMesh.userData.isVisual = false;
+                    collisionMesh.userData.isVisualMesh = false;
 
-                // Clone if already added to visual, otherwise use directly
-                const collisionMesh = isVisualGeom ? mesh.clone(true) : mesh;
-                const collisionGroup = new URDFCollider();
-                collisionGroup.name = geom.name || `collision_${geom.type || 'geom'}`;
-                collisionGroup.urdfName = collisionGroup.name;
-                collisionGroup.userData.isCollisionGroup = true;
-                collisionGroup.visible = false;
-                applyGeomTransformToContainer(collisionGroup);
+                    // Apply semi-transparent material for collision visualization
+                    collisionMesh.traverse((child: any) => {
+                        if (child.isMesh) {
+                            child.userData.isCollisionMesh = true;
+                            child.userData.isCollision = true;
+                            child.userData.isVisual = false;
+                            child.userData.isVisualMesh = false;
+                            const collisionMat = createMatteMaterial({
+                                color: 0xa855f7,
+                                opacity: 0.35,
+                                transparent: true,
+                                name: 'mjcf_collision'
+                            });
+                            // Apply depth and rendering optimizations
+                            collisionMat.depthWrite = false;
+                            collisionMat.depthTest = true;
+                            collisionMat.polygonOffset = true;
+                            collisionMat.polygonOffsetFactor = -1.0;
+                            collisionMat.polygonOffsetUnits = -4.0;
+                            child.material = collisionMat;
+                            child.renderOrder = 999;
+                        }
+                    });
 
-                collisionMesh.userData.isCollisionMesh = true;
-                collisionMesh.userData.isCollision = true;
-                collisionMesh.userData.isVisual = false;
-                collisionMesh.userData.isVisualMesh = false;
+                    collisionGroup.add(collisionMesh);
+                    targetGroup.add(collisionGroup);
+                }
 
-                // Apply semi-transparent material for collision visualization
-                collisionMesh.traverse((child: any) => {
-                    if (child.isMesh) {
-                        child.userData.isCollisionMesh = true;
-                        child.userData.isCollision = true;
-                        child.userData.isVisual = false;
-                        child.userData.isVisualMesh = false;
-                        const collisionMat = createMatteMaterial({
-                            color: 0xa855f7,
-                            opacity: 0.35,
-                            transparent: true,
-                            name: 'mjcf_collision'
-                        });
-                        // Apply depth and rendering optimizations
-                        collisionMat.depthWrite = false;
-                        collisionMat.depthTest = true;
-                        collisionMat.polygonOffset = true;
-                        collisionMat.polygonOffsetFactor = -1.0;
-                        collisionMat.polygonOffsetUnits = -4.0;
-                        child.material = collisionMat;
-                        child.renderOrder = 999;
-                    }
-                });
-
-                collisionGroup.add(collisionMesh);
-                targetGroup.add(collisionGroup);
-            }
-
-            // If neither visual nor collision classification matches, default to visual
-            if (!isVisualGeom && !isCollisionGeom) {
-                const visualGroup = new URDFVisual();
-                visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
-                visualGroup.urdfName = visualGroup.name;
-                visualGroup.userData.isVisualGroup = true;
-                applyGeomTransformToContainer(visualGroup);
-                visualGroup.add(mesh);
-                targetGroup.add(visualGroup);
+                // If neither visual nor collision classification matches, default to visual
+                if (!isVisualGeom && !isCollisionGeom) {
+                    const visualGroup = new URDFVisual();
+                    visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
+                    visualGroup.urdfName = visualGroup.name;
+                    visualGroup.userData.isVisualGroup = true;
+                    applyGeomTransformToContainer(visualGroup);
+                    visualGroup.add(mesh);
+                    targetGroup.add(visualGroup);
+                }
+            } finally {
+                processedGeoms += 1;
+                onProgress?.({ processedGeoms, totalGeoms });
             }
         }
     }

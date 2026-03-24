@@ -227,7 +227,79 @@ test('adapts USD visual materials and extra visuals into RobotState-maintained l
   assert.equal(result.robotData.materials?.[extraLink.id]?.color, '#f3f3f3');
 });
 
-test('approximates USD mesh descriptors from snapshot buffers into boxed visuals when no mesh asset path exists', () => {
+test('keeps authored visual and collision slots grouped when a single USD visual scope expands into multiple mesh descriptors', () => {
+  const result = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/unitree/b2_roundtrip.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ],
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/visual_0/Scene/ros_body1',
+          primType: 'mesh',
+          materialId: '/Looks/Base',
+          extentSize: [1.2, 0.5, 0.4],
+        },
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id1',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/visual_0/Scene/ros_body1_1',
+          primType: 'mesh',
+          materialId: '/Looks/Base',
+          extentSize: [1.2, 0.5, 0.4],
+        },
+        {
+          meshId: '/Robot/base_link/collisions.proto_mesh_id0',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/base_link/collisions/collision_0/Scene/collider',
+          primType: 'mesh',
+          extentSize: [1.1, 0.45, 0.35],
+        },
+        {
+          meshId: '/Robot/base_link/collisions.proto_mesh_id1',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/base_link/collisions/collision_0/Scene/collider_1',
+          primType: 'mesh',
+          extentSize: [1.1, 0.45, 0.35],
+        },
+      ],
+      materials: [
+        {
+          materialId: '/Looks/Base',
+          color: [0.2, 0.25, 0.3, 1],
+        },
+      ],
+    },
+  }, {
+    fileName: 'b2_roundtrip.usd',
+  });
+
+  assert.ok(result);
+  assert.deepEqual(Object.keys(result.robotData.links), ['base_link']);
+  assert.deepEqual(Object.keys(result.robotData.joints), []);
+  assert.equal(result.robotData.rootLinkId, 'base_link');
+  assert.equal(result.robotData.links.base_link.visual.type, GeometryType.MESH);
+  assert.equal(result.robotData.links.base_link.visual.meshPath, undefined);
+  assert.equal(result.robotData.links.base_link.collision.type, GeometryType.BOX);
+  assert.deepEqual(result.robotData.links.base_link.collision.dimensions, {
+    x: 1.1,
+    y: 0.45,
+    z: 0.35,
+  });
+  assert.equal(result.robotData.links.base_link.collisionBodies?.length ?? 0, 0);
+  assert.equal(result.robotData.materials?.base_link?.color, '#7c8995');
+});
+
+test('keeps USD mesh descriptors as mesh visuals when no mesh asset path exists', () => {
   const result = adaptUsdViewerSnapshotToRobotData({
     stageSourcePath: '/robots/unitree/buffer_box.usd',
     stage: {
@@ -280,22 +352,7 @@ test('approximates USD mesh descriptors from snapshot buffers into boxed visuals
   });
 
   assert.ok(result);
-  assert.equal(result.robotData.links.base_link.visual.type, GeometryType.BOX);
-  assert.deepEqual(result.robotData.links.base_link.visual.dimensions, {
-    x: 1.5,
-    y: 3,
-    z: 2,
-  });
-  assert.deepEqual(result.robotData.links.base_link.visual.origin?.xyz, {
-    x: 0.25,
-    y: 0.5,
-    z: 0.75,
-  });
-  assert.deepEqual(result.robotData.links.base_link.visual.origin?.rpy, {
-    r: 0,
-    p: 0,
-    y: 0,
-  });
+  assert.equal(result.robotData.links.base_link.visual.type, GeometryType.MESH);
   assert.equal(result.robotData.links.base_link.visual.meshPath, undefined);
 });
 

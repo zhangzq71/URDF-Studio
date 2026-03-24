@@ -40,5 +40,5 @@ export const DEFAULT_JOINT: UrdfJoint = {
   axis: { x: 0, y: 0, z: 1 },
   limit: { lower: -1.57, upper: 1.57, effort: 100, velocity: 10 },
   dynamics: { damping: 0, friction: 0 },
-  hardware: { armature: 0, motorType: 'Go1-M8010-6', motorId: '0', motorDirection: 1 }
+  hardware: { armature: 0, brand: 'Unitree', motorType: 'Go1-M8010-6', motorId: '0', motorDirection: 1 }
 };

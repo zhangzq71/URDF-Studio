@@ -5,6 +5,23 @@ export interface ParsedThreeColor {
   opacity: number | null;
 }
 
+export function createThreeColorFromSRGB(
+  red: number,
+  green: number,
+  blue: number,
+): THREE.Color {
+  return new THREE.Color().setRGB(red, green, blue, THREE.SRGBColorSpace);
+}
+
+export function setThreeColorFromSRGB(
+  target: THREE.Color,
+  red: number,
+  green: number,
+  blue: number,
+): THREE.Color {
+  return target.setRGB(red, green, blue, THREE.SRGBColorSpace);
+}
+
 function expandShortHex(hex: string): string {
   return hex
     .split('')

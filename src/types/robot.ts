@@ -55,6 +55,7 @@ export interface UrdfJointDynamics {
 
 export interface UrdfJointHardware {
   armature: number;
+  brand?: string;
   motorType: string;
   motorId: string;
   motorDirection: 1 | -1;

@@ -88,7 +88,7 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
     stlQuality: 50,
   },
   usd: {
-    compressMeshes: false,
+    compressMeshes: true,
     meshQuality: 50,
   },
 };

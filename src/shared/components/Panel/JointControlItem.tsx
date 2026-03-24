@@ -246,6 +246,20 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
         handleJointChangeCommit(name, committedValue);
     }, [handleJointChangeCommit, isContinuousJoint, name, syncContinuousSliderAnchor]);
 
+    const handleSliderInput = useCallback((nextSliderValue: number) => {
+        const nextValue = isContinuousJoint
+            ? continuousSliderAnchorRef.current + fromJointDisplayValue(nextSliderValue, jointType, angleUnit)
+            : fromJointDisplayValue(nextSliderValue, jointType, angleUnit);
+
+        if (Math.abs(nextValue - continuousPreviewValueRef.current) <= 1e-6) {
+            return;
+        }
+
+        setSliderPreviewValue(nextValue);
+        continuousPreviewValueRef.current = nextValue;
+        handleJointAngleChange(name, nextValue);
+    }, [angleUnit, handleJointAngleChange, isContinuousJoint, jointType, name]);
+
     useEffect(() => {
         if (!isSliderDragging) {
             return;
@@ -559,22 +573,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                         step={step}
                         value={sliderValue}
                         onInput={(e) => {
-                            const val = parseFloat((e.target as HTMLInputElement).value);
-                            const nextValue = isContinuousJoint
-                                ? continuousSliderAnchorRef.current + fromJointDisplayValue(val, jointType, angleUnit)
-                                : fromJointDisplayValue(val, jointType, angleUnit);
-                            setSliderPreviewValue(nextValue);
-                            continuousPreviewValueRef.current = nextValue;
-                            handleJointAngleChange(name, nextValue);
-                        }}
-                        onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            const nextValue = isContinuousJoint
-                                ? continuousSliderAnchorRef.current + fromJointDisplayValue(val, jointType, angleUnit)
-                                : fromJointDisplayValue(val, jointType, angleUnit);
-                            setSliderPreviewValue(nextValue);
-                            continuousPreviewValueRef.current = nextValue;
-                            handleJointAngleChange(name, nextValue);
+                            handleSliderInput(parseFloat((e.target as HTMLInputElement).value));
                         }}
                         onPointerDown={(e) => {
                             e.stopPropagation();

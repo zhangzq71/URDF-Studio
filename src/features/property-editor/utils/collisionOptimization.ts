@@ -86,6 +86,23 @@ export interface CollisionOptimizationCandidate {
   autoSelect?: boolean;
 }
 
+export function createCollisionOptimizationCandidateKey(
+  candidate: Pick<CollisionOptimizationCandidate, 'target' | 'secondaryTarget'>,
+): string {
+  return candidate.secondaryTarget
+    ? `${candidate.target.id}::${candidate.secondaryTarget.id}`
+    : `${candidate.target.id}::single`;
+}
+
+export function createCollisionOptimizationCandidateKeyFromTargets(
+  primaryTargetId: string,
+  secondaryTargetId?: string | null,
+): string {
+  return secondaryTargetId
+    ? `${primaryTargetId}::${secondaryTargetId}`
+    : `${primaryTargetId}::single`;
+}
+
 export interface CollisionOptimizationMutation {
   componentId?: string;
   linkId: string;

@@ -362,6 +362,7 @@ export function extractJointRecordsFromLayerText(layerText) {
         const lowerLimitDeg = toFiniteNumberLocal(body.match(/physics:lowerLimit\s*=\s*([-+0-9.eE]+)/i)?.[1]);
         const upperLimitDeg = toFiniteNumberLocal(body.match(/physics:upperLimit\s*=\s*([-+0-9.eE]+)/i)?.[1]);
         const axisLocal = parseVector3FromTupleLiteral(body.match(/urdf:axisLocal\s*=\s*\(([^)]+)\)/i)?.[1] || "");
+        const urdfJointType = String(body.match(/urdf:jointType\s*=\s*"([^"]+)"/i)?.[1] || "").trim();
         const originXyz = parseVector3FromTupleLiteral((body.match(/urdf:originXyz\s*=\s*\(([^)]+)\)/i)?.[1]
             || body.match(/physics:localPos0\s*=\s*\(([^)]+)\)/i)?.[1]
             || ""));
@@ -371,7 +372,7 @@ export function extractJointRecordsFromLayerText(layerText) {
         const localPos1 = parseVector3FromTupleLiteral(body.match(/physics:localPos1\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         const localRot1Wxyz = parseQuaternionWxyzFromTupleLiteral(body.match(/physics:localRot1\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         records.push({
-            jointTypeName,
+            jointTypeName: urdfJointType || jointTypeName,
             jointName,
             body0Path,
             body1Path,

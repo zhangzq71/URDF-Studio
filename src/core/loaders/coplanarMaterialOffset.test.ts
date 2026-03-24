@@ -28,6 +28,7 @@ test('mitigateCoplanarMaterialZFighting offsets the smaller overlapping material
     const materials = mesh.material as THREE.Material[];
 
     assert.equal(result.duplicateTriangleCount, 1);
+    assert.equal(result.nearCoplanarTriangleCount, 0);
     assert.deepEqual(result.adjustedMaterialIndices, [1]);
     assert.equal(result.adjustedMaterialCount, 1);
     assert.equal(isCoplanarOffsetMaterial(materials[0]), false);
@@ -60,9 +61,39 @@ test('mitigateCoplanarMaterialZFighting is a no-op when material groups do not o
     const materials = mesh.material as THREE.Material[];
 
     assert.equal(result.duplicateTriangleCount, 0);
+    assert.equal(result.nearCoplanarTriangleCount, 0);
     assert.equal(result.adjustedMaterialCount, 0);
     assert.equal(materials[0], materialA);
     assert.equal(materials[1], materialB);
+});
+
+test('mitigateCoplanarMaterialZFighting offsets near-coplanar material groups with slightly drifted shells', () => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+        0, 0, 0,
+        1, 0, 0,
+        0, 1, 0,
+        0.002, 0.002, 0.0001,
+        1.002, 0.002, 0.0001,
+        0.002, 1.002, 0.0001,
+    ], 3));
+    geometry.clearGroups();
+    geometry.addGroup(0, 3, 0);
+    geometry.addGroup(3, 3, 1);
+
+    const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x999999 });
+    const overlayMaterial = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const mesh = new THREE.Mesh(geometry, [baseMaterial, overlayMaterial]);
+
+    const result = mitigateCoplanarMaterialZFighting(mesh);
+    const materials = mesh.material as THREE.Material[];
+
+    assert.equal(result.duplicateTriangleCount, 0);
+    assert.equal(result.nearCoplanarTriangleCount, 1);
+    assert.deepEqual(result.adjustedMaterialIndices, [1]);
+    assert.equal(result.adjustedMaterialCount, 1);
+    assert.equal(isCoplanarOffsetMaterial(materials[0]), false);
+    assert.equal(isCoplanarOffsetMaterial(materials[1]), true);
 });
 
 test('mitigateCoplanarMaterialZFighting offsets every non-anchor material in an overlapping chain', () => {
@@ -115,6 +146,7 @@ test('mitigateCoplanarMaterialZFighting offsets every non-anchor material in an 
     const materials = mesh.material as THREE.Material[];
 
     assert.equal(result.duplicateTriangleCount, 2);
+    assert.equal(result.nearCoplanarTriangleCount, 0);
     assert.deepEqual(result.adjustedMaterialIndices, [1, 2]);
     assert.equal(result.adjustedMaterialCount, 2);
     assert.equal(isCoplanarOffsetMaterial(materials[0]), false);

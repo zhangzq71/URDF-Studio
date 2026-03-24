@@ -1,6 +1,6 @@
 // @ts-ignore runtime cache-busting query suffix is resolved by browser ESM loader.
 import { ThreeRenderDelegateInterface } from "../hydra/ThreeJsRenderDelegate.js";
-import { fitCameraToSelection, scheduleCameraRefit } from "./camera.js";
+import { collectCameraFitSelection, fitCameraToSelection, scheduleCameraRefit } from "./camera.js";
 import { getDirectoryFromVirtualPath, isLikelyNonRenderableUsdConfig, normalizeUsdPath, parseBooleanFlag } from "./path-utils.js";
 import { resolveAxisAlignmentRotationX, resolveStageUpAxis } from "./stage-up-axis.js";
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
@@ -94,10 +94,11 @@ async function ensureRootPathIsLoadable(pathToLoad, usdFsHelper) {
 }
 export async function loadUsdStage(args) {
     const { USD, usdFsHelper, messageLog, progressBar, progressLabel, showLoadUi = true, readStageMetadata, loadCollisionPrims, loadVisualPrims: requestedLoadVisualPrims, loadPassLabel, params, displayName, pathToLoad, isLoadActive, debugFileHandling = false, onResolvedFilename, applyMeshFilters, rebuildLinkAxes, renderFrame, onProgress, } = args;
+    const nonBlockingLoad = parseBooleanFlag(params.get("nonBlockingLoad"), false);
     const fastLoad = parseBooleanFlag(params.get("fastLoad"), true);
     const forceDependencyPreload = parseBooleanFlag(params.get("forceDependencyPreload"), false);
     const autoLoadDependencies = parseBooleanFlag(params.get("autoLoadDependencies"), true);
-    const strictOneShot = parseBooleanFlag(params.get("strictOneShot"), true);
+    const strictOneShot = parseBooleanFlag(params.get("strictOneShot"), !nonBlockingLoad);
     const normalizedPathForDependencyDefaults = String(pathToLoad || "").toLowerCase();
     const isConfigurationUsdPath = normalizedPathForDependencyDefaults.includes("/configuration/");
     const inferredSkipSensorPayloadsOnOpen = (!isConfigurationUsdPath
@@ -113,14 +114,14 @@ export async function loadUsdStage(args) {
     const defaultIncludeSensorDependency = normalizedPathForDependencyDefaults.includes("/unitree_model/")
         || normalizedPathForDependencyDefaults.includes("/robots/");
     const includeSensorDependency = parseBooleanFlag(params.get("includeSensorDependency"), skipSensorPayloadsOnOpen ? false : defaultIncludeSensorDependency);
-    const warmupRuntimeBridge = true;
+    const warmupRuntimeBridge = parseBooleanFlag(params.get("warmupRuntimeBridge"), !nonBlockingLoad);
     const warmupRuntimeBridgeBeforeDraw = false;
     const warmupRobotMetadata = true;
-    const resolveRobotMetadataBeforeReady = true;
-    const requireCompleteRobotMetadata = true;
+    const resolveRobotMetadataBeforeReady = parseBooleanFlag(params.get("resolveRobotMetadataBeforeReady"), !nonBlockingLoad);
+    const requireCompleteRobotMetadata = parseBooleanFlag(params.get("requireCompleteRobotMetadata"), !nonBlockingLoad);
     const maxCpuDraw = parseBooleanFlag(params.get("maxCpuDraw"), false);
     // Favor full-scene readiness during the loading phase to avoid long tail mesh hydration.
-    const aggressiveInitialDraw = parseBooleanFlag(params.get("aggressiveInitialDraw"), true);
+    const aggressiveInitialDraw = parseBooleanFlag(params.get("aggressiveInitialDraw"), !nonBlockingLoad);
     const drawBurstRenderEveryDraw = parseBooleanFlag(params.get("drawBurstRenderEveryDraw"), aggressiveInitialDraw);
     const hardwareConcurrency = Number(navigator?.hardwareConcurrency || 4);
     const defaultThreadHint = 4;
@@ -930,8 +931,9 @@ export async function loadUsdStage(args) {
     const buildRobotMetadataWarmupOptions = (force) => {
         return {
             force,
-            // Force the C++ snapshot path now; avoid waiting for idle slices.
-            skipIdleWait: true,
+            // In non-blocking mode, keep metadata work on idle slices instead of
+            // monopolizing the main thread during the visible loading phase.
+            skipIdleWait: !nonBlockingLoad,
         };
     };
     const awaitRobotMetadataWarmup = async (activeRenderInterface, options) => {
@@ -1192,6 +1194,9 @@ export async function loadUsdStage(args) {
         stage: window.usdStage,
         fallbackUpAxis: fallbackStageUpAxis,
     });
+    if (!stageUpAxis) {
+        console.warn(`[usd-loader] Missing explicit upAxis metadata for stage: ${String(pathToLoad || "<unknown>")}`);
+    }
     window.usdRoot.rotation.x = resolveAxisAlignmentRotationX({
         sourceUpAxis: stageUpAxis,
         targetUpAxis: "z",
@@ -1202,9 +1207,10 @@ export async function loadUsdStage(args) {
     if (needsFinalResolvedPrimHydrationPass) {
         runResolvedPrimHydrationPass({ force: true });
     }
-    const fitted = fitCameraToSelection(window.camera, window._controls, [window.usdRoot], 1.5, params);
+    const getCameraFitSelection = () => collectCameraFitSelection(window.usdRoot);
+    const fitted = fitCameraToSelection(window.camera, window._controls, getCameraFitSelection(), 1.5, params);
     if (!fitted) {
-        scheduleCameraRefit(window.camera, window._controls, [window.usdRoot], params);
+        scheduleCameraRefit(window.camera, window._controls, getCameraFitSelection, params);
     }
     emitProgress({
         phase: "resolving-metadata",

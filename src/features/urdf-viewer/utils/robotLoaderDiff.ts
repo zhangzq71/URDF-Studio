@@ -178,6 +178,7 @@ function sameDynamics(a: UrdfJoint['dynamics'], b: UrdfJoint['dynamics']): boole
 function sameHardware(a: UrdfJoint['hardware'], b: UrdfJoint['hardware']): boolean {
   return (
     a.armature === b.armature &&
+    a.brand === b.brand &&
     a.motorType === b.motorType &&
     a.motorId === b.motorId &&
     a.motorDirection === b.motorDirection

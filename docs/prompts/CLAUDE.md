@@ -1,75 +1,97 @@
 # URDF-Studio 开发指南
 
-> 单一主 Prompt 上下文。`overview.md`、`URDF_STUDIO_STYLE_GUIDE.md`、`urdf-viewer.md`、`visualizer.md` 现在只保留轻量入口，避免重复加载同一批信息。
+> 单一主 Prompt 上下文。`overview.md`、`URDF_STUDIO_STYLE_GUIDE.md`、`urdf-viewer.md`、`visualizer.md` 只保留轻量入口，避免重复加载同一批信息。
 
 ## 1. 最小读取策略
 
 建议按以下顺序读取，控制 token：
 
-1. 先读本文件。
-2. 仅在任务相关时再看对应轻量入口：
+1. 先读仓库根目录 `AGENTS.md`。
+2. 再读本文件。
+3. 仅在任务相关时再看对应轻量入口：
    - UI / 主题 / 可访问性：看本文件第 6 节
    - `Visualizer`（`Skeleton` / `Hardware`）：看本文件第 7 节
    - `URDF Viewer`（`Detail`）：看本文件第 8 节
-3. AI 审阅标准直接读取：
+4. AI 审阅标准直接读取：
    - `src/features/ai-assistant/config/urdf_inspect_standard_en.md`
    - `src/features/ai-assistant/config/urdf_inspect_stantard_zh.md`
-4. 与 AI 对话时，优先给出：
+5. 与 AI 对话时，优先给出：
    - 具体的 `Link` / `Joint` 名称
    - 期望的父子关系
-   - 涉及电机时的力矩 / 传动约束
+   - 当前处于 `Skeleton` / `Detail` / `Hardware` 哪个模式
+   - 涉及电机时的力矩 / 传动 / 阻尼约束
+
+若本文件描述与当前 `src/` 真实结构冲突，以仓库现状和 `AGENTS.md` 为准。
 
 ## 2. 项目快照
 
-**URDF Studio** 是一个机器人设计与仿真平台，核心能力包括：
+**URDF Studio** 是一个机器人设计、装配、可视化与导出工作台，核心能力包括：
 
 - 三模式编辑：`Skeleton` / `Detail` / `Hardware`
 - 多 URDF 组装与桥接关节
-- 多格式导入导出：`URDF` / `MJCF` / `USD` / `Xacro`
+- 多格式导入导出：`URDF` / `MJCF` / `USD` / `Xacro` / `ZIP` / `.usp`
 - AI 生成与 AI 审阅
-- 项目级文件管理：`.usp`
+- PDF / CSV 报告导出
+- 可复用 `react-robot-canvas` 画布封装与对外发布
 
 **技术栈**
 
-- React 19 + TypeScript 5.8
+- React 19.2 + TypeScript 5.8
 - Three.js + React Three Fiber + `@react-three/drei`
-- Vite 6
-- Tailwind CSS 4
+- Vite 6.2
+- Tailwind CSS 4.1
 - Zustand 5
 - Monaco Editor
 
 **源码分层**
 
-- `src/app`：应用编排与主布局
+- `src/app`：应用编排层，负责 App shell、viewer 组合、导入导出、workspace/source sync、USD hydration/roundtrip 协调
 - `src/features`：业务功能模块
 - `src/store`：Zustand 状态层
-- `src/shared`：共享组件、hooks、i18n、通用 3D 辅助
-- `src/core`：纯逻辑、解析器、生成器
+- `src/shared`：共享组件、3D 基础设施、hooks、i18n、数据、调试桥接、通用工具
+- `src/core`：纯逻辑、解析器、生成器、robot core、loaders
+- `src/lib`：对外复用的 `RobotCanvas` 封装
 - `src/types`：跨模块类型定义
 - `src/styles/index.css`：全局语义 token
+
+补充目录：
+
+- `packages/react-robot-canvas/`：对外发布包工作区
+- `public/usd/bindings/*`：USD WASM bindings，必须保持浏览器运行时可 fetch
+- `output/`：用户可见导出结果与需要保留的回归产物
+- `tmp/`：截图、trace、临时调试与中间产物
 
 ## 3. 架构红线
 
 ### 依赖方向
 
 ```text
-app/ -> features/ -> store/ -> shared/ -> core/ -> types/
+app -> features -> store -> shared -> core -> types
 ```
 
 必须遵守：
 
 - 不新增反向依赖
 - `features` 之间优先通过 `store` 通信
-- `core/` 保持纯函数，不引入 React / UI 依赖
+- `core/` 保持纯函数，不引入 React / UI / Feature 依赖
 - 使用 `@/` 指向 `src/`
+- `src/lib/` 只收稳定、通用、与应用壳无关的能力
+- 应用内部不要把 `src/lib/` 当业务逻辑 source of truth
+
+### 当前存量例外
+
+- `src/shared/components/Panel/JointControlItem.tsx` 依赖 `@/store/robotStore`
+- `src/shared/hooks/useEffectiveTheme.ts` 依赖 `@/store/uiStore`
+- `src/features/ai-assistant/utils/pdfExport.ts` 依赖 `@/features/file-io/components/InspectionReportTemplate`
 
 ### 状态管理
 
-- `robotStore`：机器人模型 CRUD、Undo/Redo、派生计算
-- `uiStore`：模式、主题、语言、面板、侧边栏标签
-- `selectionStore`：选中与悬停状态
-- `assetsStore`：mesh、texture、电机库、素材
-- `assemblyStore`：多 URDF 组装与桥接关节
+- `robotStore`：机器人模型 CRUD、Undo/Redo、派生计算、闭环约束
+- `uiStore`：模式、主题、语言、侧栏、面板、显示选项
+- `selectionStore`：选中、悬停、pulse、focus
+- `assetsStore`：mesh、texture、robot files、motor library、USD scene snapshot、prepared export cache
+- `assemblyStore`：多 URDF 组装、BridgeJoint、组件管理、组装历史
+- `collisionTransformStore`：碰撞 gizmo 的瞬时 pending transform
 
 ### 国际化
 
@@ -80,23 +102,63 @@ app/ -> features/ -> store/ -> shared/ -> core/ -> types/
 
 | 模式 | 目标 | 主模块 | 典型任务 |
 | --- | --- | --- | --- |
-| `Skeleton` | 搭建运动链拓扑 | `Visualizer` | Link / Joint 增删、拓扑与关节参数 |
-| `Detail` | 编辑几何体、材质、碰撞 | `URDF Viewer` | Visual / Collision、网格、材质、纹理 |
+| `Skeleton` | 搭建运动链拓扑 | `Visualizer` | Link / Joint 增删、拓扑编辑、关节参数 |
+| `Detail` | 编辑几何体、材质、碰撞、测量 | `URDF Viewer` | Visual / Collision、网格、材质、纹理、碰撞变换 |
 | `Hardware` | 配置电机与硬件参数 | `Visualizer` | 电机型号、传动比、阻尼、摩擦 |
 
 新增功能前，先判断所属模式，避免跨模式逻辑缠绕。
 
-## 5. 组装、文件与工作区
+跨模式共享交互优先落在：
+- `src/app/*` 编排层
+- `src/shared/components/3d/*` 共享画布基础设施
+
+## 5. App、Workspace、导入导出与装配
+
+### App 编排入口
+
+- `src/app/App.tsx`：根组件，装配 Providers、懒加载模态框、全局导入导出入口、debug bridge
+- `src/app/AppLayout.tsx`：应用壳、Header、TreeEditor、PropertyEditor、UnifiedViewer 主编排
+- `src/app/components/UnifiedViewer.tsx`：统一组合 `Visualizer` / `URDF Viewer`
+- `src/app/components/WorkspaceCanvas.tsx`：共享 R3F 画布基础设施
+- `src/app/components/AppLayoutOverlays.tsx`：延迟加载桥接创建、碰撞优化等浮层
+
+### 当前 app hooks 重点
+
+- `useViewerOrchestration.ts`：selection / hover / pulse / focus / transform pending 协调
+- `useFileImport.ts`：应用级导入流程
+- `useFileExport.ts`：应用级导出流程
+- `useWorkspaceSourceSync.ts`：workspace 与 source code 同步
+- `useWorkspaceMutations.ts`：workspace 级变更编排
+- `useLibraryFileActions.ts`：library 文件动作
+- `useCollisionOptimizationWorkflow.ts`：碰撞优化 UI 流程
+
+### File I/O 真实边界
+
+- `src/features/file-io/` 负责底层文件能力：
+  - 格式检测
+  - project archive
+  - USD export
+  - BOM
+  - `ExportDialog`
+  - PDF / snapshot hooks
+- 应用工作流 source of truth 在：
+  - `src/app/hooks/useFileImport.ts`
+  - `src/app/hooks/useFileExport.ts`
+
+说明：
+- 旧的 `features/file-io/hooks/useFileExport.ts` 已移除。
+- `.usp` project import/export、USD prepared export cache、live USD roundtrip archive 已进入主工作流。
 
 ### 多 URDF 组装
 
 - 每个组件导入后需要命名空间前缀，避免 `Link` / `Joint` 冲突
 - 组件之间通过 `BridgeJoint` 连接
-- 合并逻辑在 `assemblyStore` 与 `core/robot/assemblyMerger.ts`
+- 合并逻辑位于 `assemblyStore` 与 `core/robot/assemblyMerger.ts`
 - 改动组装功能时，重点检查：
   - 命名空间冲突
   - `BridgeJoint` 合法性
   - 合并导出一致性
+  - workspace 与 structure 视图切换时的 source file / selected file 同步
 
 ### Workspace 交互
 
@@ -105,12 +167,7 @@ app/ -> features/ -> store/ -> shared/ -> core/ -> types/
 - 文件加入组装的入口：
   - 右键菜单“添加”
   - 文件行右侧绿色按钮
-- 单击文件会打开独立 3D 预览窗口，不直接加入组装
-
-### 文件格式
-
-- 导入：`URDF`、`MJCF`、`USD`、`Xacro`、`ZIP`、`.usp`
-- 导出：`URDF`、`MJCF`、`USD`、`ZIP`、`PDF`、`CSV`
+- 单击文件会打开独立 3D 预览，不直接加入组装
 
 ## 6. UI / 样式 / 可访问性
 
@@ -131,15 +188,15 @@ app/ -> features/ -> store/ -> shared/ -> core/ -> types/
 
 ### 当前高频语义色
 
-- `app-bg`：页面底色
-- `panel-bg`：主面板
-- `element-bg`：次级容器
-- `element-hover`：悬浮层
-- `border-black`：语义边框
+- `app-bg`
+- `panel-bg`
+- `element-bg`
+- `element-hover`
+- `border-black`
 - `text-primary` / `text-secondary` / `text-tertiary`
-- `system-blue`：普通强调文本 / 图标
-- `system-blue-solid`：主按钮底色
-- `slider-accent`：线性高亮
+- `system-blue`
+- `system-blue-solid`
+- `slider-accent`
 
 ### 蓝色使用强约束
 
@@ -169,22 +226,23 @@ app/ -> features/ -> store/ -> shared/ -> core/ -> types/
 - `src/features/visualizer/components/VisualizerCanvas.tsx`
 - `src/features/visualizer/components/nodes/*`
 - `src/features/visualizer/components/controls/*`
+- `src/features/visualizer/components/constraints/*`
 - `src/features/visualizer/hooks/*`
 - `src/features/visualizer/utils/materialCache.ts`
 - 共享面板在 `src/shared/components/Panel/*`
 
 ### 核心模式
 
-- 场景递归保持：
-
 ```text
 RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 ```
 
-- 通过回调注册 THREE 引用：
-  - `useJointPivots`
-  - `useCollisionRefs`
-- 编辑流程由 `useTransformControls` / `useVisualizerController` 编排
+关键 hooks / 能力：
+- `useJointPivots`
+- `useCollisionRefs`
+- `useClosedLoopDragSync`
+- `useTransformControls`
+- `useVisualizerController`
 
 ### 实现约束
 
@@ -199,16 +257,36 @@ RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 
 ### 当前结构
 
-- `src/features/urdf-viewer/components/URDFViewer.tsx`
-- `src/features/urdf-viewer/components/URDFViewerScene.tsx`
-- `src/features/urdf-viewer/components/URDFViewerPanels.tsx`
-- `src/features/urdf-viewer/components/RobotModel.tsx`
-- `src/features/urdf-viewer/components/ViewerToolbar.tsx`
-- `src/features/urdf-viewer/components/CollisionTransformControls.tsx`
-- `src/features/urdf-viewer/hooks/*`
-- `src/features/urdf-viewer/utils/*`
-- `src/features/urdf-viewer/types.ts`
-- 共享关节面板位于 `src/shared/components/Panel/JointsPanel.tsx`
+- React 层：
+  - `src/features/urdf-viewer/components/*`
+  - `src/features/urdf-viewer/hooks/*`
+  - `src/features/urdf-viewer/types.ts`
+- Runtime / embed 层：
+  - `src/features/urdf-viewer/runtime/embed/*`
+  - `src/features/urdf-viewer/runtime/hydra/*`
+  - `src/features/urdf-viewer/runtime/viewer/*`
+  - `src/features/urdf-viewer/runtime/UPSTREAM.md`
+- Adapter / utils 层：
+  - `src/features/urdf-viewer/utils/*`
+
+### 当前关键边界
+
+- `runtime/*` 是 vendored `usd-viewer` runtime。
+- URDF Studio 应适配 runtime 输出到自己的 `ViewerRobotDataResolution` / `RobotData`。
+- 不要在 `src/core/parsers/usd/*` 里重复实现 viewer runtime 的职责。
+- `public/usd/bindings/*` 必须保留在静态资源目录，供浏览器运行时 fetch。
+
+### 核心文件
+
+- `src/features/urdf-viewer/components/UsdWasmStage.tsx`
+- `src/features/urdf-viewer/utils/viewerRobotData.ts`
+- `src/features/urdf-viewer/utils/viewerResourceScope.ts`
+- `src/features/urdf-viewer/utils/usdExportBundle.ts`
+- `src/features/urdf-viewer/utils/usdRuntimeRobotHydration.ts`
+- `src/features/urdf-viewer/utils/usdSceneRobotResolution.ts`
+- `src/features/urdf-viewer/utils/usdViewerRobotAdapter.ts`
+- `src/features/urdf-viewer/utils/visualizationFactories.ts`
+- `src/features/urdf-viewer/utils/dispose.ts`
 
 ### 工具与职责
 
@@ -220,11 +298,12 @@ RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 
 ### 实现约束
 
-- 优先复用 `src/features/urdf-viewer/utils/materials.ts`
-- 卸载 / 切换时必须调用 `dispose` 清理 THREE 资源
+- 优先复用 `materials.ts`、`urdfMaterials.ts`、`dispose.ts`
+- 卸载 / 切换 / reload / hydration rollback 时必须清理 THREE 资源
 - Props 与共享类型统一收口到 `types.ts`
 - 可视化扩展通过 `visualizationFactories.ts`
 - 避免在组件里散落临时材质、临时几何体、未释放纹理
+- 共享关节面板仍位于 `src/shared/components/Panel/JointsPanel.tsx`
 
 ## 9. AI 功能
 
@@ -241,7 +320,8 @@ VITE_OPENAI_MODEL=deepseek-v3
 - `src/features/ai-assistant/config/urdf_inspect_standard_en.md`
 - `src/features/ai-assistant/config/urdf_inspect_stantard_zh.md`
 
-说明：中文文件名当前仓库拼写为 `stantard`，属现状，不要擅自改名。
+说明：
+- 中文文件名当前仓库拼写为 `stantard`，属现状，不要擅自改名。
 
 ## 10. 常用检查命令
 
@@ -250,7 +330,9 @@ npm run dev
 npm run build
 npm run preview
 
-# 依赖方向检查
+# 结构和依赖方向
+find src -maxdepth 3 -type d | sort
+find src/app src/features -maxdepth 2 -type f | sort | sed -n '1,240p'
 rg -n "from ['\"]@/features/" src/core src/shared src/store
 rg -n "from ['\"]@/features/" src/features
 rg -n "from ['\"]@/store/" src/shared
@@ -260,9 +342,9 @@ rg -n "#[0-9A-Fa-f]{3,8}" src
 rg -n "#0088FF|#0088ff" src | rg -v "Slider.tsx|styles/index.css"
 ```
 
-## 11. 开发注意事项
+## 11. 临时产物与浏览器验证
 
-- 当前默认验证手段是 `npm run build`
-- 历史上存在少量存量 TS 问题时，避免把无关问题一并扩大
-- 新功能优先放进所属 `features/*`，不要把业务逻辑堆进 `app/`
-- 涉及 3D 逻辑时，优先考虑资源释放、材质复用、引用注册与类型完整性
+- 浏览器截图、trace、快照、临时调试日志默认写入 `tmp/`
+- `output/` 只放用户可见导出或明确要保留的结果
+- 截图前优先关闭会遮挡主体内容的侧栏与面板
+- 验证完成后关闭多余浏览器标签页、DevTools、Playwright 会话与临时进程

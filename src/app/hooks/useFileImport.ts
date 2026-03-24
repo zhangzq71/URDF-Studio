@@ -5,8 +5,7 @@
 import { useCallback } from 'react';
 import JSZip from 'jszip';
 import type { RobotData, RobotFile, MotorSpec } from '@/types';
-import { isMJCF, isUSDA, isXacro, parseMJCF, resolveRobotFileData } from '@/core/parsers';
-import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
+import { isMJCF, isUSDA, isXacro, resolveRobotFileData } from '@/core/parsers';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useSelectionStore, useUIStore } from '@/store';
 import { createAssetUrls, importProject, isMeshFile } from '@/features/file-io';
@@ -15,8 +14,8 @@ import {
   remapImportedPath,
 } from '@/features/file-io/utils/libraryImportPathCollisions';
 import { translations } from '@/shared/i18n';
-import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { buildImportedRobotStoreState } from './projectRobotStateUtils';
+import { pickPreferredImportFile } from './importPreferredFile';
 
 const USD_BINARY_MAGIC = new Uint8Array([80, 88, 82, 45, 85, 83, 68, 67]); // "PXR-USDC"
 const usdTextDecoder = new TextDecoder();
@@ -106,71 +105,6 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   // Assembly store
   const initAssembly = useAssemblyStore((state) => state.initAssembly);
   const addComponent = useAssemblyStore((state) => state.addComponent);
-
-  const pickPreferredFile = useCallback((files: RobotFile[], filePool: RobotFile[] = files) => {
-    const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
-    const preferredUrdf = robotDefinitionFiles.find((file) => file.format === 'urdf');
-    if (preferredUrdf) {
-      return preferredUrdf;
-    }
-
-    const mjcfFiles = robotDefinitionFiles.filter((file) => file.format === 'mjcf');
-    if (mjcfFiles.length > 0) {
-      const auxiliaryNamePattern = /(actuator|actuators|keyframe|position|velocity|motor|ctrl|filtered)/i;
-
-      const sortedMjcfCandidates = [...mjcfFiles].sort((left, right) => {
-        const leftBase = left.name.split('/').pop() ?? left.name;
-        const rightBase = right.name.split('/').pop() ?? right.name;
-        const leftDir = left.name.split('/').slice(-2, -1)[0] ?? '';
-        const rightDir = right.name.split('/').slice(-2, -1)[0] ?? '';
-        const leftIsScene = /scene/i.test(leftBase);
-        const rightIsScene = /scene/i.test(rightBase);
-        if (leftIsScene !== rightIsScene) {
-          return leftIsScene ? 1 : -1;
-        }
-
-        const leftIsAuxiliary = auxiliaryNamePattern.test(leftBase);
-        const rightIsAuxiliary = auxiliaryNamePattern.test(rightBase);
-        if (leftIsAuxiliary !== rightIsAuxiliary) {
-          return leftIsAuxiliary ? 1 : -1;
-        }
-
-        const leftMatchesDir = leftBase.toLowerCase() === `${leftDir.toLowerCase()}.xml`
-          || leftBase.toLowerCase() === `${leftDir.toLowerCase()}.mjcf`;
-        const rightMatchesDir = rightBase.toLowerCase() === `${rightDir.toLowerCase()}.xml`
-          || rightBase.toLowerCase() === `${rightDir.toLowerCase()}.mjcf`;
-        if (leftMatchesDir !== rightMatchesDir) {
-          return leftMatchesDir ? -1 : 1;
-        }
-
-        if (leftBase.length !== rightBase.length) {
-          return leftBase.length - rightBase.length;
-        }
-
-        return leftBase.localeCompare(rightBase);
-      });
-
-      for (const candidate of sortedMjcfCandidates) {
-        try {
-          const resolved = resolveMJCFSource(candidate, filePool);
-          if (parseMJCF(resolved.content) !== null) {
-            return candidate;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return sortedMjcfCandidates[0] ?? null;
-    }
-
-    const preferredUsd = pickPreferredUsdRootFile(robotDefinitionFiles);
-    if (preferredUsd) {
-      return preferredUsd;
-    }
-
-    return robotDefinitionFiles[0] || files[0] || null;
-  }, []);
 
   // Detect file format from content
   const detectFormat = useCallback((content: string, filename: string): 'urdf' | 'mjcf' | 'usd' | 'xacro' | null => {
@@ -427,7 +361,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       // 4. Load first robot if available (prefer .urdf/.xml over .xacro)
       // Filter to get only real robot definition files (exclude mesh)
       if (renamedRobotFilesWithSources.length > 0) {
-        const preferredFile = pickPreferredFile(renamedRobotFilesWithSources, mergedFiles);
+        const preferredFile = pickPreferredImportFile(renamedRobotFilesWithSources, mergedFiles);
 
         if (!preferredFile) {
           // No loadable file after import; fall through to generic completion handling.
@@ -447,13 +381,21 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             });
           }
           setSidebarTab('structure');
-          loadRobot(preferredFile, mergedFiles, { ...assets, ...sourceAssets });
+          if (onLoadRobot) {
+            onLoadRobot(preferredFile);
+          } else {
+            loadRobot(preferredFile, mergedFiles, { ...assets, ...sourceAssets });
+          }
           setAppMode('detail');
         } else if (!selectedFile) {
           // If the current preview was cleared by a library delete, reload the newly imported robot
           // instead of leaving the workspace on the placeholder base_link state.
           setSidebarTab('structure');
-          loadRobot(preferredFile, mergedFiles, { ...assets, ...sourceAssets });
+          if (onLoadRobot) {
+            onLoadRobot(preferredFile);
+          } else {
+            loadRobot(preferredFile, mergedFiles, { ...assets, ...sourceAssets });
+          }
           setAppMode('detail');
           if (onShowToast) {
             onShowToast(
@@ -504,7 +446,6 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     getUsdPreparedExportCache,
     initAssembly,
     addComponent,
-    pickPreferredFile,
     showImportWarning,
     t,
   ]);

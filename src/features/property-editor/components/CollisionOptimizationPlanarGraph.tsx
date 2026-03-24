@@ -7,23 +7,24 @@ import type {
   CollisionOptimizationSource,
   CollisionTargetRef,
 } from '../utils/collisionOptimization';
-import { buildCollisionOptimizationSkeletonProjection } from '../utils/collisionOptimization';
+import { createCollisionOptimizationCandidateKey } from '../utils/collisionOptimization';
 import { GeometryType } from '@/types';
+import { mergeAssembly } from '@/core/robot/assemblyMerger';
 
-const GRAPH_PADDING = 20;
-const COMPONENT_GAP = 120;
-const CARD_WIDTH = 132;
-const CARD_HEADER_HEIGHT = 22;
-const CARD_PADDING = 4;
-const ROW_HEIGHT = 22;
-const EMPTY_CARD_HEIGHT = 24;
-const MIN_SCALE = 0.2;
-const MAX_SCALE = 6;
-const CALLOUT_COLUMN_GAP = 40;
-const CALLOUT_STACK_GAP = 8;
-const CALLOUT_DRAG_ALLOWANCE = 40;
+const GRAPH_PADDING = 28;
+const NODE_HEIGHT = 28;
+const NODE_MIN_WIDTH = 84;
+const NODE_MAX_WIDTH = 150;
+const NODE_PILL_PADDING = 26;
+const NODE_GAP_X = 132;
+const NODE_GAP_Y = 92;
+const ROOT_GAP_UNITS = 1.15;
+const GROUP_PADDING_X = 18;
+const GROUP_PADDING_Y = 16;
+const MIN_SCALE = 0.32;
+const MAX_SCALE = 4.5;
 
-type CalloutSide = 'left' | 'right';
+type GraphPairType = 'manual' | 'auto';
 
 interface CollisionSelection {
   type: 'link' | 'joint' | null;
@@ -58,106 +59,53 @@ interface GraphBounds {
   centerY: number;
 }
 
-interface GraphCalloutColumn {
-  originX: number;
-  minLeft: number;
-  maxLeft: number;
-}
-
-interface GraphCalloutColumns {
-  left: GraphCalloutColumn;
-  right: GraphCalloutColumn;
-}
-
-interface SourceLinkMeta {
-  componentId?: string;
-  componentName?: string;
-  linkId: string;
-  linkName: string;
-}
-
-interface BaseGraphTargetRow {
-  target: CollisionTargetRef;
-  localX: number;
-  localY: number;
-  width: number;
-  height: number;
-}
-
-interface GraphTargetRow extends BaseGraphTargetRow {
-  x: number;
-  y: number;
-  anchorIn: GraphPoint;
-  anchorOut: GraphPoint;
-}
-
-interface BaseGraphLinkCard {
+interface GraphNodeModel {
   id: string;
-  componentId?: string;
-  componentName?: string;
   linkId: string;
   linkName: string;
-  clusterId: string;
-  side: CalloutSide;
-  anchor: GraphPoint;
+  componentName?: string;
   x: number;
   y: number;
   width: number;
   height: number;
-  rows: BaseGraphTargetRow[];
+  center: GraphPoint;
+  handle: GraphPoint;
+  targetCount: number;
+  summaryTarget: CollisionTargetRef | null;
+  summaryCandidate: CollisionOptimizationCandidate | null;
+  selected: boolean;
+  checked: boolean;
 }
 
-interface GraphLinkCard extends BaseGraphLinkCard {
-  rows: GraphTargetRow[];
-}
-
-interface GraphStructureLink {
+interface GraphEdgeModel {
   id: string;
   fromLinkId: string;
   toLinkId: string;
 }
 
-interface GraphStructureEdge {
+interface GraphGroupModel {
   id: string;
-  from: GraphPoint;
-  to: GraphPoint;
-}
-
-interface GraphPairRelation {
-  id: string;
+  sourceLinkId: string;
+  targetLinkId: string;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
   candidate: CollisionOptimizationCandidate;
-  sourceTargetId: string;
-  targetTargetId: string;
-  manual: boolean;
-}
-
-interface GraphPairEdge {
-  id: string;
-  candidate: CollisionOptimizationCandidate;
-  sourceRow: GraphTargetRow;
-  targetRow: GraphTargetRow;
-  manual: boolean;
+  pairType: GraphPairType;
+  checked: boolean;
+  labelAnchor: GraphPoint;
 }
 
 interface GraphModel {
-  cards: BaseGraphLinkCard[];
-  structureLinks: GraphStructureLink[];
-  pairRelations: GraphPairRelation[];
-  skeletonBounds: GraphBounds;
-  calloutColumns: GraphCalloutColumns;
+  nodes: GraphNodeModel[];
+  edges: GraphEdgeModel[];
+  groups: GraphGroupModel[];
   width: number;
   height: number;
-}
-
-interface GraphRenderModel {
-  cards: GraphLinkCard[];
-  rowByTargetId: Map<string, GraphTargetRow>;
-  structureEdges: GraphStructureEdge[];
-  pairEdges: GraphPairEdge[];
-  skeletonBounds: GraphBounds;
-  calloutColumns: GraphCalloutColumns;
-  width: number;
-  height: number;
+  focusBounds: GraphBounds;
 }
 
 interface PanSession {
@@ -165,14 +113,6 @@ interface PanSession {
   startClientX: number;
   startClientY: number;
   startViewport: ViewportState;
-}
-
-interface CardDragSession {
-  pointerId: number;
-  cardId: string;
-  side: CalloutSide;
-  startWorld: GraphPoint;
-  startCardPosition: GraphPoint;
 }
 
 export interface CollisionOptimizationPlanarGraphConnectionState {
@@ -203,14 +143,14 @@ export interface CollisionOptimizationPlanarGraphProps {
   source: CollisionOptimizationSource;
   analysis: CollisionOptimizationAnalysis;
   candidates: CollisionOptimizationCandidate[];
-  checkedTargetIds: ReadonlySet<string>;
+  checkedCandidateKeys: ReadonlySet<string>;
   selection?: CollisionSelection;
   manualMergePairs: CollisionOptimizationManualMergePair[];
   manualConnection?: CollisionOptimizationPlanarGraphConnectionState | null;
   labels: CollisionOptimizationPlanarGraphLabels;
   formatGeometryType: (type: GeometryType | null | undefined) => string;
   canCreateManualPair: (sourceTargetId: string, targetTargetId: string) => boolean;
-  onToggleCandidate: (targetId: string) => void;
+  onToggleCandidate: (candidateKey: string) => void;
   onSelectTarget?: (target: CollisionTargetRef) => void;
   onManualConnectionStart?: (target: CollisionTargetRef) => void;
   onManualConnectionMove?: (pointer: GraphPoint) => void;
@@ -234,47 +174,79 @@ function compareTargets(left: CollisionTargetRef, right: CollisionTargetRef): nu
 }
 
 function buildCurvePath(from: GraphPoint, to: GraphPoint): string {
-  const horizontalOffset = Math.max(48, Math.abs(to.x - from.x) * 0.35);
+  const horizontalOffset = Math.max(34, Math.abs(to.x - from.x) * 0.38);
   return `M ${from.x} ${from.y} C ${from.x + horizontalOffset} ${from.y}, ${to.x - horizontalOffset} ${to.y}, ${to.x} ${to.y}`;
 }
 
-function median(values: number[]): number {
-  if (values.length === 0) {
-    return 0;
+function formatCompactNumber(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) {
+    return '—';
   }
 
-  const sorted = [...values].sort((left, right) => left - right);
-  const midpoint = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return (sorted[midpoint - 1] + sorted[midpoint]) / 2;
+  const safeValue = Number(value);
+  const absolute = Math.abs(safeValue);
+  if (absolute >= 10) {
+    return safeValue.toFixed(1).replace(/\.0$/, '');
   }
 
-  return sorted[midpoint];
+  if (absolute >= 1) {
+    return safeValue.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  return safeValue.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function collectSourceLinkMetas(source: CollisionOptimizationSource): SourceLinkMeta[] {
-  if (source.kind === 'robot') {
-    return Object.values(source.robot.links).map((link) => ({
-      linkId: link.id,
-      linkName: link.name || link.id,
-    }));
+function getGeometryMetrics(candidate: CollisionOptimizationCandidate): Array<{ label: string; value: string }> {
+  const geometry = candidate.nextGeometry ?? candidate.target.geometry;
+  const dimensions = geometry.dimensions;
+
+  if (!dimensions) {
+    return [];
   }
 
-  return Object.values(source.assembly.components).flatMap((component) =>
-    Object.values(component.robot.links).map((link) => ({
-      componentId: component.id,
-      componentName: component.name,
-      linkId: link.id,
-      linkName: link.name || link.id,
-    })),
-  );
+  if (geometry.type === GeometryType.CYLINDER || geometry.type === GeometryType.CAPSULE) {
+    return [
+      { label: 'R', value: formatCompactNumber(dimensions.x) },
+      { label: 'L', value: formatCompactNumber(dimensions.y) },
+    ];
+  }
+
+  if (geometry.type === GeometryType.SPHERE) {
+    return [{ label: 'R', value: formatCompactNumber(dimensions.x) }];
+  }
+
+  if (geometry.type === GeometryType.BOX) {
+    return [
+      { label: 'X', value: formatCompactNumber(dimensions.x) },
+      { label: 'Y', value: formatCompactNumber(dimensions.y) },
+      { label: 'Z', value: formatCompactNumber(dimensions.z) },
+    ];
+  }
+
+  return [];
 }
 
-function getFallbackAnchor(index: number): GraphPoint {
-  return {
-    x: GRAPH_PADDING + index * 132,
-    y: GRAPH_PADDING + (index % 5) * 72,
-  };
+function getMetricSummary(candidate: CollisionOptimizationCandidate): string {
+  return getGeometryMetrics(candidate)
+    .map((metric) => `${metric.label} ${metric.value}`)
+    .join(' · ');
+}
+
+function getPrimitiveMonogram(type: GeometryType | null | undefined): string {
+  switch (type) {
+    case GeometryType.CYLINDER:
+      return 'CYL';
+    case GeometryType.CAPSULE:
+      return 'CAP';
+    case GeometryType.BOX:
+      return 'BOX';
+    case GeometryType.SPHERE:
+      return 'SPH';
+    case GeometryType.MESH:
+      return 'MSH';
+    default:
+      return '—';
+  }
 }
 
 function computeBounds(points: GraphPoint[]): GraphBounds {
@@ -322,33 +294,18 @@ function expandBounds(bounds: GraphBounds, marginX: number, marginY: number): Gr
   };
 }
 
-function getFocusBounds(model: Pick<GraphModel, 'cards' | 'skeletonBounds'>): GraphBounds {
-  const focusPoints: GraphPoint[] = [
-    { x: model.skeletonBounds.minX, y: model.skeletonBounds.minY },
-    { x: model.skeletonBounds.maxX, y: model.skeletonBounds.maxY },
-  ];
-
-  model.cards.forEach((card) => {
-    focusPoints.push(card.anchor);
-    focusPoints.push({ x: card.x, y: card.y });
-    focusPoints.push({ x: card.x + card.width, y: card.y + card.height });
-  });
-
-  return expandBounds(computeBounds(focusPoints), 20, 20);
-}
-
 function createViewportForBounds(
   container: HTMLDivElement,
   bounds: GraphBounds,
 ): ViewportState {
   const availableWidth = Math.max(container.clientWidth - 40, 320);
   const availableHeight = Math.max(container.clientHeight - 40, 240);
-  const boundsWidth = Math.max(bounds.maxX - bounds.minX, 160);
-  const boundsHeight = Math.max(bounds.maxY - bounds.minY, 160);
+  const boundsWidth = Math.max(bounds.maxX - bounds.minX, 180);
+  const boundsHeight = Math.max(bounds.maxY - bounds.minY, 180);
   const scale = clamp(
     Math.min(availableWidth / boundsWidth, availableHeight / boundsHeight),
-    0.45,
-    1.35,
+    0.5,
+    1.15,
   );
 
   return {
@@ -358,422 +315,299 @@ function createViewportForBounds(
   };
 }
 
-function layoutCalloutPositions(
-  cards: BaseGraphLinkCard[],
-  columns: GraphCalloutColumns,
-): Record<string, GraphPoint> {
-  const positions: Record<string, GraphPoint> = {};
+function pickSummaryCandidate(candidates: CollisionOptimizationCandidate[]): CollisionOptimizationCandidate | null {
+  if (candidates.length === 0) {
+    return null;
+  }
 
-  (['left', 'right'] as const).forEach((side) => {
-    const sideCards = cards
-      .filter((card) => card.side === side)
-      .sort((left, right) => left.anchor.y - right.anchor.y || left.anchor.x - right.anchor.x);
-    let cursorY = GRAPH_PADDING;
+  return [...candidates].sort((left, right) => {
+    return Number(right.eligible) - Number(left.eligible)
+      || Number(Boolean(right.secondaryTarget)) - Number(Boolean(left.secondaryTarget))
+      || Number(right.target.isPrimary) - Number(left.target.isPrimary)
+      || left.target.sequenceIndex - right.target.sequenceIndex
+      || left.target.objectIndex - right.target.objectIndex;
+  })[0] ?? null;
+}
 
-    sideCards.forEach((card, index) => {
-      const column = columns[side];
-      const desiredY = Math.max(GRAPH_PADDING, card.anchor.y - card.height / 2);
-      const laneOffset = (index % 2) * 8;
-      const left =
-        side === 'left'
-          ? clamp(column.originX + laneOffset, column.minLeft, column.maxLeft)
-          : clamp(column.originX + laneOffset, column.minLeft, column.maxLeft);
-      const top = Math.max(desiredY, cursorY);
+function buildLinkComponentMap(source: CollisionOptimizationSource): Map<string, { componentName?: string }> {
+  if (source.kind === 'robot') {
+    return new Map(
+      Object.values(source.robot.links).map((link) => [link.id, { componentName: undefined }] as const),
+    );
+  }
 
-      positions[card.id] = { x: left, y: top };
-      cursorY = top + card.height + CALLOUT_STACK_GAP;
+  return new Map(
+    Object.values(source.assembly.components).flatMap((component) =>
+      Object.values(component.robot.links).map((link) => [
+        link.id,
+        { componentName: component.name },
+      ] as const),
+    ),
+  );
+}
+
+function resolveRobot(source: CollisionOptimizationSource) {
+  return source.kind === 'robot'
+    ? source.robot
+    : mergeAssembly(source.assembly);
+}
+
+function buildTreeLayout(source: CollisionOptimizationSource): {
+  positions: Map<string, GraphPoint>;
+  edges: GraphEdgeModel[];
+} {
+  const robot = resolveRobot(source);
+  const linkIds = Object.keys(robot.links);
+  const childLinkIdSet = new Set<string>();
+  const childrenByParent = new Map<string, string[]>();
+
+  Object.values(robot.joints).forEach((joint, index) => {
+    childLinkIdSet.add(joint.childLinkId);
+    const bucket = childrenByParent.get(joint.parentLinkId) ?? [];
+    bucket.push(joint.childLinkId);
+    childrenByParent.set(joint.parentLinkId, bucket);
+  });
+
+  childrenByParent.forEach((children, parentId) => {
+    children.sort((left, right) => {
+      const leftName = robot.links[left]?.name ?? left;
+      const rightName = robot.links[right]?.name ?? right;
+      return leftName.localeCompare(rightName);
+    });
+    childrenByParent.set(parentId, children);
+  });
+
+  const rootIds = Array.from(new Set([
+    robot.rootLinkId,
+    ...linkIds.filter((linkId) => !childLinkIdSet.has(linkId)),
+  ])).filter(Boolean);
+
+  const widthCache = new Map<string, number>();
+  const measure = (linkId: string): number => {
+    const cached = widthCache.get(linkId);
+    if (cached != null) {
+      return cached;
+    }
+
+    const children = childrenByParent.get(linkId) ?? [];
+    const width = children.length === 0
+      ? 1
+      : children.reduce((sum, childId) => sum + measure(childId), 0);
+    widthCache.set(linkId, width);
+    return width;
+  };
+
+  const positions = new Map<string, GraphPoint>();
+  const edges: GraphEdgeModel[] = [];
+  let cursorUnits = 0;
+
+  const place = (linkId: string, depth: number, startUnits: number): number => {
+    const widthUnits = measure(linkId);
+    const centerUnits = startUnits + widthUnits / 2;
+    positions.set(linkId, {
+      x: GRAPH_PADDING + centerUnits * NODE_GAP_X,
+      y: GRAPH_PADDING + depth * NODE_GAP_Y,
+    });
+
+    let childCursor = startUnits;
+    const children = childrenByParent.get(linkId) ?? [];
+    children.forEach((childId, index) => {
+      place(childId, depth + 1, childCursor);
+      childCursor += measure(childId);
+      edges.push({
+        id: `tree-edge::${linkId}::${childId}::${index}`,
+        fromLinkId: linkId,
+        toLinkId: childId,
+      });
+    });
+
+    return widthUnits;
+  };
+
+  rootIds.forEach((rootId, index) => {
+    if (!robot.links[rootId]) {
+      return;
+    }
+
+    place(rootId, 0, cursorUnits);
+    cursorUnits += measure(rootId) + ROOT_GAP_UNITS;
+  });
+
+  linkIds.forEach((linkId, index) => {
+    if (positions.has(linkId)) {
+      return;
+    }
+
+    positions.set(linkId, {
+      x: GRAPH_PADDING + (cursorUnits + index) * NODE_GAP_X,
+      y: GRAPH_PADDING,
     });
   });
 
-  return positions;
+  return { positions, edges };
 }
 
 function buildGraphModel(
   source: CollisionOptimizationSource,
-  targets: CollisionTargetRef[],
+  analysis: CollisionOptimizationAnalysis,
   candidates: CollisionOptimizationCandidate[],
+  checkedCandidateKeys: ReadonlySet<string>,
+  selection: CollisionSelection | undefined,
   manualMergePairs: CollisionOptimizationManualMergePair[],
 ): GraphModel {
-  const projection = buildCollisionOptimizationSkeletonProjection(source, { viewMode: 'front' });
-  const linkMetas = collectSourceLinkMetas(source);
+  const { positions, edges } = buildTreeLayout(source);
+  const linkComponentMeta = buildLinkComponentMap(source);
   const targetsByLinkId = new Map<string, CollisionTargetRef[]>();
+  const candidatesByPrimaryLinkId = new Map<string, CollisionOptimizationCandidate[]>();
 
-  targets.forEach((target) => {
+  analysis.targets.forEach((target) => {
     const bucket = targetsByLinkId.get(target.linkId) ?? [];
     bucket.push(target);
     targetsByLinkId.set(target.linkId, bucket);
   });
 
-  const scaledProjectedPoints = new Map<string, GraphPoint>();
-  const projectedNodes = Object.values(projection.nodes);
-  const edgeDistances = projection.edges.flatMap((edge) => {
-    const fromNode = projection.nodes[edge.fromLinkId];
-    const toNode = projection.nodes[edge.toLinkId];
-    if (!fromNode || !toNode) {
-      return [];
-    }
-
-    const deltaX = fromNode.projected.x - toNode.projected.x;
-    const deltaY = fromNode.projected.y - toNode.projected.y;
-    const distance = Math.hypot(deltaX, deltaY);
-    return distance > 1e-6 ? [distance] : [];
+  candidates.forEach((candidate) => {
+    const bucket = candidatesByPrimaryLinkId.get(candidate.target.linkId) ?? [];
+    bucket.push(candidate);
+    candidatesByPrimaryLinkId.set(candidate.target.linkId, bucket);
   });
-  const typicalEdgeDistance = Math.max(median(edgeDistances), 1e-3);
-  const pixelsPerUnit = clamp(80 / typicalEdgeDistance, 72, 2400);
-
-  projectedNodes.forEach((node) => {
-    scaledProjectedPoints.set(node.linkId, {
-      x: node.projected.x * pixelsPerUnit,
-      y: node.projected.y * pixelsPerUnit,
-    });
-  });
-
-  const clusterBounds = new Map<string, { minX: number; maxX: number; minY: number; maxY: number }>();
-  projectedNodes.forEach((node) => {
-    const point = scaledProjectedPoints.get(node.linkId);
-    if (!point) {
-      return;
-    }
-
-    const current = clusterBounds.get(node.clusterId);
-    if (!current) {
-      clusterBounds.set(node.clusterId, {
-        minX: point.x,
-        maxX: point.x,
-        minY: point.y,
-        maxY: point.y,
-      });
-      return;
-    }
-
-    current.minX = Math.min(current.minX, point.x);
-    current.maxX = Math.max(current.maxX, point.x);
-    current.minY = Math.min(current.minY, point.y);
-    current.maxY = Math.max(current.maxY, point.y);
-  });
-
-  const clusterOrder = [...clusterBounds.entries()]
-    .sort((left, right) => left[1].minX - right[1].minX || left[0].localeCompare(right[0]))
-    .map(([clusterId]) => clusterId);
-  const clusterOffsetX = new Map<string, number>();
-  let clusterCursorX = GRAPH_PADDING + CARD_WIDTH + CALLOUT_COLUMN_GAP;
-  let globalMinY = Infinity;
-  let globalMaxY = -Infinity;
-
-  projectedNodes.forEach((node) => {
-    const point = scaledProjectedPoints.get(node.linkId);
-    if (!point) {
-      return;
-    }
-
-    globalMinY = Math.min(globalMinY, point.y);
-    globalMaxY = Math.max(globalMaxY, point.y);
-  });
-
-  if (!Number.isFinite(globalMinY)) {
-    globalMinY = 0;
-    globalMaxY = 0;
-  }
-
-  clusterOrder.forEach((clusterId) => {
-    const bounds = clusterBounds.get(clusterId);
-    if (!bounds) {
-      return;
-    }
-
-    clusterOffsetX.set(clusterId, clusterCursorX - bounds.minX);
-    clusterCursorX += (bounds.maxX - bounds.minX) + COMPONENT_GAP;
-  });
-
-  const anchorByLinkId = new Map<string, GraphPoint>();
-  const clusterCenterX = new Map<string, number>();
-
-  projectedNodes.forEach((node) => {
-    const point = scaledProjectedPoints.get(node.linkId);
-    if (!point) {
-      return;
-    }
-
-    anchorByLinkId.set(node.linkId, {
-      x: point.x + (clusterOffsetX.get(node.clusterId) ?? GRAPH_PADDING),
-      y: point.y - globalMinY + GRAPH_PADDING,
-    });
-  });
-
-  const skeletonBounds = computeBounds([...anchorByLinkId.values()]);
-
-  clusterOrder.forEach((clusterId) => {
-    const bounds = clusterBounds.get(clusterId);
-    const offsetX = clusterOffsetX.get(clusterId);
-    if (!bounds || offsetX == null) {
-      return;
-    }
-
-    clusterCenterX.set(clusterId, (bounds.minX + bounds.maxX) / 2 + offsetX);
-  });
-
-  const orderedLinkMetas = [...linkMetas].sort((left, right) => {
-    const leftNode = projection.nodes[left.linkId];
-    const rightNode = projection.nodes[right.linkId];
-    const leftClusterIndex = clusterOrder.indexOf(leftNode?.clusterId ?? '');
-    const rightClusterIndex = clusterOrder.indexOf(rightNode?.clusterId ?? '');
-
-    return (leftClusterIndex === -1 ? Number.MAX_SAFE_INTEGER : leftClusterIndex)
-      - (rightClusterIndex === -1 ? Number.MAX_SAFE_INTEGER : rightClusterIndex)
-      || (anchorByLinkId.get(left.linkId)?.y ?? 0) - (anchorByLinkId.get(right.linkId)?.y ?? 0)
-      || (anchorByLinkId.get(left.linkId)?.x ?? 0) - (anchorByLinkId.get(right.linkId)?.x ?? 0)
-      || left.linkName.localeCompare(right.linkName);
-  });
-
-  const cards = orderedLinkMetas.map((linkMeta, index) => {
-    const linkTargets = [...(targetsByLinkId.get(linkMeta.linkId) ?? [])].sort(compareTargets);
-    const rows = linkTargets.map((target, rowIndex) => ({
-      target,
-      localX: CARD_PADDING,
-      localY: CARD_HEADER_HEIGHT + CARD_PADDING + rowIndex * ROW_HEIGHT,
-      width: CARD_WIDTH - CARD_PADDING * 2,
-      height: ROW_HEIGHT - 2,
-    }));
-    const hasCollisions = rows.length > 0;
-    const width = hasCollisions
-      ? CARD_WIDTH
-      : clamp(96 + linkMeta.linkName.length * 6, 104, 180);
-    const height = hasCollisions
-      ? CARD_HEADER_HEIGHT + CARD_PADDING * 2 + rows.length * ROW_HEIGHT
-      : EMPTY_CARD_HEIGHT;
-    const projectionNode = projection.nodes[linkMeta.linkId];
-    const clusterId = projectionNode?.clusterId ?? 'cluster-0';
-    const anchor = anchorByLinkId.get(linkMeta.linkId) ?? getFallbackAnchor(index);
-    const clusterMidX = clusterCenterX.get(clusterId) ?? skeletonBounds.centerX;
-    const side: CalloutSide = anchor.x <= clusterMidX ? 'left' : 'right';
-
-    return {
-      id: `${linkMeta.componentId ?? 'robot'}::${linkMeta.linkId}`,
-      componentId: linkMeta.componentId,
-      componentName: linkMeta.componentName,
-      linkId: linkMeta.linkId,
-      linkName: linkMeta.linkName,
-      clusterId,
-      side,
-      anchor,
-      x: side === 'left' ? GRAPH_PADDING : skeletonBounds.maxX + CALLOUT_COLUMN_GAP,
-      y: anchor.y - height / 2,
-      width,
-      height,
-      rows,
-    };
-  });
-
-  const leftColumnWidth = cards.reduce(
-    (maxWidth, card) => card.side === 'left' ? Math.max(maxWidth, card.width) : maxWidth,
-    0,
-  );
-  const leftOriginX = Math.max(
-    GRAPH_PADDING,
-    skeletonBounds.minX - CALLOUT_COLUMN_GAP - Math.max(leftColumnWidth, CARD_WIDTH),
-  );
-  const rightOriginX = skeletonBounds.maxX + CALLOUT_COLUMN_GAP;
-  const calloutColumns: GraphCalloutColumns = {
-    left: {
-      originX: leftOriginX,
-      minLeft: Math.max(8, leftOriginX - CALLOUT_DRAG_ALLOWANCE),
-      maxLeft: Math.max(GRAPH_PADDING, skeletonBounds.minX - Math.max(leftColumnWidth, CARD_WIDTH) - 20),
-    },
-    right: {
-      originX: rightOriginX,
-      minLeft: skeletonBounds.maxX + 20,
-      maxLeft: rightOriginX + CALLOUT_DRAG_ALLOWANCE,
-    },
-  };
-
-  const spreadPositions = layoutCalloutPositions(cards, calloutColumns);
-  const laidOutCards = cards.map((card) => ({
-    ...card,
-    x: spreadPositions[card.id]?.x ?? card.x,
-    y: spreadPositions[card.id]?.y ?? card.y,
-  }));
 
   const manualPairKeys = new Set(
     manualMergePairs.map((pair) => buildPairKey(pair.primaryTargetId, pair.secondaryTargetId)),
   );
-  const pairRelations = new Map<string, GraphPairRelation>();
+
+  const nodes = Array.from(positions.entries()).map(([linkId, center]) => {
+    const linkTargets = [...(targetsByLinkId.get(linkId) ?? [])].sort(compareTargets);
+    const summaryCandidate = pickSummaryCandidate(candidatesByPrimaryLinkId.get(linkId) ?? []);
+    const summaryTarget = summaryCandidate?.target ?? linkTargets[0] ?? null;
+    const linkName = summaryTarget?.linkName ?? linkId;
+    const width = clamp(
+      NODE_PILL_PADDING + linkName.length * 6.1,
+      NODE_MIN_WIDTH,
+      NODE_MAX_WIDTH,
+    );
+    const height = NODE_HEIGHT;
+    const selected = linkTargets.some((target) => {
+      return selection?.type === 'link'
+        && selection.id === target.linkId
+        && selection.subType === 'collision'
+        && (selection.objectIndex ?? 0) === target.objectIndex;
+    });
+    const checked = (candidatesByPrimaryLinkId.get(linkId) ?? [])
+      .some((candidate) => checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate)));
+
+    return {
+      id: linkId,
+      linkId,
+      linkName,
+      componentName: linkComponentMeta.get(linkId)?.componentName,
+      x: center.x - width / 2,
+      y: center.y - height / 2,
+      width,
+      height,
+      center,
+      handle: { x: center.x + width / 2 - 6, y: center.y },
+      targetCount: linkTargets.length,
+      summaryTarget,
+      summaryCandidate,
+      selected,
+      checked,
+    };
+  }).sort((left, right) => left.center.y - right.center.y || left.center.x - right.center.x);
+
+  const nodeByLinkId = new Map(nodes.map((node) => [node.linkId, node] as const));
+  const relationMap = new Map<string, GraphGroupModel>();
 
   candidates.forEach((candidate) => {
     if (!candidate.secondaryTarget) {
       return;
     }
 
-    const relationKey = buildPairKey(candidate.target.id, candidate.secondaryTarget.id);
-    const manual = manualPairKeys.has(relationKey);
-    const existing = pairRelations.get(relationKey);
-    if (!existing || manual) {
-      pairRelations.set(relationKey, {
-        id: relationKey,
-        candidate,
-        sourceTargetId: candidate.target.id,
-        targetTargetId: candidate.secondaryTarget.id,
-        manual,
-      });
+    const pairKey = buildPairKey(candidate.target.id, candidate.secondaryTarget.id);
+    const sourceNode = nodeByLinkId.get(candidate.target.linkId);
+    const targetNode = nodeByLinkId.get(candidate.secondaryTarget.linkId);
+    if (!sourceNode || !targetNode) {
+      return;
     }
-  });
 
-  const width = Math.max(
-    clusterCursorX,
-    laidOutCards.reduce(
-      (maxWidth, card) => Math.max(maxWidth, card.x + card.width + GRAPH_PADDING, card.anchor.x + GRAPH_PADDING),
-      GRAPH_PADDING * 2,
-    ),
-  );
-  const height = Math.max(
-    globalMaxY - globalMinY + GRAPH_PADDING * 2,
-    laidOutCards.reduce(
-      (maxHeight, card) => Math.max(maxHeight, card.y + card.height + GRAPH_PADDING, card.anchor.y + GRAPH_PADDING),
-      GRAPH_PADDING * 2,
-    ),
-  );
-
-  return {
-    cards: laidOutCards,
-    structureLinks: projection.edges.map((edge) => ({
-      id: edge.id,
-      fromLinkId: edge.fromLinkId,
-      toLinkId: edge.toLinkId,
-    })),
-    pairRelations: [...pairRelations.values()],
-    skeletonBounds,
-    calloutColumns,
-    width,
-    height,
-  };
-}
-
-function resolveGraphModel(
-  model: GraphModel,
-  cardPositions: Record<string, GraphPoint>,
-): GraphRenderModel {
-  const rowByTargetId = new Map<string, GraphTargetRow>();
-  const cards = model.cards.map((card) => {
-    const position = cardPositions[card.id] ?? { x: card.x, y: card.y };
-    const rows = card.rows.map((row) => {
-      const inwardAnchorX = card.side === 'left'
-        ? position.x + card.width - 8
-        : position.x + 8;
-      const absoluteRow: GraphTargetRow = {
-        ...row,
-        x: position.x + row.localX,
-        y: position.y + row.localY,
-        anchorIn: {
-          x: inwardAnchorX,
-          y: position.y + row.localY + row.height / 2,
-        },
-        anchorOut: {
-          x: inwardAnchorX,
-          y: position.y + row.localY + row.height / 2,
-        },
-      };
-
-      rowByTargetId.set(row.target.id, absoluteRow);
-      return absoluteRow;
-    });
-
-    return {
-      ...card,
-      x: position.x,
-      y: position.y,
-      rows,
+    const minX = Math.min(sourceNode.x, targetNode.x) - GROUP_PADDING_X;
+    const maxX = Math.max(sourceNode.x + sourceNode.width, targetNode.x + targetNode.width) + GROUP_PADDING_X;
+    const minY = Math.min(sourceNode.y, targetNode.y) - GROUP_PADDING_Y;
+    const maxY = Math.max(sourceNode.y + sourceNode.height, targetNode.y + targetNode.height) + GROUP_PADDING_Y;
+    const pairType: GraphPairType = manualPairKeys.has(pairKey) ? 'manual' : 'auto';
+    const existing = relationMap.get(pairKey);
+    const checked = checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate));
+    const group: GraphGroupModel = {
+      id: pairKey,
+      sourceLinkId: candidate.target.linkId,
+      targetLinkId: candidate.secondaryTarget.linkId,
+      bounds: {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+      },
+      candidate,
+      pairType,
+      checked,
+      labelAnchor: {
+        x: maxX - 10,
+        y: minY - 6,
+      },
     };
-  });
 
-  const cardByLinkId = new Map(cards.map((card) => [card.linkId, card] as const));
-  const structureEdges = model.structureLinks.flatMap((link) => {
-    const fromCard = cardByLinkId.get(link.fromLinkId);
-    const toCard = cardByLinkId.get(link.toLinkId);
-    if (!fromCard || !toCard) {
-      return [];
+    if (!existing || pairType === 'manual') {
+      relationMap.set(pairKey, group);
     }
-
-    return [{
-      id: link.id,
-      from: fromCard.anchor,
-      to: toCard.anchor,
-    }];
   });
 
-  const pairEdges = model.pairRelations.flatMap((relation) => {
-    const sourceRow = rowByTargetId.get(relation.sourceTargetId);
-    const targetRow = rowByTargetId.get(relation.targetTargetId);
-    if (!sourceRow || !targetRow) {
-      return [];
-    }
-
-    return [{
-      id: relation.id,
-      candidate: relation.candidate,
-      sourceRow,
-      targetRow,
-      manual: relation.manual,
-    }];
+  const groups = [...relationMap.values()];
+  const modelPoints: GraphPoint[] = [];
+  nodes.forEach((node) => {
+    modelPoints.push({ x: node.x, y: node.y });
+    modelPoints.push({ x: node.x + node.width, y: node.y + node.height });
+  });
+  groups.forEach((group) => {
+    modelPoints.push({ x: group.bounds.x, y: group.bounds.y });
+    modelPoints.push({
+      x: group.bounds.x + group.bounds.width,
+      y: group.bounds.y + group.bounds.height,
+    });
   });
 
-  const width = Math.max(
-    model.width,
-    cards.reduce(
-      (maxWidth, card) => Math.max(maxWidth, card.x + card.width + GRAPH_PADDING, card.anchor.x + GRAPH_PADDING),
-      0,
-    ),
-  );
-  const height = Math.max(
-    model.height,
-    cards.reduce(
-      (maxHeight, card) => Math.max(maxHeight, card.y + card.height + GRAPH_PADDING, card.anchor.y + GRAPH_PADDING),
-      0,
-    ),
-  );
+  const contentBounds = expandBounds(computeBounds(modelPoints), 44, 52);
 
   return {
-    cards,
-    rowByTargetId,
-    structureEdges,
-    pairEdges,
-    skeletonBounds: model.skeletonBounds,
-    calloutColumns: model.calloutColumns,
-    width,
-    height,
+    nodes,
+    edges,
+    groups,
+    width: contentBounds.maxX,
+    height: contentBounds.maxY,
+    focusBounds: contentBounds,
   };
 }
 
-function getCompactGeometryLabel(
-  type: GeometryType | null | undefined,
-  formatGeometryType: (type: GeometryType | null | undefined) => string,
-): string {
-  return formatGeometryType(type).replace(/\s*\([^)]*\)\s*$/, '').trim();
-}
-
-function getCompactTargetLabel(
-  target: CollisionTargetRef,
-  candidate: CollisionOptimizationCandidate | undefined,
-  formatGeometryType: (type: GeometryType | null | undefined) => string,
-): string {
-  const currentLabel = getCompactGeometryLabel(target.geometry.type, formatGeometryType);
-  if (!candidate?.suggestedType || candidate.target.id !== target.id || candidate.suggestedType === target.geometry.type) {
-    return currentLabel;
+function getNodeTone(node: GraphNodeModel, manualConnection: boolean, connectable: boolean) {
+  if (manualConnection && connectable) {
+    return 'border-system-blue/35 bg-system-blue/10 ring-1 ring-system-blue/10';
   }
 
-  return `${currentLabel} → ${getCompactGeometryLabel(candidate.suggestedType, formatGeometryType)}`;
-}
+  if (node.selected) {
+    return 'border-system-blue/35 bg-system-blue/10 ring-1 ring-system-blue/10';
+  }
 
-function getCardTetherPoint(card: GraphLinkCard): GraphPoint {
-  return {
-    x: clamp(card.anchor.x, card.x, card.x + card.width),
-    y: clamp(card.anchor.y, card.y, card.y + card.height),
-  };
+  if (node.checked) {
+    return 'border-system-blue/25 bg-system-blue/6';
+  }
+
+  return 'border-border-black bg-element-bg/96 hover:bg-element-hover';
 }
 
 export function CollisionOptimizationPlanarGraph({
   source,
   analysis,
   candidates,
-  checkedTargetIds,
+  checkedCandidateKeys,
   selection,
   manualMergePairs,
   manualConnection = null,
@@ -792,58 +626,36 @@ export function CollisionOptimizationPlanarGraph({
   const gestureScaleRef = useRef(1);
 
   const model = useMemo(
-    () => buildGraphModel(source, analysis.targets, candidates, manualMergePairs),
-    [analysis.targets, candidates, manualMergePairs, source],
+    () => buildGraphModel(source, analysis, candidates, checkedCandidateKeys, selection, manualMergePairs),
+    [analysis, candidates, checkedCandidateKeys, manualMergePairs, selection, source],
   );
 
   const [viewport, setViewport] = useState<ViewportState>({ x: 24, y: 24, scale: 1 });
   const [panSession, setPanSession] = useState<PanSession | null>(null);
-  const [cardDragSession, setCardDragSession] = useState<CardDragSession | null>(null);
-  const [cardPositions, setCardPositions] = useState<Record<string, GraphPoint>>({});
-  const focusBounds = useMemo(() => getFocusBounds(model), [model]);
-
-  useEffect(() => {
-    setCardPositions((previous) => {
-      const next: Record<string, GraphPoint> = {};
-      let changed = Object.keys(previous).length !== model.cards.length;
-
-      model.cards.forEach((card) => {
-        const existing = previous[card.id];
-        const position = existing ?? { x: card.x, y: card.y };
-        next[card.id] = position;
-        if (!existing) {
-          changed = true;
-        }
-      });
-
-      return changed ? next : previous;
-    });
-  }, [model.cards]);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || hasInitializedViewportRef.current || model.cards.length === 0) {
+    if (!container || hasInitializedViewportRef.current || model.nodes.length === 0) {
       return;
     }
 
-    setViewport(createViewportForBounds(container, focusBounds));
+    setViewport(createViewportForBounds(container, model.focusBounds));
     hasInitializedViewportRef.current = true;
-  }, [focusBounds, model.cards.length]);
+  }, [model.focusBounds, model.nodes.length]);
 
-  const renderedModel = useMemo(
-    () => resolveGraphModel(model, cardPositions),
-    [cardPositions, model],
+  const nodeByLinkId = useMemo(
+    () => new Map(model.nodes.map((node) => [node.linkId, node] as const)),
+    [model.nodes],
   );
-
-  const candidateByTargetId = useMemo(() => {
-    const map = new Map<string, CollisionOptimizationCandidate>();
-    candidates.forEach((candidate) => {
-      if (!map.has(candidate.target.id)) {
-        map.set(candidate.target.id, candidate);
+  const nodeByTargetId = useMemo(() => {
+    const map = new Map<string, GraphNodeModel>();
+    model.nodes.forEach((node) => {
+      if (node.summaryTarget) {
+        map.set(node.summaryTarget.id, node);
       }
     });
     return map;
-  }, [candidates]);
+  }, [model.nodes]);
 
   const toWorldPoint = useCallback((clientX: number, clientY: number): GraphPoint | null => {
     const container = containerRef.current;
@@ -893,8 +705,8 @@ export function CollisionOptimizationPlanarGraph({
       return;
     }
 
-    setViewport(createViewportForBounds(container, focusBounds));
-  }, [focusBounds]);
+    setViewport(createViewportForBounds(container, model.focusBounds));
+  }, [model.focusBounds]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -951,7 +763,7 @@ export function CollisionOptimizationPlanarGraph({
     }
 
     const target = event.target as HTMLElement;
-    if (target.closest('[data-graph-card-id]') || target.closest('[data-graph-no-pan="true"]')) {
+    if (target.closest('[data-graph-node]') || target.closest('[data-graph-no-pan="true"]')) {
       return;
     }
 
@@ -963,28 +775,6 @@ export function CollisionOptimizationPlanarGraph({
       startViewport: viewport,
     });
   }, [manualConnection, viewport]);
-
-  const handleCardDragStart = useCallback((event: React.PointerEvent<HTMLButtonElement>, card: GraphLinkCard) => {
-    if (event.button !== 0 || manualConnection) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const worldPoint = toWorldPoint(event.clientX, event.clientY);
-    if (!worldPoint) {
-      return;
-    }
-
-    setCardDragSession({
-      pointerId: event.pointerId,
-      cardId: card.id,
-      side: card.side,
-      startWorld: worldPoint,
-      startCardPosition: { x: card.x, y: card.y },
-    });
-  }, [manualConnection, toWorldPoint]);
 
   const handleConnectionStart = useCallback((event: React.PointerEvent<HTMLButtonElement>, target: CollisionTargetRef) => {
     event.preventDefault();
@@ -998,7 +788,7 @@ export function CollisionOptimizationPlanarGraph({
   }, [onManualConnectionMove, onManualConnectionStart, toWorldPoint]);
 
   useEffect(() => {
-    if (!manualConnection && !panSession && !cardDragSession) {
+    if (!manualConnection && !panSession) {
       return;
     }
 
@@ -1009,26 +799,6 @@ export function CollisionOptimizationPlanarGraph({
           x: panSession.startViewport.x + (event.clientX - panSession.startClientX),
           y: panSession.startViewport.y + (event.clientY - panSession.startClientY),
         });
-        return;
-      }
-
-      if (cardDragSession && event.pointerId === cardDragSession.pointerId) {
-        const worldPoint = toWorldPoint(event.clientX, event.clientY);
-        if (!worldPoint) {
-          return;
-        }
-
-        setCardPositions((previous) => ({
-          ...previous,
-          [cardDragSession.cardId]: {
-            x: clamp(
-              cardDragSession.startCardPosition.x + (worldPoint.x - cardDragSession.startWorld.x),
-              renderedModel.calloutColumns[cardDragSession.side].minLeft,
-              renderedModel.calloutColumns[cardDragSession.side].maxLeft,
-            ),
-            y: Math.max(8, cardDragSession.startCardPosition.y + (worldPoint.y - cardDragSession.startWorld.y)),
-          },
-        }));
         return;
       }
 
@@ -1045,14 +815,11 @@ export function CollisionOptimizationPlanarGraph({
         setPanSession(null);
       }
 
-      if (cardDragSession && event.pointerId === cardDragSession.pointerId) {
-        setCardDragSession(null);
-      }
-
       if (manualConnection) {
         const hitElement = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-        const targetId = hitElement?.closest<HTMLElement>('[data-graph-target-id]')?.dataset.graphTargetId ?? null;
-        const target = targetId ? renderedModel.rowByTargetId.get(targetId)?.target ?? null : null;
+        const targetId = hitElement?.closest<HTMLElement>('[data-graph-node-target-id]')?.dataset.graphNodeTargetId ?? null;
+        const node = targetId ? nodeByTargetId.get(targetId) ?? null : null;
+        const target = node?.summaryTarget ?? null;
         onManualConnectionEnd?.(
           target && target.id !== manualConnection.sourceTargetId ? target : null,
         );
@@ -1061,7 +828,6 @@ export function CollisionOptimizationPlanarGraph({
 
     const handlePointerCancel = () => {
       setPanSession(null);
-      setCardDragSession(null);
       if (manualConnection) {
         onManualConnectionCancel?.();
       }
@@ -1091,19 +857,17 @@ export function CollisionOptimizationPlanarGraph({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [
-    cardDragSession,
     manualConnection,
+    nodeByTargetId,
     onManualConnectionCancel,
     onManualConnectionEnd,
     onManualConnectionMove,
     panSession,
-    renderedModel.calloutColumns,
-    renderedModel.rowByTargetId,
     toWorldPoint,
   ]);
 
-  const dragSourceRow = manualConnection?.sourceTargetId
-    ? renderedModel.rowByTargetId.get(manualConnection.sourceTargetId) ?? null
+  const dragSourceNode = manualConnection?.sourceTargetId
+    ? nodeByTargetId.get(manualConnection.sourceTargetId) ?? null
     : null;
 
   return (
@@ -1114,12 +878,18 @@ export function CollisionOptimizationPlanarGraph({
       onContextMenu={(event) => event.preventDefault()}
       style={{ touchAction: 'none' }}
     >
-      {renderedModel.cards.length === 0 ? (
+      {model.nodes.length === 0 ? (
         <div className="flex h-full min-h-[12rem] items-center justify-center px-3 text-center text-[10px] leading-relaxed text-text-secondary">
           {labels.empty}
         </div>
       ) : (
         <>
+          <div className="absolute left-2.5 top-2 z-20 max-w-[min(24rem,calc(100%-7rem))] rounded-2xl border border-border-black bg-element-bg/95 px-2.5 py-2 shadow-sm">
+            <div className="min-w-0 text-[9px] leading-relaxed text-text-secondary">
+              {labels.dragHint}
+            </div>
+          </div>
+
           <div className="absolute right-2.5 top-2 z-20 flex items-center gap-1 rounded-full border border-border-black bg-element-bg/95 p-1 shadow-sm">
             <button
               type="button"
@@ -1132,7 +902,7 @@ export function CollisionOptimizationPlanarGraph({
                   return;
                 }
                 const rect = container.getBoundingClientRect();
-                zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, 1 / 1.22);
+                zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, 1 / 1.2);
               }}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
             >
@@ -1149,7 +919,7 @@ export function CollisionOptimizationPlanarGraph({
                   return;
                 }
                 const rect = container.getBoundingClientRect();
-                zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, 1.22);
+                zoomAtClientPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, 1.2);
               }}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
             >
@@ -1173,122 +943,50 @@ export function CollisionOptimizationPlanarGraph({
             }`}
           >
             <div
-              className="absolute inset-0 opacity-60"
+              className="absolute inset-0 opacity-35"
               style={{
-                backgroundImage: 'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-border-black) 32%, transparent) 1px, transparent 0)',
-                backgroundSize: '18px 18px',
+                backgroundImage: 'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-border-black) 24%, transparent) 1px, transparent 0)',
+                backgroundSize: '24px 24px',
               }}
             />
 
             <div
               className="absolute left-0 top-0"
               style={{
-                width: renderedModel.width,
-                height: renderedModel.height,
+                width: model.width,
+                height: model.height,
                 transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
                 transformOrigin: '0 0',
               }}
             >
               <svg
                 className="pointer-events-none absolute inset-0"
-                width={renderedModel.width}
-                height={renderedModel.height}
-                viewBox={`0 0 ${renderedModel.width} ${renderedModel.height}`}
+                width={model.width}
+                height={model.height}
+                viewBox={`0 0 ${model.width} ${model.height}`}
                 fill="none"
               >
-                <defs>
-                  <marker
-                    id="collision-optimizer-callout-arrow"
-                    markerWidth="6"
-                    markerHeight="6"
-                    refX="5"
-                    refY="3"
-                    orient="auto"
-                    markerUnits="strokeWidth"
-                  >
-                    <path d="M 0 0 L 6 3 L 0 6 z" fill="var(--color-border-black)" opacity="0.42" />
-                  </marker>
-                </defs>
-
-                {renderedModel.pairEdges.map((edge) => {
-                  const isChecked = checkedTargetIds.has(edge.candidate.target.id);
-                  const sourceSelected = selection?.type === 'link'
-                    && selection.id === edge.candidate.target.linkId
-                    && selection.subType === 'collision'
-                    && (selection.objectIndex ?? 0) === edge.candidate.target.objectIndex;
-                  const targetSelected = selection?.type === 'link'
-                    && selection.id === edge.targetRow.target.linkId
-                    && selection.subType === 'collision'
-                    && (selection.objectIndex ?? 0) === edge.targetRow.target.objectIndex;
-
-                  return (
-                    <path
-                      key={edge.id}
-                      d={buildCurvePath(edge.sourceRow.anchorOut, edge.targetRow.anchorIn)}
-                      className={
-                        edge.manual
-                          ? 'stroke-system-blue/65'
-                          : 'stroke-amber-600/50 dark:stroke-amber-300/45'
-                      }
-                      strokeWidth={isChecked || sourceSelected || targetSelected ? 2.3 : 1.4}
-                      strokeDasharray={edge.manual ? '4 4' : '6 5'}
-                      strokeLinecap="round"
-                    />
-                  );
-                })}
-
-                {renderedModel.structureEdges.map((edge) => (
-                  <line
-                    key={edge.id}
-                    x1={edge.from.x}
-                    y1={edge.from.y}
-                    x2={edge.to.x}
-                    y2={edge.to.y}
-                    className="stroke-border-black/55 dark:stroke-border-strong/60"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                  />
-                ))}
-
-                {renderedModel.cards.map((card) => {
-                  const tetherPoint = getCardTetherPoint(card);
-                  const tetherLength = Math.hypot(card.anchor.x - tetherPoint.x, card.anchor.y - tetherPoint.y);
-                  if (tetherLength <= 2) {
+                {model.edges.map((edge) => {
+                  const from = nodeByLinkId.get(edge.fromLinkId);
+                  const to = nodeByLinkId.get(edge.toLinkId);
+                  if (!from || !to) {
                     return null;
                   }
 
                   return (
-                    <line
-                      key={`${card.id}::tether`}
-                      x1={card.anchor.x}
-                      y1={card.anchor.y}
-                      x2={tetherPoint.x}
-                      y2={tetherPoint.y}
-                      className="stroke-border-black/40 text-border-black/40 dark:stroke-border-strong/45 dark:text-border-strong/45"
-                      strokeWidth={1.15}
+                    <path
+                      key={edge.id}
+                      d={buildCurvePath({ x: from.center.x, y: from.center.y + from.height / 2 - 2 }, { x: to.center.x, y: to.center.y - to.height / 2 + 2 })}
+                      className="stroke-border-black/42 dark:stroke-border-strong/45"
+                      strokeWidth={1.8}
                       strokeLinecap="round"
-                      markerEnd="url(#collision-optimizer-callout-arrow)"
                     />
                   );
                 })}
 
-                {renderedModel.cards.map((card) => {
-                  const isGhostLink = card.rows.length === 0;
-
-                  return (
-                    <circle
-                      key={`${card.id}::node`}
-                      cx={card.anchor.x}
-                      cy={card.anchor.y}
-                      r={isGhostLink ? 3.2 : 4.4}
-                      className={isGhostLink ? 'fill-border-black/75 dark:fill-border-strong/80' : 'fill-system-blue'}
-                    />
-                  );
-                })}
-
-                {dragSourceRow && manualConnection?.pointer ? (
+                {dragSourceNode && manualConnection?.pointer ? (
                   <path
-                    d={buildCurvePath(dragSourceRow.anchorOut, manualConnection.pointer)}
+                    d={buildCurvePath(dragSourceNode.handle, manualConnection.pointer)}
                     className="stroke-system-blue"
                     strokeWidth={2.5}
                     strokeLinecap="round"
@@ -1297,140 +995,176 @@ export function CollisionOptimizationPlanarGraph({
                 ) : null}
               </svg>
 
-              {renderedModel.cards.map((card) => {
-                const isGhostLink = card.rows.length === 0;
+              {model.groups.map((group) => {
+                const labelText = `${labels.mergeTo}: ${formatGeometryType(group.candidate.suggestedType ?? group.candidate.target.geometry.type)}`;
+                const metricText = getMetricSummary(group.candidate);
+                const groupToneClass = group.checked
+                  ? 'border-system-blue/35 bg-system-blue/10'
+                  : group.pairType === 'manual'
+                    ? 'border-system-blue/28 bg-system-blue/6 border-dashed'
+                    : 'border-border-black/45 bg-element-hover/55';
+
+                return (
+                  <React.Fragment key={group.id}>
+                    <div
+                      className={`absolute rounded-[24px] border ${groupToneClass}`}
+                      style={{
+                        left: group.bounds.x,
+                        top: group.bounds.y,
+                        width: group.bounds.width,
+                        height: group.bounds.height,
+                      }}
+                    />
+
+                    <div
+                      className="absolute z-10"
+                      style={{
+                        left: group.labelAnchor.x,
+                        top: group.labelAnchor.y,
+                        transform: 'translate(-100%, -100%)',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        data-graph-no-pan="true"
+                        onClick={() => {
+                          if (group.candidate.eligible) {
+                            onToggleCandidate(createCollisionOptimizationCandidateKey(group.candidate));
+                          }
+                        }}
+                        className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-2xl border px-2.5 py-1.5 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                          group.checked
+                            ? 'border-system-blue/35 bg-panel-bg text-system-blue'
+                            : 'border-border-black bg-panel-bg text-text-primary hover:bg-element-hover'
+                        }`}
+                      >
+                        <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-xl border border-system-blue/20 bg-system-blue/10 px-1.5 text-[9px] font-semibold tracking-[0.18em]">
+                          {getPrimitiveMonogram(group.candidate.suggestedType)}
+                        </span>
+
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-1">
+                            <span className="rounded-full border border-border-black bg-element-bg px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.16em] text-text-tertiary">
+                              {group.pairType === 'manual' ? labels.manualPair : labels.autoPair}
+                            </span>
+                            <span className="truncate text-[10px] font-semibold">{labelText}</span>
+                          </span>
+                          {metricText ? (
+                            <span className="mt-0.5 block truncate text-[8px] text-text-secondary">{metricText}</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
+
+              {model.nodes.map((node) => {
+                const connectable = manualConnection?.sourceTargetId && node.summaryTarget
+                  ? node.summaryTarget.id !== manualConnection.sourceTargetId
+                    && canCreateManualPair(manualConnection.sourceTargetId, node.summaryTarget.id)
+                  : false;
+                const nodeToneClass = getNodeTone(node, Boolean(manualConnection), Boolean(connectable));
+                const summaryCandidate = node.summaryCandidate;
+                const summaryTarget = node.summaryTarget;
+                const summaryType = summaryCandidate?.suggestedType ?? summaryTarget?.geometry.type;
+                const summaryMetricText = summaryCandidate && !summaryCandidate.secondaryTarget
+                  ? getMetricSummary(summaryCandidate)
+                  : '';
 
                 return (
                   <div
-                    key={card.id}
-                    data-graph-card-id={card.id}
-                    className={`absolute border shadow-sm ${
-                      isGhostLink
-                        ? 'rounded-full border-dashed border-border-black/60 bg-element-bg/90'
-                        : 'rounded-lg border-border-black bg-element-bg/95'
-                    }`}
+                    key={node.id}
+                    data-graph-node={node.linkId}
+                    data-graph-node-target-id={summaryTarget?.id ?? undefined}
+                    className="absolute"
                     style={{
-                      left: card.x,
-                      top: card.y,
-                      width: card.width,
-                      height: card.height,
+                      left: node.x,
+                      top: node.y,
+                      width: node.width,
+                      height: node.height,
                     }}
                   >
-                    <button
-                      type="button"
-                      data-graph-no-pan="true"
-                      onPointerDown={(event) => handleCardDragStart(event, card)}
-                      title={card.componentName ? `${card.componentName} / ${card.linkName}` : card.linkName}
-                      className={`flex w-full items-center gap-1.5 px-2 text-left ${
-                        isGhostLink
-                          ? 'h-full rounded-full cursor-move bg-panel-bg/70'
-                          : 'h-[22px] rounded-t-lg border-b border-border-black cursor-move bg-panel-bg'
-                      }`}
-                    >
-                      <span className={`inline-block rounded-full ${
-                        isGhostLink ? 'h-1.5 w-1.5 bg-border-black/70' : 'h-2 w-2 bg-system-blue/70'
-                      }`}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-[9px] font-semibold text-text-primary">
-                        {card.linkName}
-                      </span>
-                    </button>
+                    <div className={`relative h-full rounded-full border shadow-sm ${nodeToneClass}`}>
+                      <button
+                        type="button"
+                        data-graph-no-pan="true"
+                        onClick={() => {
+                          if (summaryTarget) {
+                            onSelectTarget?.(summaryTarget);
+                          }
+                        }}
+                        className="flex h-full w-full items-center gap-1.5 rounded-full px-2.5 pr-9 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+                        title={node.componentName ? `${node.componentName} / ${node.linkName}` : node.linkName}
+                      >
+                        <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${node.checked ? 'bg-system-blue' : 'bg-text-tertiary'}`} />
+                        <span className="min-w-0 flex-1 truncate text-[9px] font-semibold text-text-primary">
+                          {node.linkName}
+                        </span>
+                        {node.targetCount > 1 ? (
+                          <span className="shrink-0 rounded-full border border-border-black bg-panel-bg px-1.5 py-0.5 text-[7px] font-medium text-text-tertiary">
+                            {node.targetCount}
+                          </span>
+                        ) : null}
+                      </button>
 
-                    {!isGhostLink ? (
-                      <div className="relative" style={{ height: card.height - CARD_HEADER_HEIGHT }}>
-                        {card.rows.map((row) => {
-                          const candidate = candidateByTargetId.get(row.target.id);
-                          const isChecked = checkedTargetIds.has(row.target.id);
-                          const isSelected = selection?.type === 'link'
-                            && selection.id === row.target.linkId
-                            && selection.subType === 'collision'
-                            && (selection.objectIndex ?? 0) === row.target.objectIndex;
-                          const canConnect = manualConnection?.sourceTargetId
-                            ? row.target.id !== manualConnection.sourceTargetId
-                              && canCreateManualPair(manualConnection.sourceTargetId, row.target.id)
-                            : false;
-                          const rowToneClass = isSelected
-                            ? 'border-system-blue/35 bg-system-blue/10'
-                            : canConnect
-                              ? 'border-system-blue/20 bg-system-blue/5'
-                              : 'border-border-black bg-panel-bg';
-                          const toggleControl = (
-                            <button
-                              type="button"
-                              data-graph-no-pan="true"
-                              aria-label={isChecked ? labels.unselectCandidate : labels.selectCandidate}
-                              disabled={!candidate?.eligible}
-                              onClick={() => {
-                                if (candidate?.eligible) {
-                                  onToggleCandidate(row.target.id);
-                                }
-                              }}
-                              className={`shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
-                                candidate?.eligible
-                                  ? 'text-system-blue'
-                                  : 'cursor-not-allowed text-text-tertiary/60'
-                              }`}
-                            >
-                              {isChecked ? <CheckSquare2 className="h-2.5 w-2.5" /> : <Square className="h-2.5 w-2.5" />}
-                            </button>
-                          );
-                          const connectControl = (
-                            <button
-                              type="button"
-                              data-graph-no-pan="true"
-                              aria-label={labels.connectionHandle}
-                              title={labels.connectionHandle}
-                              onPointerDown={(event) => handleConnectionStart(event, row.target)}
-                              className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
-                                canConnect || !manualConnection
-                                  ? 'border-border-black bg-element-bg text-text-secondary hover:bg-element-hover hover:text-text-primary'
-                                  : 'border-system-blue/30 bg-system-blue/10 text-system-blue'
-                              }`}
-                            >
-                              <span className="h-1.25 w-1.25 rounded-full bg-current" />
-                            </button>
-                          );
-                          const rowLabel = getCompactTargetLabel(row.target, candidate, formatGeometryType);
-                          const rowIndexLabel = row.target.sequenceIndex > 0 ? `#${row.target.sequenceIndex + 1}` : null;
+                      {summaryCandidate ? (
+                        <button
+                          type="button"
+                          data-graph-no-pan="true"
+                          aria-label={node.checked ? labels.unselectCandidate : labels.selectCandidate}
+                          disabled={!summaryCandidate.eligible}
+                          onClick={() => {
+                            if (summaryCandidate.eligible) {
+                              onToggleCandidate(createCollisionOptimizationCandidateKey(summaryCandidate));
+                            }
+                          }}
+                          className={`absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                            summaryCandidate.eligible
+                              ? 'text-system-blue'
+                              : 'cursor-not-allowed text-text-tertiary/60'
+                          }`}
+                        >
+                          {node.checked ? <CheckSquare2 className="h-3 w-3" /> : <Square className="h-3 w-3" />}
+                        </button>
+                      ) : null}
 
-                          return (
-                            <div
-                              key={row.target.id}
-                              data-graph-target-id={row.target.id}
-                              className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0.5 rounded-md border px-1 py-[2px] transition-colors ${rowToneClass}`}
-                              style={{
-                                position: 'absolute',
-                                left: row.localX,
-                                top: row.localY,
-                                width: row.width,
-                                height: row.height,
-                              }}
-                            >
-                              {card.side === 'right' ? connectControl : toggleControl}
+                      {summaryTarget ? (
+                        <button
+                          type="button"
+                          data-graph-no-pan="true"
+                          aria-label={labels.connectionHandle}
+                          title={labels.connectionHandle}
+                          onPointerDown={(event) => handleConnectionStart(event, summaryTarget)}
+                          className={`absolute -bottom-1 right-2 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                            connectable || !manualConnection
+                              ? 'border-border-black bg-element-bg text-text-secondary hover:bg-element-hover hover:text-text-primary'
+                              : 'border-system-blue/30 bg-system-blue/10 text-system-blue'
+                          }`}
+                        >
+                          <span className="h-1.25 w-1.25 rounded-full bg-current" />
+                        </button>
+                      ) : null}
+                    </div>
 
-                              <button
-                                type="button"
-                                data-graph-no-pan="true"
-                                onClick={() => onSelectTarget?.(row.target)}
-                                title={`${card.linkName} / ${rowLabel}`}
-                                className="min-w-0 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
-                              >
-                                <div className="flex min-w-0 items-center gap-1.5">
-                                  <span className="min-w-0 flex-1 truncate text-[8.5px] font-medium text-text-primary">
-                                    {rowLabel}
-                                  </span>
-                                  {rowIndexLabel ? (
-                                    <span className="shrink-0 rounded-sm bg-panel-bg px-1 py-[1px] text-[7px] font-medium text-text-tertiary">
-                                      {rowIndexLabel}
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </button>
-
-                              {card.side === 'right' ? toggleControl : connectControl}
-                            </div>
-                          );
-                        })}
+                    {summaryCandidate && !summaryCandidate.secondaryTarget ? (
+                      <div
+                        className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2"
+                        style={{ maxWidth: Math.max(node.width + 24, 140) }}
+                      >
+                        <div className="rounded-full border border-border-black bg-panel-bg/96 px-2 py-1 text-center shadow-sm">
+                          <div className="flex items-center justify-center gap-1">
+                            <span className="rounded-full border border-system-blue/20 bg-system-blue/10 px-1.5 py-0.5 text-[7px] font-semibold tracking-[0.18em] text-system-blue">
+                              {getPrimitiveMonogram(summaryType)}
+                            </span>
+                            <span className="truncate text-[8px] font-medium text-text-primary">
+                              {formatGeometryType(summaryType)}
+                            </span>
+                          </div>
+                          {summaryMetricText ? (
+                            <div className="mt-0.5 truncate text-[7px] text-text-secondary">{summaryMetricText}</div>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
                   </div>

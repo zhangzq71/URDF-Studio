@@ -78,6 +78,9 @@ export const parseLinks = (
             // (common for Collada assets such as Unitree go2/go2w), collapsing
             // them into one link-level color would destroy the mesh's embedded
             // material palette on export. Preserve the mesh materials instead.
+            // Likewise, if a visual does not author any material tag, keep the
+            // parsed color undefined instead of inferring it from sibling links
+            // or shared mesh paths.
             if (!hasMultipleMeshMaterials) {
                 const materialEl = materialEls[0] ?? null;
                 const resolvedMaterial = materialEl

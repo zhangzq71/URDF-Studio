@@ -12,6 +12,8 @@ import { computeLinkWorldMatrices, createOriginMatrix } from '@/core/robot/kinem
 import type { UrdfVisual } from '@/types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
 import { resolveUsdDescriptorTargetLinkPath } from './usdDescriptorLinkResolution';
+import { resolveUsdPrimitiveGeometryFromDescriptor } from './usdPrimitiveGeometry';
+import { resolveUsdMeshApproximationGeometry } from './usdViewerRobotAdapter';
 
 interface UsdRuntimeTransformInterface {
   getPreferredLinkWorldTransform?: (linkPath: string) => unknown;
@@ -27,6 +29,7 @@ interface DescriptorEntry {
 
 const IDENTITY_MATRIX = new THREE.Matrix4();
 const ROOT_TRANSFORM_EPSILON = 1e-6;
+const ORIGIN_EPSILON = 1e-9;
 
 function toMatrix4(value: unknown): THREE.Matrix4 | null {
   if (!value) {
@@ -213,6 +216,50 @@ function collectVisualAttachmentLinkIds(
     });
 }
 
+function originsApproximatelyEqual(
+  left: NonNullable<UrdfVisual['origin']> | null | undefined,
+  right: NonNullable<UrdfVisual['origin']> | null | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return Math.abs((left.xyz?.x || 0) - (right.xyz?.x || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.xyz?.y || 0) - (right.xyz?.y || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.xyz?.z || 0) - (right.xyz?.z || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.rpy?.r || 0) - (right.rpy?.r || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.rpy?.p || 0) - (right.rpy?.p || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.rpy?.y || 0) - (right.rpy?.y || 0)) <= ORIGIN_EPSILON;
+}
+
+function shouldIgnoreSyntheticMeshApproximationOrigin(
+  snapshot: UsdSceneSnapshot | null | undefined,
+  descriptor: UsdSceneMeshDescriptor,
+  geometry: UrdfVisual | null | undefined,
+): boolean {
+  if (!snapshot || !geometry?.origin || geometry.type === GeometryType.NONE) {
+    return false;
+  }
+
+  if (resolveUsdPrimitiveGeometryFromDescriptor(descriptor, geometry)) {
+    return false;
+  }
+
+  const approximation = resolveUsdMeshApproximationGeometry(snapshot, descriptor);
+  if (!approximation?.origin) {
+    return false;
+  }
+
+  return originsApproximatelyEqual(geometry.origin, approximation.origin);
+}
+
+function identityOrigin(): NonNullable<UrdfVisual['origin']> {
+  return {
+    xyz: { x: 0, y: 0, z: 0 },
+    rpy: { r: 0, p: 0, y: 0 },
+  };
+}
+
 function applyLocalOriginToVisual(
   visual: UrdfVisual,
   ownerLinkWorldMatrix: THREE.Matrix4,
@@ -386,8 +433,19 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
         return;
       }
 
-      targetLink.visual = applyLocalOriginToVisual(
+      const visualForHydration = shouldIgnoreSyntheticMeshApproximationOrigin(
+        snapshot,
+        entry.descriptor,
         targetLink.visual,
+      )
+        ? {
+            ...targetLink.visual,
+            origin: identityOrigin(),
+          }
+        : targetLink.visual;
+
+      targetLink.visual = applyLocalOriginToVisual(
+        visualForHydration,
         ownerLinkWorldMatrix,
         primWorldMatrix,
       );
@@ -400,6 +458,20 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
         return;
       }
 
+      const currentCollision = index === 0
+        ? link.collision
+        : link.collisionBodies?.[index - 1];
+      const collisionForHydration = shouldIgnoreSyntheticMeshApproximationOrigin(
+        snapshot,
+        entry.descriptor,
+        currentCollision,
+      )
+        ? {
+            ...currentCollision,
+            origin: identityOrigin(),
+          }
+        : currentCollision;
+
       if (index === 0) {
         link.collision = {
           ...link.collision,
@@ -408,14 +480,14 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
               .clone()
               .invert()
               .multiply(primWorldMatrix)
-              .multiply(createOriginMatrix(link.collision.origin)),
+              .multiply(createOriginMatrix(collisionForHydration.origin)),
           ),
         };
         return;
       }
 
       const collisionBodies = [...(link.collisionBodies || [])];
-      if (!collisionBodies[index - 1]) {
+      if (!collisionBodies[index - 1] || !collisionForHydration) {
         return;
       }
 
@@ -426,7 +498,7 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
             .clone()
             .invert()
             .multiply(primWorldMatrix)
-            .multiply(createOriginMatrix(collisionBodies[index - 1].origin)),
+            .multiply(createOriginMatrix(collisionForHydration.origin)),
         ),
       };
       link.collisionBodies = collisionBodies;

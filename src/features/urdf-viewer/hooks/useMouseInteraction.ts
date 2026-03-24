@@ -11,6 +11,8 @@ import { resolveSelectionTarget } from '../utils/selectionTargets';
 import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 import { resolveRevoluteDragDelta } from '../utils/jointDragDelta';
 import { createJointDragStoreSync } from '../utils/jointDragStoreSync';
+import { resolveActiveViewerJointKeyFromSelection } from '../utils/activeJointSelection';
+import { resolveMouseDownSelectionPlan } from '../utils/mouseDownSelectionPlan';
 import {
     armSelectionMissGuard,
     clearSelectionMissGuardTimer,
@@ -41,6 +43,10 @@ export interface UseMouseInteractionOptions {
     justSelectedRef?: React.RefObject<boolean>;
     isOrbitDragging?: React.RefObject<boolean>;
     isSelectionLockedRef?: React.RefObject<boolean>;
+    selection?: {
+        type: 'link' | 'joint' | null;
+        id: string | null;
+    };
     highlightGeometry: (
         linkName: string | null,
         revert: boolean,
@@ -78,6 +84,7 @@ export function useMouseInteraction({
     justSelectedRef,
     isOrbitDragging,
     isSelectionLockedRef,
+    selection,
     highlightGeometry
 }: UseMouseInteractionOptions): UseMouseInteractionResult {
     const { camera, gl, scene, invalidate } = useThree();
@@ -303,6 +310,21 @@ export function useMouseInteraction({
             return null;
         };
 
+        const syncActiveJointFromCurrentSelection = () => {
+            if (!setActiveJointRef.current) {
+                return;
+            }
+
+            const activeJointKey = resolveActiveViewerJointKeyFromSelection(
+                (robot as { joints?: Record<string, unknown> } | null)?.joints,
+                selection,
+            );
+
+            if (activeJointKey) {
+                setActiveJointRef.current(activeJointKey);
+            }
+        };
+
         const getRevoluteDelta = (
             joint: any,
             startPt: THREE.Vector3,
@@ -458,6 +480,7 @@ export function useMouseInteraction({
                 ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
                 : undefined;
             if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+                syncActiveJointFromCurrentSelection();
                 return;
             }
 
@@ -501,29 +524,28 @@ export function useMouseInteraction({
                 armSelectionMissGuard(justSelectedRef);
 
                 const linkObj = findParentLink(hit.object);
+                const clickedJoint = isCollisionInteraction ? null : (linkObj ? findParentJoint(linkObj) : null);
 
                 if (linkObj && (onSelect || onMeshSelect)) {
                     const subType = activeInteractionSubType;
-
                     const { objectIndex, highlightTarget } = resolveSelectionTarget(hit.object, linkObj);
+                    const selectionPlan = resolveMouseDownSelectionPlan({
+                        mode,
+                        linkName: linkObj.name,
+                        jointName: clickedJoint?.name ?? null,
+                        subType,
+                    });
 
-                    // Call onSelect FIRST so onMeshSelect (called after) wins in React state batching
                     if (onSelect) {
-                        if (mode === 'detail') {
-                            onSelect('link', linkObj.name, subType);
+                        const selectTarget = selectionPlan.selectTarget;
+                        if (selectTarget.type === 'joint') {
+                            onSelect('joint', selectTarget.id);
                         } else {
-                            const parent = linkObj.parent;
-                            if (parent && (parent as any).isURDFJoint) {
-                                onSelect('joint', parent.name);
-                            } else {
-                                onSelect('link', linkObj.name, subType);
-                            }
+                            onSelect('link', selectTarget.id, selectTarget.subType);
                         }
                     }
 
-                    // Call onMeshSelect AFTER onSelect so its objectIndex wins in React batching
-                    if (onMeshSelect) {
-                        const clickedJoint = isCollisionInteraction ? null : findParentJoint(linkObj);
+                    if (onMeshSelect && selectionPlan.shouldSyncMeshSelection) {
                         onMeshSelect(linkObj.name, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
                     }
 
@@ -541,12 +563,11 @@ export function useMouseInteraction({
                 }
 
                 // Find the parent joint of the clicked link
-                const clickedLink = findParentLink(hit.object);
                 const joint = toolMode === 'measure'
                     ? null
                     : isCollisionInteraction
                         ? null
-                        : (clickedLink ? findParentJoint(clickedLink) : null);
+                        : clickedJoint;
 
                 if (joint) {
                     isDraggingJoint.current = true;
@@ -646,7 +667,7 @@ export function useMouseInteraction({
             pickTargetCachesRef.current.visual.targets = [];
             pickTargetCachesRef.current.collision.targets = [];
         };
-    }, [gl, camera, scene, robot, robotVersion, orbitControls, onHover, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, showCollision, showVisual, linkMeshMapRef, useExternalHover, throttleJointChangeDuringDrag]);
+    }, [gl, camera, scene, robot, robotVersion, orbitControls, onHover, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, selection, showCollision, showVisual, linkMeshMapRef, useExternalHover, throttleJointChangeDuringDrag]);
 
     return {
         mouseRef,

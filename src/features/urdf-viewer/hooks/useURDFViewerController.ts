@@ -3,7 +3,6 @@ import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { createJointPanelStore } from '@/shared/utils/jointPanelStore';
 import {
   normalizeViewerJointAngleState,
-  resolveViewerJointAngleValue,
   resolveViewerJointKey,
 } from '@/shared/utils/jointPanelState';
 import {
@@ -13,6 +12,7 @@ import {
 } from '@/shared/debug/regressionBridge';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import type { MeasureAnchorMode, MeasureState, ToolMode, URDFViewerProps, ViewerJointMotionStateValue } from '../types';
+import { resolveInitialJointControlState } from '../utils/jointControlState';
 import { createEmptyMeasureState } from '../utils/measurements';
 import { beginInitialGroundAlignment } from '../utils/robotPositioning';
 import { usePanelDrag } from './usePanelDrag';
@@ -35,6 +35,7 @@ interface UseURDFViewerControllerProps {
   onTransformPendingChange?: URDFViewerProps['onTransformPendingChange'];
   groundPlaneOffset?: number;
   active?: boolean;
+  jointStateScopeKey?: string | null;
 }
 
 export const useURDFViewerController = ({
@@ -51,6 +52,7 @@ export const useURDFViewerController = ({
   onTransformPendingChange,
   groundPlaneOffset = 0,
   active = true,
+  jointStateScopeKey = null,
 }: UseURDFViewerControllerProps) => {
   const isOrbitDragging = useRef(false);
   const [robot, setRobot] = useState<any>(null);
@@ -122,10 +124,12 @@ export const useURDFViewerController = ({
   const jointPanelStoreRef = useRef(createJointPanelStore());
   const jointAnglesRef = useRef<Record<string, number>>(jointPanelStoreRef.current.getSnapshot().jointAngles);
   const initialJointAnglesRef = useRef<Record<string, number>>({});
+  const jointStateScopeRef = useRef<string | null>(null);
   const [angleUnit, setAngleUnit] = useState<'rad' | 'deg'>('rad');
   const activeJointRef = useRef<string | null>(jointPanelStoreRef.current.getSnapshot().activeJoint);
   const [isDragging, setIsDragging] = useState(false);
   const sceneRefreshRef = useRef<(() => void) | null>(null);
+  const pendingSceneRefreshFrameRef = useRef<number | null>(null);
 
   const justSelectedRef = useRef(false);
   const transformPendingRef = useRef(false);
@@ -168,15 +172,43 @@ export const useURDFViewerController = ({
     return changed;
   }, [syncActiveJointSnapshot]);
 
-  const requestSceneRefresh = useCallback(() => {
+  const flushSceneRefresh = useCallback(() => {
+    pendingSceneRefreshFrameRef.current = null;
     sceneRefreshRef.current?.();
   }, []);
+
+  const requestSceneRefresh = useCallback(() => {
+    if (pendingSceneRefreshFrameRef.current !== null) {
+      return;
+    }
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushSceneRefresh();
+      return;
+    }
+
+    pendingSceneRefreshFrameRef.current = window.requestAnimationFrame(() => {
+      flushSceneRefresh();
+    });
+  }, [flushSceneRefresh]);
 
   const registerSceneRefresh = useCallback((refreshScene: (() => void) | null) => {
     sceneRefreshRef.current = refreshScene;
   }, []);
 
   const getJointAnglesSnapshot = useCallback(() => ({ ...jointAnglesRef.current }), []);
+
+  const getInitialJointAnglesForNextLoad = useCallback(() => {
+    if (!jointStateScopeKey) {
+      return {};
+    }
+
+    if (jointStateScopeRef.current !== jointStateScopeKey) {
+      return {};
+    }
+
+    return { ...jointAnglesRef.current };
+  }, [jointStateScopeKey]);
 
   useEffect(() => {
     const releaseDragLock = () => setIsDragging(false);
@@ -196,6 +228,15 @@ export const useURDFViewerController = ({
       window.removeEventListener('pointerup', releaseDragLock);
       window.removeEventListener('blur', releaseDragLock);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pendingSceneRefreshFrameRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(pendingSceneRefreshFrameRef.current);
+        pendingSceneRefreshFrameRef.current = null;
+      }
     };
   }, []);
 
@@ -331,32 +372,19 @@ export const useURDFViewerController = ({
   ]);
 
   const initializeJointControlState = useCallback((loadedRobot: any) => {
-    if (loadedRobot.joints) {
-      const currentAngles: Record<string, number> = {};
-      const defaultAngles: Record<string, number> = {};
-      const previousAngles = jointAnglesRef.current;
+    const preservePreviousAngles = jointStateScopeRef.current !== null && jointStateScopeRef.current === jointStateScopeKey;
+    const { currentAngles, defaultAngles } = resolveInitialJointControlState({
+      joints: loadedRobot?.joints,
+      previousAngles: jointAnglesRef.current,
+      preservePreviousAngles,
+      isControllableJoint: isSingleDofJoint,
+    });
 
-      Object.keys(loadedRobot.joints).forEach((jointKey) => {
-        const loadedJoint = loadedRobot.joints[jointKey];
-        if (!isSingleDofJoint(loadedJoint)) return;
-
-        const defaultAngle = resolveViewerJointAngleValue({}, jointKey, loadedJoint, 0);
-        defaultAngles[jointKey] = defaultAngle;
-        const resolvedPreviousAngle = resolveViewerJointAngleValue(previousAngles, jointKey, loadedJoint, Number.NaN);
-
-        if (Number.isFinite(resolvedPreviousAngle)) {
-          currentAngles[jointKey] = resolvedPreviousAngle;
-          loadedJoint.setJointValue?.(resolvedPreviousAngle);
-        } else {
-          currentAngles[jointKey] = defaultAngle;
-        }
-      });
-
-      replaceJointPanelAngles(currentAngles);
-      initialJointAnglesRef.current = defaultAngles;
-      setPanelActiveJoint(null);
-    }
-  }, [replaceJointPanelAngles, setPanelActiveJoint]);
+    replaceJointPanelAngles(currentAngles);
+    initialJointAnglesRef.current = defaultAngles;
+    setPanelActiveJoint(null);
+    jointStateScopeRef.current = jointStateScopeKey;
+  }, [jointStateScopeKey, replaceJointPanelAngles, setPanelActiveJoint]);
 
   const handleRobotLoaded = useCallback((loadedRobot: any) => {
     setJointPanelRobot(null);
@@ -381,11 +409,26 @@ export const useURDFViewerController = ({
         const joint = jointControlRobot.joints?.[jointKey];
         if (joint && isSingleDofJoint(joint)) {
           joint.angle = angle;
+          emitJointChangeToApp(joint.name || jointKey, angle);
         }
       });
     }
 
     patchJointPanelAngles(normalizedAngles);
+  }, [emitJointChangeToApp, jointControlJoints, jointControlRobot, patchJointPanelAngles]);
+
+  const handleRuntimeJointAngleChange = useCallback((jointName: string, angle: number) => {
+    const jointKey = resolveViewerJointKey(jointControlJoints, jointName);
+    if (!jointKey) {
+      return;
+    }
+
+    const joint = jointControlRobot?.joints?.[jointKey];
+    const resolvedAngle = Number.isFinite(Number(joint?.angle ?? joint?.jointValue))
+      ? Number(joint?.angle ?? joint?.jointValue)
+      : angle;
+
+    patchJointPanelAngles({ [jointKey]: resolvedAngle });
   }, [jointControlJoints, jointControlRobot, patchJointPanelAngles]);
 
   const handleTransformPending = useCallback(
@@ -477,11 +520,13 @@ export const useURDFViewerController = ({
         shouldRefresh = true;
       }
 
+      emitJointChangeToApp(joint.name || jointKey || jointName, resolvedAngle);
+
       if (shouldRefresh) {
         requestSceneRefresh();
       }
     },
-    [jointControlJoints, jointControlRobot, patchJointPanelAngles, requestSceneRefresh]
+    [emitJointChangeToApp, jointControlJoints, jointControlRobot, patchJointPanelAngles, requestSceneRefresh]
   );
 
   const handleActiveJointChange = useCallback((jointName: string | null) => {
@@ -714,6 +759,7 @@ export const useURDFViewerController = ({
     transformMode,
     jointPanelStore: jointPanelStoreRef.current,
     getJointAnglesSnapshot,
+    getInitialJointAnglesForNextLoad,
     registerSceneRefresh,
     angleUnit,
     setAngleUnit,
@@ -727,6 +773,7 @@ export const useURDFViewerController = ({
     handleRobotLoaded,
     handleJointPanelRobotLoaded,
     handleRuntimeJointAnglesChange,
+    handleRuntimeJointAngleChange,
     handleTransformPending,
     handleJointAngleChange,
     handleJointChangeCommit,

@@ -49,6 +49,12 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
     map,
   });
 
+  // Preserve authored URDF/USD palette values without ACES shifting saturated
+  // robot colors (for example Unitree's orange) toward yellow in the viewer.
+  if (preserveExactColor) {
+    material.toneMapped = false;
+  }
+
   if (name) material.name = name;
 
   material.userData.originalColor = finalColor.clone();

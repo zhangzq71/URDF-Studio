@@ -1,6 +1,7 @@
 import React from 'react';
 import { Loader2, MousePointerClick } from 'lucide-react';
 import { SegmentedControl } from '@/shared/components/ui';
+import { GeometryType } from '@/types';
 import type {
   CollisionOptimizationAnalysis,
   CollisionOptimizationCandidate,
@@ -18,7 +19,6 @@ import {
   type CollisionOptimizationPlanarGraphConnectionState,
   type CollisionOptimizationPlanarGraphLabels,
 } from './CollisionOptimizationPlanarGraph';
-import { GeometryType } from '@/types';
 
 interface CollisionSelection {
   type: 'link' | 'joint' | null;
@@ -54,7 +54,7 @@ export interface CollisionOptimizationCandidatesPanelProps {
   selection?: CollisionSelection;
   scope: CollisionOptimizationScope;
   viewMode: CollisionOptimizationCandidatesViewMode;
-  checkedTargetIds: ReadonlySet<string>;
+  checkedCandidateKeys: ReadonlySet<string>;
   eligibleCount: number;
   activeSelectionCount: number;
   isAnalyzing: boolean;
@@ -66,13 +66,15 @@ export interface CollisionOptimizationCandidatesPanelProps {
   graphLabels: CollisionOptimizationPlanarGraphLabels;
   formatGeometryType: (type: GeometryType | null | undefined) => string;
   getStatusLabel: (candidate: CollisionOptimizationCandidate) => string;
+  getCandidateOverrideOptions: (candidate: CollisionOptimizationCandidate) => GeometryType[];
   canCreateManualPair: (sourceTargetId: string, targetTargetId: string) => boolean;
   onScopeChange: (scope: CollisionOptimizationScope) => void;
   onViewModeChange: (mode: CollisionOptimizationCandidatesViewMode) => void;
   onSelectAll: () => void;
   onClearAll: () => void;
   onClearManualPairs: () => void;
-  onToggleCandidate: (targetId: string) => void;
+  onToggleCandidate: (candidateKey: string) => void;
+  onSetCandidateOverride: (candidate: CollisionOptimizationCandidate, nextType: GeometryType) => void;
   onSelectTarget?: (target: CollisionTargetRef) => void;
   onHoverTarget?: (target: CollisionTargetRef | null) => void;
   onManualConnectionStart?: (target: CollisionTargetRef) => void;
@@ -126,7 +128,7 @@ export function CollisionOptimizationCandidatesPanel({
   selection,
   scope,
   viewMode,
-  checkedTargetIds,
+  checkedCandidateKeys,
   eligibleCount,
   activeSelectionCount,
   isAnalyzing,
@@ -138,6 +140,7 @@ export function CollisionOptimizationCandidatesPanel({
   graphLabels,
   formatGeometryType,
   getStatusLabel,
+  getCandidateOverrideOptions,
   canCreateManualPair,
   onScopeChange,
   onViewModeChange,
@@ -145,6 +148,7 @@ export function CollisionOptimizationCandidatesPanel({
   onClearAll,
   onClearManualPairs,
   onToggleCandidate,
+  onSetCandidateOverride,
   onSelectTarget,
   onHoverTarget,
   onManualConnectionStart,
@@ -230,7 +234,7 @@ export function CollisionOptimizationCandidatesPanel({
             analysis={analysis}
             candidates={candidates}
             selection={selection}
-            checkedTargetIds={checkedTargetIds}
+            checkedCandidateKeys={checkedCandidateKeys}
             manualMergePairs={manualMergePairs}
             manualConnection={manualConnection}
             labels={graphLabels}
@@ -247,14 +251,16 @@ export function CollisionOptimizationCandidatesPanel({
           <div className="h-full overflow-y-auto">
             <CollisionOptimizationCandidateList
               candidates={candidates}
-              checkedTargetIds={checkedTargetIds}
+              checkedCandidateKeys={checkedCandidateKeys}
               selection={selection}
               labels={listLabels}
               formatGeometryType={formatGeometryType}
               getStatusLabel={getStatusLabel}
+              getCandidateOverrideOptions={getCandidateOverrideOptions}
               onSelectTarget={onSelectTarget}
               onHoverTarget={onHoverTarget}
               onToggleCandidate={onToggleCandidate}
+              onSetCandidateOverride={onSetCandidateOverride}
             />
           </div>
         )}

@@ -2885,7 +2885,29 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             stageSourcePath: resolvedStageSourcePath,
             force: forceRefresh,
         });
-        const normalizedRobotMetadataSnapshot = this.getCachedRobotMetadataSnapshot(resolvedStageSourcePath) || {
+        const normalizeRobotMetadataSnapshotCandidate = (snapshot) => {
+            if (!snapshot || typeof snapshot !== 'object') {
+                return null;
+            }
+            return {
+                stageSourcePath: String(snapshot.stageSourcePath || resolvedStageSourcePath || '').trim() || null,
+                generatedAtMs: Number(snapshot.generatedAtMs || rawSnapshot.generatedAtMs || Date.now()),
+                source: String(snapshot.source || robotMetadataSummary.source || 'robot-scene-snapshot'),
+                linkParentPairs: toPlainArray(snapshot.linkParentPairs),
+                jointCatalogEntries: toPlainArray(snapshot.jointCatalogEntries),
+                linkDynamicsEntries: toPlainArray(snapshot.linkDynamicsEntries),
+                meshCountsByLinkPath: toPlainObject(snapshot.meshCountsByLinkPath),
+            };
+        };
+        const getRobotMetadataSnapshotScore = (snapshot) => {
+            if (!snapshot || typeof snapshot !== 'object') {
+                return -1;
+            }
+            return Number(snapshot.linkParentPairs?.length || 0)
+                + Number(snapshot.jointCatalogEntries?.length || 0)
+                + Number(snapshot.linkDynamicsEntries?.length || 0);
+        };
+        const rawRobotMetadataSnapshot = normalizeRobotMetadataSnapshotCandidate({
             stageSourcePath: resolvedStageSourcePath || null,
             generatedAtMs: Number(robotMetadataRaw.generatedAtMs || rawSnapshot.generatedAtMs || Date.now()),
             source: String(robotMetadataRaw.source || robotMetadataSummary.source || 'robot-scene-snapshot'),
@@ -2893,7 +2915,50 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             jointCatalogEntries: toPlainArray(robotMetadataRaw.jointCatalogEntries),
             linkDynamicsEntries: toPlainArray(robotMetadataRaw.linkDynamicsEntries),
             meshCountsByLinkPath: toPlainObject(robotMetadataRaw.meshCountsByLinkPath),
-        };
+        });
+        const cachedRobotMetadataSnapshot = normalizeRobotMetadataSnapshotCandidate(
+            this.getCachedRobotMetadataSnapshot(resolvedStageSourcePath),
+        );
+        let stageRobotMetadataSnapshot = null;
+        if (typeof this.buildRobotMetadataSnapshotForStage === 'function') {
+            try {
+                stageRobotMetadataSnapshot = normalizeRobotMetadataSnapshotCandidate(
+                    this.buildRobotMetadataSnapshotForStage(resolvedStageSourcePath, null),
+                );
+            }
+            catch {
+                stageRobotMetadataSnapshot = null;
+            }
+        }
+        const normalizedRobotMetadataSnapshot = [
+            cachedRobotMetadataSnapshot,
+            stageRobotMetadataSnapshot,
+            rawRobotMetadataSnapshot,
+        ].reduce((bestSnapshot, candidateSnapshot) => {
+            if (!candidateSnapshot) {
+                return bestSnapshot;
+            }
+            if (!bestSnapshot) {
+                return candidateSnapshot;
+            }
+
+            const bestScore = getRobotMetadataSnapshotScore(bestSnapshot);
+            const candidateScore = getRobotMetadataSnapshotScore(candidateSnapshot);
+            if (candidateScore > bestScore) {
+                return candidateSnapshot;
+            }
+
+            if (candidateScore === bestScore
+                && String(candidateSnapshot.source || '').includes('usd-stage')
+                && !String(bestSnapshot.source || '').includes('usd-stage')) {
+                return candidateSnapshot;
+            }
+
+            return bestSnapshot;
+        }, rawRobotMetadataSnapshot);
+        if (resolvedStageSourcePath && normalizedRobotMetadataSnapshot) {
+            this._robotMetadataSnapshotByStageSource?.set?.(resolvedStageSourcePath, normalizedRobotMetadataSnapshot);
+        }
         const normalizedStage = {
             stageSourcePath: resolvedStageSourcePath || null,
             rootLayerIdentifier: rawStage.rootLayerIdentifier || null,

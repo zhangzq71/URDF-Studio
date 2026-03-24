@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { URDFCollider, URDFJoint, URDFLink, URDFMimicJoint, URDFRobot, URDFVisual } from './URDFClasses';
+import { setThreeColorFromSRGB } from '@/core/utils/color.ts';
 
 const tempQuaternion = new THREE.Quaternion();
 const tempEuler = new THREE.Euler();
@@ -182,7 +183,7 @@ export class URDFLoader {
                         .split(/\s+/g)
                         .map(v => parseFloat(v));
 
-                    material.color.setRGB(rgba[0] || 0, rgba[1] || 0, rgba[2] || 0);
+                    setThreeColorFromSRGB(material.color, rgba[0] || 0, rgba[1] || 0, rgba[2] || 0);
                     material.opacity = rgba[3] ?? 1;
                     material.transparent = material.opacity < 1;
                     material.depthWrite = !material.transparent;

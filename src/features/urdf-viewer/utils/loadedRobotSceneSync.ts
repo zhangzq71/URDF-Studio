@@ -130,8 +130,13 @@ export function syncLoadedRobotScene({
       return;
     }
 
-    if (sourceFormat === 'urdf' && urdfMaterials && meshNeedsMaterialUpgrade(child as THREE.Mesh)) {
+    const shouldUpgradeVisualMaterial = meshNeedsMaterialUpgrade(child as THREE.Mesh);
+
+    if (sourceFormat === 'urdf' && urdfMaterials && shouldUpgradeVisualMaterial) {
       applyURDFMaterials(child, urdfMaterials);
+    }
+
+    if (shouldUpgradeVisualMaterial) {
       enhanceMaterials(child);
       changed = true;
     }

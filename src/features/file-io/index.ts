@@ -46,7 +46,6 @@ export {
 // Hooks
 export {
   useFileImport,
-  useFileExport,
   useSnapshot,
   usePdfExport,
 } from './hooks';

@@ -416,6 +416,32 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
         return;
       }
 
+      // Once a drag is active, the owner is already known. Skip the expensive
+      // visible-hit traversal until the pointer is released.
+      if (translateControls.dragging) {
+        universalOwnerRef.current = 'translate';
+
+        if (!rotateControls.dragging && rotateControls.axis !== null) {
+          rotateControls.axis = null;
+        }
+
+        translateControls.enabled = enabled;
+        rotateControls.enabled = false;
+        return;
+      }
+
+      if (rotateControls.dragging) {
+        universalOwnerRef.current = 'rotate';
+
+        if (!translateControls.dragging && translateControls.axis !== null) {
+          translateControls.axis = null;
+        }
+
+        rotateControls.enabled = rotateEnabled ?? enabled;
+        translateControls.enabled = false;
+        return;
+      }
+
       const translateVisibleHit = resolveVisibleTranslateHit(translateControls, pointer);
       const rotateVisibleHit = resolveVisibleRotateHit(rotateControls, pointer);
 

@@ -673,6 +673,13 @@ export class ThreeRenderDelegateCore {
         let metadataLayerTexts = [];
         const meshCountsByLinkPath = {};
         const linkPathSet = new Set();
+        const addKnownLinkPath = (value) => {
+            const normalizedPath = normalizeUsdPathToken(String(value || ''));
+            if (!normalizedPath || !normalizedPath.startsWith('/'))
+                return null;
+            linkPathSet.add(normalizedPath);
+            return normalizedPath;
+        };
         const normalizeVector3 = (value, fallback = [0, 0, 0]) => {
             const source = Array.isArray(value)
                 ? value
@@ -890,7 +897,7 @@ export class ThreeRenderDelegateCore {
             if (!proto?.linkPath)
                 continue;
             this._protoMeshMetadataByMeshId.set(meshId, proto);
-            linkPathSet.add(proto.linkPath);
+            addKnownLinkPath(proto.linkPath);
             if (!meshCountsByLinkPath[proto.linkPath]) {
                 meshCountsByLinkPath[proto.linkPath] = {
                     visualMeshCount: 0,
@@ -910,13 +917,56 @@ export class ThreeRenderDelegateCore {
                 counts.visualMeshCount += 1;
             }
         }
+        const activeDriver = typeof window !== 'undefined' ? window?.driver : null;
+        if (activeDriver && typeof activeDriver.GetPhysicsJointRecords === 'function') {
+            let rawJointRecords = [];
+            try {
+                rawJointRecords = activeDriver.GetPhysicsJointRecords();
+            }
+            catch {
+                rawJointRecords = [];
+            }
+            const driverJointRecords = (rawJointRecords && typeof rawJointRecords.length === 'number')
+                ? Array.from(rawJointRecords)
+                : [];
+            for (const jointRecord of driverJointRecords) {
+                addKnownLinkPath(jointRecord?.body0Path);
+                addKnownLinkPath(jointRecord?.body1Path);
+            }
+        }
+        if (activeDriver && typeof activeDriver.GetPhysicsLinkDynamicsRecords === 'function') {
+            let rawLinkDynamicsRecords = [];
+            try {
+                rawLinkDynamicsRecords = activeDriver.GetPhysicsLinkDynamicsRecords();
+            }
+            catch {
+                rawLinkDynamicsRecords = [];
+            }
+            const driverLinkDynamicsRecords = (rawLinkDynamicsRecords && typeof rawLinkDynamicsRecords.length === 'number')
+                ? Array.from(rawLinkDynamicsRecords)
+                : [];
+            for (const dynamicsRecord of driverLinkDynamicsRecords) {
+                addKnownLinkPath(dynamicsRecord?.linkPath);
+            }
+        }
+        if (allowJsStageFallback) {
+            metadataLayerTexts = this.getStageMetadataLayerTexts(getStageForMetadataFallback());
+            for (const layerText of metadataLayerTexts) {
+                for (const jointRecord of extractJointRecordsFromLayerText(layerText)) {
+                    addKnownLinkPath(jointRecord?.body0Path);
+                    addKnownLinkPath(jointRecord?.body1Path);
+                }
+                for (const linkPath of parseLinkDynamicsPatchesFromLayerText(layerText).keys()) {
+                    addKnownLinkPath(linkPath);
+                }
+            }
+        }
         const sortedLinkPaths = Array.from(linkPathSet).sort((left, right) => left.localeCompare(right));
         const mergeMissingJointCatalogEntriesFromDriver = (snapshot) => {
             if (!snapshot || typeof snapshot !== 'object')
                 return snapshot;
             if (!Array.isArray(sortedLinkPaths) || sortedLinkPaths.length <= 0)
                 return snapshot;
-            const activeDriver = typeof window !== 'undefined' ? window?.driver : null;
             if (!activeDriver || typeof activeDriver.GetPhysicsJointRecords !== 'function') {
                 return snapshot;
             }
@@ -1196,7 +1246,9 @@ export class ThreeRenderDelegateCore {
                 };
             }
             const stage = getStageForMetadataFallback();
-            metadataLayerTexts = this.getStageMetadataLayerTexts(stage);
+            if (metadataLayerTexts.length <= 0) {
+                metadataLayerTexts = this.getStageMetadataLayerTexts(stage);
+            }
         }
         const jointCatalogEntries = [];
         const linkDynamicsEntries = [];
@@ -1372,7 +1424,7 @@ export class ThreeRenderDelegateCore {
                 }
             }
         };
-        if (!truth && allowJsStageFallback) {
+        if (allowJsStageFallback) {
             const driverRecords = (() => {
                 try {
                     const activeDriver = typeof window !== 'undefined' ? window?.driver : null;
@@ -1424,13 +1476,13 @@ export class ThreeRenderDelegateCore {
                 });
             }
         }
-        if (!truth && metadataLayerTexts.length > 0) {
+        if (metadataLayerTexts.length > 0) {
             for (const layerText of metadataLayerTexts) {
                 ingestStageJointRecords(extractJointRecordsFromLayerText(layerText));
             }
         }
         const linkDynamicsPatchesByLinkPath = new Map();
-        if (!truth && metadataLayerTexts.length > 0) {
+        if (metadataLayerTexts.length > 0) {
             const mergePatch = (linkPath, incomingPatch) => {
                 if (!linkPath || !incomingPatch || typeof incomingPatch !== 'object')
                     return;
@@ -1472,9 +1524,11 @@ export class ThreeRenderDelegateCore {
         for (const linkPath of sortedLinkPaths) {
             const linkName = getPathBasename(linkPath);
             const rootPath = getRootPathFromPrimPath(linkPath);
-            const jointEntry = jointByChildLinkName?.get?.(linkName) || stageJointRecordByChildLinkPath.get(linkPath) || null;
+            const stageJointEntry = stageJointRecordByChildLinkPath.get(linkPath) || null;
+            const truthJointEntry = jointByChildLinkName?.get?.(linkName) || null;
+            const jointEntry = stageJointEntry || truthJointEntry || null;
             if (jointEntry) {
-                const isUrdfJointEntry = !!(jointByChildLinkName?.get?.(linkName));
+                const isUrdfJointEntry = !stageJointEntry && !!truthJointEntry;
                 const stageAxisToken = normalizeAxisToken(jointEntry.axisToken || 'X');
                 const fallbackAxisLocal = rotateAxisByQuaternionWxyz(stageAxisToken, jointEntry.localRot1Wxyz);
                 const resolvedAxisLocal = jointEntry.axisLocal && typeof jointEntry.axisLocal.length === 'number'
@@ -1526,25 +1580,32 @@ export class ThreeRenderDelegateCore {
                 const prim = safeGetPrimAtPath(stage, linkPath);
                 const stagePatch = linkDynamicsPatchesByLinkPath.get(linkPath) || linkDynamicsPatchesByLinkName.get(linkName) || null;
                 const massValueFromPrim = toFiniteNumber(safeGetPrimAttribute(prim, 'physics:mass'));
-                const massValue = Number.isFinite(Number(inertialEntry?.mass))
+                const truthMassValue = Number.isFinite(Number(inertialEntry?.mass))
                     ? Number(inertialEntry.mass)
-                    : (stageDynamicsRecord?.mass !== null && Number.isFinite(Number(stageDynamicsRecord?.mass))
-                        ? Number(stageDynamicsRecord.mass)
-                        : (massValueFromPrim !== undefined ? Number(massValueFromPrim) : (Number.isFinite(Number(stagePatch?.mass)) ? Number(stagePatch.mass) : null)));
+                    : null;
+                const stageMassValue = stageDynamicsRecord?.mass !== null && Number.isFinite(Number(stageDynamicsRecord?.mass))
+                    ? Number(stageDynamicsRecord.mass)
+                    : (massValueFromPrim !== undefined ? Number(massValueFromPrim) : (Number.isFinite(Number(stagePatch?.mass)) ? Number(stagePatch.mass) : null));
                 const centerOfMassTupleFromPrim = toFiniteVector3Tuple(safeGetPrimAttribute(prim, 'physics:centerOfMass'));
                 const diagonalInertiaTupleFromPrim = toFiniteVector3Tuple(safeGetPrimAttribute(prim, 'physics:diagonalInertia'));
                 const principalAxesTupleFromPrim = toFiniteQuaternionWxyzTuple(safeGetPrimAttribute(prim, 'physics:principalAxes'));
-                const centerOfMassLocal = inertialEntry
-                    ? normalizeVector3(inertialEntry.centerOfMassLocal, [0, 0, 0])
-                    : normalizeVector3(stageDynamicsRecord?.centerOfMassLocal || centerOfMassTupleFromPrim || stagePatch?.centerOfMassLocal, [0, 0, 0]);
-                const diagonalInertia = inertialEntry
-                    ? (Array.isArray(inertialEntry.diagonalInertia) ? normalizeVector3(inertialEntry.diagonalInertia, [0, 0, 0]) : null)
-                    : (Array.isArray(stageDynamicsRecord?.diagonalInertia || diagonalInertiaTupleFromPrim || stagePatch?.diagonalInertia)
-                        ? normalizeVector3(stageDynamicsRecord?.diagonalInertia || diagonalInertiaTupleFromPrim || stagePatch?.diagonalInertia, [0, 0, 0])
+                const stageCenterOfMassSource = stageDynamicsRecord?.centerOfMassLocal || centerOfMassTupleFromPrim || stagePatch?.centerOfMassLocal || null;
+                const stageDiagonalInertiaSource = stageDynamicsRecord?.diagonalInertia || diagonalInertiaTupleFromPrim || stagePatch?.diagonalInertia || null;
+                const stagePrincipalAxesSource = stageDynamicsRecord?.principalAxesLocalWxyz || principalAxesTupleFromPrim || stagePatch?.principalAxesLocalWxyz || null;
+                const massValue = stageMassValue ?? truthMassValue;
+                const centerOfMassLocal = stageCenterOfMassSource
+                    ? normalizeVector3(stageCenterOfMassSource, [0, 0, 0])
+                    : (inertialEntry ? normalizeVector3(inertialEntry.centerOfMassLocal, [0, 0, 0]) : [0, 0, 0]);
+                const diagonalInertia = Array.isArray(stageDiagonalInertiaSource)
+                    ? normalizeVector3(stageDiagonalInertiaSource, [0, 0, 0])
+                    : (inertialEntry && Array.isArray(inertialEntry.diagonalInertia)
+                        ? normalizeVector3(inertialEntry.diagonalInertia, [0, 0, 0])
                         : null);
-                const principalAxesWxyz = inertialEntry
-                    ? normalizeQuaternionWxyz(inertialEntry.principalAxesLocalWxyz, [1, 0, 0, 0])
-                    : normalizeQuaternionWxyz(stageDynamicsRecord?.principalAxesLocalWxyz || principalAxesTupleFromPrim || stagePatch?.principalAxesLocalWxyz, [1, 0, 0, 0]);
+                const principalAxesWxyz = stagePrincipalAxesSource
+                    ? normalizeQuaternionWxyz(stagePrincipalAxesSource, [1, 0, 0, 0])
+                    : (inertialEntry
+                        ? normalizeQuaternionWxyz(inertialEntry.principalAxesLocalWxyz, [1, 0, 0, 0])
+                        : [1, 0, 0, 0]);
                 const hasDynamicsData = (hasSignificantMassValue(massValue)
                     || hasSignificantVector3(centerOfMassLocal)
                     || hasSignificantVector3(diagonalInertia)
@@ -1684,6 +1745,34 @@ export class ThreeRenderDelegateCore {
             if (!snapshot)
                 return null;
             this._robotMetadataSnapshotByStageSource.set(normalizedStagePath, snapshot);
+            const cachedSceneSnapshot = this._robotSceneSnapshotByStageSource.get(normalizedStagePath);
+            if (cachedSceneSnapshot && typeof cachedSceneSnapshot === 'object') {
+                const nextSceneSnapshot = {
+                    ...cachedSceneSnapshot,
+                    robotTree: {
+                        ...(cachedSceneSnapshot.robotTree && typeof cachedSceneSnapshot.robotTree === 'object'
+                            ? cachedSceneSnapshot.robotTree
+                            : {}),
+                        linkParentPairs: Array.isArray(snapshot.linkParentPairs)
+                            ? snapshot.linkParentPairs
+                            : [],
+                        jointCatalogEntries: Array.isArray(snapshot.jointCatalogEntries)
+                            ? snapshot.jointCatalogEntries
+                            : [],
+                    },
+                    physics: {
+                        ...(cachedSceneSnapshot.physics && typeof cachedSceneSnapshot.physics === 'object'
+                            ? cachedSceneSnapshot.physics
+                            : {}),
+                        linkDynamicsEntries: Array.isArray(snapshot.linkDynamicsEntries)
+                            ? snapshot.linkDynamicsEntries
+                            : [],
+                    },
+                    robotMetadataSnapshot: snapshot,
+                };
+                this._robotSceneSnapshotByStageSource.set(normalizedStagePath, nextSceneSnapshot);
+                this.emitRobotSceneSnapshotReady(nextSceneSnapshot);
+            }
             this.emitRobotMetadataSnapshotReady(snapshot);
             return snapshot;
         })
@@ -1809,12 +1898,6 @@ export class ThreeRenderDelegateCore {
             return visualLinkFrameMatrix ? visualLinkFrameMatrix.clone() : null;
         if (!visualLinkFrameMatrix)
             return stageWorldMatrix.clone();
-        const stageLooksIdentity = isMatrixApproximatelyIdentity(stageWorldMatrix);
-        const visualFrameLooksAuthored = !isMatrixApproximatelyIdentity(visualLinkFrameMatrix)
-            || hasNonZeroTranslation(visualLinkFrameMatrix);
-        if (stageLooksIdentity && visualFrameLooksAuthored) {
-            return visualLinkFrameMatrix.clone();
-        }
         return stageWorldMatrix.clone();
     }
     getPreferredLinkWorldTransform(linkPath) {

@@ -159,6 +159,7 @@ export interface UrdfGeneratorOptions {
 
 const DEFAULT_PARSED_HARDWARE = {
   armature: 0,
+  brand: '',
   motorType: 'None',
   motorId: '',
   motorDirection: 1 as 1 | -1,
@@ -170,6 +171,7 @@ const hasExportableHardware = (joint: UrdfJoint): boolean => {
 
   return (
     (hardware.motorType?.trim() ?? '') !== DEFAULT_PARSED_HARDWARE.motorType
+    || (hardware.brand?.trim() ?? '') !== DEFAULT_PARSED_HARDWARE.brand
     || (hardware.motorId?.trim() ?? '') !== DEFAULT_PARSED_HARDWARE.motorId
     || (hardware.motorDirection ?? DEFAULT_PARSED_HARDWARE.motorDirection) !== DEFAULT_PARSED_HARDWARE.motorDirection
     || (hardware.armature ?? DEFAULT_PARSED_HARDWARE.armature) !== DEFAULT_PARSED_HARDWARE.armature
@@ -354,6 +356,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
 
         if (shouldExportHardware) {
             xml += `    <hardware>\n`;
+            if (joint.hardware.brand) xml += `      <brand>${joint.hardware.brand}</brand>\n`;
             if (joint.hardware.motorType) xml += `      <motorType>${joint.hardware.motorType}</motorType>\n`;
             if (joint.hardware.motorId) xml += `      <motorId>${joint.hardware.motorId}</motorId>\n`;
             if (joint.hardware.motorDirection) xml += `      <motorDirection>${joint.hardware.motorDirection}</motorDirection>\n`;

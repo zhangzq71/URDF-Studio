@@ -66,7 +66,7 @@ export function createOriginAxes(size: number): THREE.Group {
 
     // X Axis - Red
     const xAxisGeom = new THREE.CylinderGeometry(thickness, thickness, size, 12);
-    const xAxisMat = new THREE.MeshBasicMaterial({ color: 0xef4444, depthTest: false });
+    const xAxisMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
     const xAxis = new THREE.Mesh(xAxisGeom, xAxisMat);
     xAxis.rotation.set(0, 0, -Math.PI / 2);
     xAxis.position.set(size / 2, 0, 0);
@@ -86,7 +86,7 @@ export function createOriginAxes(size: number): THREE.Group {
 
     // Y Axis - Green
     const yAxisGeom = new THREE.CylinderGeometry(thickness, thickness, size, 12);
-    const yAxisMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, depthTest: false });
+    const yAxisMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
     const yAxis = new THREE.Mesh(yAxisGeom, yAxisMat);
     yAxis.position.set(0, size / 2, 0);
     yAxis.userData = { isGizmo: true };
@@ -104,7 +104,7 @@ export function createOriginAxes(size: number): THREE.Group {
 
     // Z Axis - Blue
     const zAxisGeom = new THREE.CylinderGeometry(thickness, thickness, size, 12);
-    const zAxisMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, depthTest: false });
+    const zAxisMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6 });
     const zAxis = new THREE.Mesh(zAxisGeom, zAxisMat);
     zAxis.rotation.set(Math.PI / 2, 0, 0);
     zAxis.position.set(0, 0, size / 2);

@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { AppMode, Theme } from '@/types';
+import type { AppMode, DetailLinkTab, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 
 // Language type
@@ -106,6 +106,10 @@ interface UIState {
   // Property editor rotation format
   rotationDisplayMode: RotationDisplayMode;
   setRotationDisplayMode: (mode: RotationDisplayMode) => void;
+
+  // Detail-mode link property tab
+  detailLinkTab: DetailLinkTab;
+  setDetailLinkTab: (tab: DetailLinkTab) => void;
 
   // Structure tree geometry detail disclosure
   structureTreeShowGeometryDetails: boolean;
@@ -353,6 +357,10 @@ export const useUIStore = create<UIState>()(
       rotationDisplayMode: 'euler_deg',
       setRotationDisplayMode: (rotationDisplayMode) => set({ rotationDisplayMode }),
 
+      // Detail-mode link property tab
+      detailLinkTab: 'visual',
+      setDetailLinkTab: (detailLinkTab) => set({ detailLinkTab }),
+
       // Structure tree geometry detail disclosure
       structureTreeShowGeometryDetails: false,
       setStructureTreeShowGeometryDetails: (structureTreeShowGeometryDetails) =>
@@ -360,7 +368,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 4,
+      version: 5,
       migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
@@ -376,6 +384,7 @@ export const useUIStore = create<UIState>()(
         panelSections: state.panelSections,
         fontSize: state.fontSize,
         rotationDisplayMode: state.rotationDisplayMode,
+        detailLinkTab: state.detailLinkTab,
         structureTreeShowGeometryDetails: state.structureTreeShowGeometryDetails,
       }),
       onRehydrateStorage: () => (state) => {

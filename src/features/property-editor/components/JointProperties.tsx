@@ -102,7 +102,7 @@ const getJointTypeLabel = (jointType: JointType, t: typeof translations['en']): 
 interface JointData {
   name?: string;
   type?: string;
-  hardware?: { motorType?: string; armature?: number; motorId?: string; motorDirection?: number };
+  hardware?: { brand?: string; motorType?: string; armature?: number; motorId?: string; motorDirection?: number };
   limit?: { velocity?: number; effort?: number; lower?: number; upper?: number };
   dynamics?: { friction?: number; damping?: number };
   origin?: { xyz: { x: number; y: number; z: number }; rpy: { r: number; p: number; y: number } };

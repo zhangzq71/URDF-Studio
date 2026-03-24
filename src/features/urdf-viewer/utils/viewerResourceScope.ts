@@ -5,6 +5,7 @@ import { inferUsdBundleVirtualDirectory, isUsdPathWithinBundleDirectory } from '
 
 const KNOWN_BUNDLE_SEGMENTS = new Set([
   'urdf',
+  'xml',
   'usd',
   'mjcf',
   'xacro',

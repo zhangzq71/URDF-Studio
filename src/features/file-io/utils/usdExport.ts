@@ -65,11 +65,14 @@ type UsdPreviewMaterialRecord = {
   appearance: UsdRenderableAppearance;
 };
 
+type UsdNumericAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
+
 type UsdMeshGeometryData = {
-  faceVertexCounts: number[];
+  triangleCount: number;
   faceVertexIndices: number[];
-  points: string[];
-  stValues: string[] | null;
+  positions: UsdNumericAttribute;
+  uvAttribute: UsdNumericAttribute | null;
+  signature: string;
 };
 
 type UsdMeshGeometryRecord = {
@@ -85,10 +88,30 @@ type UsdSerializationContext = {
   geometryRecords: UsdMeshGeometryRecord[];
 };
 
+const USD_EXPORT_OBJECT_YIELD_INTERVAL = 8;
+const USD_EXPORT_VERTEX_YIELD_INTERVAL = 4096;
+const USD_EXPORT_RECORD_YIELD_INTERVAL = 4;
+
 export interface UsdMeshCompressionOptions {
   enabled: boolean;
   quality: number;
 }
+
+export type ExportRobotToUsdPhase = 'links' | 'geometry' | 'scene' | 'assets';
+
+export interface ExportRobotToUsdProgress {
+  phase: ExportRobotToUsdPhase;
+  completed: number;
+  total: number;
+  label?: string;
+}
+
+type UsdExportProgressTracker = {
+  phase: ExportRobotToUsdPhase;
+  completed: number;
+  total: number;
+  onProgress?: (progress: ExportRobotToUsdProgress) => void;
+};
 
 export interface ExportRobotToUsdOptions {
   robot: RobotState;
@@ -96,11 +119,7 @@ export interface ExportRobotToUsdOptions {
   assets: Record<string, string>;
   extraMeshFiles?: Map<string, Blob>;
   meshCompression?: UsdMeshCompressionOptions;
-  onProgress?: (progress: {
-    processedLinks: number;
-    totalLinks: number;
-    currentLinkName: string;
-  }) => void;
+  onProgress?: (progress: ExportRobotToUsdProgress) => void;
 }
 
 export interface ExportRobotToUsdPayload {
@@ -588,12 +607,11 @@ function applyVisualOrigin(object: THREE.Object3D, visual: UrdfVisual): void {
     visual.origin?.xyz?.y ?? 0,
     visual.origin?.xyz?.z ?? 0,
   );
-  object.rotation.set(
+  object.quaternion.copy(rpyToQuaternion(
     visual.origin?.rpy?.r ?? 0,
     visual.origin?.rpy?.p ?? 0,
     visual.origin?.rpy?.y ?? 0,
-    'XYZ',
-  );
+  ));
 }
 
 function createPrimitiveSceneNode(
@@ -847,6 +865,14 @@ function formatTuple(values: number[]): string {
   return `(${values.map((value) => formatFloat(value)).join(', ')})`;
 }
 
+function formatTuple2(x: number, y: number): string {
+  return `(${formatFloat(x)}, ${formatFloat(y)})`;
+}
+
+function formatTuple3(x: number, y: number, z: number): string {
+  return `(${formatFloat(x)}, ${formatFloat(y)}, ${formatFloat(z)})`;
+}
+
 function isExternalAssetPath(path: string): boolean {
   return /^(?:blob:|https?:\/\/|data:)/i.test(path);
 }
@@ -858,6 +884,12 @@ function hashString(value: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function hashGeometryNumber(hash: number, value: number): number {
+  const normalized = Number.isFinite(value) ? Math.round(value * 1_000_000) : 0;
+  hash ^= normalized >>> 0;
+  return Math.imul(hash, 16777619) >>> 0;
 }
 
 function inferTextureExtension(texturePath: string): string {
@@ -927,6 +959,68 @@ function quaternionToUsdTuple(quaternion: THREE.Quaternion | JointQuaternion | n
 
 function rpyToQuaternion(r: number, p: number, y: number): THREE.Quaternion {
   return new THREE.Quaternion().setFromEuler(new THREE.Euler(r, p, y, 'ZYX'));
+}
+
+async function yieldToMainThread(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => resolve());
+      return;
+    }
+
+    globalThis.setTimeout(resolve, 0);
+  });
+}
+
+function normalizeUsdProgressLabel(value: string | null | undefined, fallback: string): string {
+  const normalized = String(value || '').trim();
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function createUsdProgressTracker(
+  phase: ExportRobotToUsdPhase,
+  total: number,
+  onProgress?: (progress: ExportRobotToUsdProgress) => void,
+): UsdExportProgressTracker {
+  const tracker: UsdExportProgressTracker = {
+    phase,
+    completed: 0,
+    total,
+    onProgress,
+  };
+
+  if (onProgress && total > 0) {
+    onProgress({
+      phase,
+      completed: 0,
+      total,
+    });
+  }
+
+  return tracker;
+}
+
+function advanceUsdProgress(
+  tracker: UsdExportProgressTracker | null | undefined,
+  label?: string,
+): void {
+  if (!tracker || tracker.total <= 0) {
+    return;
+  }
+
+  tracker.completed = Math.min(tracker.total, tracker.completed + 1);
+  tracker.onProgress?.({
+    phase: tracker.phase,
+    completed: tracker.completed,
+    total: tracker.total,
+    ...(label ? { label } : {}),
+  });
+}
+
+async function yieldPeriodically(index: number, interval: number): Promise<void> {
+  if (interval > 0 && index > 0 && index % interval === 0) {
+    await yieldToMainThread();
+  }
 }
 
 function serializeTransformOps(lines: string[], depth: number, object: THREE.Object3D): void {
@@ -1113,69 +1207,129 @@ function collectUsdFaceVertexIndices(
   return groupedIndices;
 }
 
-function extractUsdMeshGeometryData(mesh: THREE.Mesh): UsdMeshGeometryData | null {
+async function extractUsdMeshGeometryData(mesh: THREE.Mesh): Promise<UsdMeshGeometryData | null> {
   const geometry = mesh.geometry;
   const position = geometry.getAttribute('position');
   if (!position || position.count === 0) {
     return null;
   }
 
-  const points: string[] = [];
+  let signatureHash = 2166136261;
   for (let index = 0; index < position.count; index += 1) {
-    points.push(
-      formatTuple([
-        position.getX(index),
-        position.getY(index),
-        position.getZ(index),
-      ]),
-    );
+    const x = position.getX(index);
+    const y = position.getY(index);
+    const z = position.getZ(index);
+    signatureHash = hashGeometryNumber(signatureHash, x);
+    signatureHash = hashGeometryNumber(signatureHash, y);
+    signatureHash = hashGeometryNumber(signatureHash, z);
+    await yieldPeriodically(index + 1, USD_EXPORT_VERTEX_YIELD_INTERVAL);
   }
 
   const indexValues = collectUsdFaceVertexIndices(mesh, geometry, position.count);
-
-  const faceVertexCounts: number[] = [];
   const faceVertexIndices: number[] = [];
   for (let index = 0; index < indexValues.length; index += 3) {
     if (index + 2 >= indexValues.length) break;
-    faceVertexCounts.push(3);
     faceVertexIndices.push(indexValues[index], indexValues[index + 1], indexValues[index + 2]);
+    signatureHash = hashGeometryNumber(signatureHash, 3);
+    signatureHash = hashGeometryNumber(signatureHash, indexValues[index]);
+    signatureHash = hashGeometryNumber(signatureHash, indexValues[index + 1]);
+    signatureHash = hashGeometryNumber(signatureHash, indexValues[index + 2]);
   }
+  const triangleCount = faceVertexIndices.length / 3;
 
   const uv = geometry.getAttribute('uv');
-  let stValues: string[] | null = null;
-  if (uv && uv.count > 0) {
-    const nextStValues = faceVertexIndices
-      .filter((index) => index >= 0 && index < uv.count)
-      .map((index) => formatTuple([
-        uv.getX(index),
-        uv.getY(index),
-      ]));
+  let uvAttribute: UsdNumericAttribute | null = null;
+  if (uv && uv.count > 0 && faceVertexIndices.length > 0) {
+    let uvSignatureHash = signatureHash;
+    let hasCompleteUvCoverage = true;
+    for (let index = 0; index < faceVertexIndices.length; index += 1) {
+      const faceVertexIndex = faceVertexIndices[index];
+      if (faceVertexIndex < 0 || faceVertexIndex >= uv.count) {
+        hasCompleteUvCoverage = false;
+        break;
+      }
 
-    if (nextStValues.length === faceVertexIndices.length && nextStValues.length > 0) {
-      stValues = nextStValues;
+      uvSignatureHash = hashGeometryNumber(uvSignatureHash, uv.getX(faceVertexIndex));
+      uvSignatureHash = hashGeometryNumber(uvSignatureHash, uv.getY(faceVertexIndex));
+      await yieldPeriodically(index + 1, USD_EXPORT_VERTEX_YIELD_INTERVAL);
+    }
+
+    if (hasCompleteUvCoverage) {
+      uvAttribute = uv;
+      signatureHash = uvSignatureHash;
     }
   }
 
   return {
-    faceVertexCounts,
+    triangleCount,
     faceVertexIndices,
-    points,
-    stValues,
+    positions: position,
+    uvAttribute,
+    signature: (signatureHash >>> 0).toString(16).padStart(8, '0'),
   };
 }
 
-function serializeMeshGeometryData(
+async function serializeMeshGeometryData(
   data: UsdMeshGeometryData,
   lines: string[],
   depth: number,
-): void {
+): Promise<void> {
   const indent = makeIndent(depth);
-  lines.push(`${indent}int[] faceVertexCounts = [${data.faceVertexCounts.join(', ')}]`);
-  lines.push(`${indent}int[] faceVertexIndices = [${data.faceVertexIndices.join(', ')}]`);
-  lines.push(`${indent}point3f[] points = [${data.points.join(', ')}]`);
+  const serializeChunkedArray = async (
+    prefix: string,
+    length: number,
+    formatter: (index: number) => string,
+    chunkSize = 512,
+  ) => {
+    if (length === 0) {
+      lines.push(`${indent}${prefix} = []`);
+      return;
+    }
 
-  if (data.stValues && data.stValues.length > 0) {
-    lines.push(`${indent}texCoord2f[] primvars:st = [${data.stValues.join(', ')}]`);
+    lines.push(`${indent}${prefix} = [`);
+    for (let start = 0; start < length; start += chunkSize) {
+      const end = Math.min(length, start + chunkSize);
+      const chunk: string[] = [];
+      for (let index = start; index < end; index += 1) {
+        chunk.push(formatter(index));
+      }
+      const suffix = end < length ? ',' : '';
+      lines.push(`${makeIndent(depth + 1)}${chunk.join(', ')}${suffix}`);
+      await yieldPeriodically(end, chunkSize);
+    }
+    lines.push(`${indent}]`);
+  };
+
+  await serializeChunkedArray('int[] faceVertexCounts', data.triangleCount, () => '3');
+  await serializeChunkedArray(
+    'int[] faceVertexIndices',
+    data.faceVertexIndices.length,
+    (index) => String(data.faceVertexIndices[index]),
+  );
+  await serializeChunkedArray(
+    'point3f[] points',
+    data.positions.count,
+    (index) => formatTuple3(
+      data.positions.getX(index),
+      data.positions.getY(index),
+      data.positions.getZ(index),
+    ),
+    128,
+  );
+
+  if (data.uvAttribute && data.faceVertexIndices.length > 0) {
+    await serializeChunkedArray(
+      'texCoord2f[] primvars:st',
+      data.faceVertexIndices.length,
+      (index) => {
+        const faceVertexIndex = data.faceVertexIndices[index];
+        return formatTuple2(
+          data.uvAttribute!.getX(faceVertexIndex),
+          data.uvAttribute!.getY(faceVertexIndex),
+        );
+      },
+      128,
+    );
     lines.push(`${indent}uniform token primvars:st:interpolation = "faceVarying"`);
   }
 
@@ -1226,27 +1380,37 @@ function createUsdMaterialSignature(appearance: UsdRenderableAppearance): string
 }
 
 function createUsdGeometrySignature(data: UsdMeshGeometryData): string {
-  return hashString(JSON.stringify({
-    faceVertexCounts: data.faceVertexCounts,
-    faceVertexIndices: data.faceVertexIndices,
-    points: data.points,
-    stValues: data.stValues,
-  }));
+  return data.signature;
 }
 
-function collectUsdSerializationContext(sceneRoot: THREE.Object3D): UsdSerializationContext {
+async function collectUsdSerializationContext(
+  sceneRoot: THREE.Object3D,
+  onProgress?: (progress: ExportRobotToUsdProgress) => void,
+): Promise<UsdSerializationContext> {
   const rootPrimName = sanitizeUsdIdentifier(sceneRoot.name || 'Robot');
   const materialByObject = new WeakMap<THREE.Object3D, UsdPreviewMaterialRecord>();
   const materialBySignature = new Map<string, UsdPreviewMaterialRecord>();
   const materialRecords: UsdPreviewMaterialRecord[] = [];
   const geometryByObject = new WeakMap<THREE.Object3D, UsdMeshGeometryRecord>();
   const geometryBySignature = new Map<string, UsdMeshGeometryRecord>();
+  const geometryByBuffer = new WeakMap<THREE.BufferGeometry, UsdMeshGeometryRecord>();
   const geometryRecords: UsdMeshGeometryRecord[] = [];
+  const objects: THREE.Object3D[] = [];
 
   sceneRoot.traverse((object) => {
-    if (!(object.userData.usdGeomType || isMeshObject(object))) {
-      return;
+    if (object.userData.usdGeomType || isMeshObject(object)) {
+      objects.push(object);
     }
+  });
+
+  const progressTracker = createUsdProgressTracker('geometry', objects.length, onProgress);
+
+  for (let objectIndex = 0; objectIndex < objects.length; objectIndex += 1) {
+    const object = objects[objectIndex];
+    const label = normalizeUsdProgressLabel(
+      object.name || object.userData.usdGeomType,
+      'object',
+    );
 
     const appearance = getRenderableAppearance(object);
     if (appearance) {
@@ -1275,30 +1439,35 @@ function collectUsdSerializationContext(sceneRoot: THREE.Object3D): UsdSerializa
       materialByObject.set(object, record);
     }
 
-    if (!isMeshObject(object)) {
-      return;
+    if (isMeshObject(object)) {
+      const cachedGeometryRecord = geometryByBuffer.get(object.geometry);
+      if (cachedGeometryRecord) {
+        geometryByObject.set(object, cachedGeometryRecord);
+      } else {
+        const geometryData = await extractUsdMeshGeometryData(object);
+        if (geometryData) {
+          const geometrySignature = createUsdGeometrySignature(geometryData);
+          let geometryRecord = geometryBySignature.get(geometrySignature);
+          if (!geometryRecord) {
+            const name = `Geometry_${geometryRecords.length}`;
+            geometryRecord = {
+              name,
+              path: `/${rootPrimName}/__MeshLibrary/${name}`,
+              data: geometryData,
+            };
+            geometryBySignature.set(geometrySignature, geometryRecord);
+            geometryRecords.push(geometryRecord);
+          }
+
+          geometryByBuffer.set(object.geometry, geometryRecord);
+          geometryByObject.set(object, geometryRecord);
+        }
+      }
     }
 
-    const geometryData = extractUsdMeshGeometryData(object);
-    if (!geometryData) {
-      return;
-    }
-
-    const geometrySignature = createUsdGeometrySignature(geometryData);
-    let geometryRecord = geometryBySignature.get(geometrySignature);
-    if (!geometryRecord) {
-      const name = `Geometry_${geometryRecords.length}`;
-      geometryRecord = {
-        name,
-        path: `/${rootPrimName}/__MeshLibrary/${name}`,
-        data: geometryData,
-      };
-      geometryBySignature.set(geometrySignature, geometryRecord);
-      geometryRecords.push(geometryRecord);
-    }
-
-    geometryByObject.set(object, geometryRecord);
-  });
+    advanceUsdProgress(progressTracker, label);
+    await yieldPeriodically(objectIndex + 1, USD_EXPORT_OBJECT_YIELD_INTERVAL);
+  }
 
   return {
     materialByObject,
@@ -1308,11 +1477,12 @@ function collectUsdSerializationContext(sceneRoot: THREE.Object3D): UsdSerializa
   };
 }
 
-function serializeUsdPreviewMaterials(
+async function serializeUsdPreviewMaterials(
   lines: string[],
   depth: number,
   context: UsdSerializationContext,
-): void {
+  progressTracker?: UsdExportProgressTracker,
+): Promise<void> {
   if (context.materialRecords.length === 0) {
     return;
   }
@@ -1324,7 +1494,8 @@ function serializeUsdPreviewMaterials(
   lines.push(`${indent}def Scope "Looks"`);
   lines.push(`${indent}{`);
 
-  context.materialRecords.forEach((record) => {
+  for (let index = 0; index < context.materialRecords.length; index += 1) {
+    const record = context.materialRecords[index];
     lines.push(`${childIndent}def Material "${record.name}"`);
     lines.push(`${childIndent}{`);
     lines.push(`${grandchildIndent}token outputs:surface.connect = <${record.path}/PreviewSurface.outputs:surface>`);
@@ -1379,16 +1550,19 @@ function serializeUsdPreviewMaterials(
     }
 
     lines.push(`${childIndent}}`);
-  });
+    advanceUsdProgress(progressTracker, record.name);
+    await yieldPeriodically(index + 1, USD_EXPORT_RECORD_YIELD_INTERVAL);
+  }
 
   lines.push(`${indent}}`);
 }
 
-function serializeUsdMeshGeometryLibrary(
+async function serializeUsdMeshGeometryLibrary(
   lines: string[],
   depth: number,
   context: UsdSerializationContext,
-): void {
+  progressTracker?: UsdExportProgressTracker,
+): Promise<void> {
   if (context.geometryRecords.length === 0) {
     return;
   }
@@ -1399,12 +1573,15 @@ function serializeUsdMeshGeometryLibrary(
   lines.push(`${indent}def Scope "__MeshLibrary"`);
   lines.push(`${indent}{`);
 
-  context.geometryRecords.forEach((record) => {
+  for (let index = 0; index < context.geometryRecords.length; index += 1) {
+    const record = context.geometryRecords[index];
     lines.push(`${childIndent}def Mesh "${record.name}"`);
     lines.push(`${childIndent}{`);
-    serializeMeshGeometryData(record.data, lines, depth + 2);
+    await serializeMeshGeometryData(record.data, lines, depth + 2);
     lines.push(`${childIndent}}`);
-  });
+    advanceUsdProgress(progressTracker, record.name);
+    await yieldPeriodically(index + 1, USD_EXPORT_RECORD_YIELD_INTERVAL);
+  }
 
   lines.push(`${indent}}`);
 }
@@ -1423,13 +1600,14 @@ function serializeMaterialBinding(
   lines.push(`${makeIndent(depth)}rel material:binding = <${materialRecord.path}>`);
 }
 
-function serializeSceneNode(
+async function serializeSceneNode(
   object: THREE.Object3D,
   depth: number,
   lines: string[],
   context: UsdSerializationContext,
   forcedName?: string,
-): void {
+  progressTracker?: UsdExportProgressTracker,
+): Promise<void> {
   const indent = makeIndent(depth);
   const childIndent = makeIndent(depth + 1);
   const primitiveType = object.userData.usdGeomType as SerializedPrimitiveType | undefined;
@@ -1468,9 +1646,9 @@ function serializeSceneNode(
     serializeMaterialBinding(lines, childDepth, object, context);
   } else if (isMeshObject(object)) {
     if (!geometryRecord) {
-      const inlineGeometry = extractUsdMeshGeometryData(object);
+      const inlineGeometry = await extractUsdMeshGeometryData(object);
       if (inlineGeometry) {
-        serializeMeshGeometryData(inlineGeometry, lines, childDepth);
+        await serializeMeshGeometryData(inlineGeometry, lines, childDepth);
       }
     }
     serializeDisplayColor(lines, childDepth, object);
@@ -1478,9 +1656,11 @@ function serializeSceneNode(
   }
 
   if (depth === 0) {
-    serializeUsdMeshGeometryLibrary(lines, childDepth, context);
-    serializeUsdPreviewMaterials(lines, childDepth, context);
+    await serializeUsdMeshGeometryLibrary(lines, childDepth, context, progressTracker);
+    await serializeUsdPreviewMaterials(lines, childDepth, context, progressTracker);
   }
+
+  advanceUsdProgress(progressTracker, name);
 
   const usedNames = new Set<string>();
   if (depth === 0 && context.geometryRecords.length > 0) {
@@ -1489,7 +1669,8 @@ function serializeSceneNode(
   if (depth === 0 && context.materialRecords.length > 0) {
     usedNames.add('Looks');
   }
-  object.children.forEach((child, index) => {
+  for (let index = 0; index < object.children.length; index += 1) {
+    const child = object.children[index];
     const baseChildName = sanitizeUsdIdentifier(child.name || `child_${index}`);
     let childName = baseChildName;
     let duplicateCount = 1;
@@ -1498,8 +1679,9 @@ function serializeSceneNode(
       duplicateCount += 1;
     }
     usedNames.add(childName);
-    serializeSceneNode(child, childDepth, lines, context, childName);
-  });
+    await serializeSceneNode(child, childDepth, lines, context, childName, progressTracker);
+    await yieldPeriodically(index + 1, USD_EXPORT_RECORD_YIELD_INTERVAL);
+  }
 
   lines.push(`${indent}}`);
 }
@@ -1590,6 +1772,9 @@ function serializeJointDefinition(
   if (typeName !== 'PhysicsFixedJoint') {
     lines.push(`${childIndent}uniform token physics:axis = "${getAxisToken(joint.axis)}"`);
   }
+  lines.push(
+    `${childIndent}custom string urdf:jointType = "${escapeUsdString(String(joint.type || 'fixed').toLowerCase())}"`,
+  );
   lines.push(`${childIndent}custom float3 urdf:axisLocal = ${formatTuple([
     joint.axis?.x ?? 1,
     joint.axis?.y ?? 0,
@@ -1808,7 +1993,7 @@ async function buildLinkSceneNode(
   registry: AssetRegistry,
   meshCompression?: UsdMeshCompressionOptions,
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null,
-  onLinkVisit?: (link: UrdfLink) => void,
+  onLinkVisit?: (link: UrdfLink) => void | Promise<void>,
 ): Promise<THREE.Group> {
   const link = robot.links[linkId];
   const group = new THREE.Group();
@@ -1822,7 +2007,7 @@ async function buildLinkSceneNode(
     id: link.id,
     name: link.name,
   };
-  onLinkVisit?.(link);
+  await onLinkVisit?.(link);
 
   const visuals = getPrimaryVisuals(link);
   if (visuals.length > 0) {
@@ -1905,9 +2090,12 @@ async function buildLinkSceneNode(
   return group;
 }
 
-function buildBaseLayerContent(sceneRoot: THREE.Object3D): string {
+async function buildBaseLayerContent(
+  sceneRoot: THREE.Object3D,
+  serializationContext: UsdSerializationContext,
+  onProgress?: (progress: ExportRobotToUsdProgress) => void,
+): Promise<string> {
   const rootPrimName = sanitizeUsdIdentifier(sceneRoot.name || 'Robot');
-  const serializationContext = collectUsdSerializationContext(sceneRoot);
   const lines = [
     '#usda 1.0',
     '(',
@@ -1918,7 +2106,18 @@ function buildBaseLayerContent(sceneRoot: THREE.Object3D): string {
     '',
   ];
 
-  serializeSceneNode(sceneRoot, 0, lines, serializationContext);
+  let sceneNodeCount = 0;
+  sceneRoot.traverse(() => {
+    sceneNodeCount += 1;
+  });
+
+  const progressTracker = createUsdProgressTracker(
+    'scene',
+    sceneNodeCount + serializationContext.geometryRecords.length + serializationContext.materialRecords.length,
+    onProgress,
+  );
+
+  await serializeSceneNode(sceneRoot, 0, lines, serializationContext, undefined, progressTracker);
   return `${lines.join('\n')}\n`;
 }
 
@@ -2076,6 +2275,7 @@ async function collectUsdAssetFiles(
   sceneRoot: THREE.Object3D,
   context: UsdSerializationContext,
   registry: AssetRegistry,
+  onProgress?: (progress: ExportRobotToUsdProgress) => void,
 ): Promise<Map<string, Blob>> {
   const textureFiles = new Map<string, string>();
 
@@ -2100,12 +2300,18 @@ async function collectUsdAssetFiles(
   });
 
   const archiveFiles = new Map<string, Blob>();
+  const textureEntries = Array.from(textureFiles.entries());
+  const progressTracker = createUsdProgressTracker('assets', textureEntries.length, onProgress);
 
-  await Promise.all(Array.from(textureFiles.entries()).map(async ([exportPath, sourcePath]) => {
+  for (let index = 0; index < textureEntries.length; index += 1) {
+    const [exportPath, sourcePath] = textureEntries[index];
+    const label = normalizeUsdProgressLabel(exportPath, 'asset');
     const resolvedUrl = resolveAssetUrl(sourcePath, registry);
     if (!resolvedUrl) {
       console.warn(`[USD export] Texture asset not found for: ${sourcePath}`);
-      return;
+      advanceUsdProgress(progressTracker, label);
+      await yieldPeriodically(index + 1, USD_EXPORT_RECORD_YIELD_INTERVAL);
+      continue;
     }
 
     try {
@@ -2118,7 +2324,10 @@ async function collectUsdAssetFiles(
     } catch (error) {
       console.error(`[USD export] Failed to load texture ${sourcePath}`, error);
     }
-  }));
+
+    advanceUsdProgress(progressTracker, label);
+    await yieldPeriodically(index + 1, USD_EXPORT_RECORD_YIELD_INTERVAL);
+  }
 
   return archiveFiles;
 }
@@ -2146,8 +2355,11 @@ export async function exportRobotToUsd({
 
   const sceneRoot = new THREE.Group();
   sceneRoot.name = rootPrimName;
-  const totalLinks = Math.max(1, Object.keys(robot.links).length);
-  let processedLinks = 0;
+  const linkProgressTracker = createUsdProgressTracker(
+    'links',
+    Math.max(1, Object.keys(robot.links).length),
+    onProgress,
+  );
 
   try {
     const linkRoot = await buildLinkSceneNode(
@@ -2158,24 +2370,34 @@ export async function exportRobotToUsd({
       registry,
       meshCompression,
       colladaRootNormalizationHints,
-      (link) => {
-        processedLinks += 1;
-        onProgress?.({
-          processedLinks,
-          totalLinks,
-          currentLinkName: String(link.name || link.id || '').trim() || 'link',
-        });
+      async (link) => {
+        advanceUsdProgress(
+          linkProgressTracker,
+          normalizeUsdProgressLabel(link.name || link.id, 'link'),
+        );
+
+        if (
+          linkProgressTracker.completed < linkProgressTracker.total
+          && linkProgressTracker.completed % 4 === 0
+        ) {
+          await yieldToMainThread();
+        }
       },
     );
     sceneRoot.add(linkRoot);
     sceneRoot.updateMatrixWorld(true);
 
     const rootLayerContent = buildRootLayerContent(rootPrimName, configStem);
-    const baseLayerContent = buildBaseLayerContent(sceneRoot);
+    await yieldToMainThread();
+    const usdContext = await collectUsdSerializationContext(sceneRoot, onProgress);
+    await yieldToMainThread();
+    const baseLayerContent = await buildBaseLayerContent(sceneRoot, usdContext, onProgress);
+    await yieldToMainThread();
     const physicsLayerContent = buildPhysicsLayerContent(robot, pathMaps, rootPrimName, configStem);
+    await yieldToMainThread();
     const sensorLayerContent = buildSensorLayerContent(rootPrimName);
-    const usdContext = collectUsdSerializationContext(sceneRoot);
-    const usdAssetFiles = await collectUsdAssetFiles(sceneRoot, usdContext, registry);
+    await yieldToMainThread();
+    const usdAssetFiles = await collectUsdAssetFiles(sceneRoot, usdContext, registry, onProgress);
 
     const archive = createArchiveFiles(
       normalizedExportName,

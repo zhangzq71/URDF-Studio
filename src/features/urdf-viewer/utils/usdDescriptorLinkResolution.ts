@@ -8,7 +8,17 @@ const GENERIC_SEMANTIC_CHILD_PRIM_NAMES = new Set([
   'sphere',
   'cylinder',
   'capsule',
+  'scene',
+  'root',
 ]);
+
+const GENERIC_SEMANTIC_CHILD_PRIM_PATTERNS = [
+  /^mesh_\d+$/i,
+  /^visual_\d+$/i,
+  /^collision_\d+$/i,
+  /^group(?:_\d+)?$/i,
+  /^xform(?:_\d+)?$/i,
+];
 
 function normalizeUsdPath(path: string | null | undefined): string {
   const normalized = String(path || '').trim().replace(/[<>]/g, '').replace(/\\/g, '/');
@@ -72,6 +82,21 @@ export function inferUsdDescriptorOwningLinkPath(
 export function getUsdDescriptorSemanticChildLinkName(
   descriptor: Pick<UsdSceneMeshDescriptor, 'resolvedPrimPath' | 'sectionName'>,
 ): string {
+  const candidateLinkName = getUsdDescriptorSectionChildToken(descriptor);
+  if (
+    !candidateLinkName
+    || GENERIC_SEMANTIC_CHILD_PRIM_NAMES.has(candidateLinkName.toLowerCase())
+    || GENERIC_SEMANTIC_CHILD_PRIM_PATTERNS.some((pattern) => pattern.test(candidateLinkName))
+  ) {
+    return '';
+  }
+
+  return candidateLinkName;
+}
+
+export function getUsdDescriptorSectionChildToken(
+  descriptor: Pick<UsdSceneMeshDescriptor, 'resolvedPrimPath' | 'sectionName'>,
+): string {
   const normalizedResolvedPrimPath = normalizeUsdPath(descriptor.resolvedPrimPath || '');
   const normalizedSectionName = normalizeSectionName(descriptor.sectionName);
   if (
@@ -94,14 +119,6 @@ export function getUsdDescriptorSemanticChildLinkName(
   }
 
   const candidateLinkName = String(resolvedSegments[sectionIndex + 1] || '').trim();
-  if (
-    !candidateLinkName
-    || GENERIC_SEMANTIC_CHILD_PRIM_NAMES.has(candidateLinkName.toLowerCase())
-    || /^mesh_\d+$/i.test(candidateLinkName)
-  ) {
-    return '';
-  }
-
   return candidateLinkName;
 }
 
