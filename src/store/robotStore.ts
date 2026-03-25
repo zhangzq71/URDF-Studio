@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { RobotClosedLoopConstraint, UrdfLink, UrdfJoint } from '@/types';
+import type { RobotClosedLoopConstraint, RobotMaterialState, UrdfLink, UrdfJoint } from '@/types';
 import { DEFAULT_LINK, DEFAULT_JOINT } from '@/types';
 import { resolveClosedLoopJointMotionCompensation } from '@/core/robot';
 import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
@@ -17,7 +17,7 @@ export interface RobotData {
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  materials?: Record<string, { color?: string; texture?: string }>;
+  materials?: Record<string, RobotMaterialState>;
   closedLoopConstraints?: RobotClosedLoopConstraint[];
 }
 

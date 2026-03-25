@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, Eye, EyeOff, FileCode, Plus, Shapes, Shield } from 'lucide-react';
 import { translations } from '@/shared/i18n';
-import type { AppMode, AssemblyState, RobotState } from '@/types';
+import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
 import { AssemblyTreeView } from '../AssemblyTreeView';
 import { TreeNode } from '../TreeNode';
 
@@ -15,10 +15,10 @@ interface TreeEditorStructureSectionProps {
   currentFileName?: string;
   mode: AppMode;
   assemblyState?: AssemblyState | null;
-  robot: RobotState;
+  robot: RobotData;
   treeRootLinkIds: string[];
   childJointsByParent: Record<string, RobotState['joints'][string][]>;
-  selectionBranchLinkIds: Set<string>;
+  parentLinkByChild: Record<string, string>;
   t: TreeEditorTranslations;
   onToggleOpen: () => void;
   onToggleGeometryDetails: () => void;
@@ -51,7 +51,7 @@ export function TreeEditorStructureSection({
   robot,
   treeRootLinkIds,
   childJointsByParent,
-  selectionBranchLinkIds,
+  parentLinkByChild,
   t,
   onToggleOpen,
   onToggleGeometryDetails,
@@ -95,11 +95,24 @@ export function TreeEditorStructureSection({
             <div
               className="flex min-w-0 items-center gap-1 rounded-md border border-border-black bg-white px-1.5 py-0.5 dark:bg-panel-bg"
               title={currentFileName}
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
             >
               <FileCode className="h-3 w-3 shrink-0 text-system-blue" />
-              <span className="truncate text-[9px] leading-none font-medium text-text-secondary dark:text-text-tertiary">
-                {currentFileName}
-              </span>
+              <input
+                type="text"
+                readOnly
+                value={currentFileName ?? ''}
+                aria-label={currentFileName ?? ''}
+                spellCheck={false}
+                className="min-w-0 flex-1 bg-transparent text-[9px] leading-none font-medium text-text-secondary outline-none dark:text-text-tertiary cursor-text"
+                onFocus={(event) => event.currentTarget.select()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  event.currentTarget.select();
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+              />
             </div>
           )}
         </div>
@@ -158,7 +171,6 @@ export function TreeEditorStructureSection({
               {isAssemblyView && assemblyState ? (
                 <AssemblyTreeView
                   assemblyState={assemblyState}
-                  robot={robot}
                   showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
                   onSelect={onSelect}
                   onSelectGeometry={onSelectGeometry}
@@ -177,24 +189,28 @@ export function TreeEditorStructureSection({
                 />
               ) : (
                 treeRootLinkIds.map((treeRootLinkId) => (
-                  <TreeNode
+                  <div
                     key={treeRootLinkId}
-                    linkId={treeRootLinkId}
-                    robot={robot}
-                    showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
-                    childJointsByParent={childJointsByParent}
-                    selectionBranchLinkIds={selectionBranchLinkIds}
-                    onSelect={onSelect}
-                    onSelectGeometry={onSelectGeometry}
-                    onFocus={onFocus}
-                    onAddChild={onAddChild}
-                    onAddCollisionBody={onAddCollisionBody}
-                    onDelete={onDelete}
-                    onUpdate={onUpdate}
-                    mode={mode}
-                    t={t}
-                    readOnly={isReadOnly}
-                  />
+                    style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}
+                  >
+                    <TreeNode
+                      linkId={treeRootLinkId}
+                      robot={robot}
+                      showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
+                      childJointsByParent={childJointsByParent}
+                      parentLinkByChild={parentLinkByChild}
+                      onSelect={onSelect}
+                      onSelectGeometry={onSelectGeometry}
+                      onFocus={onFocus}
+                      onAddChild={onAddChild}
+                      onAddCollisionBody={onAddCollisionBody}
+                      onDelete={onDelete}
+                      onUpdate={onUpdate}
+                      mode={mode}
+                      t={t}
+                      readOnly={isReadOnly}
+                    />
+                  </div>
                 ))
               )}
             </div>

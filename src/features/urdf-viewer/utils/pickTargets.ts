@@ -1,20 +1,17 @@
 import * as THREE from 'three';
 import { isGizmoObject } from './raycast';
+import {
+  hasPickableMaterial,
+  isInternalHelperObject,
+  isPickableMeshObject,
+  isVisibleInHierarchy,
+} from './pickFilter';
 
 export type PickTargetMode = 'all' | 'visual' | 'collision';
 
 function matchesMode(key: string, mode: PickTargetMode): boolean {
   if (mode === 'all') return true;
   return key.endsWith(`:${mode}`);
-}
-
-function isVisibleInHierarchy(object: THREE.Object3D): boolean {
-  let current: THREE.Object3D | null = object;
-  while (current) {
-    if (!current.visible) return false;
-    current = current.parent;
-  }
-  return true;
 }
 
 export function isCollisionPickObject(object: THREE.Object3D | null): boolean {
@@ -29,7 +26,11 @@ export function isCollisionPickObject(object: THREE.Object3D | null): boolean {
 }
 
 function matchesIntersectionMode(hit: THREE.Intersection, mode: PickTargetMode): boolean {
-  if (isGizmoObject(hit.object)) return false;
+  if (isGizmoObject(hit.object) || isInternalHelperObject(hit.object)) return false;
+  if (!isVisibleInHierarchy(hit.object)) return false;
+  if ((hit.object as THREE.Mesh).isMesh && !hasPickableMaterial((hit.object as THREE.Mesh).material)) {
+    return false;
+  }
   if (mode === 'all') return true;
 
   const isCollision = isCollisionPickObject(hit.object);
@@ -49,8 +50,7 @@ export function collectPickTargets(
     meshes.forEach((mesh) => {
       if (seen.has(mesh.id)) return;
       if (!mesh.geometry) return;
-      if (mesh.userData?.isGizmo) return;
-      if (!isVisibleInHierarchy(mesh)) return;
+      if (!isPickableMeshObject(mesh)) return;
 
       seen.add(mesh.id);
       targets.push(mesh);
@@ -65,16 +65,21 @@ export function findPickIntersections(
   raycaster: THREE.Raycaster,
   pickTargets: THREE.Object3D[],
   mode: PickTargetMode,
+  fallbackOnMiss = true,
 ): THREE.Intersection[] {
   const directHits = pickTargets.length > 0
-    ? raycaster.intersectObjects(pickTargets, false).filter((hit) => matchesIntersectionMode(hit, mode))
+    ? raycaster
+        .intersectObjects(pickTargets, false)
+        .filter((hit) => matchesIntersectionMode(hit, mode))
+        .sort((left, right) => left.distance - right.distance)
     : [];
 
-  if (directHits.length > 0 || !robot) {
+  if (directHits.length > 0 || !fallbackOnMiss || !robot) {
     return directHits;
   }
 
   return raycaster
     .intersectObject(robot, true)
-    .filter((hit) => matchesIntersectionMode(hit, mode));
+    .filter((hit) => matchesIntersectionMode(hit, mode))
+    .sort((left, right) => left.distance - right.distance);
 }

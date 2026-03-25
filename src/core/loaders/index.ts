@@ -13,9 +13,13 @@ export {
     createMeshLoader
 } from './meshLoader';
 export {
+    markMaterialAsCoplanarOffset,
     mitigateCoplanarMaterialZFighting,
     isCoplanarOffsetMaterial,
 } from './coplanarMaterialOffset';
+export {
+    applyColladaCoplanarMaterialFixups,
+} from './colladaCoplanarMaterialFixups';
 
 export type { AssetIndex } from './meshLoader';
 export { bakeColladaRootTransformInPlace } from './colladaRootTransform';

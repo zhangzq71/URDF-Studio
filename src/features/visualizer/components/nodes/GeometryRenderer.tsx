@@ -11,6 +11,7 @@ import {
 } from '@/core/loaders/colladaRootNormalization';
 import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 import { resolveGeometryVisibilityState } from './geometryVisibility';
+import { buildVisualizerMeshLoadKey } from '../../utils/visualizerMeshLoading';
 
 interface GeometryRendererProps {
   isCollision: boolean;
@@ -28,7 +29,7 @@ interface GeometryRendererProps {
   geometryId?: string;
   objectIndex?: number;
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
-  onMeshResolved?: () => void;
+  onMeshResolved?: (meshLoadKey: string) => void;
 }
 
 /**
@@ -89,6 +90,21 @@ export const GeometryRenderer = memo(function GeometryRenderer({
 
   const isSkeleton = mode === 'skeleton';
   const geometrySubType = isCollision ? 'collision' : 'visual';
+  const meshLoadKey = type === GeometryType.MESH && meshPath
+    ? buildVisualizerMeshLoadKey({
+        linkId: link.id,
+        geometryRole: geometrySubType,
+        geometryId: geometryId || 'primary',
+        objectIndex: objectIndex ?? 0,
+        meshPath,
+      })
+    : null;
+  const handleMeshResolved = useCallback(() => {
+    if (!meshLoadKey) {
+      return;
+    }
+    onMeshResolved?.(meshLoadKey);
+  }, [meshLoadKey, onMeshResolved]);
   const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
   const isHovered = useSelectionStore((state) => {
     const hovered = state.hoveredSelection;
@@ -260,7 +276,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       const assetBaseDir = getSourceFileDirectory(meshPath);
 
       if (ext === 'stl') {
-        geometryNode = <STLRenderer url={url} material={material} scale={dimensions} onResolved={onMeshResolved} />;
+        geometryNode = <STLRenderer url={url} material={material} scale={dimensions} onResolved={handleMeshResolved} />;
       } else if (ext === 'obj') {
         geometryNode = (
           <OBJRenderer
@@ -270,7 +286,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
             assets={assets}
             assetBaseDir={assetBaseDir}
             scale={dimensions}
-            onResolved={onMeshResolved}
+            onResolved={handleMeshResolved}
           />
         );
       } else if (ext === 'dae') {
@@ -282,7 +298,7 @@ export const GeometryRenderer = memo(function GeometryRenderer({
             assetBaseDir={assetBaseDir}
             normalizeRoot={shouldNormalizeColladaGeometry(meshPath, origin, colladaRootNormalizationHints)}
             scale={dimensions}
-            onResolved={onMeshResolved}
+            onResolved={handleMeshResolved}
           />
         );
       } else {

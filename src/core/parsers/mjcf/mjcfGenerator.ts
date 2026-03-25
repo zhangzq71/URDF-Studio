@@ -209,6 +209,9 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     linkId: string;
     color: string;
     texture?: string;
+    shininess?: number;
+    reflectance?: number;
+    emission?: number;
   }
 
   interface VisualVariantMaterialAssetEntry {
@@ -224,6 +227,50 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   const resolveLinkMaterialTexture = (link: UrdfLink): string | undefined => {
     const material = robot.materials?.[link.id] || robot.materials?.[link.name];
     return material?.texture;
+  };
+
+  const clampUnitScalar = (value: number | null | undefined): number | undefined => {
+    if (!Number.isFinite(value)) {
+      return undefined;
+    }
+
+    return Math.max(0, Math.min(1, Number(value)));
+  };
+
+  const resolveLinkMaterialPbr = (
+    link: UrdfLink,
+  ): Pick<LinkMaterialAssetEntry, 'shininess' | 'reflectance' | 'emission'> => {
+    const material = robot.materials?.[link.id] || robot.materials?.[link.name];
+    const usdMaterial = material?.usdMaterial;
+    if (!usdMaterial || typeof usdMaterial !== 'object') {
+      return {};
+    }
+
+    const roughness = clampUnitScalar(usdMaterial.roughness);
+    const reflectance = clampUnitScalar(usdMaterial.metalness);
+    const emissive = usdMaterial.emissive && typeof usdMaterial.emissive.length === 'number'
+      ? Array.from(usdMaterial.emissive)
+        .slice(0, 3)
+        .map((channel) => Number(channel))
+        .filter((channel) => Number.isFinite(channel))
+      : [];
+    const emissivePeak = emissive.length >= 3
+      ? Math.max(emissive[0] || 0, emissive[1] || 0, emissive[2] || 0)
+      : null;
+    const emissiveIntensity = Number.isFinite(usdMaterial.emissiveIntensity)
+      ? Math.max(0, Number(usdMaterial.emissiveIntensity))
+      : null;
+    const emission = clampUnitScalar(
+      emissivePeak !== null
+        ? emissivePeak * (emissiveIntensity ?? 1)
+        : emissiveIntensity,
+    );
+
+    return {
+      ...(roughness !== undefined ? { shininess: clampUnitScalar(1 - roughness) } : {}),
+      ...(reflectance !== undefined ? { reflectance } : {}),
+      ...(emission !== undefined ? { emission } : {}),
+    };
   };
 
   const sanitizeMaterialAssetName = (value: string): string => (
@@ -284,8 +331,9 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
     const color = resolveLinkMaterialColor(link);
     const texture = resolveLinkMaterialTexture(link);
+    const pbr = resolveLinkMaterialPbr(link);
     const materialName = buildVisualMaterialAssetName(link);
-    visualMaterialAssets.set(linkId, { linkId, color, texture });
+    visualMaterialAssets.set(linkId, { linkId, color, texture, ...pbr });
     visualMaterialNameMap.set(linkId, materialName);
   });
 
@@ -387,15 +435,20 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     }
     xml += `    <texture name="${textureName}" type="2d" file="${path}" />\n`;
   });
-  visualMaterialAssets.forEach(({ linkId, color, texture }) => {
+  visualMaterialAssets.forEach(({ linkId, color, texture, shininess, reflectance, emission }) => {
     const materialName = visualMaterialNameMap.get(linkId);
     if (!materialName) {
       return;
     }
     const textureAssetName = resolveTextureAssetName(texture);
+    const pbrAttrs = [
+      Number.isFinite(shininess) ? ` shininess="${formatNumberWithMaxDecimals(shininess!, 4)}"` : '',
+      Number.isFinite(reflectance) ? ` reflectance="${formatNumberWithMaxDecimals(reflectance!, 4)}"` : '',
+      Number.isFinite(emission) ? ` emission="${formatNumberWithMaxDecimals(emission!, 4)}"` : '',
+    ].join('');
     xml += textureAssetName
-      ? `    <material name="${materialName}" rgba="${hexToRgba(color)}" texture="${textureAssetName}" />\n`
-      : `    <material name="${materialName}" rgba="${hexToRgba(color)}" />\n`;
+      ? `    <material name="${materialName}" rgba="${hexToRgba(color)}" texture="${textureAssetName}"${pbrAttrs} />\n`
+      : `    <material name="${materialName}" rgba="${hexToRgba(color)}"${pbrAttrs} />\n`;
   });
   visualVariantMaterialAssets.forEach(({ key, color }) => {
     const materialName = visualVariantMaterialNameMap.get(key);

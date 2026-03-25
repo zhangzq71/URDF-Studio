@@ -13,6 +13,7 @@ interface ResolveUrdfSourceExportContentOptions {
   selectedFileContent?: string | null;
   originalUrdfContent?: string | null;
   useRelativePaths?: boolean;
+  preferSourceVisualMeshes?: boolean;
 }
 
 function normalizeRobotForSnapshot(robot: RobotState): RobotState {
@@ -46,7 +47,12 @@ export function resolveUrdfSourceExportContent({
   selectedFileContent,
   originalUrdfContent,
   useRelativePaths = false,
+  preferSourceVisualMeshes = true,
 }: ResolveUrdfSourceExportContentOptions): string | null {
+  if (!preferSourceVisualMeshes) {
+    return null;
+  }
+
   const currentSnapshot = createRobotSourceSnapshot(
     rewriteRobotMeshPathsForSource(
       normalizeRobotForSnapshot(currentRobot),

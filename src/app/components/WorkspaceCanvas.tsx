@@ -22,6 +22,74 @@ import type { WorkspaceOrbitControlsProps } from '@/shared/components/3d/scene/W
 import { useEffectiveTheme } from '@/shared/hooks';
 import { attachContextMenuBlocker } from '@/shared/utils';
 
+const INTERACTION_RECOVERY_DELAY_MS = 180;
+const RESTING_DPR_CAP = 1.75;
+// Keep the same DPR while orbiting; dropping to 1.0 makes the whole scene,
+// especially the reference grid, look blurry on HiDPI displays.
+const INTERACTION_DPR_CAP = RESTING_DPR_CAP;
+
+function useAdaptiveInteractionQuality() {
+  const [isInteracting, setIsInteracting] = useState(false);
+  const interactionTimeoutRef = useRef<number | null>(null);
+
+  const clearInteractionTimeout = useCallback(() => {
+    if (typeof window === 'undefined' || interactionTimeoutRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(interactionTimeoutRef.current);
+    interactionTimeoutRef.current = null;
+  }, []);
+
+  const beginInteraction = useCallback(() => {
+    clearInteractionTimeout();
+    setIsInteracting(true);
+  }, [clearInteractionTimeout]);
+
+  const endInteraction = useCallback(
+    (delay = INTERACTION_RECOVERY_DELAY_MS) => {
+      if (typeof window === 'undefined') {
+        setIsInteracting(false);
+        return;
+      }
+
+      clearInteractionTimeout();
+      interactionTimeoutRef.current = window.setTimeout(() => {
+        interactionTimeoutRef.current = null;
+        setIsInteracting(false);
+      }, delay);
+    },
+    [clearInteractionTimeout]
+  );
+
+  const pulseInteraction = useCallback(
+    (delay = INTERACTION_RECOVERY_DELAY_MS) => {
+      beginInteraction();
+      endInteraction(delay);
+    },
+    [beginInteraction, endInteraction]
+  );
+
+  useEffect(() => () => clearInteractionTimeout(), [clearInteractionTimeout]);
+
+  const dpr = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return isInteracting ? INTERACTION_DPR_CAP : RESTING_DPR_CAP;
+    }
+
+    const devicePixelRatio = window.devicePixelRatio || 1;
+    return Math.min(devicePixelRatio, isInteracting ? INTERACTION_DPR_CAP : RESTING_DPR_CAP);
+  }, [isInteracting]);
+
+  return {
+    dpr,
+    isInteracting,
+    beginInteraction,
+    endInteraction,
+    pulseInteraction,
+  };
+}
+
 interface WorkspaceCanvasProps {
   theme: Theme;
   lang?: Language;
@@ -78,13 +146,28 @@ export const WorkspaceCanvas = ({
   const effectiveTheme = useEffectiveTheme();
   const [contextLost, setContextLost] = useState(false);
   const contextMenuCleanupRef = useRef<(() => void) | null>(null);
+  const {
+    dpr,
+    isInteracting,
+    beginInteraction,
+    endInteraction,
+    pulseInteraction,
+  } = useAdaptiveInteractionQuality();
 
   const finalOrbitControlsProps = useMemo<Partial<WorkspaceOrbitControlsProps>>(
     () => ({
       enableDamping: false,
       ...orbitControlsProps,
+      onStart: () => {
+        beginInteraction();
+        orbitControlsProps?.onStart?.();
+      },
+      onEnd: () => {
+        endInteraction();
+        orbitControlsProps?.onEnd?.();
+      },
     }),
-    [orbitControlsProps]
+    [beginInteraction, endInteraction, orbitControlsProps]
   );
 
   const handleCreated = useCallback(
@@ -147,19 +230,57 @@ export const WorkspaceCanvas = ({
     };
   }, [containerRef]);
 
+  const handlePointerDownCapture = useCallback<React.PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      beginInteraction();
+      onPointerDownCapture?.(event);
+    },
+    [beginInteraction, onPointerDownCapture]
+  );
+
+  const handleMouseMove = useCallback<React.MouseEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (event.buttons !== 0) {
+        beginInteraction();
+      }
+      onMouseMove?.(event);
+    },
+    [beginInteraction, onMouseMove]
+  );
+
+  const handleMouseUp = useCallback<React.MouseEventHandler<HTMLDivElement>>(
+    (event) => {
+      endInteraction();
+      onMouseUp?.(event);
+    },
+    [endInteraction, onMouseUp]
+  );
+
+  const handleMouseLeave = useCallback<React.MouseEventHandler<HTMLDivElement>>(
+    (event) => {
+      endInteraction(0);
+      onMouseLeave?.(event);
+    },
+    [endInteraction, onMouseLeave]
+  );
+
   return (
     <div
       ref={containerRef}
       className={className}
       style={{ touchAction: 'none', userSelect: 'none' }}
-      onPointerDownCapture={onPointerDownCapture}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseLeave}
+      onPointerDownCapture={handlePointerDownCapture}
+      onPointerUpCapture={() => endInteraction()}
+      onPointerLeave={() => endInteraction(0)}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
+      onWheelCapture={() => pulseInteraction()}
       onContextMenuCapture={(event) => event.preventDefault()}
     >
       {overlays}
       <Canvas
+        dpr={dpr}
         shadows
         frameloop="demand"
         camera={{
@@ -185,7 +306,13 @@ export const WorkspaceCanvas = ({
             <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0} />
           )}
           {environment === 'studio' && <NeutralStudioEnvironment intensity={environmentIntensity} />}
-          <SceneLighting theme={effectiveTheme} cameraFollowPrimary={cameraFollowPrimary} />
+          <SceneLighting
+            theme={effectiveTheme}
+            cameraFollowPrimary={cameraFollowPrimary}
+            // Viewer orbiting should not toggle shadows on/off. The delayed
+            // re-enable causes a visible flash on dense models like Unitree B2.
+            enableShadows={cameraFollowPrimary ? true : !isInteracting}
+          />
           <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
           {children}
           <ReferenceGrid theme={effectiveTheme} />

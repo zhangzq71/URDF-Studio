@@ -40,7 +40,7 @@ interface CommonVisualizerProps {
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
   onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
-  onMeshResolved?: () => void;
+  onMeshResolved?: (meshLoadKey: string) => void;
 }
 
 interface RobotNodeProps extends CommonVisualizerProps {
@@ -293,6 +293,7 @@ export const RobotNode = memo(function RobotNode({
               geometryId={entry.bodyIndex === null ? '0' : `extra-${entry.bodyIndex + 1}`}
                 objectIndex={entry.objectIndex}
                 colladaRootNormalizationHints={colladaRootNormalizationHints}
+                onMeshResolved={onMeshResolved}
               />
           ))}
         </>

@@ -39,6 +39,8 @@ export {
   exportRobotToUsd,
   exportLibraryRobotFile,
   getDroppedFiles,
+  createImportPathCollisionMap,
+  remapImportedPath,
   exportProject,
   importProject,
 } from './utils';

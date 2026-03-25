@@ -20,7 +20,7 @@ interface UseWorkspaceSourceSyncOptions {
   robotLinks: Record<string, UrdfLink>;
   robotJoints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  robotMaterials?: Record<string, { color?: string; texture?: string }>;
+  robotMaterials?: RobotState['materials'];
   closedLoopConstraints?: RobotClosedLoopConstraint[];
   isCodeViewerOpen: boolean;
   selectedFile: RobotFile | null;

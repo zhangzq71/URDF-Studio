@@ -28,6 +28,8 @@ export {
   WORKSPACE_DEFAULT_CAMERA_UP,
 } from './SceneUtilities';
 export { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from './UnifiedTransformControls';
+export { LoadingHud } from './LoadingHud';
+export { buildLoadingHudState } from './loadingHudState';
 
 // Visualization Helpers
 export * from './helpers';

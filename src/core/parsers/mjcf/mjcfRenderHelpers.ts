@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
+import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
 
 // Uses unified material factory for consistent URDF/MJCF appearance
 export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, number, number]): void {
@@ -8,16 +9,18 @@ export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, num
     const g = isFinite(rgba[1]) ? Math.max(0, Math.min(1, rgba[1])) : 0.8;
     const b = isFinite(rgba[2]) ? Math.max(0, Math.min(1, rgba[2])) : 0.8;
     const alpha = isFinite(rgba[3]) ? Math.max(0, Math.min(1, rgba[3])) : 1.0;
+    const color = createThreeColorFromSRGB(r, g, b);
 
     mesh.traverse((child: any) => {
         if (child.isMesh && child.material) {
             // Create unified matte material using the factory
             // This ensures MJCF and URDF have identical visual appearance
             const newMat = createMatteMaterial({
-                color: new THREE.Color(r, g, b),
+                color,
                 opacity: alpha,
                 transparent: alpha < 1.0,
-                name: child.material?.name || 'mjcf_material'
+                name: child.material?.name || 'mjcf_material',
+                preserveExactColor: true,
             });
 
             if (Array.isArray(child.material)) {

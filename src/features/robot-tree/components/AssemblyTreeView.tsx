@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRightLeft,
   Box,
@@ -17,13 +17,14 @@ import { getTreeRenderRootLinkIds } from '@/core/robot';
 import { ContextMenuFrame, ContextMenuItem } from '@/shared/components/ui';
 import type { TranslationKeys } from '@/shared/i18n';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
-import type { AppMode, AssemblyState, RobotState } from '@/types';
+import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
 import { useShallow } from 'zustand/react/shallow';
 import { TreeNode } from './TreeNode';
+import { EMPTY_TREE_SELECTION, buildParentLinkByChild } from '../utils/treeSelectionScope';
 
 export interface AssemblyTreeViewProps {
   assemblyState: AssemblyState;
-  robot: RobotState;
+  robot?: RobotData | RobotState;
   showGeometryDetailsByDefault?: boolean;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
@@ -43,7 +44,6 @@ export interface AssemblyTreeViewProps {
 
 export const AssemblyTreeView = memo(({
   assemblyState,
-  robot,
   showGeometryDetailsByDefault = false,
   onSelect,
   onSelectGeometry,
@@ -57,16 +57,17 @@ export const AssemblyTreeView = memo(({
   onRenameComponent,
   onCreateBridge,
   onToggleComponentVisibility,
-	mode,
-	t,
+  mode,
+  t,
 }: AssemblyTreeViewProps) => {
-  const { hoveredSelection, attentionSelection, setHoveredSelection, clearHover } = useSelectionStore(
+  const { selection, hoveredSelection, attentionSelection, setHoveredSelection, clearHover } = useSelectionStore(
     useShallow((state) => ({
+      selection: state.selection,
       hoveredSelection: state.hoveredSelection,
       attentionSelection: state.attentionSelection,
       setHoveredSelection: state.setHoveredSelection,
       clearHover: state.clearHover,
-    }))
+    })),
   );
   const [isComponentsExpanded, setIsComponentsExpanded] = useState(true);
   const [isBridgesExpanded, setIsBridgesExpanded] = useState(true);
@@ -78,6 +79,30 @@ export const AssemblyTreeView = memo(({
     componentId: string;
   } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const components = useMemo(() => Object.values(assemblyState.components), [assemblyState.components]);
+  const bridges = useMemo(() => Object.values(assemblyState.bridges), [assemblyState.bridges]);
+  const robotSelection = robot?.selection ?? EMPTY_TREE_SELECTION;
+  const componentRootLinkIds = useMemo<Record<string, string[]>>(() => {
+    const rootLinkIdsByComponent: Record<string, string[]> = {};
+
+    components.forEach((component) => {
+      rootLinkIdsByComponent[component.id] = getTreeRenderRootLinkIds({
+        ...component.robot,
+        selection: EMPTY_TREE_SELECTION,
+      });
+    });
+
+    return rootLinkIdsByComponent;
+  }, [components]);
+  const componentParentLinkByChild = useMemo<Record<string, Record<string, string>>>(() => {
+    const parentLinkByChildByComponent: Record<string, Record<string, string>> = {};
+
+    components.forEach((component) => {
+      parentLinkByChildByComponent[component.id] = buildParentLinkByChild(component.robot.joints);
+    });
+
+    return parentLinkByChildByComponent;
+  }, [components]);
 
   const toggleComponent = (id: string) => {
     setExpandedComponents((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -159,8 +184,6 @@ export const AssemblyTreeView = memo(({
     setComponentContextMenu(null);
   };
 
-  const components = Object.values(assemblyState.components);
-  const bridges = Object.values(assemblyState.bridges);
   const sectionHoverClass = 'hover:bg-system-blue/10 hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
   const itemHoverClass = 'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
   const itemSelectedClass = 'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
@@ -202,7 +225,7 @@ export const AssemblyTreeView = memo(({
               const isEditingComponent = editingComponent?.id === component.id;
               const componentRobotState: RobotState = {
                 ...component.robot,
-                selection: robot.selection,
+                selection: robotSelection,
               };
 
               return (
@@ -274,13 +297,17 @@ export const AssemblyTreeView = memo(({
                   </div>
 
                   {isExpanded && (
-                    <div className="ml-2">
-                      {getTreeRenderRootLinkIds(componentRobotState).map((treeRootLinkId) => (
+                    <div
+                      className="ml-2"
+                      style={{ containIntrinsicSize: '280px', contentVisibility: 'auto' }}
+                    >
+                      {componentRootLinkIds[component.id]?.map((treeRootLinkId) => (
                         <TreeNode
                           key={treeRootLinkId}
                           linkId={treeRootLinkId}
-                          robot={componentRobotState}
+                          robot={component.robot}
                           showGeometryDetailsByDefault={showGeometryDetailsByDefault}
+                          parentLinkByChild={componentParentLinkByChild[component.id]}
                           onSelect={onSelect}
                           onSelectGeometry={onSelectGeometry}
                           onFocus={onFocus}
@@ -341,7 +368,7 @@ export const AssemblyTreeView = memo(({
                   className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group transition-all duration-200 ${
                     matchesSelection(attentionSelection, { type: 'joint', id: bridge.id })
                       ? itemAttentionClass
-                      : robot.selection.type === 'joint' && robot.selection.id === bridge.id
+                      : selection.type === 'joint' && selection.id === bridge.id
                         ? itemSelectedClass
                         : matchesSelection(hoveredSelection, { type: 'joint', id: bridge.id })
                           ? itemSelectedClass

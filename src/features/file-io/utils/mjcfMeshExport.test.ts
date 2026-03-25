@@ -6,10 +6,14 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { JSDOM } from 'jsdom';
 
-import { buildColladaRootNormalizationHints, createMeshLoader } from '@/core/loaders';
+import {
+  buildColladaRootNormalizationHints,
+  createMeshLoader,
+  markMaterialAsCoplanarOffset,
+} from '@/core/loaders';
 import { DEFAULT_LINK, GeometryType, type RobotState } from '@/types';
 
-import { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
+import { __mjcfMeshExportInternals, prepareMjcfMeshExportAssets } from './mjcfMeshExport';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
@@ -41,6 +45,117 @@ function countObjFaces(content: string): number {
     .filter((line) => line.startsWith('f '))
     .length;
 }
+
+test('mjcf mesh export internals accept BufferGeometry-like objects from foreign Three runtimes', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 1,
+    1, 0, 1,
+    0, 1, 1,
+  ], 3));
+  geometry.clearGroups();
+  geometry.addGroup(0, 3, 0);
+  geometry.addGroup(3, 3, 1);
+
+  const foreignGeometry = {
+    isBufferGeometry: true,
+    attributes: geometry.attributes,
+    groups: geometry.groups,
+    morphAttributes: geometry.morphAttributes,
+    morphTargetsRelative: geometry.morphTargetsRelative,
+    clone: () => geometry.clone(),
+    getAttribute: geometry.getAttribute.bind(geometry),
+    getIndex: geometry.getIndex.bind(geometry),
+  } as unknown as THREE.BufferGeometry;
+
+  const mesh = new THREE.Mesh(
+    foreignGeometry,
+    [
+      new THREE.MeshStandardMaterial({ color: '#112233' }),
+      new THREE.MeshStandardMaterial({ color: '#445566' }),
+    ],
+  );
+  mesh.updateMatrixWorld(true);
+
+  const bakedMesh = __mjcfMeshExportInternals.createBakedVariantMesh(
+    mesh,
+    (mesh.material as THREE.Material[])[1]!,
+    1,
+  );
+
+  assert.ok(bakedMesh, 'expected variant extraction to work for BufferGeometry-like meshes');
+  assert.equal((bakedMesh!.geometry as THREE.BufferGeometry).getAttribute('position')?.count, 3);
+});
+
+test('mjcf mesh export internals bake duplicate coplanar anchor subsets in world space', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ], 3));
+  geometry.clearGroups();
+  geometry.addGroup(0, 3, 0);
+  geometry.addGroup(0, 3, 1);
+
+  const anchorMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff' });
+  anchorMaterial.name = 'logo.001';
+  const shellMaterial = markMaterialAsCoplanarOffset(new THREE.MeshStandardMaterial({ color: '#666666' }));
+  shellMaterial.name = 'shell';
+
+  const mesh = new THREE.Mesh(geometry, [anchorMaterial, shellMaterial]);
+  mesh.scale.setScalar(10);
+  mesh.updateMatrixWorld(true);
+
+  const bakedAnchorMesh = __mjcfMeshExportInternals.createBakedVariantMesh(
+    mesh,
+    anchorMaterial,
+    0,
+  );
+  assert.ok(bakedAnchorMesh, 'expected anchor material subset to remain exportable');
+
+  const bakedOffsetMesh = __mjcfMeshExportInternals.createBakedVariantMesh(
+    mesh,
+    shellMaterial,
+    1,
+  );
+  assert.equal(bakedOffsetMesh, null, 'expected exact duplicate shell subset to yield to the anchor subset');
+
+  const position = (bakedAnchorMesh!.geometry as THREE.BufferGeometry).getAttribute('position');
+  assert.ok(position, 'expected baked anchor mesh to retain positions');
+  assert.equal(position.count, 3);
+  assert.ok(Math.abs(position.getX(1) - 10) < 1e-6);
+  assert.ok(Math.abs(position.getY(2) - 10) < 1e-6);
+  for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex += 1) {
+    assert.ok(
+      Math.abs(position.getZ(vertexIndex) - 1e-4) < 1e-7,
+      'expected anchor subset to be lifted by a stable world-space offset',
+    );
+  }
+
+  (bakedAnchorMesh!.geometry as THREE.BufferGeometry).dispose();
+  (bakedAnchorMesh!.material as THREE.Material).dispose();
+});
+
+test('mjcf mesh export internals accept Color-like material values from foreign Three runtimes', () => {
+  const color = new THREE.Color('#aabbcc');
+  const foreignMaterial = {
+    color: {
+      isColor: true,
+      r: color.r,
+      g: color.g,
+      b: color.b,
+      getHexString: color.getHexString.bind(color),
+    },
+  } as unknown as THREE.Material;
+
+  const resolvedColor = __mjcfMeshExportInternals.getMaterialColor(foreignMaterial);
+  assert.ok(resolvedColor, 'expected color-like values to be preserved');
+  assert.equal(resolvedColor!.getHexString(), color.getHexString());
+});
 
 async function loadReferenceMeshObject(
   meshPath: string,
@@ -393,6 +508,80 @@ test('prepareMjcfMeshExportAssets keeps the full converted OBJ when a multi-mate
   assert.ok(prepared.visualMeshVariants.get(sourcePath)?.length);
 });
 
+test('prepareMjcfMeshExportAssets keeps the b2 base logo as a split visual variant', async () => {
+  const sourcePath = 'package://b2_description/meshes/base_link.dae';
+  const meshFilePath = 'test/unitree_ros/robots/b2_description/meshes/base_link.dae';
+  const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshFilePath, 'utf8')).toString('base64')}`;
+  const robot: RobotState = {
+    name: 'b2-base-visual-variants',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath: sourcePath,
+          authoredMaterials: [
+            { name: '磨砂铝合金_011-effect', color: '#bfbfbf' },
+            { name: 'logo_001-effect', color: '#ffffff' },
+            { name: '材质_023-effect', color: '#000000' },
+            { name: '材质_024-effect', color: '#010101' },
+          ],
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.5, y: 0.28, z: 0.15 },
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+        collisionBodies: [],
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+  const assets = {
+    [meshFilePath]: meshDataUrl,
+    [sourcePath]: meshDataUrl,
+    'base_link.dae': meshDataUrl,
+  };
+
+  const prepared = await prepareMjcfMeshExportAssets({
+    robot,
+    assets,
+  });
+
+  assert.equal(prepared.meshPathOverrides.get(sourcePath), undefined);
+  const variants = prepared.visualMeshVariants.get(sourcePath);
+  assert.ok(variants, 'expected split visual mesh variants for b2 base_link');
+  assert.equal(variants.length, 4);
+
+  const logoVariant = variants.find((variant) => (
+    /logo/i.test(variant.sourceMaterialName ?? '')
+    || /logo/i.test(variant.meshPath)
+  ));
+  assert.ok(logoVariant, 'expected b2 base export to keep a dedicated logo mesh variant');
+
+  const logoBlob = prepared.archiveFiles.get(logoVariant!.meshPath);
+  assert.ok(logoBlob, `expected archive blob for ${logoVariant!.meshPath}`);
+  assert.ok(
+    countObjFaces(await logoBlob!.text()) > 0,
+    'expected exported b2 logo OBJ to retain visible triangle faces',
+  );
+});
+
 test('prepareMjcfMeshExportAssets preserves go2w mirrored thigh geometry when splitting visual material variants', async () => {
   const leftPath = 'package://go2w_description/dae/thigh.dae';
   const rightPath = 'package://go2w_description/dae/thigh_mirror.dae';
@@ -512,4 +701,148 @@ test('prepareMjcfMeshExportAssets preserves go2w mirrored thigh geometry when sp
 
   const exportedRightCenter = exportedRightBox.getCenter(new THREE.Vector3());
   assert.ok(exportedRightCenter.y > 0, `expected exported mirrored thigh center to stay on positive Y, got ${exportedRightCenter.y}`);
+});
+
+test('prepareMjcfMeshExportAssets reuses identical native OBJ meshes from extracted USD exports by default', async () => {
+  const leftPath = 'usd-extracted/FL_thigh_visual_0.obj';
+  const rearPath = 'usd-extracted/RL_thigh_visual_0.obj';
+  const sharedObj = [
+    'o shared_thigh',
+    'v 0 0 0',
+    'v 1 0 0',
+    'v 0 1 0',
+    'f 1 2 3',
+    '',
+  ].join('\n');
+
+  const robot: RobotState = {
+    name: 'shared-native-obj-reuse',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+      FL_thigh: {
+        ...DEFAULT_LINK,
+        id: 'FL_thigh',
+        name: 'FL_thigh',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath: leftPath,
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+      },
+      RL_thigh: {
+        ...DEFAULT_LINK,
+        id: 'RL_thigh',
+        name: 'RL_thigh',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath: rearPath,
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const prepared = await prepareMjcfMeshExportAssets({
+    robot,
+    assets: {},
+    extraMeshFiles: new Map([
+      [leftPath, new Blob([sharedObj], { type: 'text/plain' })],
+      [rearPath, new Blob([sharedObj], { type: 'text/plain' })],
+    ]),
+  });
+
+  assert.equal(prepared.meshPathOverrides.get(leftPath), undefined);
+  assert.equal(prepared.meshPathOverrides.get(rearPath), leftPath);
+  assert.equal(prepared.convertedSourceMeshPaths.has(leftPath), false);
+  assert.equal(prepared.convertedSourceMeshPaths.has(rearPath), true);
+  assert.equal(prepared.archiveFiles.size, 0);
+});
+
+test('prepareMjcfMeshExportAssets can disable native OBJ sharing when requested', async () => {
+  const leftPath = 'usd-extracted/FL_thigh_visual_0.obj';
+  const rearPath = 'usd-extracted/RL_thigh_visual_0.obj';
+  const sharedObj = [
+    'o shared_thigh',
+    'v 0 0 0',
+    'v 1 0 0',
+    'v 0 1 0',
+    'f 1 2 3',
+    '',
+  ].join('\n');
+
+  const robot: RobotState = {
+    name: 'shared-native-obj-opt-out',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+      FL_thigh: {
+        ...DEFAULT_LINK,
+        id: 'FL_thigh',
+        name: 'FL_thigh',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath: leftPath,
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+      },
+      RL_thigh: {
+        ...DEFAULT_LINK,
+        id: 'RL_thigh',
+        name: 'RL_thigh',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath: rearPath,
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const prepared = await prepareMjcfMeshExportAssets({
+    robot,
+    assets: {},
+    extraMeshFiles: new Map([
+      [leftPath, new Blob([sharedObj], { type: 'text/plain' })],
+      [rearPath, new Blob([sharedObj], { type: 'text/plain' })],
+    ]),
+    preferSharedMeshReuse: false,
+  });
+
+  assert.equal(prepared.meshPathOverrides.get(rearPath), undefined);
+  assert.equal(prepared.convertedSourceMeshPaths.has(rearPath), false);
 });

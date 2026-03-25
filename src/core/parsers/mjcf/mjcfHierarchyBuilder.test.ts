@@ -5,6 +5,10 @@ import * as THREE from 'three';
 
 import { buildMJCFHierarchy } from './mjcfHierarchyBuilder.ts';
 
+function toFixedColorArray(color: THREE.Color, digits = 4): number[] {
+    return color.toArray().map((value) => Number(value.toFixed(digits)));
+}
+
 test('applies texture-backed material assets to generated visual meshes', async (t) => {
   const originalLoadAsync = THREE.TextureLoader.prototype.loadAsync;
   THREE.TextureLoader.prototype.loadAsync = async function mockLoadAsync(
@@ -95,6 +99,8 @@ test('applies texture-backed material assets to generated visual meshes', async 
     assert.ok(visualMaterial.map instanceof THREE.Texture);
     assert.equal(visualMaterial.map.repeat.x, 2);
     assert.equal(visualMaterial.map.repeat.y, 3);
+    assert.deepEqual(toFixedColorArray(visualMaterial.color), toFixedColorArray(new THREE.Color(0xffffff)));
+    assert.equal(visualMaterial.toneMapped, false);
     assert.equal(visualMaterial.roughness, 0);
     assert.equal(visualMaterial.metalness, 0.4);
 });
@@ -163,9 +169,72 @@ test('does not let inherited geom rgba override material asset colors', async ()
     });
 
     assert.ok(visualMaterial);
-    assert.ok(Math.abs(visualMaterial.color.r - 0.1) < 1e-6);
-    assert.ok(Math.abs(visualMaterial.color.g - 0.2) < 1e-6);
-    assert.ok(Math.abs(visualMaterial.color.b - 0.3) < 1e-6);
+    const expected = new THREE.Color().setRGB(0.1, 0.2, 0.3, THREE.SRGBColorSpace);
+    assert.deepEqual(toFixedColorArray(visualMaterial.color), toFixedColorArray(expected));
+    assert.equal(visualMaterial.toneMapped, false);
+});
+
+test('interprets explicit MJCF geom rgba values as sRGB to match URDF imports', async () => {
+    const rootGroup = new THREE.Group();
+    await buildMJCFHierarchy({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'base',
+                        pos: [0, 0, 0],
+                        geoms: [
+                            {
+                                name: 'body-shell',
+                                type: 'box',
+                                size: [0.1, 0.1, 0.1],
+                                rgba: [1, 0.4235294118, 0.0392156863, 1],
+                                hasExplicitRgba: true,
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                        ],
+                        joints: [],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map(),
+        assets: {},
+        meshCache: new Map(),
+        compilerSettings: {
+            angleUnit: 'radian',
+            meshdir: '',
+            texturedir: '',
+            eulerSequence: 'xyz',
+        },
+        materialMap: new Map(),
+        textureMap: new Map(),
+        sourceFileDir: '',
+    });
+
+    let visualMaterial: THREE.MeshStandardMaterial | null = null;
+    rootGroup.traverse((child) => {
+        if (!('isMesh' in child) || !(child as any).isMesh) {
+            return;
+        }
+
+        const mesh = child as THREE.Mesh;
+        if (mesh.userData.isVisualMesh && mesh.material instanceof THREE.MeshStandardMaterial) {
+            visualMaterial = mesh.material;
+        }
+    });
+
+    assert.ok(visualMaterial);
+    const expected = new THREE.Color().setRGB(1, 0.4235294118, 0.0392156863, THREE.SRGBColorSpace);
+    assert.deepEqual(toFixedColorArray(visualMaterial.color), toFixedColorArray(expected));
+    assert.equal(visualMaterial.toneMapped, false);
 });
 
 test('keeps collision proxy geoms out of runtime visuals when a dedicated visual geom exists', async () => {
@@ -331,6 +400,92 @@ test('offsets coincident visual mesh geoms within the same body to reduce z-figh
         assert.equal(material.polygonOffset, true);
         assert.equal(material.userData?.mjcfCoincidentVisualStackIndex, index + 1);
     });
+});
+
+test('offsets near-coincident visual mesh geoms within the same body when MJCF assets only differ by tiny foot shim offsets', async () => {
+    const createCachedVisualMesh = (name: string, color: number) => {
+        const group = new THREE.Group();
+        const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(0.1, 0.1, 0.1),
+            new THREE.MeshStandardMaterial({ color, name }),
+        );
+        mesh.name = name;
+        group.add(mesh);
+        return group;
+    };
+
+    const rootGroup = new THREE.Group();
+    await buildMJCFHierarchy({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'base_link',
+                        pos: [0, 0, 0],
+                        geoms: [
+                            {
+                                name: 'body_shell',
+                                type: 'mesh',
+                                mesh: 'shell',
+                                group: 1,
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                            {
+                                name: 'body_trim',
+                                type: 'mesh',
+                                mesh: 'trim',
+                                pos: [0, 0.000086986, 0],
+                                group: 1,
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                        ],
+                        joints: [],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map([
+            ['shell', { name: 'shell', file: 'shell.obj' }],
+            ['trim', { name: 'trim', file: 'trim.obj' }],
+        ]),
+        assets: {},
+        meshCache: new Map([
+            ['shell.obj', createCachedVisualMesh('shell', 0xffffff)],
+            ['trim.obj', createCachedVisualMesh('trim', 0x111111)],
+        ]),
+        compilerSettings: {
+            angleUnit: 'radian',
+            meshdir: '',
+            texturedir: '',
+            eulerSequence: 'xyz',
+        },
+        materialMap: new Map(),
+        textureMap: new Map(),
+        sourceFileDir: '',
+    });
+
+    const visualMeshes: THREE.Mesh[] = [];
+    rootGroup.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && child.userData.isVisualMesh) {
+            visualMeshes.push(child as THREE.Mesh);
+        }
+    });
+
+    assert.equal(visualMeshes.length, 2);
+    assert.equal(visualMeshes[0]?.renderOrder ?? 0, 0);
+    assert.equal(visualMeshes[1]?.renderOrder ?? 0, 1);
+
+    const offsetMaterial = visualMeshes[1]?.material as THREE.MeshStandardMaterial;
+    assert.equal(offsetMaterial.polygonOffset, true);
+    assert.equal(offsetMaterial.userData?.mjcfCoincidentVisualStackIndex, 1);
 });
 
 test('reports geom build progress while constructing the hierarchy', async () => {

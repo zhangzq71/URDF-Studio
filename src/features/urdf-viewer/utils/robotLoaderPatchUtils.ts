@@ -2,7 +2,7 @@ import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { URDFJoint as RuntimeURDFJoint } from '@/core/parsers/urdf/loader';
 import { disposeObject3D, disposeMaterial } from './dispose';
-import { collisionBaseMaterial, createMatteMaterial } from './materials';
+import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial, createMatteMaterial } from './materials';
 import { SHARED_MATERIALS } from '../constants';
 import { DEFAULT_RPY, DEFAULT_VEC3 } from './robotLoaderDiff';
 import type { UrdfJoint, UrdfVisual as LinkGeometry } from '@/types';
@@ -85,20 +85,21 @@ export function updateVisualMaterial(
 
   const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
 
-  const update = (mat: THREE.Material): THREE.Material => {
-    const map = (mat as any).map || null;
-    const next = createMatteMaterial({
-      color: colorOverride,
-      opacity: mat.opacity ?? 1,
-      transparent: mat.transparent || (mat.opacity ?? 1) < 1,
-      side: mat.side,
-      map,
-      name: mat.name,
-    });
-    next.userData.urdfColorApplied = true;
-    next.userData.urdfColor = new THREE.Color(colorOverride);
-    return next;
-  };
+    const update = (mat: THREE.Material): THREE.Material => {
+      const map = (mat as any).map || null;
+      const next = createMatteMaterial({
+        color: colorOverride,
+        opacity: mat.opacity ?? 1,
+        transparent: mat.transparent || (mat.opacity ?? 1) < 1,
+        side: mat.side,
+        map,
+        name: mat.name,
+        preserveExactColor: true,
+      });
+      next.userData.urdfColorApplied = true;
+      next.userData.urdfColor = new THREE.Color(colorOverride);
+      return next;
+    };
 
   if (Array.isArray(mesh.material)) {
     mesh.material = mesh.material.map((mat) => update(mat));
@@ -142,7 +143,7 @@ export function markCollisionObject(obj: THREE.Object3D, linkName: string): void
     child.userData.isVisual = false;
     child.userData.isVisualMesh = false;
     child.material = collisionBaseMaterial;
-    child.renderOrder = 999;
+    child.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
 
     disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
   });

@@ -15,6 +15,7 @@ import {
     hasExplicitMeshScaleHint,
 } from './meshScaleHints';
 import { mitigateCoplanarMaterialZFighting } from './coplanarMaterialOffset';
+import { applyColladaCoplanarMaterialFixups } from './colladaCoplanarMaterialFixups';
 import {
     type ColladaRootNormalizationHints,
 } from './colladaRootNormalization';
@@ -486,11 +487,15 @@ export const createMeshLoader = (
             }
 
             if (meshObject) {
-                meshObject.traverse((child) => {
-                    if ((child as THREE.Mesh).isMesh) {
-                        mitigateCoplanarMaterialZFighting(child as THREE.Mesh);
-                    }
-                });
+                if (ext === 'dae') {
+                    applyColladaCoplanarMaterialFixups(meshObject);
+                } else {
+                    meshObject.traverse((child) => {
+                        if ((child as THREE.Mesh).isMesh) {
+                            mitigateCoplanarMaterialZFighting(child as THREE.Mesh);
+                        }
+                    });
+                }
                 done(meshObject);
             } else {
                 console.warn('[MeshLoader] Unsupported mesh format, using placeholder:', ext, path);

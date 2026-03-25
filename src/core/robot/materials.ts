@@ -33,7 +33,7 @@ export function syncRobotMaterialsForLinkUpdate(
 ): RobotMaterials | undefined {
   const existingEntry = resolveExistingMaterialEntry(materials, nextLink, previousLink);
   const shouldTrackEntry = nextLink.visual.type !== GeometryType.NONE
-    || Boolean(existingEntry?.color || existingEntry?.texture);
+    || Boolean(existingEntry?.color || existingEntry?.texture || existingEntry?.usdMaterial);
 
   if (!shouldTrackEntry) {
     return materials;
@@ -50,7 +50,7 @@ export function syncRobotMaterialsForLinkUpdate(
     delete nextEntry.color;
   }
 
-  if (!nextEntry.color && !nextEntry.texture) {
+  if (!nextEntry.color && !nextEntry.texture && !nextEntry.usdMaterial) {
     if (!materials || !Object.prototype.hasOwnProperty.call(materials, nextLink.id)) {
       return materials;
     }

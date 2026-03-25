@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { findAssetByPath } from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
+import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
+import { COLLISION_OVERLAY_RENDER_ORDER, createCollisionOverlayMaterial } from '@/shared/utils/three/collisionOverlayMaterial';
 import { URDFCollider, URDFVisual } from '../urdf/loader/URDFClasses';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
@@ -61,8 +63,9 @@ export interface MJCFHierarchyResult {
     jointsMap: Record<string, THREE.Object3D>;
 }
 
-const COINCIDENT_VISUAL_DECIMALS = 6;
 const MJCF_COINCIDENT_VISUAL_STACK_FLAG = '__mjcfCoincidentVisualStacking';
+const COINCIDENT_VISUAL_POSITION_TOLERANCE = 1e-4;
+const COINCIDENT_VISUAL_QUATERNION_TOLERANCE = 1e-4;
 
 function countBodyGeoms(body: MJCFHierarchyBody): number {
     return body.geoms.length + body.children.reduce((sum, child) => sum + countBodyGeoms(child), 0);
@@ -83,47 +86,60 @@ function convertJointLimitValue(value: number, _jointType: string, _settings: MJ
     return value;
 }
 
-function formatTransformComponent(value: number | undefined): string {
-    return Number(value ?? 0).toFixed(COINCIDENT_VISUAL_DECIMALS);
-}
+function transformsMatchWithinTolerance(
+    left: Pick<MJCFHierarchyGeom, 'pos' | 'quat'>,
+    right: Pick<MJCFHierarchyGeom, 'pos' | 'quat'>,
+): boolean {
+    const leftPos = left.pos ?? [0, 0, 0];
+    const rightPos = right.pos ?? [0, 0, 0];
 
-function buildCoincidentVisualTransformSignature(geom: Pick<MJCFHierarchyGeom, 'pos' | 'quat'>): string {
-    const pos = geom.pos ?? [0, 0, 0];
-    const quat = geom.quat ?? [1, 0, 0, 0];
+    for (let index = 0; index < 3; index += 1) {
+        if (Math.abs((leftPos[index] ?? 0) - (rightPos[index] ?? 0)) > COINCIDENT_VISUAL_POSITION_TOLERANCE) {
+            return false;
+        }
+    }
 
-    return [
-        formatTransformComponent(pos[0]),
-        formatTransformComponent(pos[1]),
-        formatTransformComponent(pos[2]),
-        formatTransformComponent(quat[0]),
-        formatTransformComponent(quat[1]),
-        formatTransformComponent(quat[2]),
-        formatTransformComponent(quat[3]),
-    ].join('|');
+    const leftQuat = left.quat ?? [1, 0, 0, 0];
+    const rightQuat = right.quat ?? [1, 0, 0, 0];
+    let directDelta = 0;
+    let negatedDelta = 0;
+
+    for (let index = 0; index < 4; index += 1) {
+        const leftValue = leftQuat[index] ?? 0;
+        const rightValue = rightQuat[index] ?? 0;
+        directDelta = Math.max(directDelta, Math.abs(leftValue - rightValue));
+        negatedDelta = Math.max(negatedDelta, Math.abs(leftValue + rightValue));
+    }
+
+    return Math.min(directDelta, negatedDelta) <= COINCIDENT_VISUAL_QUATERNION_TOLERANCE;
 }
 
 function buildCoincidentVisualMeshStackIndices(
     geomRoles: Array<{ geom: MJCFHierarchyGeom; renderVisual: boolean }>,
 ): Map<number, number> {
-    const groupedVisualMeshes = new Map<string, number[]>();
+    const groupedVisualMeshes: Array<{ referenceGeom: MJCFHierarchyGeom; indices: number[] }> = [];
 
     geomRoles.forEach(({ geom, renderVisual }, geomIndex) => {
         if (!renderVisual || !geom.mesh) {
             return;
         }
 
-        const signature = buildCoincidentVisualTransformSignature(geom);
-        const indices = groupedVisualMeshes.get(signature);
-        if (indices) {
-            indices.push(geomIndex);
+        const matchingGroup = groupedVisualMeshes.find(({ referenceGeom }) =>
+            transformsMatchWithinTolerance(referenceGeom, geom),
+        );
+        if (matchingGroup) {
+            matchingGroup.indices.push(geomIndex);
             return;
         }
 
-        groupedVisualMeshes.set(signature, [geomIndex]);
+        groupedVisualMeshes.push({
+            referenceGeom: geom,
+            indices: [geomIndex],
+        });
     });
 
     const stackIndices = new Map<number, number>();
-    groupedVisualMeshes.forEach((indices) => {
+    groupedVisualMeshes.forEach(({ indices }) => {
         if (indices.length < 2) {
             return;
         }
@@ -289,7 +305,8 @@ async function applyMaterialAssetToMesh(
     sourceFileDir: string,
     materialName?: string,
 ): Promise<void> {
-    const rgba = materialDef.rgba || [0.8, 0.8, 0.8, 1];
+    const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
+    const rgba = materialDef.rgba || (materialDef.texture ? [1, 1, 1, 1] : [0.8, 0.8, 0.8, 1]);
     const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
     const g = Math.max(0, Math.min(1, rgba[1] ?? 0.8));
     const b = Math.max(0, Math.min(1, rgba[2] ?? 0.8));
@@ -308,12 +325,13 @@ async function applyMaterialAssetToMesh(
     mesh.traverse((child: any) => {
         if (!child.isMesh) return;
         child.material = createMatteMaterial({
-            color: new THREE.Color(r, g, b),
+            color: createThreeColorFromSRGB(r, g, b),
             opacity: alpha,
             transparent: alpha < 1,
             side: THREE.DoubleSide,
             map: texture,
             name: materialName || materialDef.name || 'mjcf_material_asset',
+            preserveExactColor: hasAuthoredRgba || Boolean(texture),
         });
         if (roughness != null) {
             child.material.roughness = roughness;
@@ -444,20 +462,8 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                             child.userData.isCollision = true;
                             child.userData.isVisual = false;
                             child.userData.isVisualMesh = false;
-                            const collisionMat = createMatteMaterial({
-                                color: 0xa855f7,
-                                opacity: 0.35,
-                                transparent: true,
-                                name: 'mjcf_collision'
-                            });
-                            // Apply depth and rendering optimizations
-                            collisionMat.depthWrite = false;
-                            collisionMat.depthTest = true;
-                            collisionMat.polygonOffset = true;
-                            collisionMat.polygonOffsetFactor = -1.0;
-                            collisionMat.polygonOffsetUnits = -4.0;
-                            child.material = collisionMat;
-                            child.renderOrder = 999;
+                            child.material = createCollisionOverlayMaterial('mjcf_collision');
+                            child.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
                         }
                     });
 

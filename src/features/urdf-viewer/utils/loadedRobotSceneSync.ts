@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { collisionBaseMaterial, enhanceMaterials } from './materials';
+import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial, enhanceMaterials } from './materials';
 import { markCollisionObject } from './robotLoaderPatchUtils';
 import { applyURDFMaterials, type URDFMaterialInfo } from './urdfMaterials';
 
@@ -102,7 +102,7 @@ export function syncLoadedRobotScene({
           collisionMesh.userData.isVisual = false;
           collisionMesh.userData.isVisualMesh = false;
           collisionMesh.material = collisionBaseMaterial;
-          collisionMesh.renderOrder = 999;
+          collisionMesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
         });
       }
 

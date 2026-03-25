@@ -71,21 +71,83 @@ function serializePreferredMaterialRecord(material) {
     if (!material || typeof material !== 'object') {
         return null;
     }
-    const name = String(material.name || '').trim();
-    const mapPath = String(material.map?.name || '').trim();
-    const opacity = Number(material.opacity);
-    const color = material.color?.isColor
-        ? [material.color.r, material.color.g, material.color.b]
-        : null;
-    if (!name && !mapPath && !color && !Number.isFinite(opacity)) {
+    const normalizeTexturePath = (texture) => {
+        const normalized = String(texture?.userData?.usdSourcePath || texture?.name || '').trim();
+        return normalized || null;
+    };
+    const normalizeScalar = (value, options = {}) => {
+        const numeric = toFiniteNumber(value);
+        if (numeric === undefined)
+            return null;
+        let nextValue = numeric;
+        if (typeof options.min === 'number') {
+            nextValue = Math.max(options.min, nextValue);
+        }
+        if (options.clamp01) {
+            nextValue = clamp01(nextValue);
+        }
+        return nextValue;
+    };
+    const normalizeColor = (value) => {
+        const tuple = toColorArray(value);
+        return tuple ? [tuple[0], tuple[1], tuple[2]] : null;
+    };
+    const normalizeVec2 = (value) => {
+        const tuple = toFiniteVector2Tuple(value);
+        return tuple ? [tuple[0], tuple[1]] : null;
+    };
+    const record = {
+        ...(String(material.name || '').trim() ? { name: String(material.name || '').trim() } : {}),
+        ...(normalizeColor(material.color) ? { color: normalizeColor(material.color) } : {}),
+        ...(normalizeColor(material.emissive) ? { emissive: normalizeColor(material.emissive) } : {}),
+        ...(normalizeColor(material.specularColor) ? { specularColor: normalizeColor(material.specularColor) } : {}),
+        ...(normalizeColor(material.attenuationColor) ? { attenuationColor: normalizeColor(material.attenuationColor) } : {}),
+        ...(normalizeColor(material.sheenColor) ? { sheenColor: normalizeColor(material.sheenColor) } : {}),
+        ...(normalizeVec2(material.normalScale) ? { normalScale: normalizeVec2(material.normalScale) } : {}),
+        ...(normalizeVec2(material.clearcoatNormalScale) ? { clearcoatNormalScale: normalizeVec2(material.clearcoatNormalScale) } : {}),
+        ...(normalizeScalar(material.roughness, { clamp01: true }) !== null ? { roughness: normalizeScalar(material.roughness, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.metalness, { clamp01: true }) !== null ? { metalness: normalizeScalar(material.metalness, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.opacity, { clamp01: true }) !== null ? { opacity: normalizeScalar(material.opacity, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.alphaTest, { clamp01: true }) !== null ? { alphaTest: normalizeScalar(material.alphaTest, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.clearcoat, { clamp01: true }) !== null ? { clearcoat: normalizeScalar(material.clearcoat, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.clearcoatRoughness, { clamp01: true }) !== null ? { clearcoatRoughness: normalizeScalar(material.clearcoatRoughness, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.specularIntensity, { clamp01: true }) !== null ? { specularIntensity: normalizeScalar(material.specularIntensity, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.transmission, { clamp01: true }) !== null ? { transmission: normalizeScalar(material.transmission, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.thickness, { min: 0 }) !== null ? { thickness: normalizeScalar(material.thickness, { min: 0 }) } : {}),
+        ...(normalizeScalar(material.attenuationDistance, { min: 0 }) !== null ? { attenuationDistance: normalizeScalar(material.attenuationDistance, { min: 0 }) } : {}),
+        ...(normalizeScalar(material.aoMapIntensity, { clamp01: true }) !== null ? { aoMapIntensity: normalizeScalar(material.aoMapIntensity, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.sheen, { clamp01: true }) !== null ? { sheen: normalizeScalar(material.sheen, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.sheenRoughness, { clamp01: true }) !== null ? { sheenRoughness: normalizeScalar(material.sheenRoughness, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.iridescence, { clamp01: true }) !== null ? { iridescence: normalizeScalar(material.iridescence, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.iridescenceIOR, { min: 1 }) !== null ? { iridescenceIOR: normalizeScalar(material.iridescenceIOR, { min: 1 }) } : {}),
+        ...(normalizeScalar(material.anisotropy, { clamp01: true }) !== null ? { anisotropy: normalizeScalar(material.anisotropy, { clamp01: true }) } : {}),
+        ...(normalizeScalar(material.anisotropyRotation) !== null ? { anisotropyRotation: normalizeScalar(material.anisotropyRotation) } : {}),
+        ...(normalizeScalar(material.emissiveIntensity, { min: 0 }) !== null ? { emissiveIntensity: normalizeScalar(material.emissiveIntensity, { min: 0 }) } : {}),
+        ...(normalizeScalar(material.ior, { min: 1 }) !== null ? { ior: normalizeScalar(material.ior, { min: 1 }) } : {}),
+        ...(normalizeTexturePath(material.map) ? { mapPath: normalizeTexturePath(material.map) } : {}),
+        ...(normalizeTexturePath(material.emissiveMap) ? { emissiveMapPath: normalizeTexturePath(material.emissiveMap) } : {}),
+        ...(normalizeTexturePath(material.roughnessMap) ? { roughnessMapPath: normalizeTexturePath(material.roughnessMap) } : {}),
+        ...(normalizeTexturePath(material.metalnessMap) ? { metalnessMapPath: normalizeTexturePath(material.metalnessMap) } : {}),
+        ...(normalizeTexturePath(material.normalMap) ? { normalMapPath: normalizeTexturePath(material.normalMap) } : {}),
+        ...(normalizeTexturePath(material.aoMap) ? { aoMapPath: normalizeTexturePath(material.aoMap) } : {}),
+        ...(normalizeTexturePath(material.alphaMap) ? { alphaMapPath: normalizeTexturePath(material.alphaMap) } : {}),
+        ...(normalizeTexturePath(material.clearcoatMap) ? { clearcoatMapPath: normalizeTexturePath(material.clearcoatMap) } : {}),
+        ...(normalizeTexturePath(material.clearcoatRoughnessMap) ? { clearcoatRoughnessMapPath: normalizeTexturePath(material.clearcoatRoughnessMap) } : {}),
+        ...(normalizeTexturePath(material.clearcoatNormalMap) ? { clearcoatNormalMapPath: normalizeTexturePath(material.clearcoatNormalMap) } : {}),
+        ...(normalizeTexturePath(material.specularColorMap) ? { specularColorMapPath: normalizeTexturePath(material.specularColorMap) } : {}),
+        ...(normalizeTexturePath(material.specularIntensityMap) ? { specularIntensityMapPath: normalizeTexturePath(material.specularIntensityMap) } : {}),
+        ...(normalizeTexturePath(material.transmissionMap) ? { transmissionMapPath: normalizeTexturePath(material.transmissionMap) } : {}),
+        ...(normalizeTexturePath(material.thicknessMap) ? { thicknessMapPath: normalizeTexturePath(material.thicknessMap) } : {}),
+        ...(normalizeTexturePath(material.sheenColorMap) ? { sheenColorMapPath: normalizeTexturePath(material.sheenColorMap) } : {}),
+        ...(normalizeTexturePath(material.sheenRoughnessMap) ? { sheenRoughnessMapPath: normalizeTexturePath(material.sheenRoughnessMap) } : {}),
+        ...(normalizeTexturePath(material.anisotropyMap) ? { anisotropyMapPath: normalizeTexturePath(material.anisotropyMap) } : {}),
+        ...(normalizeTexturePath(material.iridescenceMap) ? { iridescenceMapPath: normalizeTexturePath(material.iridescenceMap) } : {}),
+        ...(normalizeTexturePath(material.iridescenceThicknessMap) ? { iridescenceThicknessMapPath: normalizeTexturePath(material.iridescenceThicknessMap) } : {}),
+    };
+    if (!Object.values(record).some((value) => value !== null && value !== undefined)) {
         return null;
     }
-    return {
-        ...(name ? { name } : {}),
-        ...(color ? { color } : {}),
-        ...(Number.isFinite(opacity) ? { opacity } : {}),
-        ...(mapPath ? { mapPath } : {}),
-    };
+    return record;
 }
 function mergeUrdfMaterialMetadataMaps(targetMap, nextMap) {
     if (!(targetMap instanceof Map) || !(nextMap instanceof Map)) {

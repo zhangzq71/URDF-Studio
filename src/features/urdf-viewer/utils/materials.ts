@@ -6,6 +6,18 @@ export { disposeMaterial } from './dispose';
 export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
 export type { CreateMaterialOptions } from '@/shared/utils/materialFactory';
 import { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
+import {
+    COLLISION_OVERLAY_RENDER_ORDER,
+    collisionBaseMaterial,
+    configureCollisionOverlayMaterial,
+    createCollisionOverlayMaterial,
+} from '@/shared/utils/three/collisionOverlayMaterial';
+export {
+    COLLISION_OVERLAY_RENDER_ORDER,
+    collisionBaseMaterial,
+    configureCollisionOverlayMaterial,
+    createCollisionOverlayMaterial,
+} from '@/shared/utils/three/collisionOverlayMaterial';
 
 /**
  * Applies unified material properties to an existing mesh's materials.
@@ -21,6 +33,7 @@ export function applyMatteMaterialToMesh(
     opacity: number = 1.0
 ): void {
     const processMaterial = (oldMat: THREE.Material): THREE.MeshStandardMaterial => {
+        const usesVertexColors = Boolean((oldMat as any).vertexColors);
         // Extract existing color if not overridden
         let matColor: THREE.Color;
         if (color !== undefined) {
@@ -40,7 +53,8 @@ export function applyMatteMaterialToMesh(
             transparent: opacity < 1.0 || oldMat.transparent,
             side: oldMat.side,
             map: existingMap,
-            name: oldMat.name
+            name: oldMat.name,
+            preserveExactColor: usesVertexColors,
         });
     };
 
@@ -146,23 +160,6 @@ measureSecondHighlightMaterial.userData.isHighlightMaterial = true;
 measureHoverHighlightMaterial.userData.isSharedMaterial = true;
 measureHoverHighlightMaterial.userData.isHighlightMaterial = true;
 
-export const collisionBaseMaterial = new THREE.MeshStandardMaterial({
-    color: 0xa855f7, // Purple-500
-    transparent: true,
-    opacity: 0.35,
-    roughness: 0.8,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-    depthWrite: false,      // Critical: transparent objects should not write to depth buffer
-    depthTest: false,       // Disable depth test so collision always renders above visual mesh
-    polygonOffset: true,    // Prevent Z-fighting with ground plane
-    polygonOffsetFactor: -1.0,
-    polygonOffsetUnits: -4.0,
-});
-// Set flags to prevent opacity modification and mark as collision material
-collisionBaseMaterial.userData.isCollisionMaterial = true;
-collisionBaseMaterial.userData.isSharedMaterial = true;  // Prevent opacity modification
-
 // Empty raycast function to disable raycast on collision meshes
 export const emptyRaycast = () => { };
 
@@ -236,6 +233,8 @@ export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Tex
  * @returns Enhanced MeshStandardMaterial
  */
 export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.Texture | null): THREE.Material => {
+    const usesVertexColors = Boolean((material as any).vertexColors);
+
     // Extract color from existing material
     // Priority: URDF color > existing material color > default gray
     let color: THREE.Color;
@@ -263,8 +262,14 @@ export const enhanceSingleMaterial = (material: THREE.Material, envMap?: THREE.T
         side: existingSide,
         map: existingMap,
         name: material.name,
-        preserveExactColor: Boolean(material.userData.urdfColorApplied),
+        preserveExactColor: Boolean(material.userData.urdfColorApplied) || usesVertexColors,
     });
+
+    if (usesVertexColors) {
+        newMat.vertexColors = true;
+        newMat.toneMapped = false;
+        newMat.userData.usesVertexColors = true;
+    }
 
     // Apply environment map if provided
     if (envMap) {

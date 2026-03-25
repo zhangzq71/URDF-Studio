@@ -19,6 +19,7 @@ const LazyUsdWasmStage = lazy(async () => ({
 
 interface URDFViewerSceneProps {
   controller: URDFViewerController;
+  active?: boolean;
   sourceFile?: RobotFile | null;
   availableFiles: RobotFile[];
   urdfContent: string;
@@ -45,6 +46,7 @@ interface URDFViewerSceneProps {
 
 export const URDFViewerScene = ({
   controller,
+  active = true,
   sourceFile,
   availableFiles,
   urdfContent,
@@ -118,6 +120,7 @@ export const URDFViewerScene = ({
         <Suspense fallback={null}>
           <LazyUsdWasmStage
             key={runtimeInstanceKey}
+            active={active}
             sourceFile={usdSourceFile}
             availableFiles={availableFiles}
             assets={assets}
@@ -162,6 +165,7 @@ export const URDFViewerScene = ({
         <Suspense fallback={null}>
           <RobotModel
             key={runtimeInstanceKey}
+            active={active}
             urdfContent={urdfContent}
             assets={assets}
             sourceFormat={sourceFile?.format === 'mjcf' ? 'mjcf' : sourceFile?.format === 'urdf' ? 'urdf' : 'auto'}

@@ -3,9 +3,9 @@ import { Color, FrontSide, MeshPhysicalMaterial } from 'three';
 
 export const HYDRA_DEFAULT_GRAY_HEX = 0x888888;
 export const HYDRA_UNIFIED_MATERIAL_DEFAULTS = Object.freeze({
-    roughness: 0.68,
-    metalness: 0.02,
-    envMapIntensity: 0.3,
+    roughness: 0.56,
+    metalness: 0.035,
+    envMapIntensity: 0.5,
 });
 
 export function applyUnifiedHydraMaterialDefaults(material) {

@@ -25,9 +25,8 @@ export function resolveViewerJointScopeKey({
     return `preview:${previewScope}`;
   }
 
-  // Joint panel state must follow the file entry the user selected, not the
-  // resolved MJCF source path. Wrapper files like `tiago_motor.xml` can resolve
-  // to `tiago.xml`, but they still need isolated joint state.
+  // Joint panel state must follow the file entry the user selected, not any
+  // derived MJCF source path.
   const selectedFileScope = normalizeScopeSegment(sourceFile?.name);
   if (selectedFileScope) {
     return `current:${selectedFileScope}`;

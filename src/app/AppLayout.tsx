@@ -15,12 +15,12 @@ import {
 import type { HeaderAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
-import type { ToolMode } from '@/features/urdf-viewer';
 import {
   getCurrentUsdViewerSceneSnapshot,
   prepareUsdExportCacheFromSnapshot,
-} from '@/features/urdf-viewer/utils/usdExportBundle';
-import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
+  type ToolMode,
+  type ViewerRobotDataResolution,
+} from '@/features/urdf-viewer';
 import {
   useAppLayoutEffects,
   useCollisionOptimizationWorkflow,

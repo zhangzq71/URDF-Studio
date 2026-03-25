@@ -143,6 +143,7 @@ export interface RobotModelProps {
     hoveredSelection?: URDFViewerProps['hoveredSelection'];
     isMeshPreview?: boolean;
     groundPlaneOffset?: number;
+    active?: boolean;
 }
 
 export interface CollisionTransformControlsProps {

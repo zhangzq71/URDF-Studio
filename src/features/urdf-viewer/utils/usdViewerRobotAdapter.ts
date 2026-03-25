@@ -6,6 +6,7 @@ import {
   GeometryType,
   JointType,
   type Euler,
+  type RobotData,
   type UrdfJoint,
   type UrdfLink,
   type UrdfVisual,
@@ -133,6 +134,43 @@ function colorArrayToHex(
   }
 
   return `#${rgb.join('')}`;
+}
+
+function hasMaterialRecordContent(material: MaterialRecord | null | undefined): boolean {
+  if (!material || typeof material !== 'object') {
+    return false;
+  }
+
+  return Object.values(material).some((value) => {
+    if (value == null) {
+      return false;
+    }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (ArrayBuffer.isView(value)) {
+      return value.byteLength > 0;
+    }
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+    return true;
+  });
+}
+
+function resolveSnapshotMaterialColorHex(material: MaterialRecord | null | undefined): string | null {
+  const authoredColor = colorArrayToHex(material?.color, material?.opacity);
+  if (authoredColor) {
+    return authoredColor;
+  }
+
+  const opacity = Number(material?.opacity);
+  const hasPrimaryTexture = Boolean(String(material?.mapPath || material?.alphaMapPath || '').trim());
+  if (hasPrimaryTexture && Number.isFinite(opacity) && opacity < 0.999) {
+    return colorArrayToHex([1, 1, 1], opacity);
+  }
+
+  return null;
 }
 
 function getSnapshotMaterialLookup(snapshot: RobotSceneSnapshot): Map<string, MaterialRecord> {
@@ -857,7 +895,7 @@ export function adaptUsdViewerSnapshotToRobotData(
     || getPathBasename(normalizedStageSourcePath)
     || 'usd_scene';
 
-  const materials: Record<string, { color?: string; texture?: string }> = {};
+  const materials: NonNullable<RobotData['materials']> = {};
   const materialLookup = getSnapshotMaterialLookup(snapshot);
   const descriptors = Array.from(snapshot.render?.meshDescriptors || []);
   const visualDescriptorsByLinkPath = new Map<string, DescriptorEntry[]>();
@@ -918,9 +956,9 @@ export function adaptUsdViewerSnapshotToRobotData(
       return;
     }
 
-    const color = colorArrayToHex(material.color, material.opacity);
+    const color = resolveSnapshotMaterialColorHex(material);
     const texture = material.mapPath ? String(material.mapPath) : undefined;
-    if (!color && !texture) {
+    if (!color && !texture && !hasMaterialRecordContent(material)) {
       return;
     }
 
@@ -936,6 +974,7 @@ export function adaptUsdViewerSnapshotToRobotData(
     materials[linkId] = {
       ...(color ? { color } : {}),
       ...(texture ? { texture } : {}),
+      ...(hasMaterialRecordContent(material) ? { usdMaterial: structuredClone(material) } : {}),
     };
   });
 
@@ -973,7 +1012,7 @@ export function adaptUsdViewerSnapshotToRobotData(
       );
       const materialId = getDescriptorMaterialId(descriptor);
       const material = materialId ? materialLookup.get(materialId) : null;
-      const color = colorArrayToHex(material?.color, material?.opacity) || DEFAULT_LINK.visual.color;
+      const color = resolveSnapshotMaterialColorHex(material) || DEFAULT_LINK.visual.color;
       const texture = material?.mapPath ? String(material.mapPath) : undefined;
 
       links[childLinkId] = {
@@ -1004,6 +1043,7 @@ export function adaptUsdViewerSnapshotToRobotData(
       materials[childLinkId] = {
         ...(color ? { color } : {}),
         ...(texture ? { texture } : {}),
+        ...(hasMaterialRecordContent(material) ? { usdMaterial: structuredClone(material) } : {}),
       };
 
       group.entries.forEach(({ descriptor: groupDescriptor, ordinal }) => {

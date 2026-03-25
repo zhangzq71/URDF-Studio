@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 import { GeometryType, JointType } from '../../../types/index.ts';
@@ -869,6 +870,133 @@ test('buildUsdExportBundleFromSnapshot falls back to preferred live visual mater
   assert.equal(hasVertexColors, true);
 });
 
+test('buildUsdExportBundleFromSnapshot preserves UV coordinates for textured snapshot meshes', async () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const indices = new Uint32Array([0, 1, 2]);
+  const uvs = new Float32Array([
+    0, 0,
+    1, 0,
+    0, 1,
+  ]);
+
+  const snapshot = {
+    stageSourcePath: '/robots/demo/textured.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/demo/textured.usd',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+      ] as Array<[string, string | null]>,
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/base_link',
+          primType: 'mesh',
+          materialId: '/Robot/Looks/body',
+          ranges: {
+            positions: { offset: 0, count: 9, stride: 3 },
+            indices: { offset: 0, count: 3, stride: 1 },
+            uvs: { offset: 0, count: 6, stride: 2 },
+          },
+        },
+      ],
+      materials: [
+        {
+          materialId: '/Robot/Looks/body',
+          color: [1, 1, 1, 1],
+          mapPath: 'textures/body_basecolor.png',
+        },
+      ],
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs,
+      transforms: new Float32Array(0),
+      rangesByMeshId: {},
+    },
+  };
+
+  const currentRobot: RobotState = {
+    name: 'textured_export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const bundle = buildUsdExportBundleFromSnapshot(snapshot, {
+    fileName: 'textured.usd',
+    currentRobot,
+  });
+
+  assert.ok(bundle);
+  assert.equal(bundle.robot.materials?.base_link?.texture, 'textures/body_basecolor.png');
+  assert.equal(bundle.robot.materials?.base_link?.usdMaterial?.mapPath, 'textures/body_basecolor.png');
+
+  const meshText = await bundle.meshFiles.get('base_link_visual_0.obj')?.text();
+  assert.ok(meshText);
+  assert.match(meshText, /^vt 0 0$/m);
+  assert.match(meshText, /^vt 1 0$/m);
+  assert.match(meshText, /^vt 0 1$/m);
+  assert.match(meshText, /^f 1\/1 2\/2 3\/3$/m);
+
+  const parsedObject = new OBJLoader().parse(meshText);
+  let uvCount = 0;
+  parsedObject.traverse((child: any) => {
+    if (!child.isMesh || uvCount > 0) {
+      return;
+    }
+
+    uvCount = Number(child.geometry?.getAttribute?.('uv')?.count || 0);
+  });
+
+  assert.equal(uvCount, 3);
+});
+
 test('buildUsdExportBundleFromSnapshot splits geom subsets into separate export meshes with subset material colors', async () => {
   const positions = new Float32Array([
     0, 0, 0,
@@ -1637,6 +1765,30 @@ test('resolveUsdExportSceneSnapshot prefers cached store snapshot before live re
 });
 
 test('resolveUsdExportSceneSnapshot enriches cached snapshots with live preferred material records when available', () => {
+  const preferredMaterial = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#d6d9e4'),
+    roughness: 0.28,
+    metalness: 0.63,
+    emissive: new THREE.Color('#223344'),
+    emissiveIntensity: 1.4,
+    opacity: 0.85,
+    transparent: true,
+    transmission: 0.18,
+    thickness: 0.12,
+    ior: 1.45,
+    clearcoat: 0.22,
+    clearcoatRoughness: 0.41,
+  });
+  preferredMaterial.name = 'Body';
+  preferredMaterial.map = new THREE.Texture();
+  preferredMaterial.map.name = 'textures/body_basecolor.png';
+  preferredMaterial.roughnessMap = new THREE.Texture();
+  preferredMaterial.roughnessMap.name = 'textures/body_roughness.png';
+  preferredMaterial.normalMap = new THREE.Texture();
+  preferredMaterial.normalMap.name = 'textures/body_normal.png';
+  preferredMaterial.alphaMap = new THREE.Texture();
+  preferredMaterial.alphaMap.name = 'textures/body_opacity.png';
+
   const cachedSnapshot = {
     stageSourcePath: '/robots/go2.usd',
     render: {
@@ -1657,30 +1809,39 @@ test('resolveUsdExportSceneSnapshot enriches cached snapshots with live preferre
     targetWindow: {
       renderInterface: {
         getPreferredVisualMaterialForLink: (linkPath: string) => (
-          linkPath === '/Robot/base_link'
-            ? {
-                name: 'Body',
-                opacity: 1,
-                color: {
-                  r: 0.6717054843902588,
-                  g: 0.6924257278442383,
-                  b: 0.7742701768875122,
-                },
-              }
-            : null
+          linkPath === '/Robot/base_link' ? preferredMaterial : null
         ),
       },
     },
   });
 
   assert.notEqual(resolved, cachedSnapshot);
-  assert.deepEqual(resolved?.render?.preferredVisualMaterialsByLinkPath, {
-    '/Robot/base_link': {
-      name: 'Body',
-      opacity: 1,
-      color: [0.6717054843902588, 0.6924257278442383, 0.7742701768875122],
-    },
-  });
+  const preferredRecord = resolved?.render?.preferredVisualMaterialsByLinkPath?.['/Robot/base_link'];
+  assert.ok(preferredRecord);
+  assert.equal(preferredRecord.name, 'Body');
+  assert.deepEqual(preferredRecord.color, [
+    preferredMaterial.color.r,
+    preferredMaterial.color.g,
+    preferredMaterial.color.b,
+  ]);
+  assert.equal(preferredRecord.opacity, 0.85);
+  assert.equal(preferredRecord.roughness, 0.28);
+  assert.equal(preferredRecord.metalness, 0.63);
+  assert.deepEqual(preferredRecord.emissive, [
+    preferredMaterial.emissive.r,
+    preferredMaterial.emissive.g,
+    preferredMaterial.emissive.b,
+  ]);
+  assert.equal(preferredRecord.emissiveIntensity, 1.4);
+  assert.equal(preferredRecord.transmission, 0.18);
+  assert.equal(preferredRecord.thickness, 0.12);
+  assert.equal(preferredRecord.ior, 1.45);
+  assert.equal(preferredRecord.clearcoat, 0.22);
+  assert.equal(preferredRecord.clearcoatRoughness, 0.41);
+  assert.equal(preferredRecord.mapPath, 'textures/body_basecolor.png');
+  assert.equal(preferredRecord.roughnessMapPath, 'textures/body_roughness.png');
+  assert.equal(preferredRecord.normalMapPath, 'textures/body_normal.png');
+  assert.equal(preferredRecord.alphaMapPath, 'textures/body_opacity.png');
 });
 
 test('resolveUsdExportSceneSnapshot normalizes bare stage source paths for live snapshot lookups', () => {

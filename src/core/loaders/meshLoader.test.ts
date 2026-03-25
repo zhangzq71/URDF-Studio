@@ -224,18 +224,18 @@ test('createMeshLoader offsets duplicated coplanar material subsets in b2 base_l
         });
     });
 
-    const meshes = getAllMeshes(loadedObject);
-    const adjustedMaterials = meshes.flatMap((mesh) => {
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        return materials.filter((material) => isCoplanarOffsetMaterial(material));
-    });
+    const mesh = getFirstMesh(loadedObject);
+    assert.ok(Array.isArray(mesh.material), 'expected b2 base_link to keep multi-material Collada materials');
 
-    assert.ok(adjustedMaterials.length > 0, 'expected b2 base_link to receive coplanar material offsets');
-    adjustedMaterials.forEach((material) => {
-        assert.equal(material.polygonOffset, true);
-        assert.equal(material.polygonOffsetFactor, -2);
-        assert.equal(material.polygonOffsetUnits, -2);
-    });
+    const materials = mesh.material as THREE.Material[];
+    assert.equal(materials[0]?.name, '磨砂铝合金.011');
+    assert.equal(materials[1]?.name, 'logo.001');
+    assert.equal(materials[2]?.name, '材质.023');
+    assert.equal(materials[3]?.name, '材质.024');
+    assert.equal(isCoplanarOffsetMaterial(materials[0]), true);
+    assert.equal(isCoplanarOffsetMaterial(materials[1]), false);
+    assert.equal(isCoplanarOffsetMaterial(materials[2]), true);
+    assert.equal(isCoplanarOffsetMaterial(materials[3]), true);
 });
 
 test('createMeshLoader offsets near-coplanar shell materials in b2 calf.dae', async () => {
@@ -278,6 +278,44 @@ test('createMeshLoader offsets near-coplanar shell materials in b2 calf.dae', as
         assert.equal(material.polygonOffsetFactor, -2);
         assert.equal(material.polygonOffsetUnits, -2);
     });
+});
+
+test('createMeshLoader keeps the b2 RR_thigh silicone shell ahead of the aluminum insert', async () => {
+    const meshPath = 'test/unitree_ros/robots/b2_description/meshes/RR_thigh.dae';
+    const urdfContent = fs.readFileSync('test/unitree_ros/robots/b2_description/urdf/b2_description.urdf', 'utf8');
+    const colladaRootNormalizationHints = buildColladaRootNormalizationHints(parseURDF(urdfContent).links);
+    const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
+    const manager = new THREE.LoadingManager();
+    const loadMesh = createMeshLoader(
+        {
+            [meshPath]: meshDataUrl,
+            'package://b2_description/meshes/RR_thigh.dae': meshDataUrl,
+            'RR_thigh.dae': meshDataUrl,
+        },
+        manager,
+        '',
+        { colladaRootNormalizationHints },
+    );
+
+    const loadedObject = await new Promise<THREE.Object3D>((resolve, reject) => {
+        loadMesh('package://b2_description/meshes/RR_thigh.dae', manager, (result, err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+
+            resolve(result);
+        });
+    });
+
+    const mesh = getFirstMesh(loadedObject);
+    assert.ok(Array.isArray(mesh.material), 'expected b2 RR_thigh to keep multi-material Collada materials');
+
+    const materials = mesh.material as THREE.Material[];
+    assert.equal(materials[0]?.name, '磨砂铝合金.008');
+    assert.equal(materials[1]?.name, '灰色硅胶.009');
+    assert.equal(isCoplanarOffsetMaterial(materials[0]), false);
+    assert.equal(isCoplanarOffsetMaterial(materials[1]), true);
 });
 
 test('findAssetByPath resolves package-prefixed b2w mesh paths against imported zip assets', () => {

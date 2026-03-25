@@ -61,6 +61,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     isMeshPreview = false,
     hoveredSelection,
     groundPlaneOffset = 0,
+    active = true,
 }) => {
     const { invalidate } = useThree();
     const autoFrameScopeFallbackRef = useRef<string | null>(null);
@@ -130,8 +131,9 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         focusTarget,
         selection,
         mode,
-        autoFrameOnRobotChange: !focusTarget && !isLoading,
+        autoFrameOnRobotChange: active && !focusTarget && !isLoading,
         autoFrameScopeKey: sourceFilePath ?? autoFrameScopeFallbackRef.current,
+        active,
     });
 
     // ============================================================
@@ -265,6 +267,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
             : loadingProgress?.phase === 'finalizing-scene'
                 ? t.loadingRobotFinalizingScene
                 : null;
+    const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
 
     if (error) {
         return (
@@ -284,7 +287,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                     <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
                         <ViewerLoadingHud
                             title={t.loadingRobot}
-                            detail={loadingHudState.detail}
+                            detail={loadingDetail}
                             progress={loadingHudState.progress}
                             statusLabel={loadingHudState.statusLabel}
                             stageLabel={loadingStageLabel}

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bakeColladaRootTransformInPlace } from '@/core/loaders';
+import { applyColladaCoplanarMaterialFixups, bakeColladaRootTransformInPlace } from '@/core/loaders';
 
 export interface ColladaSceneCloneResult {
   clone: THREE.Object3D;
@@ -12,6 +12,8 @@ export function cloneColladaScenePreservingRootTransform(
 ): ColladaSceneCloneResult {
   const clone = scene.clone();
   const overrideMeshes: THREE.Mesh[] = [];
+
+  applyColladaCoplanarMaterialFixups(clone);
 
   if (preserveRootTransform) {
     // Visualizer-style URDF rendering applies link origins outside the imported
