@@ -68,14 +68,28 @@ const getModelName = (): string => {
 /**
  * Get simplified robot context for AI prompts
  */
+const serializeGeometryForInspection = (geometry: RobotState['links'][string]['visual']) => ({
+  origin: geometry.origin,
+  geometry: {
+    type: geometry.type,
+    dimensions: geometry.dimensions
+  }
+})
+
 const getContextRobot = (robot: RobotState) => {
   return {
     name: robot.name,
     links: Object.values(robot.links).map(l => ({
       id: l.id,
       name: l.name,
-      mass: l.inertial?.mass ?? 0,
-      inertia: l.inertial?.inertia
+      inertial: {
+        mass: l.inertial?.mass ?? 0,
+        origin: l.inertial?.origin,
+        inertia: l.inertial?.inertia
+      },
+      visual: serializeGeometryForInspection(l.visual),
+      collision: serializeGeometryForInspection(l.collision),
+      collisionBodies: l.collisionBodies?.map(serializeGeometryForInspection)
     })),
     joints: Object.values(robot.joints).map(j => ({
       id: j.id,

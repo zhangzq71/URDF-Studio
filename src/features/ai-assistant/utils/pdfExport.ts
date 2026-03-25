@@ -7,6 +7,7 @@ import { createRoot } from 'react-dom/client'
 import { translations, type Language } from '@/shared/i18n'
 import type { InspectionReport } from '@/types'
 import { InspectionReportTemplate } from '@/features/file-io/components/InspectionReportTemplate'
+import { printElementAsPdf } from '@/features/file-io/utils/generatePdfFromHtml'
 
 interface ExportInspectionReportPdfParams {
   inspectionReport: InspectionReport | null
@@ -43,7 +44,7 @@ export function exportInspectionReportPdf({
     })
   )
 
-  setTimeout(() => {
+  setTimeout(async () => {
     const now = new Date()
     const dateStr = now.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', {
       year: 'numeric',
@@ -57,67 +58,33 @@ export function exportInspectionReportPdf({
 
     const element = document.getElementById('pdf-report-container-modal')?.firstElementChild
     if (element) {
-      const originalContent = document.body.innerHTML
-      const reportClone = element.cloneNode(true) as HTMLElement
-      reportClone.style.cssText = `
-        width: 100%;
-        max-width: 210mm;
-        margin: 0 auto;
-        padding: 20mm;
-      `
-
-      document.body.innerHTML = ''
-      document.body.appendChild(reportClone)
-
-      const originalTitle = document.title
-      document.title = fileName
-
-      const styleElement = document.createElement('style')
-      styleElement.textContent = `
-        @page {
-          size: A4;
-          margin: 10mm;
-        }
-        @media print {
-          body {
-            margin: 0;
-            padding: 0;
-          }
-        }
-      `
-      document.head.appendChild(styleElement)
-
-      let restored = false
-
-      const restoreOriginalView = () => {
-        if (restored) return
-        restored = true
-        window.removeEventListener('afterprint', handleAfterPrint)
-        document.body.innerHTML = originalContent
-        document.title = originalTitle
-        styleElement.remove()
+      try {
+        await printElementAsPdf({
+          element: element as HTMLElement,
+          title: fileName,
+          bodyStyle: `
+            display: flex;
+            justify-content: center;
+          `,
+          extraCss: `
+            body > * {
+              width: 100%;
+              max-width: 210mm;
+              margin: 0 auto;
+              padding: 20mm;
+              box-sizing: border-box;
+            }
+          `
+        })
+      } catch (error) {
+        console.error('Inspection report PDF export failed', error)
       }
-
-      const handleAfterPrint = () => {
-        restoreOriginalView()
-      }
-
-      setTimeout(() => {
-        window.addEventListener('afterprint', handleAfterPrint, { once: true })
-        window.print()
-
-        setTimeout(() => {
-          restoreOriginalView()
-        }, 5000)
-      }, 100)
     }
 
-    setTimeout(() => {
-      root.unmount()
-      const containerToRemove = document.getElementById('pdf-report-container-modal')
-      if (containerToRemove && containerToRemove.parentElement) {
-        containerToRemove.parentElement.removeChild(containerToRemove)
-      }
-    }, 6000)
+    root.unmount()
+    const containerToRemove = document.getElementById('pdf-report-container-modal')
+    if (containerToRemove && containerToRemove.parentElement) {
+      containerToRemove.parentElement.removeChild(containerToRemove)
+    }
   }, 200)
 }

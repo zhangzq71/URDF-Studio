@@ -3,6 +3,130 @@
  * This ensures proper Chinese character support without needing external fonts
  */
 
+interface PrintElementAsPdfOptions {
+  element: HTMLElement
+  title?: string
+  bodyStyle?: string
+  extraCss?: string
+}
+
+function clonePrintableHead(targetDocument: Document) {
+  const headNodes = Array.from(document.head.children)
+  headNodes.forEach(node => {
+    if (node instanceof HTMLTitleElement) return
+    targetDocument.head.appendChild(node.cloneNode(true))
+  })
+}
+
+export async function printElementAsPdf({
+  element,
+  title,
+  bodyStyle,
+  extraCss
+}: PrintElementAsPdfOptions): Promise<void> {
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.cssText = `
+    position: fixed;
+    width: 0;
+    height: 0;
+    right: 0;
+    bottom: 0;
+    border: 0;
+    visibility: hidden;
+    pointer-events: none;
+  `
+
+  document.body.appendChild(iframe)
+
+  const iframeWindow = iframe.contentWindow
+  const iframeDocument = iframe.contentDocument
+
+  if (!iframeWindow || !iframeDocument) {
+    iframe.remove()
+    throw new Error('Unable to create print document')
+  }
+
+  iframeDocument.open()
+  iframeDocument.write('<!doctype html><html><head></head><body></body></html>')
+  iframeDocument.close()
+
+  clonePrintableHead(iframeDocument)
+
+  if (title) {
+    iframeDocument.title = title
+    const titleElement = iframeDocument.createElement('title')
+    titleElement.textContent = title
+    iframeDocument.head.appendChild(titleElement)
+  }
+
+  const printStyle = iframeDocument.createElement('style')
+  printStyle.textContent = `
+    @page {
+      size: A4;
+      margin: 10mm;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+    ${bodyStyle ? `body { ${bodyStyle} }` : ''}
+    ${extraCss ?? ''}
+  `
+  iframeDocument.head.appendChild(printStyle)
+
+  iframeDocument.body.appendChild(element.cloneNode(true))
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    let printStarted = false
+
+    const cleanup = () => {
+      iframeWindow.removeEventListener('afterprint', handleAfterPrint)
+      iframe.remove()
+    }
+
+    const finalize = (error?: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    }
+
+    const handleAfterPrint = () => finalize()
+
+    iframeWindow.addEventListener('afterprint', handleAfterPrint, { once: true })
+
+    const startPrint = () => {
+      if (settled || printStarted) return
+      printStarted = true
+
+      try {
+        iframeWindow.focus()
+        iframeWindow.print()
+      } catch (error) {
+        finalize(error instanceof Error ? error : new Error('Print failed'))
+        return
+      }
+
+      // Some browsers do not reliably fire afterprint when the dialog is cancelled.
+      setTimeout(() => finalize(), 1000)
+    }
+
+    iframe.onload = () => {
+      setTimeout(startPrint, 100)
+    }
+
+    // srcdoc-like manual write can complete before onload is attached, so keep a fallback.
+    setTimeout(startPrint, 300)
+  })
+}
+
 export async function generatePdfFromHtml(
   elementId: string,
   title?: string
@@ -11,125 +135,22 @@ export async function generatePdfFromHtml(
   if (!element) {
     throw new Error(`Element with id "${elementId}" not found`);
   }
-
-  // Store original page title
-  const originalTitle = document.title;
-  if (title) {
-    document.title = title;
-  }
-
-  // Store original styles
-  const originalStyle = document.body.getAttribute('style');
-
-  // Create a clone for printing
-  const clone = element.cloneNode(true) as HTMLElement;
-
-  // Create print container
-  const printContainer = document.createElement('div');
-  printContainer.id = 'pdf-print-container';
-  printContainer.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 99999;
-    background: white;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    justify-content: center;
-  `;
-
-  // Apply print-specific styles to the clone
-  clone.style.cssText = `
-    width: 100%;
-    max-width: 210mm;
-    padding: 20mm;
-    box-sizing: border-box;
-    background: white;
-  `;
-
-  printContainer.appendChild(clone);
-  document.body.appendChild(printContainer);
-
-  // Inject print styles
-  const styleElement = document.createElement('style');
-  styleElement.setAttribute('data-pdf-print', 'true');
-  styleElement.textContent = `
-    @media print {
-      body * {
-        visibility: hidden;
+  await printElementAsPdf({
+    element,
+    title,
+    bodyStyle: `
+      display: flex;
+      justify-content: center;
+    `,
+    extraCss: `
+      body > * {
+        width: 100%;
+        max-width: 210mm;
+        padding: 20mm;
+        box-sizing: border-box;
       }
-      #pdf-print-container,
-      #pdf-print-container * {
-        visibility: visible;
-      }
-      #pdf-print-container {
-        position: absolute;
-        left: 0;
-        top: 0;
-      }
-      @page {
-        margin: 0;
-        size: A4;
-      }
-    }
-  `;
-  document.head.appendChild(styleElement);
-
-  // Use print dialog to generate PDF
-  try {
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-
-      function finalize(error?: Error) {
-        if (settled) return;
-        settled = true;
-        window.removeEventListener('afterprint', printHandler);
-        window.removeEventListener('cancel', errorHandler);
-        cleanup();
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      }
-
-      function printHandler() {
-        finalize();
-      }
-
-      function errorHandler() {
-        finalize(new Error('Print dialog was cancelled'));
-      }
-
-      // Wait a bit for styles to apply
-      setTimeout(() => {
-        window.addEventListener('afterprint', printHandler, { once: true });
-        window.addEventListener('cancel', errorHandler, { once: true });
-        window.print();
-      }, 100);
-    });
-  } finally {
-    // Restore original state
-    document.title = originalTitle;
-    if (originalStyle) {
-      document.body.setAttribute('style', originalStyle);
-    } else {
-      document.body.removeAttribute('style');
-    }
-  }
-
-  function cleanup() {
-    const container = document.getElementById('pdf-print-container');
-    if (container) {
-      document.body.removeChild(container);
-    }
-    styleElement.remove();
-    const styles = document.head.querySelectorAll('style[data-pdf-print]');
-    styles.forEach((s) => s.remove());
-  }
+    `
+  })
 }
 
 /**

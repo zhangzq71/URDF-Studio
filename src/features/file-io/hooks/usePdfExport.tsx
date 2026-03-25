@@ -10,6 +10,7 @@ import { translations } from '@/shared/i18n';
 import { useUIStore, useRobotStore } from '@/store';
 import type { InspectionReport } from '@/types';
 import { InspectionReportTemplate } from '../components/InspectionReportTemplate';
+import { printElementAsPdf } from '../utils/generatePdfFromHtml';
 
 interface UsePdfExportReturn {
   handleDownloadPDF: (inspectionReport: InspectionReport | null) => void;
@@ -47,7 +48,7 @@ export function usePdfExport(): UsePdfExportReturn {
     );
 
     // Wait for rendering to complete
-    setTimeout(() => {
+    setTimeout(async () => {
       // Generate filename
       const now = new Date();
       const dateStr = now.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', {
@@ -64,70 +65,35 @@ export function usePdfExport(): UsePdfExportReturn {
       // Create a clean printable version
       const element = document.getElementById('pdf-report-container')?.firstElementChild;
       if (element) {
-        // Store original body content
-        const originalContent = document.body.innerHTML;
-
-        // Replace body with report content for printing
-        const reportClone = element.cloneNode(true) as HTMLElement;
-        reportClone.style.cssText = `
-          width: 100%;
-          max-width: 210mm;
-          margin: 0 auto;
-          padding: 20mm;
-        `;
-
-        document.body.innerHTML = '';
-        document.body.appendChild(reportClone);
-
-        // Store original title
-        const originalTitle = document.title;
-        document.title = fileName;
-
-        // Inject print styles
-        const styleElement = document.createElement('style');
-        styleElement.textContent = `
-          @page {
-            size: A4;
-            margin: 10mm;
-          }
-          @media print {
-            body {
-              margin: 0;
-              padding: 0;
-            }
-          }
-        `;
-        document.head.appendChild(styleElement);
-
-        // Small delay before opening print dialog
-        setTimeout(() => {
-          window.print();
-
-          // Restore original content after print
-          window.addEventListener('afterprint', () => {
-            document.body.innerHTML = originalContent;
-            document.title = originalTitle;
-            styleElement.remove();
-          }, { once: true });
-
-          // Also restore after a timeout in case user cancels
-          setTimeout(() => {
-            if (document.body.contains(reportClone)) {
-              document.body.innerHTML = originalContent;
-              document.title = originalTitle;
-            }
-          }, 5000);
-        }, 100);
+        try {
+          await printElementAsPdf({
+            element: element as HTMLElement,
+            title: fileName,
+            bodyStyle: `
+              display: flex;
+              justify-content: center;
+            `,
+            extraCss: `
+              body > * {
+                width: 100%;
+                max-width: 210mm;
+                margin: 0 auto;
+                padding: 20mm;
+                box-sizing: border-box;
+              }
+            `
+          });
+        } catch (error) {
+          console.error('Inspection report PDF export failed', error);
+        }
       }
 
       // Cleanup
-      setTimeout(() => {
-        root.unmount();
-        const containerToRemove = document.getElementById('pdf-report-container');
-        if (containerToRemove && containerToRemove.parentElement) {
-          containerToRemove.parentElement.removeChild(containerToRemove);
-        }
-      }, 6000);
+      root.unmount();
+      const containerToRemove = document.getElementById('pdf-report-container');
+      if (containerToRemove && containerToRemove.parentElement) {
+        containerToRemove.parentElement.removeChild(containerToRemove);
+      }
     }, 200);
   }, [lang, robotName, t]);
 
