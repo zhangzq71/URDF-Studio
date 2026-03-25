@@ -85,6 +85,20 @@ Key project references:
     ```
     Visit `http://localhost:5173` in your browser.
 
+### USD Runtime Note
+USD loading uses the bundled USD WASM runtime, which requires a cross-origin isolated page because it depends on `SharedArrayBuffer`.
+
+- Use `npm run dev` for local development.
+- Use `npm run preview` when validating the production build locally.
+- Do not serve `dist/` with a plain static server such as `python -m http.server`, VS Code Live Server, or any other server that does not send:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+If those headers are missing, USD imports will fail even though the rest of the app still loads.
+
 ## 📝 Usage Instructions
 
 1.  **Kinematic Setup**: Use the **Skeleton Mode** to add links and joints. Use the tree view to manage the robot hierarchy.

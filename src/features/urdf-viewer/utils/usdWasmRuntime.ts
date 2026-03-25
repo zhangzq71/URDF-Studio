@@ -105,6 +105,22 @@ function getPreferredUsdThreadCount(): number {
   return Math.max(1, Math.min(cappedConcurrency, 4));
 }
 
+function assertUsdRuntimeEnvironment(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (globalThis.crossOriginIsolated) {
+    return;
+  }
+
+  throw new Error(
+    'USD loading requires a cross-origin isolated page because the bundled USD WASM runtime uses SharedArrayBuffer. '
+    + 'Start the app with `npm run dev` or `npm run preview`, or configure your local/static server to send '
+    + '`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.',
+  );
+}
+
 let getUsdModuleFnPromise: Promise<((config: Record<string, any>) => Promise<UsdModule>)> | null = null;
 let usdRuntimePromise: Promise<UsdWasmRuntime> | null = null;
 
@@ -135,6 +151,8 @@ async function loadEmHdBindingsGetUsdModuleFn(): Promise<((config: Record<string
 export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
   if (!usdRuntimePromise) {
     usdRuntimePromise = (async () => {
+      assertUsdRuntimeEnvironment();
+
       const [
         getUsdModuleFn,
         usdFsModule,

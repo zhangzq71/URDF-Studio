@@ -2,11 +2,11 @@ import JSZip from 'jszip';
 import { isMJCF } from '@/core/parsers/mjcf';
 import { isUSDA } from '@/core/parsers/usd';
 import { isXacro } from '@/core/parsers/xacro';
-import { isMeshFile } from '@/features/file-io/utils/formatDetection';
 import {
   createImportPathCollisionMap,
+  isMeshFile,
   remapImportedPath,
-} from '@/features/file-io/utils/libraryImportPathCollisions';
+} from '@/features/file-io/utils';
 import type { RobotFile } from '@/types';
 
 const USD_BINARY_MAGIC = new Uint8Array([80, 88, 82, 45, 85, 83, 68, 67]); // "PXR-USDC"

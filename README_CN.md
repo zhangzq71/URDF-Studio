@@ -85,6 +85,20 @@
     ```
     在浏览器中访问 `http://localhost:5173`。
 
+### USD 本地运行说明
+USD 加载依赖仓库内置的 USD WASM runtime，而这个 runtime 依赖 `SharedArrayBuffer`，因此页面必须处于 `cross-origin isolated` 环境。
+
+- 本地开发请使用 `npm run dev`
+- 本地验证生产构建请使用 `npm run preview`
+- 不要用 `python -m http.server`、VS Code Live Server，或任何没有返回下面响应头的普通静态服务器直接跑 `dist/`
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+如果缺少这些响应头，页面本身可能还能打开，但 USD 导入会失败。
+
 ## 📝 使用方法
 
 1.  **构建拓扑**：在**骨架模式**下，通过树状视图添加子连杆，并使用 3D 控件调整关节位置。
