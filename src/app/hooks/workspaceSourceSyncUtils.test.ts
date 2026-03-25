@@ -7,9 +7,10 @@ import { GeometryType, JointType, type RobotFile, type RobotState } from '@/type
 import {
   createPreviewRobotState,
   createRobotSourceSnapshot,
+  getPreferredMjcfContent,
   getPreferredUrdfContent,
   shouldUseEmptyRobotForUsdHydration,
-} from './workspaceSourceSyncUtils';
+} from './workspaceSourceSyncUtils.ts';
 
 const { window } = new JSDOM();
 
@@ -187,4 +188,26 @@ test('createPreviewRobotState falls back to a USD placeholder when hydration dat
   assert.equal(previewRobot?.name, 'scene');
   assert.equal(previewRobot?.rootLinkId, 'usd_scene_root');
   assert.equal(previewRobot?.links.usd_scene_root?.visual.type, GeometryType.NONE);
+});
+
+test('getPreferredMjcfContent keeps the imported MJCF before viewer edits', () => {
+  assert.equal(
+    getPreferredMjcfContent({
+      sourceContent: '<mujoco model="cassie-source"/>',
+      generatedContent: '<mujoco model="cassie-generated"/>',
+      hasViewerEdits: false,
+    }),
+    '<mujoco model="cassie-source"/>',
+  );
+});
+
+test('getPreferredMjcfContent switches to generated MJCF after viewer edits', () => {
+  assert.equal(
+    getPreferredMjcfContent({
+      sourceContent: '<mujoco model="cassie-source"/>',
+      generatedContent: '<mujoco model="cassie-generated"/>',
+      hasViewerEdits: true,
+    }),
+    '<mujoco model="cassie-generated"/>',
+  );
 });

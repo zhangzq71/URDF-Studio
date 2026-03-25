@@ -88,8 +88,9 @@ Key project references:
 ### USD Runtime Note
 USD loading uses the bundled USD WASM runtime, which requires a cross-origin isolated page because it depends on `SharedArrayBuffer`.
 
-- Use `npm run dev` for local development.
+- Use `npm run dev` for local development, and open the app from `http://localhost:<port>` or `http://127.0.0.1:<port>`.
 - Use `npm run preview` when validating the production build locally.
+- If you open the app from a LAN IP address, a remote HTTP URL, or another non-secure origin, the browser will ignore `COOP/COEP`, `SharedArrayBuffer` will stay unavailable, and USD imports will still fail. Use HTTPS for those setups.
 - Do not serve `dist/` with a plain static server such as `python -m http.server`, VS Code Live Server, or any other server that does not send:
 
 ```http

@@ -468,21 +468,27 @@ function degreesToRadians(value: number | null | undefined): number | undefined 
 
 function jointTypeFromViewerValue(value: string | null | undefined): JointType {
   const normalized = String(value || '').trim().toLowerCase();
-  switch (normalized) {
-    case 'fixed':
-      return JointType.FIXED;
-    case 'continuous':
-      return JointType.CONTINUOUS;
-    case 'prismatic':
-      return JointType.PRISMATIC;
-    case 'planar':
-      return JointType.PLANAR;
-    case 'floating':
-      return JointType.FLOATING;
-    case 'revolute':
-    default:
-      return JointType.REVOLUTE;
+  if (!normalized) {
+    return JointType.REVOLUTE;
   }
+
+  if (normalized === 'fixed' || normalized.includes('fixed')) {
+    return JointType.FIXED;
+  }
+  if (normalized === 'continuous' || normalized.includes('continuous')) {
+    return JointType.CONTINUOUS;
+  }
+  if (normalized === 'prismatic' || normalized.includes('prismatic')) {
+    return JointType.PRISMATIC;
+  }
+  if (normalized === 'planar' || normalized.includes('planar')) {
+    return JointType.PLANAR;
+  }
+  if (normalized === 'floating' || normalized.includes('floating')) {
+    return JointType.FLOATING;
+  }
+
+  return JointType.REVOLUTE;
 }
 
 function axisFromToken(token: string | null | undefined): Vector3 {

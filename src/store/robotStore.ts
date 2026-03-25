@@ -7,7 +7,10 @@ import { immer } from 'zustand/middleware/immer';
 import type { RobotClosedLoopConstraint, RobotMaterialState, UrdfLink, UrdfJoint } from '@/types';
 import { DEFAULT_LINK, DEFAULT_JOINT } from '@/types';
 import { resolveClosedLoopJointMotionCompensation } from '@/core/robot';
-import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
+import {
+  syncRobotMaterialsForLinkUpdate,
+  syncRobotVisualColorsFromMaterials,
+} from '@/core/robot/materials';
 
 const INITIAL_LINK_ID = 'base_link';
 
@@ -142,6 +145,7 @@ export const useRobotStore = create<RobotData & RobotActions & {
 
       // Full robot data
       setRobot: (data, options) => {
+        const normalizedData = syncRobotVisualColorsFromMaterials(data);
         const shouldResetHistory = options?.resetHistory === true;
         const historyLabel = options?.label ?? 'Load robot state';
 
@@ -150,12 +154,12 @@ export const useRobotStore = create<RobotData & RobotActions & {
         }
 
         set((state) => {
-          state.name = data.name;
-          state.links = data.links;
-          state.joints = data.joints;
-          state.rootLinkId = data.rootLinkId;
-          state.materials = data.materials;
-          state.closedLoopConstraints = data.closedLoopConstraints;
+          state.name = normalizedData.name;
+          state.links = normalizedData.links;
+          state.joints = normalizedData.joints;
+          state.rootLinkId = normalizedData.rootLinkId;
+          state.materials = normalizedData.materials;
+          state.closedLoopConstraints = normalizedData.closedLoopConstraints;
           if (shouldResetHistory) {
             state._history = { past: [], future: [] };
             state._activity = [...state._activity, createChangeLogEntry(historyLabel)].slice(-MAX_ACTIVITY_LOG);
@@ -164,7 +168,7 @@ export const useRobotStore = create<RobotData & RobotActions & {
       },
 
       resetRobot: (data) => {
-        const newData = data || INITIAL_ROBOT_DATA;
+        const newData = syncRobotVisualColorsFromMaterials(data || INITIAL_ROBOT_DATA);
         set((state) => {
           state.name = newData.name;
           state.links = newData.links;

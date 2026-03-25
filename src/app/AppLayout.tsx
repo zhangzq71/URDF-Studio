@@ -793,6 +793,7 @@ export function AppLayout({
             jointAngleState={jointAngleState}
             jointMotionState={jointMotionState}
             onJointChange={handleJointChange}
+            syncJointChangesToApp
             selection={robot.selection}
             focusTarget={focusTarget}
             isMeshPreview={selectedFile?.format === 'mesh'}

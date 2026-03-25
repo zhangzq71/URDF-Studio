@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { URDFJoint as RuntimeURDFJoint } from '@/core/parsers/urdf/loader';
+import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
 import { disposeObject3D, disposeMaterial } from './dispose';
 import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial, createMatteMaterial } from './materials';
 import { SHARED_MATERIALS } from '../constants';
@@ -82,24 +83,30 @@ export function updateVisualMaterial(
   if (!colorOverride) {
     return;
   }
+  const parsedColorOverride = parseThreeColorWithOpacity(colorOverride);
+  if (!parsedColorOverride) {
+    return;
+  }
 
   const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
+  const overrideOpacity = parsedColorOverride.opacity;
 
-    const update = (mat: THREE.Material): THREE.Material => {
-      const map = (mat as any).map || null;
-      const next = createMatteMaterial({
-        color: colorOverride,
-        opacity: mat.opacity ?? 1,
-        transparent: mat.transparent || (mat.opacity ?? 1) < 1,
-        side: mat.side,
-        map,
-        name: mat.name,
-        preserveExactColor: true,
-      });
-      next.userData.urdfColorApplied = true;
-      next.userData.urdfColor = new THREE.Color(colorOverride);
-      return next;
-    };
+  const update = (mat: THREE.Material): THREE.Material => {
+    const map = (mat as any).map || null;
+    const effectiveOpacity = overrideOpacity ?? (mat.opacity ?? 1);
+    const next = createMatteMaterial({
+      color: parsedColorOverride.color,
+      opacity: effectiveOpacity,
+      transparent: mat.transparent || effectiveOpacity < 1,
+      side: mat.side,
+      map,
+      name: mat.name,
+      preserveExactColor: true,
+    });
+    next.userData.urdfColorApplied = true;
+    next.userData.urdfColor = parsedColorOverride.color.clone();
+    return next;
+  };
 
   if (Array.isArray(mesh.material)) {
     mesh.material = mesh.material.map((mat) => update(mat));

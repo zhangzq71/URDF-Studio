@@ -79,3 +79,27 @@ test('updateVisualMaterial preserves exact authored white overrides without wash
   assert.equal(nextMaterial.toneMapped, false);
   assert.equal(nextMaterial.userData.urdfColorApplied, true);
 });
+
+test('updateVisualMaterial preserves alpha from 8-digit hex overrides', () => {
+  const authoredMaterial = new THREE.MeshPhongMaterial({
+    name: 'wing',
+    color: new THREE.Color('#4d4d4d'),
+    opacity: 1,
+    transparent: false,
+  });
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    authoredMaterial,
+  );
+  const disposedMaterials = new Set<THREE.Material>();
+
+  updateVisualMaterial(mesh, '#89afcc66', disposedMaterials);
+
+  const nextMaterial = mesh.material as THREE.MeshStandardMaterial;
+  assert.equal(nextMaterial.color.getHexString(), '89afcc');
+  assert.equal(nextMaterial.transparent, true);
+  assert.ok(Math.abs(nextMaterial.opacity - (0x66 / 255)) < 1e-6);
+  assert.equal(nextMaterial.depthWrite, false);
+  assert.equal(nextMaterial.userData.urdfColorApplied, true);
+  assert.equal((nextMaterial.userData.urdfColor as THREE.Color).getHexString(), '89afcc');
+});

@@ -3,6 +3,7 @@ import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { highlightFaceMaterial } from '../utils/materials';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
+import { choosePreferredHoverMatch, findNearestExpandedBoundsHit } from '../utils/hoverLinkBounds';
 import { collectPickTargets, findPickIntersections, type PickTargetMode } from '../utils/pickTargets';
 import { resolveSelectionTarget } from '../utils/selectionTargets';
 import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
@@ -315,14 +316,20 @@ export function useHoverDetection({
             restoreSelectionHighlight();
         };
 
-        if (isSelectionLockedRef?.current) {
-            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
+        const resetHoverState = () => {
+            if (hoveredLinkRef.current) {
                 clearHoverHighlight();
+                return;
             }
+
+            emitHoverSelection(null, null);
+        };
+
+        if (isSelectionLockedRef?.current) {
+            resetHoverState();
             if (highlightedFace) {
                 setHighlightedFace(null);
             }
-            emitHoverSelection(null, null);
             return;
         }
 
@@ -334,8 +341,7 @@ export function useHoverDetection({
         if (toolMode === 'face') {
             if (!activeInteractionSubType) {
                 if (highlightedFace) setHighlightedFace(null);
-                if (hoveredLinkRef.current) clearHoverHighlight();
-                emitHoverSelection(null, null);
+                resetHoverState();
                 return;
             }
 
@@ -347,15 +353,14 @@ export function useHoverDetection({
                 : undefined;
             if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
                 if (highlightedFace) setHighlightedFace(null);
-                if (hoveredLinkRef.current) clearHoverHighlight();
-                emitHoverSelection(null, null);
+                resetHoverState();
                 return;
             }
 
             // PERFORMANCE: Two-phase detection - check bounding box first
             if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current)) {
                 if (highlightedFace) setHighlightedFace(null);
-                emitHoverSelection(null, null);
+                resetHoverState();
                 return;
             }
 
@@ -380,7 +385,7 @@ export function useHoverDetection({
                 }
             }
             if (highlightedFace) setHighlightedFace(null);
-            emitHoverSelection(null, null);
+            resetHoverState();
             return;
         }
 
@@ -390,20 +395,14 @@ export function useHoverDetection({
         }
 
         if (!isStandardMode) {
-            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                clearHoverHighlight();
-            }
-            emitHoverSelection(null, null);
+            resetHoverState();
             return;
         }
 
         // CRITICAL: Skip hover detection if the corresponding display option is not enabled
         if (!activeInteractionSubType) {
             // Clear any current hover since display is disabled
-            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                clearHoverHighlight();
-            }
-            emitHoverSelection(null, null);
+            resetHoverState();
             return;
         }
 
@@ -414,19 +413,14 @@ export function useHoverDetection({
             ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
             : undefined;
         if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
-            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                clearHoverHighlight();
-            }
+            resetHoverState();
             return;
         }
 
         // PERFORMANCE: Two-phase detection - check bounding box first
         if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current)) {
             // Ray misses robot entirely - clear hover state if needed
-            if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
-                clearHoverHighlight();
-            }
-            emitHoverSelection(null, null);
+            resetHoverState();
             return;
         }
 
@@ -438,53 +432,127 @@ export function useHoverDetection({
             false
         );
 
+        const exactHoverMatch: {
+            meta: {
+                linkId: string;
+                highlightTarget?: THREE.Object3D | null;
+                objectIndex?: number;
+            };
+            distance: number;
+        } | null = (() => {
+            if (intersections.length === 0) {
+                return null;
+            }
+
+            const firstValidHit = intersections[0];
+            if (!firstValidHit) {
+                return null;
+            }
+
+            let linkObj: THREE.Object3D | null = null;
+            let linkId: string | null = typeof firstValidHit.object.userData?.parentLinkName === 'string'
+                ? firstValidHit.object.userData.parentLinkName
+                : null;
+
+            if (linkId) {
+                linkObj = (robot as any).links?.[linkId] ?? null;
+            }
+
+            if (!linkObj) {
+                let current: THREE.Object3D | null = firstValidHit.object;
+                while (current) {
+                    if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+                        linkId = current.name;
+                        linkObj = current;
+                        break;
+                    }
+                    if ((robot as any).links && (robot as any).links[current.name]) {
+                        linkId = current.name;
+                        linkObj = current;
+                        break;
+                    }
+                    if (current === robot) break;
+                    current = current.parent;
+                }
+            }
+
+            if (!linkObj || !linkId) {
+                return null;
+            }
+
+            const resolvedTarget = resolveSelectionTarget(firstValidHit.object, linkObj);
+            return {
+                meta: {
+                    linkId,
+                    highlightTarget: resolvedTarget.highlightTarget,
+                    objectIndex: resolvedTarget.objectIndex,
+                },
+                distance: firstValidHit.distance,
+            };
+        })();
+
+        const hoverBoundsCandidates: {
+            mesh: THREE.Mesh;
+            meta: {
+                linkId: string;
+                highlightTarget?: THREE.Object3D | null;
+                objectIndex?: number;
+            };
+        }[] = [];
+        for (const target of pickTargets) {
+            if (!(target as THREE.Mesh).isMesh) {
+                continue;
+            }
+
+            const mesh = target as THREE.Mesh;
+            const linkId = typeof mesh.userData?.parentLinkName === 'string'
+                ? mesh.userData.parentLinkName
+                : null;
+
+            if (!linkId) {
+                continue;
+            }
+
+            hoverBoundsCandidates.push({
+                mesh,
+                meta: { linkId },
+            });
+        }
+
+        const preferredHoverMatch = choosePreferredHoverMatch(
+            exactHoverMatch,
+            findNearestExpandedBoundsHit(
+                raycasterRef.current.ray,
+                hoverBoundsCandidates,
+                (meta) => meta.linkId,
+            ),
+            (meta) => meta.linkId,
+        );
+
         let newHoveredLink: string | null = null;
         let newHoveredMesh: THREE.Object3D | null = null;
         let newHoveredObjectIndex: number | undefined = undefined;
 
-        if (intersections.length > 0) {
-            const firstValidHit = intersections[0];
+        if (preferredHoverMatch) {
+            newHoveredLink = preferredHoverMatch.meta.linkId;
 
-            if (firstValidHit) {
-                let linkObj: THREE.Object3D | null = null;
-
-                const parentLinkName = typeof firstValidHit.object.userData?.parentLinkName === 'string'
-                    ? firstValidHit.object.userData.parentLinkName
-                    : null;
-                if (parentLinkName) {
-                    newHoveredLink = parentLinkName;
-                    linkObj = (robot as any).links?.[parentLinkName] ?? null;
-                }
-
-                if (!linkObj) {
-                    let current: THREE.Object3D | null = firstValidHit.object;
-                    while (current) {
-                        if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
-                            newHoveredLink = current.name;
-                            linkObj = current;
-                            break;
-                        }
-                        if ((robot as any).links && (robot as any).links[current.name]) {
-                            newHoveredLink = current.name;
-                            linkObj = current;
-                            break;
-                        }
-                        if (current === robot) break;
-                        current = current.parent;
-                    }
-                }
-
-                if (linkObj && newHoveredLink) {
-                    const resolvedTarget = resolveSelectionTarget(firstValidHit.object, linkObj);
-                    newHoveredMesh = resolvedTarget.highlightTarget;
-                    newHoveredObjectIndex = resolvedTarget.objectIndex;
-                } else {
-                    newHoveredLink = null;
-                }
+            if (preferredHoverMatch === exactHoverMatch) {
+                newHoveredMesh = preferredHoverMatch.meta.highlightTarget;
+                newHoveredObjectIndex = preferredHoverMatch.meta.objectIndex;
             }
         }
 
-        if (newHoveredLink !== hoveredLinkRef.current || newHoveredMesh !== (hoveredLinkRef as any).currentMesh) {
+        const previousHoveredMesh = (hoveredLinkRef as any).currentMesh ?? null;
+        const previousHoveredObjectIndex = (hoveredLinkRef as any).currentObjectIndex ?? null;
+        const previousHoveredSubType = (hoveredLinkRef as any).currentSubType ?? null;
+        const nextHoveredSubType = newHoveredLink ? activeInteractionSubType : null;
+
+        if (
+            newHoveredLink !== hoveredLinkRef.current
+            || newHoveredMesh !== previousHoveredMesh
+            || (newHoveredObjectIndex ?? null) !== previousHoveredObjectIndex
+            || nextHoveredSubType !== previousHoveredSubType
+        ) {
             if (hoveredLinkRef.current && hoveredLinkRef.current !== selection?.id) {
                 clearHoverHighlight();
             }
@@ -496,7 +564,7 @@ export function useHoverDetection({
             hoveredLinkRef.current = newHoveredLink;
             (hoveredLinkRef as any).currentMesh = newHoveredMesh;
             (hoveredLinkRef as any).currentObjectIndex = newHoveredObjectIndex ?? null;
-            (hoveredLinkRef as any).currentSubType = newHoveredLink ? activeInteractionSubType : null;
+            (hoveredLinkRef as any).currentSubType = nextHoveredSubType;
             emitHoverSelection(
                 newHoveredLink ? 'link' : null,
                 newHoveredLink,

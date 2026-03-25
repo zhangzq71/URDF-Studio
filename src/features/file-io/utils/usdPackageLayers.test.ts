@@ -1,0 +1,145 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { GeometryType, JointType, type RobotState } from '@/types';
+import {
+  buildUsdLinkPathMaps,
+  buildUsdPhysicsLayerContent,
+  buildUsdRootLayerContent,
+  buildUsdSensorLayerContent,
+  createUsdArchivePackage,
+} from './usdPackageLayers.ts';
+
+const createLayeredRobot = (): RobotState => {
+  return {
+    name: 'demo_robot',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    joints: {
+      child_joint: {
+        id: 'child_joint',
+        name: 'child_joint',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base_link',
+        childLinkId: 'child_link',
+        origin: { xyz: { x: 0.1, y: 0.2, z: 0.3 }, rpy: { r: 0, p: 0, y: Math.PI / 4 } },
+        axis: { x: 0, y: 1, z: 0 },
+        angle: 0,
+        limit: { lower: -Math.PI / 6, upper: Math.PI / 3, effort: 10, velocity: 3 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+      child_link: {
+        id: 'child_link',
+        name: 'child_link',
+        visible: true,
+        visual: {
+          type: GeometryType.CYLINDER,
+          dimensions: { x: 0.1, y: 0.5, z: 0 },
+          color: '#00ff00',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.MESH,
+          meshPath: 'meshes/collision.stl',
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1.5,
+          origin: { xyz: { x: 0.01, y: 0.02, z: 0.03 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 0.4, ixy: 0, ixz: 0, iyy: 0.5, iyz: 0, izz: 0.6 },
+        },
+      },
+    },
+    materials: {},
+  };
+};
+
+test('usd package layers serialize root and sensor configuration prims', () => {
+  const rootLayer = buildUsdRootLayerContent('demo_robot_description', 'demo_robot_description');
+  const sensorLayer = buildUsdSensorLayerContent('demo_robot_description');
+
+  assert.match(rootLayer, /defaultPrim = "demo_robot_description"/);
+  assert.match(rootLayer, /prepend references = @configuration\/demo_robot_description_base\.usd@/);
+  assert.match(rootLayer, /prepend payload = @configuration\/demo_robot_description_physics\.usd@/);
+  assert.match(rootLayer, /prepend payload = @configuration\/demo_robot_description_sensor\.usd@/);
+  assert.match(sensorLayer, /def Xform "demo_robot_description"/);
+});
+
+test('usd package layers serialize articulation, joint paths, and mesh collision overrides', () => {
+  const robot = createLayeredRobot();
+  const pathMaps = buildUsdLinkPathMaps(robot, 'demo_robot_description');
+  const physicsLayer = buildUsdPhysicsLayerContent(
+    robot,
+    pathMaps,
+    'demo_robot_description',
+    'demo_robot_description',
+  );
+
+  assert.match(physicsLayer, /subLayers = \[\n\s+@demo_robot_description_base\.usd@\n\s+\]/);
+  assert.match(physicsLayer, /prepend apiSchemas = \["PhysicsArticulationRootAPI"\]/);
+  assert.match(physicsLayer, /rel physics:body0 = <\/demo_robot_description\/base_link>/);
+  assert.match(physicsLayer, /rel physics:body1 = <\/demo_robot_description\/base_link\/child_link>/);
+  assert.match(physicsLayer, /uniform token physics:axis = "Y"/);
+  assert.match(physicsLayer, /custom float3 urdf:axisLocal = \(0, 1, 0\)/);
+  assert.match(physicsLayer, /float physics:lowerLimit = -30/);
+  assert.match(physicsLayer, /float physics:upperLimit = 60/);
+  assert.match(physicsLayer, /over "collision_0" \(\n\s+prepend apiSchemas = \["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"\]\n\s*\)\n\s+\{/);
+  assert.match(physicsLayer, /uniform token physics:approximation = "convexHull"/);
+});
+
+test('usd package layers package root and configuration files under stable usd paths', async () => {
+  const archive = createUsdArchivePackage(
+    'demo_robot',
+    {
+      rootLayerContent: 'root',
+      baseLayerContent: 'base',
+      physicsLayerContent: 'physics',
+      sensorLayerContent: 'sensor',
+    },
+    new Map([
+      ['assets/checker.png', new Blob(['texture'], { type: 'image/png' })],
+    ]),
+  );
+
+  assert.equal(archive.archiveFileName, 'demo_robot_usd.zip');
+  assert.equal(archive.rootLayerPath, 'demo_robot/usd/demo_robot.usd');
+  assert.deepEqual(
+    Array.from(archive.archiveFiles.keys()).sort(),
+    [
+      'demo_robot/usd/assets/checker.png',
+      'demo_robot/usd/configuration/demo_robot_description_base.usd',
+      'demo_robot/usd/configuration/demo_robot_description_physics.usd',
+      'demo_robot/usd/configuration/demo_robot_description_sensor.usd',
+      'demo_robot/usd/demo_robot.usd',
+    ],
+  );
+
+  assert.equal(await archive.archiveFiles.get('demo_robot/usd/demo_robot.usd')?.text(), 'root');
+  assert.equal(
+    await archive.archiveFiles.get('demo_robot/usd/configuration/demo_robot_description_base.usd')?.text(),
+    'base',
+  );
+});

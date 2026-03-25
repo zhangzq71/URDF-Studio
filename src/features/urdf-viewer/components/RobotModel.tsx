@@ -76,10 +76,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         setIsDraggingRef.current = setIsDragging;
     }, [setIsDragging]);
 
-    const handleCollisionTransformDragging = useCallback((dragging: boolean) => {
-        setIsDraggingRef.current?.(dragging);
-    }, []);
-
     // ============================================================
     // HOOK: Robot Loading
     // ============================================================
@@ -168,6 +164,14 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         selection,
         highlightGeometry
     });
+
+    const handleCollisionTransformDragging = useCallback((dragging: boolean) => {
+        setIsDraggingRef.current?.(dragging);
+        if (!dragging) {
+            needsRaycastRef.current = true;
+            invalidate();
+        }
+    }, [invalidate, needsRaycastRef]);
 
     // ============================================================
     // HOOK: Hover Detection

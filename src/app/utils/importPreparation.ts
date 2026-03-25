@@ -30,14 +30,21 @@ export interface PreparedImportPayload {
 }
 
 export interface PrepareImportPayloadArgs {
-  files: readonly File[];
+  files: readonly ImportPreparationFileInput[];
   existingPaths: readonly string[];
 }
+
+export interface ImportPreparationFileDescriptor {
+  file: File;
+  relativePath?: string;
+}
+
+export type ImportPreparationFileInput = File | ImportPreparationFileDescriptor;
 
 export interface PrepareImportWorkerRequest {
   type: 'prepare-import';
   requestId: number;
-  files: File[];
+  files: ImportPreparationFileDescriptor[];
   existingPaths: string[];
 }
 
@@ -54,6 +61,24 @@ interface CollectedImportPayload {
   usdSourceFiles: PreparedImportBlobFile[];
   libraryFiles: PreparedImportLibraryFile[];
 }
+
+const LOOSE_IMPORT_ROOTLESS_FOLDERS = new Set([
+  'meshes',
+  'mesh',
+  'mjcf',
+  'urdf',
+  'textures',
+  'texture',
+  'dae',
+  'obj',
+  'stl',
+  'usd',
+  'usda',
+  'usdc',
+  'usdz',
+  'xacro',
+  'motor library',
+]);
 
 export const detectImportFormat = (
   content: string,
@@ -138,6 +163,158 @@ export function createImportedUsdFile(name: string, bytes: Uint8Array): RobotFil
 function shouldSkipImportPath(path: string): boolean {
   const pathParts = path.split('/');
   return pathParts.some((part) => part.startsWith('.'));
+}
+
+function resolveImportInputFile(input: ImportPreparationFileInput): File {
+  return input instanceof File ? input : input.file;
+}
+
+function resolveImportInputPath(input: ImportPreparationFileInput): string {
+  if (!(input instanceof File) && input.relativePath) {
+    return input.relativePath;
+  }
+
+  const file = resolveImportInputFile(input);
+  return file.webkitRelativePath || file.name;
+}
+
+function normalizeImportPath(path: string): string {
+  return path
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+/g, '/');
+}
+
+function getTopLevelImportSegment(path: string): string | null {
+  const normalized = normalizeImportPath(path);
+  const separatorIndex = normalized.indexOf('/');
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  return normalized.slice(0, separatorIndex);
+}
+
+function sanitizeInferredImportRoot(rootName: string | null | undefined): string | null {
+  const trimmed = rootName?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const sanitized = trimmed
+    .replace(/[\\/]+/g, '-')
+    .replace(/^\.+/, '')
+    .trim();
+
+  return sanitized || null;
+}
+
+function inferBundleRootFromRobotFiles(robotFiles: readonly RobotFile[]): string | null {
+  for (const file of robotFiles) {
+    if (file.format === 'urdf' || file.format === 'xacro') {
+      const match = file.content.match(/<robot\b[^>]*\bname\s*=\s*["']([^"']+)["']/i);
+      const inferred = sanitizeInferredImportRoot(match?.[1]);
+      if (inferred) {
+        return inferred;
+      }
+    }
+  }
+
+  for (const file of robotFiles) {
+    if (file.format === 'mjcf') {
+      const match = file.content.match(/<mujoco\b[^>]*\bmodel\s*=\s*["']([^"']+)["']/i);
+      const inferred = sanitizeInferredImportRoot(match?.[1]);
+      if (inferred) {
+        return inferred;
+      }
+    }
+  }
+
+  const firstDefinitionFile = robotFiles.find((file) => file.format !== 'mesh' && file.format !== 'usd')
+    ?? robotFiles.find((file) => file.format !== 'mesh')
+    ?? robotFiles[0];
+
+  if (!firstDefinitionFile) {
+    return null;
+  }
+
+  const inferredFromStem = firstDefinitionFile.name
+    .split('/')
+    .pop()
+    ?.replace(/\.[^.]+$/, '');
+  return sanitizeInferredImportRoot(inferredFromStem);
+}
+
+function shouldWrapLooseImportUnderBundleRoot(payload: CollectedImportPayload): boolean {
+  const allPaths = [
+    ...payload.robotFiles.map((file) => file.name),
+    ...payload.assetFiles.map((file) => file.name),
+    ...payload.usdSourceFiles.map((file) => file.name),
+    ...payload.libraryFiles.map((file) => file.path),
+  ].map(normalizeImportPath);
+
+  if (allPaths.length === 0) {
+    return false;
+  }
+
+  const topLevelSegments = new Set(
+    allPaths
+      .map(getTopLevelImportSegment)
+      .filter((segment): segment is string => Boolean(segment)),
+  );
+
+  if (topLevelSegments.size <= 1) {
+    return false;
+  }
+
+  const hasConventionalRobotFolders = Array.from(topLevelSegments).every((segment) =>
+    LOOSE_IMPORT_ROOTLESS_FOLDERS.has(segment.toLowerCase()),
+  );
+
+  if (!hasConventionalRobotFolders) {
+    return false;
+  }
+
+  return payload.robotFiles.some((file) => file.format !== 'mesh');
+}
+
+function prefixCollectedImportPath(path: string, bundleRoot: string): string {
+  const normalized = normalizeImportPath(path);
+  if (!normalized) {
+    return bundleRoot;
+  }
+
+  return `${bundleRoot}/${normalized}`;
+}
+
+function normalizeLooseImportBundleRoot(payload: CollectedImportPayload): CollectedImportPayload {
+  if (!shouldWrapLooseImportUnderBundleRoot(payload)) {
+    return payload;
+  }
+
+  const bundleRoot = inferBundleRootFromRobotFiles(payload.robotFiles);
+  if (!bundleRoot) {
+    return payload;
+  }
+
+  return {
+    robotFiles: payload.robotFiles.map((file) => ({
+      ...file,
+      name: prefixCollectedImportPath(file.name, bundleRoot),
+    })),
+    assetFiles: payload.assetFiles.map((file) => ({
+      ...file,
+      name: prefixCollectedImportPath(file.name, bundleRoot),
+    })),
+    usdSourceFiles: payload.usdSourceFiles.map((file) => ({
+      ...file,
+      name: prefixCollectedImportPath(file.name, bundleRoot),
+    })),
+    libraryFiles: payload.libraryFiles.map((file) => ({
+      ...file,
+      path: prefixCollectedImportPath(file.path, bundleRoot),
+    })),
+  };
 }
 
 function isImportableDefinitionPath(lowerPath: string): boolean {
@@ -229,7 +406,7 @@ async function collectImportPayloadFromZipFile(zipFile: File): Promise<Collected
   return payload;
 }
 
-async function collectImportPayloadFromLooseFiles(files: readonly File[]): Promise<CollectedImportPayload> {
+async function collectImportPayloadFromLooseFiles(files: readonly ImportPreparationFileInput[]): Promise<CollectedImportPayload> {
   const payload: CollectedImportPayload = {
     robotFiles: [],
     assetFiles: [],
@@ -237,8 +414,9 @@ async function collectImportPayloadFromLooseFiles(files: readonly File[]): Promi
     libraryFiles: [],
   };
 
-  await Promise.all(files.map(async (file) => {
-    const path = file.webkitRelativePath || file.name;
+  await Promise.all(files.map(async (input) => {
+    const file = resolveImportInputFile(input);
+    const path = resolveImportInputPath(input);
     const lowerPath = path.toLowerCase();
 
     if (shouldSkipImportPath(path)) {
@@ -273,15 +451,16 @@ async function collectImportPayloadFromLooseFiles(files: readonly File[]): Promi
     }
   }));
 
-  return payload;
+  return normalizeLooseImportBundleRoot(payload);
 }
 
 export async function prepareImportPayload({
   files,
   existingPaths,
 }: PrepareImportPayloadArgs): Promise<PreparedImportPayload> {
-  const collectedPayload = files.length === 1 && files[0].name.toLowerCase().endsWith('.zip')
-    ? await collectImportPayloadFromZipFile(files[0])
+  const firstFile = files[0] ? resolveImportInputFile(files[0]) : null;
+  const collectedPayload = files.length === 1 && firstFile && firstFile.name.toLowerCase().endsWith('.zip')
+    ? await collectImportPayloadFromZipFile(firstFile)
     : await collectImportPayloadFromLooseFiles(files);
 
   return renameCollectedImportPayload(collectedPayload, existingPaths);

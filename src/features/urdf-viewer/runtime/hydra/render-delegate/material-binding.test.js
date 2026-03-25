@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Float32BufferAttribute, Group, MeshPhysicalMaterial } from 'three';
 
+import { isCoplanarOffsetMaterial } from '../../../../../core/loaders/coplanarMaterialOffset.ts';
 import { ThreeRenderDelegateMaterialOps } from './ThreeRenderDelegateMaterialOps.js';
 import { HydraMesh } from './HydraMesh.js';
 
@@ -186,6 +187,59 @@ test('HydraMesh.tryApplyPendingGeomSubsetMaterials applies subset materials with
     assert.equal(hydraMesh._pendingGeomSubsetSections, null);
     assert.equal(hydraMesh._geometry.groups.length, 2);
     assert.deepEqual(hydraMesh._mesh.material.map((material) => material.name), ['mat-a', 'mat-b']);
+});
+
+test('HydraMesh.tryApplyPendingGeomSubsetMaterials offsets repeated overlapping subset materials idempotently', () => {
+    const materialA = new MeshPhysicalMaterial({ name: 'subset-anchor' });
+    const materialB = new MeshPhysicalMaterial({ name: 'subset-overlay' });
+    const hydraInterface = {
+        config: {
+            usdRoot: new Group(),
+        },
+        materials: {
+            '/robot/Looks/subset-anchor': { _material: materialA },
+            '/robot/Looks/subset-overlay': { _material: materialB },
+        },
+        resolveMaterialIdForMesh(materialId) {
+            return materialId;
+        },
+        getOrCreateMaterialById(materialId) {
+            return this.materials[materialId] || null;
+        },
+        getPreferredVisualMaterialForLink() {
+            return null;
+        },
+        _preferredVisualMaterialByLinkCache: new Map(),
+    };
+    const hydraMesh = new HydraMesh('mesh', '/robot/base_link/visuals.proto_mesh_id0', hydraInterface);
+    hydraMesh._geometry.setAttribute('position', new Float32BufferAttribute([
+        0, 0, 0,
+        1, 0, 0,
+        0, 1, 0,
+    ], 3));
+    hydraMesh._geometry.setIndex([0, 1, 2, 0, 1, 2]);
+    hydraMesh._mesh.geometry = hydraMesh._geometry;
+
+    const subsetSections = [
+        { start: 0, length: 3, materialId: '/robot/Looks/subset-anchor' },
+        { start: 3, length: 3, materialId: '/robot/Looks/subset-overlay' },
+    ];
+
+    hydraMesh._pendingGeomSubsetSections = subsetSections.map((section) => ({ ...section }));
+    assert.equal(hydraMesh.tryApplyPendingGeomSubsetMaterials(), true);
+
+    let resolvedMaterials = Array.isArray(hydraMesh._mesh.material)
+        ? hydraMesh._mesh.material
+        : [hydraMesh._mesh.material];
+    assert.equal(resolvedMaterials.filter((material) => isCoplanarOffsetMaterial(material)).length, 1);
+
+    hydraMesh._pendingGeomSubsetSections = subsetSections.map((section) => ({ ...section }));
+    assert.equal(hydraMesh.tryApplyPendingGeomSubsetMaterials(), true);
+
+    resolvedMaterials = Array.isArray(hydraMesh._mesh.material)
+        ? hydraMesh._mesh.material
+        : [hydraMesh._mesh.material];
+    assert.equal(resolvedMaterials.filter((material) => isCoplanarOffsetMaterial(material)).length, 1);
 });
 
 test('HydraMesh.tryApplyProtoDataBlobFastPath replaces stale expanded normals with authored proto normals', () => {

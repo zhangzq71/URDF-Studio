@@ -60,6 +60,38 @@ test('resolveRobotFileData returns cached USD robot data when provided', () => {
   assert.deepEqual(result.robotData.links, usdRobotData.links);
 });
 
+test('resolveRobotFileData syncs cached USD material colors back onto link visuals', () => {
+  const baseRobotData = createResolvedUsdRobotData('cached_usd_robot');
+  const usdRobotData: RobotData = {
+    ...baseRobotData,
+    links: {
+      base_link: {
+        ...baseRobotData.links.base_link,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.2, y: 0.3, z: 0.4 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+      },
+    },
+    materials: {
+      base_link: { color: '#12ab34' },
+    },
+  };
+
+  const result = resolveRobotFileData(createUsdFile(), {
+    usdRobotData,
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected USD import result to be ready');
+  }
+  assert.equal(result.robotData.links.base_link.visual.color, '#12ab34');
+  assert.equal(result.robotData.materials?.base_link?.color, '#12ab34');
+});
+
 test('resolveRobotFileData returns needs_hydration for USD when runtime robot data is unavailable', () => {
   const result = resolveRobotFileData(createUsdFile());
 

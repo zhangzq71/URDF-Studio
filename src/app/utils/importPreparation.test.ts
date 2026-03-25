@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
 
-import { prepareImportPayload } from './importPreparation';
+import {
+  prepareImportPayload,
+  type ImportPreparationFileDescriptor,
+} from './importPreparation';
+import { pickPreferredImportFile } from '@/app/hooks/importPreferredFile';
 
 function createLooseFile(
   name: string,
@@ -129,4 +133,84 @@ def Xform "robot"
   assert.equal(result.robotFiles[0].content, usdText);
   assert.equal(result.usdSourceFiles.length, 1);
   assert.equal(await result.usdSourceFiles[0].blob.text(), usdText);
+});
+
+test('prepareImportPayload synthesizes a bundle root when loose robot folders arrive without their outer directory', async () => {
+  const files = [
+    createLooseFile(
+      'demo.urdf',
+      `<?xml version="1.0"?>
+<robot name="demo_pkg">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://demo_pkg/meshes/base.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'urdf/demo.urdf',
+    ),
+    createLooseFile(
+      'mjmodel.xml',
+      `<?xml version="1.0"?>
+<mujoco model="demo_pkg">
+  <compiler meshdir="../meshes" />
+  <asset>
+    <mesh name="base_mesh" file="base.stl" />
+  </asset>
+</mujoco>`,
+      'mjcf/mjmodel.xml',
+    ),
+    createLooseFile('base.stl', 'solid demo', 'meshes/base.stl'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'demo_pkg/meshes/base.stl', format: 'mesh' },
+      { name: 'demo_pkg/mjcf/mjmodel.xml', format: 'mjcf' },
+      { name: 'demo_pkg/urdf/demo.urdf', format: 'urdf' },
+    ],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name),
+    ['demo_pkg/meshes/base.stl'],
+  );
+  assert.equal(
+    pickPreferredImportFile(result.robotFiles, result.robotFiles)?.name,
+    'demo_pkg/urdf/demo.urdf',
+  );
+});
+
+test('prepareImportPayload preserves explicit relativePath metadata when files are worker-cloned', async () => {
+  const files: ImportPreparationFileDescriptor[] = [
+    {
+      file: createLooseFile('mjmodel.xml', '<mujoco model="demo_pkg" />'),
+      relativePath: 'casbot mini/mjcf/mjmodel.xml',
+    },
+    {
+      file: createLooseFile('pelvis_link.STL', 'solid demo'),
+      relativePath: 'casbot mini/meshes/pelvis_link.STL',
+    },
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => file.name).sort(),
+    ['casbot mini/meshes/pelvis_link.STL', 'casbot mini/mjcf/mjmodel.xml'],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name),
+    ['casbot mini/meshes/pelvis_link.STL'],
+  );
 });

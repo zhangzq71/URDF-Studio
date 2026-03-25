@@ -4,6 +4,7 @@ import { parseMJCF } from './mjcf/mjcfParser';
 import { resolveMJCFSource } from './mjcf/mjcfSourceResolver';
 import { parseXacro } from './xacro/xacroParser';
 import { rewriteRobotMeshPathsForSource } from './meshPathUtils';
+import { syncRobotVisualColorsFromMaterials } from '@/core/robot/materials';
 
 export interface ResolveRobotFileDataOptions {
   availableFiles?: RobotFile[];
@@ -112,7 +113,9 @@ function createReadyImportResult(file: RobotFile, robotData: RobotData): RobotIm
   return {
     status: 'ready',
     format: file.format,
-    robotData: rewriteRobotMeshPathsForSource(robotData, file.name),
+    robotData: syncRobotVisualColorsFromMaterials(
+      rewriteRobotMeshPathsForSource(robotData, file.name),
+    ),
   };
 }
 

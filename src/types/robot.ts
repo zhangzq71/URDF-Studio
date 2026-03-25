@@ -80,6 +80,7 @@ export interface UrdfJoint {
   dynamics: UrdfJointDynamics;
   hardware: UrdfJointHardware;
   mimic?: UrdfJointMimic;
+  referencePosition?: number;
   angle?: number;
   quaternion?: JointQuaternion;
 }

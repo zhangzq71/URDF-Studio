@@ -110,14 +110,23 @@ function assertUsdRuntimeEnvironment(): void {
     return;
   }
 
+  if (!globalThis.isSecureContext) {
+    throw new Error(
+      'USD loading requires a secure context. Open the app from `http://localhost:<port>` or `http://127.0.0.1:<port>`, '
+      + 'or serve it over HTTPS. Accessing the Vite dev server from a LAN IP address or another non-HTTPS URL is not enough, '
+      + 'even when `npm run dev` is sending COOP/COEP headers.',
+    );
+  }
+
   if (globalThis.crossOriginIsolated) {
     return;
   }
 
   throw new Error(
     'USD loading requires a cross-origin isolated page because the bundled USD WASM runtime uses SharedArrayBuffer. '
-    + 'Start the app with `npm run dev` or `npm run preview`, or configure your local/static server to send '
-    + '`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.',
+    + 'Start the app with `npm run dev` or `npm run preview`, open it from `localhost`/`127.0.0.1` (or HTTPS), '
+    + 'and make sure the server sends `Cross-Origin-Opener-Policy: same-origin` and '
+    + '`Cross-Origin-Embedder-Policy: require-corp`.',
   );
 }
 

@@ -49,6 +49,24 @@ export function createRobotSourceSnapshot(robot: RobotState): string {
   }));
 }
 
+interface PreferredMjcfContentOptions {
+  sourceContent?: string | null;
+  generatedContent?: string | null;
+  hasViewerEdits: boolean;
+}
+
+export function getPreferredMjcfContent({
+  sourceContent,
+  generatedContent,
+  hasViewerEdits,
+}: PreferredMjcfContentOptions): string | null {
+  if (hasViewerEdits) {
+    return generatedContent ?? sourceContent ?? null;
+  }
+
+  return sourceContent ?? generatedContent ?? null;
+}
+
 interface PreferredUrdfContentOptions {
   fileContent?: string | null;
   originalContent?: string | null;

@@ -45,6 +45,7 @@ interface MJCFJointDef {
     type: string;
     axis?: { x: number, y: number, z: number };
     range?: [number, number];
+    ref?: number;
     pos?: { x: number, y: number, z: number };
     limited?: boolean;
     damping?: number;
@@ -237,6 +238,25 @@ function buildImportedJointLimit(
         effort,
         velocity,
     };
+}
+
+function resolveJointInitialAngle(
+    joint: MJCFJointDef | undefined,
+    jointType: JointType,
+): number | undefined {
+    if (!joint || !Number.isFinite(joint.ref)) {
+        return undefined;
+    }
+
+    if (
+        jointType === JointType.REVOLUTE
+        || jointType === JointType.CONTINUOUS
+        || jointType === JointType.PRISMATIC
+    ) {
+        return joint.ref;
+    }
+
+    return undefined;
 }
 
 function createEmptyLinkInertial(): UrdfLink['inertial'] {
@@ -485,6 +505,7 @@ function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody
             type: joint.type,
             axis: joint.axis ? toPositionObject(joint.axis) : undefined,
             range: convertJointRange(joint.range, joint.type, settings),
+            ref: typeof joint.ref === 'number' ? joint.ref : undefined,
             pos: joint.pos ? toPositionObject(joint.pos) : undefined,
             limited: typeof joint.limited === 'boolean' ? joint.limited : undefined,
             damping: typeof joint.damping === 'number' ? joint.damping : undefined,
@@ -905,6 +926,7 @@ function mjcfToRobotState(
             const jointMechanicalRange = resolveJointMechanicalRange(mjcfJoint, jointType);
             const jointEffort = resolveJointEffortLimit(mjcfJoint, actuatorMap.get(jointId));
             const jointLimit = buildImportedJointLimit(jointType, jointMechanicalRange, jointEffort, 0);
+            const jointInitialAngle = resolveJointInitialAngle(mjcfJoint, jointType);
             const jointOrigin = {
                 xyz: {
                     x: body.pos.x + (jointFrameOffsetInParent?.x ?? 0),
@@ -928,6 +950,8 @@ function mjcfToRobotState(
                     damping: mjcfJoint?.damping ?? DEFAULT_JOINT.dynamics.damping,
                     friction: mjcfJoint?.frictionloss ?? DEFAULT_JOINT.dynamics.friction,
                 },
+                ...(jointInitialAngle != null ? { referencePosition: jointInitialAngle } : {}),
+                ...(jointInitialAngle != null ? { angle: jointInitialAngle } : {}),
                 hardware: {
                     ...DEFAULT_JOINT.hardware,
                     armature: mjcfJoint?.armature ?? DEFAULT_JOINT.hardware.armature,

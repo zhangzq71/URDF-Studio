@@ -16,6 +16,7 @@ export {
     markMaterialAsCoplanarOffset,
     mitigateCoplanarMaterialZFighting,
     isCoplanarOffsetMaterial,
+    cloneMaterialWithCoplanarOffset,
 } from './coplanarMaterialOffset';
 export {
     applyColladaCoplanarMaterialFixups,

@@ -2,6 +2,7 @@
 import { BackSide, BoxGeometry, BufferGeometry, CapsuleGeometry, CylinderGeometry, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, MeshPhysicalMaterial, Quaternion, SkinnedMesh, SphereGeometry, Uint32BufferAttribute, Vector3, } from 'three';
 import * as Shared from './shared.js';
 import { mitigateCoplanarMaterialZFighting } from '../../../../../core/loaders/coplanarMaterialOffset.ts';
+import { stackCoincidentVisualRoots } from '../../../../../core/loaders/visualMeshStacking.ts';
 import { getDefaultMaterial } from './default-material-state.js';
 import { createUnifiedHydraPhysicalMaterial } from './material-defaults.js';
 const { buildProtoPrimPathCandidates, clamp01, createMatrixFromXformOp, debugInstancer, debugMaterials, debugMeshes, debugPrims, debugTextures, defaultGrayComponent, disableMaterials, disableTextures, extractPrimPathFromMaterialBindingWarning, extractReferencePrimTargets, extractScopeBodyText, extractUsdAssetReferencesFromLayerText, getActiveMaterialBindingWarningOwner, getAngleInRadians, getCollisionGeometryTypeFromUrdfElement, getExpectedPrimTypesForCollisionProto, getExpectedPrimTypesForProtoType, getMatrixMaxElementDelta, getPathBasename, getPathWithoutRoot, getRawConsoleMethod, getRootPathFromPrimPath, getSafePrimTypeName, hasNonZeroTranslation, hydraCallbackErrorCounts, installMaterialBindingApiWarningInterceptor, isIdentityQuaternion, isLikelyDefaultGrayMaterial, isLikelyInverseTransform, isMaterialBindingApiWarningMessage, isMatrixApproximatelyIdentity, isNonZero, isPotentiallyLargeBaseAssetPath, logHydraCallbackError, materialBindingRepairMaxLayerTextLength, materialBindingWarningHandlers, maxHydraCallbackErrorLogsPerMethod, nearlyEqual, normalizeHydraPath, normalizeUsdPathToken, parseGuideCollisionReferencesFromLayerText, parseProtoMeshIdentifier, parseUrdfTruthFromText, parseVector3Text, parseXformOpFallbacksFromLayerText, rawConsoleError, rawConsoleWarn, registerMaterialBindingApiWarningHandler, remapRootPathIfNeeded, resolveUrdfTruthFileNameForStagePath, resolveUsdAssetPath, setActiveMaterialBindingWarningOwner, shouldAllowLargeBaseAssetScan, stringifyConsoleArgs, toArrayLike, toColorArray, toFiniteNumber, toFiniteQuaternionWxyzTuple, toFiniteVector2Tuple, toFiniteVector3Tuple, toMatrixFromUrdfOrigin, toQuaternionWxyzFromRpy, transformEpsilon, wrapHydraCallbackObject } = Shared;
@@ -282,6 +283,28 @@ class HydraMesh {
         const proto = parseProtoMeshIdentifier(this._id);
         return !!proto && proto.sectionName === 'visuals';
     }
+    restackSiblingVisualProtoMeshes(linkPath = null) {
+        const resolvedLinkPath = normalizeHydraPath(linkPath)
+            || normalizeHydraPath(parseProtoMeshIdentifier(this._id)?.linkPath || '');
+        if (!resolvedLinkPath || !this._interface?.meshes) {
+            return;
+        }
+        const visualRoots = Object.entries(this._interface.meshes)
+            .map(([meshId, hydraMesh]) => ({
+            hydraMesh,
+            meshId,
+            proto: parseProtoMeshIdentifier(meshId),
+        }))
+            .filter(({ hydraMesh, proto }) => !!hydraMesh?._mesh && proto?.sectionName === 'visuals' && proto.linkPath === resolvedLinkPath)
+            .map(({ hydraMesh, meshId }) => ({
+            root: hydraMesh._mesh,
+            stableId: meshId,
+        }));
+        if (visualRoots.length < 2) {
+            return;
+        }
+        stackCoincidentVisualRoots(visualRoots);
+    }
     tryInheritVisualMaterialFromLink() {
         if (!this.isVisualProtoMesh())
             return false;
@@ -298,6 +321,7 @@ class HydraMesh {
             return false;
         this._mesh.material = inheritedMaterial;
         this._pendingMaterialId = undefined;
+        this.restackSiblingVisualProtoMeshes(proto.linkPath);
         return true;
     }
     tryApplyPendingGeomSubsetMaterials(profile = null) {
@@ -1764,6 +1788,9 @@ class HydraMesh {
             if (typeof interfaceRef?.updateRepresentativeVisualTransformIndex === 'function') {
                 interfaceRef.updateRepresentativeVisualTransformIndex(this._id, this._mesh.matrix);
             }
+            if (this.isVisualProtoMesh()) {
+                this.restackSiblingVisualProtoMeshes();
+            }
             if (hasSyncHotPathGuard) {
                 interfaceRef.leaveHydraSyncHotPath();
             }
@@ -2137,6 +2164,7 @@ class HydraMesh {
         }
         if (linkPath) {
             this._interface._preferredVisualMaterialByLinkCache?.delete?.(linkPath);
+            this.restackSiblingVisualProtoMeshes(linkPath);
         }
     }
     setGeomSubsetMaterial(sections, profile = null) {
@@ -2231,6 +2259,7 @@ class HydraMesh {
         const proto = parseProtoMeshIdentifier(this._id);
         if (proto?.sectionName === 'visuals' && proto.linkPath) {
             this._interface._preferredVisualMaterialByLinkCache?.delete?.(proto.linkPath);
+            this.restackSiblingVisualProtoMeshes(proto.linkPath);
         }
         const subsetsTotalEnd = this._nowMs();
         if (profile) {
@@ -2687,6 +2716,9 @@ class HydraMesh {
         if (this._pendingMaterialId && this._interface.materials[this._pendingMaterialId]?._material) {
             const materialStart = this._nowMs();
             this._mesh.material = this._interface.materials[this._pendingMaterialId]._material;
+            if (this.isVisualProtoMesh()) {
+                this.restackSiblingVisualProtoMeshes();
+            }
             this._pendingMaterialId = undefined;
             trackStep('pendingMaterialMs', this._nowMs() - materialStart);
         }

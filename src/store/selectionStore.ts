@@ -22,6 +22,9 @@ interface SelectionState {
 
   // Hover state for synchronized highlighting across components
   hoveredSelection: Selection;
+  deferredHoveredSelection: Selection;
+  hoverFrozen: boolean;
+  setHoverFrozen: (frozen: boolean) => void;
   setHoveredSelection: (selection: Selection) => void;
   hoverLink: (id: string) => void;
   hoverJoint: (id: string) => void;
@@ -74,25 +77,68 @@ export const useSelectionStore = create<SelectionState>()((set) => ({
 
   // Hover state
   hoveredSelection: emptySelection,
+  deferredHoveredSelection: emptySelection,
+  hoverFrozen: false,
+  setHoverFrozen: (frozen) => set((state) => {
+    if (state.hoverFrozen === frozen) {
+      if (
+        !frozen
+        || (
+          matchesSelection(state.hoveredSelection, emptySelection)
+          && matchesSelection(state.deferredHoveredSelection, state.hoveredSelection)
+        )
+      ) {
+        return state;
+      }
+    }
+
+    return frozen
+      ? {
+          hoverFrozen: true,
+          hoveredSelection: emptySelection,
+          deferredHoveredSelection: state.hoveredSelection,
+        }
+      : {
+          hoverFrozen: false,
+          hoveredSelection: state.deferredHoveredSelection,
+          deferredHoveredSelection: emptySelection,
+        };
+  }),
   setHoveredSelection: (selection) => set((state) => (
-    matchesSelection(state.hoveredSelection, selection)
+    state.hoverFrozen
+      ? matchesSelection(state.deferredHoveredSelection, selection)
+        ? state
+        : { deferredHoveredSelection: selection }
+      : matchesSelection(state.hoveredSelection, selection)
       ? state
       : { hoveredSelection: selection }
   )),
   hoverLink: (id) => set((state) => (
-    matchesSelection(state.hoveredSelection, { type: 'link', id })
+    state.hoverFrozen
+      ? matchesSelection(state.deferredHoveredSelection, { type: 'link', id })
+        ? state
+        : { deferredHoveredSelection: { type: 'link', id } }
+      : matchesSelection(state.hoveredSelection, { type: 'link', id })
       ? state
       : { hoveredSelection: { type: 'link', id } }
   )),
   hoverJoint: (id) => set((state) => (
-    matchesSelection(state.hoveredSelection, { type: 'joint', id })
+    state.hoverFrozen
+      ? matchesSelection(state.deferredHoveredSelection, { type: 'joint', id })
+        ? state
+        : { deferredHoveredSelection: { type: 'joint', id } }
+      : matchesSelection(state.hoveredSelection, { type: 'joint', id })
       ? state
       : { hoveredSelection: { type: 'joint', id } }
   )),
   clearHover: () => set((state) => (
-    matchesSelection(state.hoveredSelection, emptySelection)
-      ? state
-      : { hoveredSelection: emptySelection }
+    state.hoverFrozen
+      ? matchesSelection(state.deferredHoveredSelection, emptySelection)
+        ? state
+        : { deferredHoveredSelection: emptySelection }
+      : matchesSelection(state.hoveredSelection, emptySelection)
+        ? state
+        : { hoveredSelection: emptySelection }
   )),
 
   // Transient emphasis

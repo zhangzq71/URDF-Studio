@@ -8,6 +8,7 @@ import {
     buildColladaRootNormalizationHints,
     createLoadingManager,
     createMeshLoader,
+    isCoplanarOffsetMaterial,
 } from '@/core/loaders';
 import { parseURDF } from '@/core/parsers/urdf/parser';
 import { URDFLoader } from './URDFLoader';
@@ -182,6 +183,55 @@ test('URDFLoader preserves named mesh materials for multi-material DAE groups', 
     assert.ok(Array.isArray(nestedMesh.material));
     const materialNames = (nestedMesh.material as THREE.Material[]).map((material) => material.name);
     assert.deepEqual(materialNames, ['磨砂铝合金.008', '灰色硅胶.009']);
+});
+
+test('URDFLoader stabilizes coincident sibling visuals on the same link', () => {
+    const loader = new URDFLoader();
+    let loadCount = 0;
+    loader.loadMeshCb = (_url, _manager, onLoad) => {
+        const size = loadCount === 0 ? 1 : 1.02;
+        const material = new THREE.MeshPhongMaterial({
+            name: loadCount === 0 ? 'inner_shell' : 'outer_shell',
+            color: new THREE.Color(loadCount === 0 ? 0xffffff : 0x111111),
+        });
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
+        loadCount += 1;
+        onLoad(mesh);
+    };
+
+    const robot = loader.parse(`<?xml version="1.0"?>
+<robot name="coincident_visuals">
+  <link name="base_link">
+    <visual name="inner_visual">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="inner_shell.obj" />
+      </geometry>
+    </visual>
+    <visual name="outer_visual">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="outer_shell.obj" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`, '/tmp/');
+
+    const baseLink = robot.links.base_link as THREE.Object3D | undefined;
+    assert.ok(baseLink);
+
+    const visualGroups = baseLink.children.filter((child: any) => child.isURDFVisual) as THREE.Object3D[];
+    assert.equal(visualGroups.length, 2);
+
+    const innerMesh = visualGroups[0]?.children[0] as THREE.Mesh | undefined;
+    const outerMesh = visualGroups[1]?.children[0] as THREE.Mesh | undefined;
+    assert.ok(innerMesh);
+    assert.ok(outerMesh);
+
+    assert.equal(innerMesh.renderOrder, 0);
+    assert.equal(outerMesh.renderOrder, 1);
+    assert.equal(isCoplanarOffsetMaterial(innerMesh.material as THREE.Material), false);
+    assert.equal(isCoplanarOffsetMaterial(outerMesh.material as THREE.Material), true);
 });
 
 test('URDFLoader overrides single named OBJ materials when URDF provides the export color', () => {

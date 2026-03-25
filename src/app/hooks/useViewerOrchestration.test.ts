@@ -10,6 +10,7 @@ import type { RobotState } from '@/types';
 
 function resetSelectionStore() {
   const store = useSelectionStore.getState();
+  store.setHoverFrozen(false);
   store.setSelection({ type: null, id: null });
   store.setHoveredSelection({ type: null, id: null });
   store.setAttentionSelection({ type: null, id: null });

@@ -6,9 +6,15 @@ import { ensureUsdWasmRuntime } from './usdWasmRuntime';
 test('ensureUsdWasmRuntime rejects early when the page is not cross-origin isolated', async () => {
   const previousWindow = globalThis.window;
   const previousCrossOriginIsolated = globalThis.crossOriginIsolated;
+  const previousIsSecureContext = globalThis.isSecureContext;
 
   Object.defineProperty(globalThis, 'window', {
     value: {} as Window & typeof globalThis,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'isSecureContext', {
+    value: true,
     configurable: true,
     writable: true,
   });
@@ -33,6 +39,59 @@ test('ensureUsdWasmRuntime rejects early when the page is not cross-origin isola
     });
   }
 
+  Object.defineProperty(globalThis, 'isSecureContext', {
+    value: previousIsSecureContext,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'crossOriginIsolated', {
+    value: previousCrossOriginIsolated,
+    configurable: true,
+    writable: true,
+  });
+});
+
+test('ensureUsdWasmRuntime rejects early when the page is not a secure context', async () => {
+  const previousWindow = globalThis.window;
+  const previousCrossOriginIsolated = globalThis.crossOriginIsolated;
+  const previousIsSecureContext = globalThis.isSecureContext;
+
+  Object.defineProperty(globalThis, 'window', {
+    value: {} as Window & typeof globalThis,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'isSecureContext', {
+    value: false,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(globalThis, 'crossOriginIsolated', {
+    value: false,
+    configurable: true,
+    writable: true,
+  });
+
+  await assert.rejects(
+    () => ensureUsdWasmRuntime(),
+    /secure context|localhost|127\.0\.0\.1/,
+  );
+
+  if (previousWindow === undefined) {
+    delete (globalThis as { window?: Window & typeof globalThis }).window;
+  } else {
+    Object.defineProperty(globalThis, 'window', {
+      value: previousWindow,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  Object.defineProperty(globalThis, 'isSecureContext', {
+    value: previousIsSecureContext,
+    configurable: true,
+    writable: true,
+  });
   Object.defineProperty(globalThis, 'crossOriginIsolated', {
     value: previousCrossOriginIsolated,
     configurable: true,

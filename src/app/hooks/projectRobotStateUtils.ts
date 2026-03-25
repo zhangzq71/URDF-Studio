@@ -5,6 +5,7 @@ import type {
   UrdfJoint,
   UrdfLink,
 } from '@/types';
+import { syncRobotVisualColorsFromMaterials } from '@/core/robot/materials';
 
 export interface RobotActivityEntryLike {
   id: string;
@@ -65,13 +66,15 @@ export function buildImportedRobotStoreState(
     };
   }
 
+  const normalizedRobotState = syncRobotVisualColorsFromMaterials(robotState);
+
   return {
-    name: robotState.name,
-    links: robotState.links,
-    joints: robotState.joints,
-    rootLinkId: robotState.rootLinkId,
-    materials: robotState.materials,
-    closedLoopConstraints: robotState.closedLoopConstraints,
+    name: normalizedRobotState.name,
+    links: normalizedRobotState.links,
+    joints: normalizedRobotState.joints,
+    rootLinkId: normalizedRobotState.rootLinkId,
+    materials: normalizedRobotState.materials,
+    closedLoopConstraints: normalizedRobotState.closedLoopConstraints,
     _history: robotHistory,
     _activity: robotActivity,
   };

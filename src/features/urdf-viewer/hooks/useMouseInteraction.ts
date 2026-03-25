@@ -15,6 +15,7 @@ import { resolveActiveViewerJointKeyFromSelection } from '../utils/activeJointSe
 import { resolveMouseDownSelectionPlan } from '../utils/mouseDownSelectionPlan';
 import {
     armSelectionMissGuard,
+    disarmSelectionMissGuard,
     clearSelectionMissGuardTimer,
     scheduleSelectionMissGuardReset,
 } from '../utils/selectionMissGuard';
@@ -519,6 +520,10 @@ export function useMouseInteraction({
                 }
                 return true;
             });
+
+            if (!hit) {
+                disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+            }
 
             if (hit) {
                 armSelectionMissGuard(justSelectedRef);

@@ -32,6 +32,7 @@ export const useVisualizerController = ({
   const pendingGroundAlignmentRef = useRef<number | null>(null);
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   const clearHover = useSelectionStore((state) => state.clearHover);
+  const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const robotRootRef = useRef<THREE.Group | null>(null);
@@ -162,9 +163,10 @@ export const useVisualizerController = ({
 
   useEffect(() => {
     return () => {
+      setHoverFrozen(false);
       clearMaterialCache();
     };
-  }, []);
+  }, [setHoverFrozen]);
 
   useEffect(() => {
     state.setTransformMode('translate');

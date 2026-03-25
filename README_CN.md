@@ -88,8 +88,9 @@
 ### USD 本地运行说明
 USD 加载依赖仓库内置的 USD WASM runtime，而这个 runtime 依赖 `SharedArrayBuffer`，因此页面必须处于 `cross-origin isolated` 环境。
 
-- 本地开发请使用 `npm run dev`
+- 本地开发请使用 `npm run dev`，并通过 `http://localhost:<端口>` 或 `http://127.0.0.1:<端口>` 打开页面
 - 本地验证生产构建请使用 `npm run preview`
+- 如果是通过局域网 IP、远端 HTTP 地址或其他非安全上下文打开页面，浏览器会忽略 `COOP/COEP`，`SharedArrayBuffer` 仍然不可用，USD 还是会失败；这种场景需要 HTTPS
 - 不要用 `python -m http.server`、VS Code Live Server，或任何没有返回下面响应头的普通静态服务器直接跑 `dist/`
 
 ```http

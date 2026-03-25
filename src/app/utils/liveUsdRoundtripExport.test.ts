@@ -3,7 +3,19 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import type { RobotFile } from '@/types';
+import { inferUsdBundleVirtualDirectory } from '@/features/urdf-viewer';
 import { buildLiveUsdRoundtripArchive } from './liveUsdRoundtripExport.ts';
+
+function deriveExpectedArchiveEntryPath(virtualPath: string): string {
+  const normalizedVirtualPath = virtualPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  const bundleDirectory = inferUsdBundleVirtualDirectory(normalizedVirtualPath).replace(/^\/+|\/+$/g, '');
+  const archiveRoot = bundleDirectory.split('/').filter(Boolean).pop() || '';
+  const relativePath = bundleDirectory && normalizedVirtualPath.startsWith(`${bundleDirectory}/`)
+    ? normalizedVirtualPath.slice(bundleDirectory.length + 1)
+    : normalizedVirtualPath;
+
+  return archiveRoot ? `${archiveRoot}/${relativePath}` : relativePath;
+}
 
 test('buildLiveUsdRoundtripArchive keeps the original B2 file name instead of viewer_roundtrip aliases', async () => {
   const sourceFile: RobotFile = {
@@ -96,8 +108,13 @@ test('buildLiveUsdRoundtripArchive preserves root-level bundle paths without add
 test('buildLiveUsdRoundtripArchive packages real unitree_model USD samples under their original bundle paths', async () => {
   const samplePaths = [
     'test/unitree_model/B2/usd/b2.usd',
+    'test/unitree_model/G1/23dof/usd/g1_23dof_rev_1_0/g1_23dof_rev_1_0.usd',
+    'test/unitree_model/G1/29dof/usd/g1_29dof_rev_1_0/g1_29dof_rev_1_0.usd',
     'test/unitree_model/Go2/usd/go2.usd',
     'test/unitree_model/Go2W/usd/go2w.usd',
+    'test/unitree_model/H1/h1/usd/h1.usd',
+    'test/unitree_model/H1-2/h1_2/h1_2.usd',
+    'test/unitree_model/H1-2/h1_2_handless/h1_2_handless.usd',
   ];
 
   for (const samplePath of samplePaths) {
@@ -125,7 +142,7 @@ test('buildLiveUsdRoundtripArchive packages real unitree_model USD samples under
       },
     });
 
-    const expectedEntryPath = virtualPath.replace(/^unitree_model\//, '');
+    const expectedEntryPath = deriveExpectedArchiveEntryPath(virtualPath);
     const expectedArchiveName = `${expectedEntryPath.split('/').pop()?.replace(/\.usd$/i, '') || 'model'}.zip`;
 
     assert.equal(archive.archiveFileName, expectedArchiveName);

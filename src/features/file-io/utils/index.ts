@@ -42,3 +42,10 @@ export { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
 export { exportRobotToUsd } from './usdExport';
 export type { ImportResult } from './projectImport';
 export type { ProjectManifest } from './projectExport';
+export type {
+  ExportRobotToUsdOptions,
+  ExportRobotToUsdPayload,
+  ExportRobotToUsdPhase,
+  ExportRobotToUsdProgress,
+  UsdMeshCompressionOptions,
+} from './usdExport';

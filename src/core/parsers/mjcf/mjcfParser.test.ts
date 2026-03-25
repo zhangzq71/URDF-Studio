@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
 
 import { parseMJCF } from './mjcfParser.ts';
+import { computeLinkWorldMatrices } from '@/core/robot';
 
 function installDomGlobals(): void {
     const dom = new JSDOM('<!doctype html><html><body></body></html>', { contentType: 'text/html' });
@@ -105,6 +107,43 @@ test('parseMJCF preserves root free joint transforms as floating joint origins',
     assert.deepEqual(robot.joints.floating_base_joint?.origin?.xyz, { x: 0, y: 0, z: 0.5 });
     assert.deepEqual(robot.joints.floating_base_joint?.origin?.rpy, { r: 0, p: 0, y: 0 });
     assert.deepEqual(robot.joints.child_joint?.origin?.xyz, { x: 0, y: 0.1, z: 0.2 });
+});
+
+test('parseMJCF applies joint ref as the imported initial joint value', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="joint-ref-defaults">
+          <worldbody>
+            <body name="base_link">
+              <body name="knee_link">
+                <joint name="knee_joint" type="hinge" ref="-45" range="-90 90" />
+              </body>
+              <body name="slider_link" pos="0 0 0.1">
+                <joint name="slider_joint" type="slide" ref="0.12" range="-1 1" />
+              </body>
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.ok(Math.abs((robot.joints.knee_joint?.angle ?? 0) + Math.PI / 4) < 1e-9);
+    assert.ok(Math.abs((robot.joints.knee_joint?.referencePosition ?? 0) + Math.PI / 4) < 1e-9);
+    assert.equal(robot.joints.slider_joint?.angle, 0.12);
+    assert.equal(robot.joints.slider_joint?.referencePosition, 0.12);
+
+    const linkWorldMatrices = computeLinkWorldMatrices(robot);
+    const kneeWorldQuaternion = new THREE.Quaternion();
+    const kneeWorldPosition = new THREE.Vector3();
+    linkWorldMatrices.knee_link?.decompose(kneeWorldPosition, kneeWorldQuaternion, new THREE.Vector3());
+    assert.ok(kneeWorldQuaternion.angleTo(new THREE.Quaternion()) <= 1e-9);
+
+    const sliderWorldQuaternion = new THREE.Quaternion();
+    const sliderWorldPosition = new THREE.Vector3();
+    linkWorldMatrices.slider_link?.decompose(sliderWorldPosition, sliderWorldQuaternion, new THREE.Vector3());
+    assert.ok(sliderWorldQuaternion.angleTo(new THREE.Quaternion()) <= 1e-9);
+    assert.ok(sliderWorldPosition.distanceTo(new THREE.Vector3(0, 0, 0.1)) <= 1e-9);
 });
 
 test('parseMJCF folds non-zero joint anchors into the imported joint origin instead of scattering the child link frame', () => {

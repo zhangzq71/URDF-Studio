@@ -48,6 +48,7 @@ import {
   markUsdHoverRaycastDirty,
   setUsdHoverPointerState,
 } from '../utils/usdHoverPointerState';
+import { choosePreferredHoverMatch, findNearestExpandedBoundsHit } from '../utils/hoverLinkBounds';
 import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 import { hasPickableMaterial, isInternalHelperObject, isVisibleInHierarchy } from '../utils/pickFilter';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
@@ -62,6 +63,7 @@ import { createEmbeddedUsdViewerLoadParams } from '../utils/usdViewerRenderParam
 import { resolveUsdStageJointPreview, type UsdStageJointInfoLike } from '../utils/usdStageJointPreview';
 import {
   armSelectionMissGuard,
+  disarmSelectionMissGuard,
   clearSelectionMissGuardTimer,
   scheduleSelectionMissGuardReset,
 } from '../utils/selectionMissGuard';
@@ -1434,7 +1436,11 @@ export function UsdWasmStage({
     }
   }, [onRuntimeActiveJointChange, onRuntimeJointAnglesChange]);
 
-  const pickRuntimeMeshMetaAtClientPoint = useCallback((clientX: number, clientY: number): RuntimeMeshMeta | null => {
+  const pickRuntimeMeshMetaAtClientPoint = useCallback((
+    clientX: number,
+    clientY: number,
+    options: { allowBoundsFallback?: boolean } = {},
+  ): RuntimeMeshMeta | null => {
     if (!camera) return null;
 
     const { subType: interactiveSubType } = resolveEffectiveInteractionSubType(
@@ -1467,6 +1473,8 @@ export function UsdWasmStage({
 
     const { meshMetaByObject, pickMeshes } = rebuildRuntimeMeshIndex();
     const hits = raycaster.intersectObjects(pickMeshes, false).sort((left, right) => left.distance - right.distance);
+
+    let exactHoverMatch: { meta: RuntimeMeshMeta; distance: number } | null = null;
     for (const hit of hits) {
       if (
         hit.object.visible === false
@@ -1483,11 +1491,54 @@ export function UsdWasmStage({
         if (meta.role === 'collision' && !Number.isInteger(meta.objectIndex)) {
           continue;
         }
-        return meta;
+        exactHoverMatch = {
+          meta,
+          distance: hit.distance,
+        };
+        break;
       }
     }
 
-    return null;
+    if (!options.allowBoundsFallback) {
+      return exactHoverMatch?.meta ?? null;
+    }
+
+    const hoverBoundsCandidates: { mesh: THREE.Mesh; meta: RuntimeMeshMeta }[] = [];
+    for (const mesh of pickMeshes) {
+      const meta = meshMetaByObject.get(mesh);
+      if (!meta || meta.role !== interactiveSubType) {
+        continue;
+      }
+
+      hoverBoundsCandidates.push({ mesh, meta });
+    }
+
+    const preferredHoverMatch = choosePreferredHoverMatch(
+      exactHoverMatch,
+      findNearestExpandedBoundsHit(
+        raycaster.ray,
+        hoverBoundsCandidates,
+        (meta) => meta.linkPath,
+      ),
+      (meta) => meta.linkPath,
+    );
+
+    if (!preferredHoverMatch) {
+      return null;
+    }
+
+    if (
+      preferredHoverMatch === exactHoverMatch
+      || !exactHoverMatch
+      || preferredHoverMatch.meta.linkPath === exactHoverMatch.meta.linkPath
+    ) {
+      return preferredHoverMatch.meta;
+    }
+
+    return {
+      ...preferredHoverMatch.meta,
+      objectIndex: undefined,
+    };
   }, [camera, getGizmoTargets, gl.domElement, highlightMode, rebuildRuntimeMeshIndex]);
 
   const pickRuntimeMeshMetaAtPointer = useCallback((event: PointerEvent | MouseEvent): RuntimeMeshMeta | null => (
@@ -1678,6 +1729,8 @@ export function UsdWasmStage({
       lastPointerDownMeshMetaRef.current = pickedMeshMeta;
       if (pickedMeshMeta) {
         armSelectionMissGuard(justSelectedRef);
+      } else {
+        disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
       }
     };
     const handleMouseDown = (event: MouseEvent) => {
@@ -1967,6 +2020,14 @@ export function UsdWasmStage({
             emitRuntimeSelectionChangeRef.current(linkPath);
             emitRuntimeJointPreviewRef.current(linkPath, jointInfo);
 
+            if (linkRotationController.dragging) {
+              setIsDragging?.(true);
+              clearRuntimeHover();
+              return;
+            }
+
+            setIsDragging?.(false);
+            markUsdHoverRaycastDirty(hoverNeedsRaycastRef, invalidate);
             if (!linkRotationController.dragging) {
               emitRuntimeJointAnglesChangeRef.current();
             }
@@ -2049,6 +2110,8 @@ export function UsdWasmStage({
     rootGroup,
     scene,
     currentStageSourcePath,
+    clearRuntimeHover,
+    setIsDragging,
     publishResolvedRobotData,
     sourceFile,
   ]);
@@ -2078,7 +2141,7 @@ export function UsdWasmStage({
       ) {
         hoverNeedsRaycastRef.current = false;
 
-        const meta = pickRuntimeMeshMetaAtClientPoint(pointer.x, pointer.y);
+        const meta = pickRuntimeMeshMetaAtClientPoint(pointer.x, pointer.y, { allowBoundsFallback: true });
         if (!meta) {
           clearRuntimeHover();
         } else {

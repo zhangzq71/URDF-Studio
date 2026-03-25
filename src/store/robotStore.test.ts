@@ -87,6 +87,39 @@ test('setRobot can reset undo history for a fresh USD file load', () => {
   assert.equal(nextState._activity.at(-1)?.label, 'Load USD stage');
 });
 
+test('setRobot syncs link visual colors from tracked materials during load', () => {
+  resetRobotStore();
+
+  const state = useRobotStore.getState();
+  state.setRobot({
+    name: 'material_sync_robot',
+    links: {
+      base_link: {
+        ...state.links.base_link,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...state.links.base_link.visual,
+          type: GeometryType.BOX,
+          color: '#808080',
+          dimensions: { x: 0.2, y: 0.3, z: 0.4 },
+        },
+      },
+    },
+    joints: {},
+    rootLinkId: 'base_link',
+    materials: {
+      base_link: { color: '#12ab34' },
+    },
+  }, {
+    skipHistory: true,
+  });
+
+  const nextState = useRobotStore.getState();
+  assert.equal(nextState.links.base_link.visual.color, '#12ab34');
+  assert.equal(nextState.materials?.base_link?.color, '#12ab34');
+});
+
 test('updateLink keeps robot materials in sync with visual color edits', () => {
   resetRobotStore();
 

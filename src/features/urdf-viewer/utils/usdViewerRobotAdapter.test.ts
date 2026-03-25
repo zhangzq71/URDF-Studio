@@ -227,6 +227,63 @@ test('adapts USD visual materials and extra visuals into RobotState-maintained l
   assert.equal(result.robotData.materials?.[extraLink.id]?.color, '#f3f3f3');
 });
 
+test('maps authored USD physics schema joint type names back onto URDF joint types', () => {
+  const result = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath: '/robots/unitree/fixed_helper.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/head_link', '/Robot/base_link'],
+      ],
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/unitree/fixed_helper.usd',
+      linkParentPairs: [
+        ['/Robot/base_link', null],
+        ['/Robot/head_link', '/Robot/base_link'],
+      ],
+      jointCatalogEntries: [
+        {
+          linkPath: '/Robot/head_link',
+          parentLinkPath: '/Robot/base_link',
+          jointName: 'joint_head',
+          jointTypeName: 'PhysicsFixedJoint',
+          axisToken: 'X',
+          axisLocal: [1, 0, 0],
+          lowerLimitDeg: 0,
+          upperLimitDeg: 0,
+          originXyz: [0, 0, 0.1],
+          originQuatWxyz: [1, 0, 0, 0],
+        },
+      ],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+          collisionPrimitiveCounts: {},
+        },
+        '/Robot/head_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+          collisionPrimitiveCounts: {},
+        },
+      },
+    },
+  }, {
+    fileName: 'fixed_helper.usd',
+  });
+
+  assert.ok(result);
+
+  const joint = Object.values(result.robotData.joints).find((candidate) => candidate.name === 'joint_head');
+  assert.ok(joint);
+  assert.equal(joint.type, JointType.FIXED);
+});
+
 test('keeps authored visual and collision slots grouped when a single USD visual scope expands into multiple mesh descriptors', () => {
   const result = adaptUsdViewerSnapshotToRobotData({
     stageSourcePath: '/robots/unitree/b2_roundtrip.usd',

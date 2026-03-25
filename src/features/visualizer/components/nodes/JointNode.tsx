@@ -4,6 +4,7 @@ import { Html, Line } from '@react-three/drei';
 import { RobotState, UrdfJoint } from '@/types';
 import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { getJointMotionPose } from '@/core/robot';
+import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, JointAxesVisual } from '@/shared/components/3d';
 import { Language } from '@/shared/i18n';
 import { RobotNode } from './RobotNode';
@@ -111,6 +112,7 @@ export const JointNode = memo(function JointNode({
   // Joint group: contains visualization, positioned at [0,0,0] relative to pivot
   const [, setJointGroup] = useState<THREE.Group | null>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const hoverFrozen = useSelectionStore((state) => state.hoverFrozen);
 
   // Register pivot with parent Visualizer component
   useEffect(() => {
@@ -134,6 +136,12 @@ export const JointNode = memo(function JointNode({
       }
     };
   }, [joint.id, jointMotionGroup, onRegisterJointMotion]);
+
+  useEffect(() => {
+    if (hoverFrozen) {
+      setIsHovered(false);
+    }
+  }, [hoverFrozen]);
 
   return (
     <group>
@@ -197,7 +205,11 @@ export const JointNode = memo(function JointNode({
                   <div
                     style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
                     className="pointer-events-auto cursor-pointer select-none"
-                    onMouseEnter={() => setIsHovered(true)}
+                    onMouseEnter={() => {
+                      if (!hoverFrozen) {
+                        setIsHovered(true);
+                      }
+                    }}
                     onMouseLeave={() => setIsHovered(false)}
                     onClick={(e) => {
                       e.stopPropagation();

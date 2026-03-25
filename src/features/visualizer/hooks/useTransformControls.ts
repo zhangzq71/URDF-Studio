@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { resolveJointKey } from '@/core/robot';
 import { RobotState } from '@/types';
 import { useRobotStore } from '@/store/robotStore';
+import { useSelectionStore } from '@/store/selectionStore';
 
 interface PendingEdit {
   axis: string;
@@ -47,6 +48,7 @@ export function useTransformControls(
   options: TransformControlsOptions = {},
 ): TransformControlsState {
   const setJointAngle = useRobotStore((state) => state.setJointAngle);
+  const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const tempEulerRef = useRef(new THREE.Euler(0, 0, 0, 'ZYX'));
   const transformControlRef = useRef<any>(null);
   const rotateTransformControlRef = useRef<any>(null);
@@ -158,13 +160,14 @@ export function useTransformControls(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      setHoverFrozen(false);
       if (pendingEdit && selectedObject) {
         selectedObject.position.copy(originalPositionRef.current);
         selectedObject.quaternion.copy(originalQuaternionRef.current);
       }
       onResetPreview?.();
     };
-  }, [onResetPreview, pendingEdit, selectedObject]);
+  }, [onResetPreview, pendingEdit, selectedObject, setHoverFrozen]);
 
   // Update original refs when target object changes
   useEffect(() => {
@@ -309,6 +312,7 @@ export function useTransformControls(
 
       const handleDraggingChange = (event: any) => {
         const dragging = event.value;
+        setHoverFrozen(dragging);
 
         if (dragging) {
           isDraggingControlRef.current = true;
@@ -345,6 +349,7 @@ export function useTransformControls(
       if (!controls) return () => {};
 
       const handleDraggingChange = (event: any) => {
+        setHoverFrozen(Boolean(event.value));
         if (event.value) {
           return;
         }
@@ -379,6 +384,7 @@ export function useTransformControls(
     selectedObject,
     selectedRotateObject,
     setJointAngle,
+    setHoverFrozen,
   ]);
 
   return {

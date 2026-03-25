@@ -21,6 +21,13 @@ export type {
   XacroExportConfig,
   UsdExportConfig,
 } from './components/ExportDialog';
+export type {
+  ExportRobotToUsdOptions,
+  ExportRobotToUsdPayload,
+  ExportRobotToUsdPhase,
+  ExportRobotToUsdProgress,
+  UsdMeshCompressionOptions,
+} from './utils';
 
 // Utilities
 export {

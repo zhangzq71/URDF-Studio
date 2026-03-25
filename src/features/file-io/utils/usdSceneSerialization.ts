@@ -1,0 +1,476 @@
+import * as THREE from 'three';
+
+import { isUsdMeshObject } from './usdMaterialNormalization.ts';
+import {
+  extractUsdMeshGeometryData,
+  getUsdDisplayColor,
+  type UsdMeshGeometryData,
+  type UsdSerializationContext,
+} from './usdSerializationContext.ts';
+import { type UsdMaterialMetadata } from './usdSceneNodeFactory.ts';
+import {
+  advanceUsdProgress,
+  createUsdProgressTracker,
+  type UsdProgressEvent,
+  type UsdProgressTracker,
+  yieldPeriodically,
+} from './usdProgress.ts';
+import {
+  escapeUsdString,
+  formatUsdFloat,
+  formatUsdTuple,
+  formatUsdTuple2,
+  formatUsdTuple3,
+  makeUsdIndent,
+  quaternionToUsdTuple,
+  sanitizeUsdIdentifier,
+  serializeUsdPrimSpecWithMetadata,
+} from './usdTextFormatting.ts';
+
+type SerializedPrimitiveType = 'Cube' | 'Sphere' | 'Cylinder' | 'Capsule';
+
+export type UsdSceneSerializationProgress = {
+  phase: 'scene';
+  completed: number;
+  total: number;
+  label?: string;
+};
+
+type UsdSceneProgressTracker = UsdProgressTracker<'scene'>;
+
+const USD_SCENE_SERIALIZATION_YIELD_INTERVAL = 4;
+
+const serializeTransformOps = (
+  lines: string[],
+  depth: number,
+  object: THREE.Object3D,
+): void => {
+  const indent = makeUsdIndent(depth);
+  const opOrder: string[] = [];
+
+  const hasTranslate = object.position.lengthSq() > 1e-12;
+  if (hasTranslate) {
+    lines.push(`${indent}double3 xformOp:translate = ${formatUsdTuple([
+      object.position.x,
+      object.position.y,
+      object.position.z,
+    ])}`);
+    opOrder.push('xformOp:translate');
+  }
+
+  const hasOrient = Math.abs(object.quaternion.x) > 1e-9
+    || Math.abs(object.quaternion.y) > 1e-9
+    || Math.abs(object.quaternion.z) > 1e-9
+    || Math.abs(object.quaternion.w - 1) > 1e-9;
+  if (hasOrient) {
+    lines.push(`${indent}quatf xformOp:orient = ${quaternionToUsdTuple(object.quaternion)}`);
+    opOrder.push('xformOp:orient');
+  }
+
+  const hasScale = Math.abs(object.scale.x - 1) > 1e-9
+    || Math.abs(object.scale.y - 1) > 1e-9
+    || Math.abs(object.scale.z - 1) > 1e-9;
+  if (hasScale) {
+    lines.push(`${indent}double3 xformOp:scale = ${formatUsdTuple([
+      object.scale.x,
+      object.scale.y,
+      object.scale.z,
+    ])}`);
+    opOrder.push('xformOp:scale');
+  }
+
+  if (opOrder.length > 0) {
+    lines.push(`${indent}uniform token[] xformOpOrder = [${opOrder.map((entry) => `"${entry}"`).join(', ')}]`);
+  }
+};
+
+const serializeDisplayColor = (
+  lines: string[],
+  depth: number,
+  object: THREE.Object3D,
+): void => {
+  const color = getUsdDisplayColor(object);
+  if (!color) {
+    return;
+  }
+
+  const indent = makeUsdIndent(depth);
+  lines.push(
+    `${indent}color3f[] primvars:displayColor = [${formatUsdTuple([color.r, color.g, color.b])}]`,
+  );
+};
+
+const serializePrimitiveAttributes = (
+  lines: string[],
+  depth: number,
+  primitiveType: SerializedPrimitiveType,
+): void => {
+  const indent = makeUsdIndent(depth);
+
+  if (primitiveType === 'Cube') {
+    lines.push(`${indent}double size = 1`);
+    return;
+  }
+
+  if (primitiveType === 'Sphere') {
+    lines.push(`${indent}double radius = 0.5`);
+    return;
+  }
+
+  if (primitiveType === 'Cylinder' || primitiveType === 'Capsule') {
+    lines.push(`${indent}double radius = 0.5`);
+    lines.push(`${indent}double height = 1`);
+    lines.push(`${indent}uniform token axis = "Z"`);
+  }
+};
+
+const serializeMeshGeometryData = async (
+  data: UsdMeshGeometryData,
+  lines: string[],
+  depth: number,
+): Promise<void> => {
+  const indent = makeUsdIndent(depth);
+
+  const serializeChunkedArray = async (
+    prefix: string,
+    length: number,
+    formatter: (index: number) => string,
+    chunkSize = 512,
+  ) => {
+    if (length === 0) {
+      lines.push(`${indent}${prefix} = []`);
+      return;
+    }
+
+    lines.push(`${indent}${prefix} = [`);
+    for (let start = 0; start < length; start += chunkSize) {
+      const end = Math.min(length, start + chunkSize);
+      const chunk: string[] = [];
+      for (let index = start; index < end; index += 1) {
+        chunk.push(formatter(index));
+      }
+
+      const suffix = end < length ? ',' : '';
+      lines.push(`${makeUsdIndent(depth + 1)}${chunk.join(', ')}${suffix}`);
+      await yieldPeriodically(end, chunkSize);
+    }
+    lines.push(`${indent}]`);
+  };
+
+  await serializeChunkedArray('int[] faceVertexCounts', data.triangleCount, () => '3');
+  await serializeChunkedArray(
+    'int[] faceVertexIndices',
+    data.faceVertexIndices.length,
+    (index) => String(data.faceVertexIndices[index]),
+  );
+  await serializeChunkedArray(
+    'point3f[] points',
+    data.positions.count,
+    (index) => formatUsdTuple3(
+      data.positions.getX(index),
+      data.positions.getY(index),
+      data.positions.getZ(index),
+    ),
+    128,
+  );
+
+  if (data.uvAttribute && data.faceVertexIndices.length > 0) {
+    await serializeChunkedArray(
+      'texCoord2f[] primvars:st',
+      data.faceVertexIndices.length,
+      (index) => {
+        const faceVertexIndex = data.faceVertexIndices[index];
+        return formatUsdTuple2(
+          data.uvAttribute!.getX(faceVertexIndex),
+          data.uvAttribute!.getY(faceVertexIndex),
+        );
+      },
+      128,
+    );
+    lines.push(`${indent}uniform token primvars:st:interpolation = "faceVarying"`);
+  }
+
+  lines.push(`${indent}uniform token subdivisionScheme = "none"`);
+};
+
+export const applyUsdMaterialMetadata = (
+  node: THREE.Object3D,
+  materialState: UsdMaterialMetadata,
+): void => {
+  node.userData.usdMaterial = materialState;
+
+  node.traverse((child) => {
+    if (child === node) {
+      return;
+    }
+
+    if (!(child.userData.usdGeomType || isUsdMeshObject(child))) {
+      return;
+    }
+
+    child.userData.usdMaterial = materialState;
+  });
+};
+
+const serializeCustomMetadata = (
+  lines: string[],
+  depth: number,
+  object: THREE.Object3D,
+): void => {
+  const indent = makeUsdIndent(depth);
+  const linkMetadata = object.userData.usdLink as { id: string; name: string } | undefined;
+  if (linkMetadata) {
+    lines.push(`${indent}custom string urdf:linkId = "${escapeUsdString(linkMetadata.id)}"`);
+    lines.push(`${indent}custom string urdf:linkName = "${escapeUsdString(linkMetadata.name)}"`);
+  }
+
+  const materialMetadata = object.userData.usdMaterial as UsdMaterialMetadata | undefined;
+  if (materialMetadata?.color) {
+    lines.push(`${indent}custom string urdf:materialColor = "${escapeUsdString(materialMetadata.color)}"`);
+  }
+  if (materialMetadata?.texture) {
+    lines.push(`${indent}custom string urdf:materialTexture = "${escapeUsdString(materialMetadata.texture)}"`);
+  }
+};
+
+const serializeUsdPreviewMaterials = async (
+  lines: string[],
+  depth: number,
+  context: UsdSerializationContext,
+  progressTracker?: UsdSceneProgressTracker,
+): Promise<void> => {
+  if (context.materialRecords.length === 0) {
+    return;
+  }
+
+  const indent = makeUsdIndent(depth);
+  const childIndent = makeUsdIndent(depth + 1);
+  const grandchildIndent = makeUsdIndent(depth + 2);
+
+  lines.push(`${indent}def Scope "Looks"`);
+  lines.push(`${indent}{`);
+
+  for (let index = 0; index < context.materialRecords.length; index += 1) {
+    const record = context.materialRecords[index];
+    lines.push(`${childIndent}def Material "${record.name}"`);
+    lines.push(`${childIndent}{`);
+    lines.push(`${grandchildIndent}token outputs:surface.connect = <${record.path}/PreviewSurface.outputs:surface>`);
+    lines.push(`${grandchildIndent}def Shader "PreviewSurface"`);
+    lines.push(`${grandchildIndent}{`);
+    lines.push(`${makeUsdIndent(depth + 3)}uniform token info:id = "UsdPreviewSurface"`);
+    if (record.appearance.texture) {
+      lines.push(
+        `${makeUsdIndent(depth + 3)}color3f inputs:diffuseColor.connect = <${record.path}/DiffuseTexture.outputs:rgb>`,
+      );
+    } else {
+      lines.push(
+        `${makeUsdIndent(depth + 3)}color3f inputs:diffuseColor = ${formatUsdTuple([
+          record.appearance.color.r,
+          record.appearance.color.g,
+          record.appearance.color.b,
+        ])}`,
+      );
+    }
+    lines.push(`${makeUsdIndent(depth + 3)}float inputs:metallic = 0`);
+    lines.push(`${makeUsdIndent(depth + 3)}float inputs:roughness = 1`);
+    lines.push(`${makeUsdIndent(depth + 3)}float inputs:opacity = ${formatUsdFloat(record.appearance.opacity)}`);
+    lines.push(`${makeUsdIndent(depth + 3)}token outputs:surface`);
+    lines.push(`${grandchildIndent}}`);
+
+    if (record.appearance.texture) {
+      lines.push(`${grandchildIndent}def Shader "PrimvarReader_st"`);
+      lines.push(`${grandchildIndent}{`);
+      lines.push(`${makeUsdIndent(depth + 3)}uniform token info:id = "UsdPrimvarReader_float2"`);
+      lines.push(`${makeUsdIndent(depth + 3)}token inputs:varname = "st"`);
+      lines.push(`${makeUsdIndent(depth + 3)}float2 outputs:result`);
+      lines.push(`${grandchildIndent}}`);
+
+      lines.push(`${grandchildIndent}def Shader "DiffuseTexture"`);
+      lines.push(`${grandchildIndent}{`);
+      lines.push(`${makeUsdIndent(depth + 3)}uniform token info:id = "UsdUVTexture"`);
+      lines.push(`${makeUsdIndent(depth + 3)}asset inputs:file = @../assets/${record.appearance.texture.exportPath}@`);
+      lines.push(
+        `${makeUsdIndent(depth + 3)}float2 inputs:st.connect = <${record.path}/PrimvarReader_st.outputs:result>`,
+      );
+      lines.push(
+        `${makeUsdIndent(depth + 3)}float4 inputs:fallback = ${formatUsdTuple([
+          record.appearance.color.r,
+          record.appearance.color.g,
+          record.appearance.color.b,
+          record.appearance.opacity,
+        ])}`,
+      );
+      lines.push(`${makeUsdIndent(depth + 3)}token inputs:sourceColorSpace = "sRGB"`);
+      lines.push(`${makeUsdIndent(depth + 3)}float3 outputs:rgb`);
+      lines.push(`${grandchildIndent}}`);
+    }
+
+    lines.push(`${childIndent}}`);
+    advanceUsdProgress(progressTracker, record.name);
+    await yieldPeriodically(index + 1, USD_SCENE_SERIALIZATION_YIELD_INTERVAL);
+  }
+
+  lines.push(`${indent}}`);
+};
+
+const serializeUsdMeshGeometryLibrary = async (
+  lines: string[],
+  depth: number,
+  context: UsdSerializationContext,
+  progressTracker?: UsdSceneProgressTracker,
+): Promise<void> => {
+  if (context.geometryRecords.length === 0) {
+    return;
+  }
+
+  const indent = makeUsdIndent(depth);
+  const childIndent = makeUsdIndent(depth + 1);
+
+  lines.push(`${indent}def Scope "__MeshLibrary"`);
+  lines.push(`${indent}{`);
+
+  for (let index = 0; index < context.geometryRecords.length; index += 1) {
+    const record = context.geometryRecords[index];
+    lines.push(`${childIndent}def Mesh "${record.name}"`);
+    lines.push(`${childIndent}{`);
+    await serializeMeshGeometryData(record.data, lines, depth + 2);
+    lines.push(`${childIndent}}`);
+    advanceUsdProgress(progressTracker, record.name);
+    await yieldPeriodically(index + 1, USD_SCENE_SERIALIZATION_YIELD_INTERVAL);
+  }
+
+  lines.push(`${indent}}`);
+};
+
+const serializeMaterialBinding = (
+  lines: string[],
+  depth: number,
+  object: THREE.Object3D,
+  context: UsdSerializationContext,
+): void => {
+  const materialRecord = context.materialByObject.get(object);
+  if (!materialRecord) {
+    return;
+  }
+
+  lines.push(`${makeUsdIndent(depth)}rel material:binding = <${materialRecord.path}>`);
+};
+
+const serializeSceneNode = async (
+  object: THREE.Object3D,
+  depth: number,
+  lines: string[],
+  context: UsdSerializationContext,
+  forcedName?: string,
+  progressTracker?: UsdSceneProgressTracker,
+): Promise<void> => {
+  const indent = makeUsdIndent(depth);
+  const childIndent = makeUsdIndent(depth + 1);
+  const primitiveType = object.userData.usdGeomType as SerializedPrimitiveType | undefined;
+  const name = sanitizeUsdIdentifier(forcedName || object.name || primitiveType || 'Node');
+  const typeName = primitiveType || (isUsdMeshObject(object) ? 'Mesh' : 'Xform');
+  const materialRecord = context.materialByObject.get(object);
+  const geometryRecord = isUsdMeshObject(object) ? context.geometryByObject.get(object) : undefined;
+  const primMetadata: string[] = [];
+
+  if (materialRecord) {
+    primMetadata.push('prepend apiSchemas = ["MaterialBindingAPI"]');
+  }
+  if (geometryRecord) {
+    primMetadata.push(`prepend references = <${geometryRecord.path}>`);
+  }
+
+  serializeUsdPrimSpecWithMetadata(
+    lines,
+    depth,
+    `def ${typeName} "${name}"`,
+    primMetadata,
+  );
+  lines.push(`${indent}{`);
+
+  const childDepth = depth + 1;
+
+  serializeTransformOps(lines, childDepth, object);
+  serializeCustomMetadata(lines, childDepth, object);
+
+  if (object.userData?.usdPurpose === 'guide') {
+    lines.push(`${childIndent}uniform token purpose = "guide"`);
+  }
+
+  if (primitiveType) {
+    serializePrimitiveAttributes(lines, childDepth, primitiveType);
+    serializeDisplayColor(lines, childDepth, object);
+    serializeMaterialBinding(lines, childDepth, object, context);
+  } else if (isUsdMeshObject(object)) {
+    if (!geometryRecord) {
+      const inlineGeometry = await extractUsdMeshGeometryData(object);
+      if (inlineGeometry) {
+        await serializeMeshGeometryData(inlineGeometry, lines, childDepth);
+      }
+    }
+    serializeDisplayColor(lines, childDepth, object);
+    serializeMaterialBinding(lines, childDepth, object, context);
+  }
+
+  if (depth === 0) {
+    await serializeUsdMeshGeometryLibrary(lines, childDepth, context, progressTracker);
+    await serializeUsdPreviewMaterials(lines, childDepth, context, progressTracker);
+  }
+
+  advanceUsdProgress(progressTracker, name);
+
+  const usedNames = new Set<string>();
+  if (depth === 0 && context.geometryRecords.length > 0) {
+    usedNames.add('__MeshLibrary');
+  }
+  if (depth === 0 && context.materialRecords.length > 0) {
+    usedNames.add('Looks');
+  }
+
+  for (let index = 0; index < object.children.length; index += 1) {
+    const child = object.children[index];
+    const baseChildName = sanitizeUsdIdentifier(child.name || `child_${index}`);
+    let childName = baseChildName;
+    let duplicateCount = 1;
+    while (usedNames.has(childName)) {
+      childName = `${baseChildName}_${duplicateCount}`;
+      duplicateCount += 1;
+    }
+    usedNames.add(childName);
+    await serializeSceneNode(child, childDepth, lines, context, childName, progressTracker);
+    await yieldPeriodically(index + 1, USD_SCENE_SERIALIZATION_YIELD_INTERVAL);
+  }
+
+  lines.push(`${indent}}`);
+};
+
+export const buildUsdBaseLayerContent = async (
+  sceneRoot: THREE.Object3D,
+  serializationContext: UsdSerializationContext,
+  onProgress?: (progress: UsdSceneSerializationProgress) => void,
+): Promise<string> => {
+  const rootPrimName = sanitizeUsdIdentifier(sceneRoot.name || 'Robot');
+  const lines = [
+    '#usda 1.0',
+    '(',
+    `    defaultPrim = "${rootPrimName}"`,
+    '    upAxis = "Z"',
+    '    metersPerUnit = 1',
+    ')',
+    '',
+  ];
+
+  let sceneNodeCount = 0;
+  sceneRoot.traverse(() => {
+    sceneNodeCount += 1;
+  });
+
+  const progressTracker = createUsdProgressTracker(
+    'scene',
+    sceneNodeCount + serializationContext.geometryRecords.length + serializationContext.materialRecords.length,
+    onProgress as ((progress: UsdProgressEvent<'scene'>) => void) | undefined,
+  );
+
+  await serializeSceneNode(sceneRoot, 0, lines, serializationContext, undefined, progressTracker);
+  return `${lines.join('\n')}\n`;
+};

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { URDFCollider, URDFJoint, URDFLink, URDFMimicJoint, URDFRobot, URDFVisual } from './URDFClasses';
+import { stackCoincidentVisualRoots } from '@/core/loaders/visualMeshStacking';
 import { setThreeColorFromSRGB } from '@/core/utils/color.ts';
 
 const tempQuaternion = new THREE.Quaternion();
@@ -61,6 +62,21 @@ function loadedObjectShouldPreserveEmbeddedMaterials(obj: THREE.Object3D): boole
     });
 
     return hasMaterialTexture || hasMultiMaterialMesh || materialNames.size > 1;
+}
+
+function restackLinkVisualRoots(linkTarget: THREE.Object3D) {
+    const visualRoots = linkTarget.children
+        .filter((child: any) => child?.isURDFVisual)
+        .map((child, index) => ({
+            root: child,
+            stableId: child.name || child.userData?.urdfName || index,
+        }));
+
+    if (visualRoots.length < 2) {
+        return;
+    }
+
+    stackCoincidentVisualRoots(visualRoots);
 }
 
 export interface MeshLoadDoneFunc {
@@ -255,6 +271,9 @@ export class URDFLoader {
                                     }
 
                                     group.add(obj);
+                                    if (group.parent) {
+                                        restackLinkVisualRoots(group.parent);
+                                    }
                                 }
                             });
                         }
@@ -326,6 +345,7 @@ export class URDFLoader {
                 visualNodes.forEach(visualNode => {
                     const visual = processLinkElement(visualNode, materialMap) as URDFVisual;
                     linkTarget.add(visual);
+                    restackLinkVisualRoots(linkTarget);
 
                     if (visualNode.hasAttribute('name')) {
                         const name = visualNode.getAttribute('name') || '';

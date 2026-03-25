@@ -8,6 +8,10 @@ function normalizeMaterialValue(value?: string | null): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function materialValuesEqual(left?: string | null, right?: string | null): boolean {
+  return normalizeMaterialValue(left)?.toLowerCase() === normalizeMaterialValue(right)?.toLowerCase();
+}
+
 function materialEntriesEqual(
   left: RobotMaterialEntry | undefined,
   right: RobotMaterialEntry | undefined,
@@ -68,5 +72,52 @@ export function syncRobotMaterialsForLinkUpdate(
   return {
     ...(materials || {}),
     [nextLink.id]: nextEntry,
+  };
+}
+
+export function syncRobotVisualColorsFromMaterials<T extends Pick<RobotData, 'links' | 'materials'>>(
+  robot: T,
+): T {
+  if (!robot.materials || Object.keys(robot.materials).length === 0) {
+    return robot;
+  }
+
+  let linksChanged = false;
+  const nextLinks = Object.fromEntries(
+    Object.entries(robot.links).map(([linkId, link]) => {
+      const materialColor = normalizeMaterialValue(
+        robot.materials?.[link.id]?.color
+        || robot.materials?.[link.name]?.color,
+      );
+
+      if (
+        !materialColor
+        || link.visual.type === GeometryType.NONE
+        || materialValuesEqual(link.visual.color, materialColor)
+      ) {
+        return [linkId, link];
+      }
+
+      linksChanged = true;
+      return [
+        linkId,
+        {
+          ...link,
+          visual: {
+            ...link.visual,
+            color: materialColor,
+          },
+        },
+      ];
+    }),
+  ) as T['links'];
+
+  if (!linksChanged) {
+    return robot;
+  }
+
+  return {
+    ...robot,
+    links: nextLinks,
   };
 }

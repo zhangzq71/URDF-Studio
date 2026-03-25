@@ -26,6 +26,17 @@ export function clearSelectionMissGuardTimer(timerRef: SelectionMissGuardTimerRe
   timerRef.current = null;
 }
 
+export function disarmSelectionMissGuard(
+  justSelectedRef?: SelectionMissGuardRef | null,
+  timerRef?: SelectionMissGuardTimerRef | null,
+): void {
+  if (timerRef) {
+    clearSelectionMissGuardTimer(timerRef);
+  }
+  if (!justSelectedRef) return;
+  justSelectedRef.current = false;
+}
+
 export function scheduleSelectionMissGuardReset({
   justSelectedRef,
   timerRef,

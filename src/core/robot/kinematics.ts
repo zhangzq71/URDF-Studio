@@ -52,11 +52,15 @@ export function getJointEffectiveAngle(
   angleOverrides: JointAngleOverrideMap = {},
 ): number {
   const override = angleOverrides[joint.id];
+  const referencePosition = Number.isFinite(joint.referencePosition)
+    ? joint.referencePosition!
+    : 0;
+
   if (Number.isFinite(override)) {
-    return override;
+    return override - referencePosition;
   }
 
-  return Number.isFinite(joint.angle) ? joint.angle! : 0;
+  return (Number.isFinite(joint.angle) ? joint.angle! : 0) - referencePosition;
 }
 
 function toThreeQuaternion(quaternion?: JointQuaternion): THREE.Quaternion {

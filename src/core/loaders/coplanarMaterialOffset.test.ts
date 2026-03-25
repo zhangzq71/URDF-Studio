@@ -185,3 +185,41 @@ test('mitigateCoplanarMaterialZFighting offsets every more exterior material in 
     assert.equal(isCoplanarOffsetMaterial(materials[1]), true);
     assert.equal(isCoplanarOffsetMaterial(materials[2]), false);
 });
+
+test('mitigateCoplanarMaterialZFighting assigns progressive offsets for stacked duplicate overlays', () => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+        0, 0, 0,
+        1, 0, 0,
+        0, 1, 0,
+    ], 3));
+    geometry.setIndex([
+        0, 1, 2,
+        0, 1, 2,
+        0, 1, 2,
+    ]);
+    geometry.clearGroups();
+    geometry.addGroup(0, 3, 0);
+    geometry.addGroup(3, 3, 1);
+    geometry.addGroup(6, 3, 2);
+
+    const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x999999 });
+    const overlayMaterialA = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    const overlayMaterialB = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const mesh = new THREE.Mesh(geometry, [baseMaterial, overlayMaterialA, overlayMaterialB]);
+
+    const result = mitigateCoplanarMaterialZFighting(mesh);
+    const materials = mesh.material as THREE.Material[];
+
+    assert.equal(result.duplicateTriangleCount, 1);
+    assert.equal(result.nearCoplanarTriangleCount, 0);
+    assert.deepEqual(result.adjustedMaterialIndices, [1, 2]);
+    assert.equal(result.adjustedMaterialCount, 2);
+    assert.equal(isCoplanarOffsetMaterial(materials[0]), false);
+    assert.equal(isCoplanarOffsetMaterial(materials[1]), true);
+    assert.equal(isCoplanarOffsetMaterial(materials[2]), true);
+    assert.equal(materials[1].polygonOffsetFactor, -2);
+    assert.equal(materials[1].polygonOffsetUnits, -2);
+    assert.equal(materials[2].polygonOffsetFactor, -3);
+    assert.equal(materials[2].polygonOffsetUnits, -4);
+});

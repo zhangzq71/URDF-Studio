@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DEFAULT_LINK } from '@/types/constants';
-import { JointType, type RobotClosedLoopConstraint, type RobotData, type UrdfJoint } from '@/types';
+import { GeometryType, JointType, type RobotClosedLoopConstraint, type RobotData, type UrdfJoint } from '@/types';
 import {
   buildCurrentRobotExportData,
   buildCurrentRobotExportState,
@@ -118,6 +118,27 @@ test('buildImportedRobotStoreState restores closed-loop constraints into robot s
   assert.deepEqual(patch.materials, robotData.materials);
   assert.deepEqual(patch._history, robotHistory);
   assert.deepEqual(patch._activity, robotActivity);
+});
+
+test('buildImportedRobotStoreState syncs imported material colors onto link visuals', () => {
+  const robotData = createRobotData();
+  robotData.links.base_link = {
+    ...robotData.links.base_link,
+    visual: {
+      ...robotData.links.base_link.visual,
+      type: GeometryType.BOX,
+      color: '#808080',
+      dimensions: { x: 0.2, y: 0.3, z: 0.4 },
+    },
+  };
+  robotData.materials = {
+    base_link: { color: '#12ab34' },
+  };
+
+  const patch = buildImportedRobotStoreState(robotData, { past: [], future: [] }, []);
+
+  assert.equal(patch.links.base_link.visual.color, '#12ab34');
+  assert.equal(patch.materials?.base_link?.color, '#12ab34');
 });
 
 test('buildImportedRobotStoreState keeps history-only restores working', () => {

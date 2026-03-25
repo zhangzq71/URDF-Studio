@@ -6,6 +6,7 @@ import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
 import { LoadingHud, UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE, buildLoadingHudState } from '@/shared/components/3d';
 import { buildColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
+import { useSelectionStore } from '@/store/selectionStore';
 import { RobotNode } from './nodes';
 import { ClosedLoopConstraintsOverlay } from './constraints';
 import { JointTransformControls } from './controls';
@@ -38,6 +39,7 @@ export const VisualizerScene = React.memo(({
   controller,
 }: VisualizerSceneProps) => {
   const t = translations[lang];
+  const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const collisionTransformControlRef = React.useRef<any>(null);
   const {
     robotRootRef,
@@ -114,10 +116,12 @@ export const VisualizerScene = React.memo(({
 
   const handleCollisionDraggingChanged = React.useCallback(
     (event: { value?: boolean }) => {
-      if (event?.value) return;
+      const dragging = Boolean(event?.value);
+      setHoverFrozen(dragging);
+      if (dragging) return;
       handleCollisionTransformEnd();
     },
-    [handleCollisionTransformEnd]
+    [handleCollisionTransformEnd, setHoverFrozen]
   );
 
   const handleMeshResolved = React.useCallback((meshLoadKey: string) => {

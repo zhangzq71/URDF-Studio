@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   armSelectionMissGuard,
+  disarmSelectionMissGuard,
   clearSelectionMissGuardTimer,
   scheduleSelectionMissGuardReset,
 } from './selectionMissGuard.ts';
@@ -56,4 +57,22 @@ test('clears any pending timer without changing the current guard state', (t) =>
 
   assert.equal(timerRef.current, null);
   assert.equal(justSelectedRef.current, true);
+});
+
+test('disarms the guard immediately when the next click is a background miss', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  const justSelectedRef = { current: false };
+  const timerRef = { current: null as ReturnType<typeof setTimeout> | null };
+
+  armSelectionMissGuard(justSelectedRef);
+  scheduleSelectionMissGuardReset({ justSelectedRef, timerRef });
+
+  disarmSelectionMissGuard(justSelectedRef, timerRef);
+
+  assert.equal(justSelectedRef.current, false);
+  assert.equal(timerRef.current, null);
+
+  t.mock.timers.tick(100);
+  assert.equal(justSelectedRef.current, false);
 });

@@ -216,6 +216,123 @@ function collectVisualAttachmentLinkIds(
     });
 }
 
+function sanitizeSyntheticIdToken(value: string | null | undefined): string {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[^\w]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || 'visual';
+}
+
+function createUniqueSyntheticKey(
+  existing: Record<string, unknown>,
+  preferredKey: string,
+): string {
+  const baseKey = sanitizeSyntheticIdToken(preferredKey);
+  if (!Object.prototype.hasOwnProperty.call(existing, baseKey)) {
+    return baseKey;
+  }
+
+  let suffix = 2;
+  while (Object.prototype.hasOwnProperty.call(existing, `${baseKey}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${baseKey}_${suffix}`;
+}
+
+function createSyntheticVisualAttachmentLink(
+  resolution: ViewerRobotDataResolution,
+  parentLinkId: string,
+  parentLinkPath: string,
+  descriptor: UsdSceneMeshDescriptor,
+  ordinal: number,
+): string {
+  const resolvedPrimPath = normalizeUsdPath(descriptor.resolvedPrimPath || descriptor.meshId || '');
+  const descriptorToken = sanitizeSyntheticIdToken(
+    resolvedPrimPath.split('/').filter(Boolean).pop() || `${parentLinkId}_visual_${ordinal}`,
+  );
+  const linkId = createUniqueSyntheticKey(
+    resolution.robotData.links,
+    `${parentLinkId}_${descriptorToken}`,
+  );
+  const jointId = createUniqueSyntheticKey(
+    resolution.robotData.joints,
+    `fixed_${linkId}`,
+  );
+  const normalizedParentLinkPath = normalizeUsdPath(parentLinkPath);
+
+  resolution.robotData.links[linkId] = {
+    ...DEFAULT_LINK,
+    id: linkId,
+    name: linkId,
+    visible: true,
+    visual: {
+      ...DEFAULT_LINK.visual,
+      type: GeometryType.MESH,
+      origin: identityOrigin(),
+    },
+    collision: {
+      ...DEFAULT_LINK.collision,
+      type: GeometryType.NONE,
+      origin: identityOrigin(),
+    },
+    inertial: {
+      ...DEFAULT_LINK.inertial,
+      mass: 0,
+    },
+  };
+
+  resolution.robotData.joints[jointId] = {
+    ...DEFAULT_JOINT,
+    id: jointId,
+    name: jointId,
+    type: JointType.FIXED,
+    parentLinkId,
+    childLinkId: linkId,
+    origin: identityOrigin(),
+    axis: { x: 0, y: 0, z: 1 },
+  };
+
+  resolution.linkPathById = {
+    ...resolution.linkPathById,
+    [linkId]: normalizedParentLinkPath,
+  };
+  resolution.childLinkPathByJointId = {
+    ...resolution.childLinkPathByJointId,
+    [jointId]: normalizedParentLinkPath,
+  };
+  resolution.parentLinkPathByJointId = {
+    ...resolution.parentLinkPathByJointId,
+    [jointId]: normalizedParentLinkPath,
+  };
+
+  return linkId;
+}
+
+function ensureCollisionBodySlot(
+  resolution: ViewerRobotDataResolution,
+  linkId: string,
+  collisionIndex: number,
+): void {
+  if (collisionIndex <= 0) {
+    return;
+  }
+
+  const link = resolution.robotData.links[linkId];
+  if (!link) {
+    return;
+  }
+
+  const collisionBodies = [...(link.collisionBodies || [])];
+  while (collisionBodies.length < collisionIndex) {
+    collisionBodies.push({
+      ...DEFAULT_LINK.collision,
+      origin: identityOrigin(),
+    });
+  }
+  link.collisionBodies = collisionBodies;
+}
+
 function originsApproximatelyEqual(
   left: NonNullable<UrdfVisual['origin']> | null | undefined,
   right: NonNullable<UrdfVisual['origin']> | null | undefined,
@@ -355,6 +472,11 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
 
   const nextResolution: ViewerRobotDataResolution = {
     ...resolution,
+    linkIdByPath: { ...resolution.linkIdByPath },
+    linkPathById: { ...resolution.linkPathById },
+    jointPathById: { ...resolution.jointPathById },
+    childLinkPathByJointId: { ...resolution.childLinkPathByJointId },
+    parentLinkPathByJointId: { ...resolution.parentLinkPathByJointId },
     robotData: structuredClone(resolution.robotData),
   };
   let computedLinkWorldMatrices = computeLinkWorldMatrices(nextResolution.robotData);
@@ -418,7 +540,17 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
     const visualAttachmentLinkIds = collectVisualAttachmentLinkIds(nextResolution, linkId);
     const visualDescriptors = descriptorsByLinkRole.get(`${linkId}:visual`) || [];
     visualDescriptors.forEach((entry, index) => {
-      const targetLinkId = index === 0 ? linkId : visualAttachmentLinkIds[index - 1];
+      let targetLinkId = index === 0 ? linkId : visualAttachmentLinkIds[index - 1];
+      if (!targetLinkId && index > 0) {
+        targetLinkId = createSyntheticVisualAttachmentLink(
+          nextResolution,
+          linkId,
+          linkPath,
+          entry.descriptor,
+          entry.ordinal,
+        );
+        visualAttachmentLinkIds.push(targetLinkId);
+      }
       if (!targetLinkId) {
         return;
       }
@@ -453,6 +585,10 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
 
     const collisionDescriptors = descriptorsByLinkRole.get(`${linkId}:collision`) || [];
     collisionDescriptors.forEach((entry, index) => {
+      if (index > 0) {
+        ensureCollisionBodySlot(nextResolution, linkId, index);
+      }
+
       const primWorldMatrix = resolvePrimWorldMatrix(runtime, entry.descriptor);
       if (!primWorldMatrix) {
         return;

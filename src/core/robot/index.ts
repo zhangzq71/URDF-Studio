@@ -68,6 +68,7 @@ export {
 
 export {
     createRobotClosedLoopConstraint,
+    solveClosedLoopMotionCompensation,
     resolveClosedLoopJointMotionCompensation,
     resolveClosedLoopJointAngleCompensation,
     resolveClosedLoopJointOriginCompensation,

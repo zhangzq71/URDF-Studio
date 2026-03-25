@@ -44,6 +44,7 @@ export interface MJCFModelJoint {
     type: string;
     axis?: [number, number, number];
     range?: [number, number];
+    ref?: number;
     pos?: [number, number, number];
     limited?: boolean;
     damping?: number;
@@ -209,6 +210,9 @@ function parseJointElement(
     const axisNums = !isFreeJoint && jointAttrs.axis ? parseNumbers(jointAttrs.axis) : [];
     const rangeNums = jointAttrs.range ? parseNumbers(jointAttrs.range) : [];
     const actuatorForceRange = jointAttrs.actuatorfrcrange ? parseNumbers(jointAttrs.actuatorfrcrange) : [];
+    const parsedRef = jointAttrs.ref != null && jointAttrs.ref !== ''
+        ? parseFloat(jointAttrs.ref)
+        : Number.NaN;
 
     const joint: MJCFModelJoint = {
         // Match MuJoCo's anonymous joint fallback naming (`joint_<global-index>`).
@@ -250,6 +254,12 @@ function parseJointElement(
         if (parsedRange) {
             joint.range = normalizeJointRange(parsedRange, joint.type, compilerSettings);
         }
+    }
+
+    if (Number.isFinite(parsedRef)) {
+        joint.ref = joint.type.toLowerCase() === 'slide'
+            ? parsedRef
+            : convertAngularValue(parsedRef, compilerSettings);
     }
 
     const parsedActuatorForceRange = toOptionalRangeTuple(actuatorForceRange);

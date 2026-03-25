@@ -1,6 +1,7 @@
 import {
   prepareImportPayload,
   type PrepareImportPayloadArgs,
+  type ImportPreparationFileDescriptor,
   type PreparedImportPayload,
   type PrepareImportWorkerRequest,
   type PrepareImportWorkerResponse,
@@ -96,10 +97,23 @@ export async function prepareImportPayloadWithWorker(
     return await new Promise<PreparedImportPayload>((resolve, reject) => {
       const requestId = ++requestIdCounter;
       const worker = ensureSharedWorker();
+      const files: ImportPreparationFileDescriptor[] = [...args.files].map((input) => {
+        if (input instanceof File) {
+          return {
+            file: input,
+            relativePath: input.webkitRelativePath || input.name,
+          };
+        }
+
+        return {
+          file: input.file,
+          relativePath: input.relativePath || input.file.webkitRelativePath || input.file.name,
+        };
+      });
       const request: PrepareImportWorkerRequest = {
         type: 'prepare-import',
         requestId,
-        files: [...args.files],
+        files,
         existingPaths: [...args.existingPaths],
       };
 

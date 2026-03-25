@@ -11,12 +11,15 @@ export interface MJCFCompilerSettings {
     eulerSequence: string;
 }
 
+export type MJCFMeshInertiaMode = 'legacy' | 'shell' | 'exact' | 'convex';
+
 export interface MJCFMesh {
     name: string;
     file: string;
     scale?: number[];
     refpos?: [number, number, number];
     refquat?: [number, number, number, number];
+    inertia?: MJCFMeshInertiaMode;
 }
 
 export interface MJCFMaterial {
@@ -657,6 +660,10 @@ export function parseMeshAssets(doc: Document, settings?: MJCFCompilerSettings, 
             const scale = parseNumbers(meshAttrs.scale || null);
             const refpos = parseNumbers(meshAttrs.refpos || null);
             const refquat = parseQuatAsTuple(meshAttrs.refquat || null);
+            const inertiaAttr = (meshAttrs.inertia || '').trim().toLowerCase();
+            const inertia = inertiaAttr === 'shell' || inertiaAttr === 'exact' || inertiaAttr === 'convex' || inertiaAttr === 'legacy'
+                ? inertiaAttr
+                : undefined;
             meshMap.set(name, {
                 name,
                 file,
@@ -665,6 +672,7 @@ export function parseMeshAssets(doc: Document, settings?: MJCFCompilerSettings, 
                     ? [refpos[0] ?? 0, refpos[1] ?? 0, refpos[2] ?? 0]
                     : undefined,
                 refquat,
+                inertia,
             });
 
             meshIndex += 1;

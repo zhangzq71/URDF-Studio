@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stackCoincidentVisualRoots } from '@/core/loaders/visualMeshStacking';
 import { findAssetByPath } from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
@@ -32,6 +33,7 @@ export interface MJCFHierarchyJoint {
     type: string;
     axis?: [number, number, number];
     range?: [number, number];
+    ref?: number;
     pos?: [number, number, number];
 }
 
@@ -63,9 +65,20 @@ export interface MJCFHierarchyResult {
     jointsMap: Record<string, THREE.Object3D>;
 }
 
-const MJCF_COINCIDENT_VISUAL_STACK_FLAG = '__mjcfCoincidentVisualStacking';
-const COINCIDENT_VISUAL_POSITION_TOLERANCE = 1e-4;
-const COINCIDENT_VISUAL_QUATERNION_TOLERANCE = 1e-4;
+function restackLinkVisualRoots(linkTarget: THREE.Object3D): void {
+    const visualRoots = linkTarget.children
+        .filter((child: any) => child?.isURDFVisual)
+        .map((child, index) => ({
+            root: child,
+            stableId: child.userData?.visualOrder ?? index,
+        }));
+
+    if (visualRoots.length < 2) {
+        return;
+    }
+
+    stackCoincidentVisualRoots(visualRoots);
+}
 
 function countBodyGeoms(body: MJCFHierarchyBody): number {
     return body.geoms.length + body.children.reduce((sum, child) => sum + countBodyGeoms(child), 0);
@@ -86,122 +99,6 @@ function convertJointLimitValue(value: number, _jointType: string, _settings: MJ
     return value;
 }
 
-function transformsMatchWithinTolerance(
-    left: Pick<MJCFHierarchyGeom, 'pos' | 'quat'>,
-    right: Pick<MJCFHierarchyGeom, 'pos' | 'quat'>,
-): boolean {
-    const leftPos = left.pos ?? [0, 0, 0];
-    const rightPos = right.pos ?? [0, 0, 0];
-
-    for (let index = 0; index < 3; index += 1) {
-        if (Math.abs((leftPos[index] ?? 0) - (rightPos[index] ?? 0)) > COINCIDENT_VISUAL_POSITION_TOLERANCE) {
-            return false;
-        }
-    }
-
-    const leftQuat = left.quat ?? [1, 0, 0, 0];
-    const rightQuat = right.quat ?? [1, 0, 0, 0];
-    let directDelta = 0;
-    let negatedDelta = 0;
-
-    for (let index = 0; index < 4; index += 1) {
-        const leftValue = leftQuat[index] ?? 0;
-        const rightValue = rightQuat[index] ?? 0;
-        directDelta = Math.max(directDelta, Math.abs(leftValue - rightValue));
-        negatedDelta = Math.max(negatedDelta, Math.abs(leftValue + rightValue));
-    }
-
-    return Math.min(directDelta, negatedDelta) <= COINCIDENT_VISUAL_QUATERNION_TOLERANCE;
-}
-
-function buildCoincidentVisualMeshStackIndices(
-    geomRoles: Array<{ geom: MJCFHierarchyGeom; renderVisual: boolean }>,
-): Map<number, number> {
-    const groupedVisualMeshes: Array<{ referenceGeom: MJCFHierarchyGeom; indices: number[] }> = [];
-
-    geomRoles.forEach(({ geom, renderVisual }, geomIndex) => {
-        if (!renderVisual || !geom.mesh) {
-            return;
-        }
-
-        const matchingGroup = groupedVisualMeshes.find(({ referenceGeom }) =>
-            transformsMatchWithinTolerance(referenceGeom, geom),
-        );
-        if (matchingGroup) {
-            matchingGroup.indices.push(geomIndex);
-            return;
-        }
-
-        groupedVisualMeshes.push({
-            referenceGeom: geom,
-            indices: [geomIndex],
-        });
-    });
-
-    const stackIndices = new Map<number, number>();
-    groupedVisualMeshes.forEach(({ indices }) => {
-        if (indices.length < 2) {
-            return;
-        }
-
-        indices.forEach((geomIndex, stackedIndex) => {
-            stackIndices.set(geomIndex, stackedIndex);
-        });
-    });
-
-    return stackIndices;
-}
-
-function cloneCoincidentVisualOffsetMaterial(material: THREE.Material, stackIndex: number): THREE.Material {
-    const existingStackIndex = Number(material.userData?.mjcfCoincidentVisualStackIndex);
-    if (material.userData?.[MJCF_COINCIDENT_VISUAL_STACK_FLAG] === true && existingStackIndex === stackIndex) {
-        return material;
-    }
-
-    const nextMaterial = material.clone();
-    nextMaterial.userData = {
-        ...(nextMaterial.userData ?? {}),
-        [MJCF_COINCIDENT_VISUAL_STACK_FLAG]: true,
-        mjcfCoincidentVisualStackIndex: stackIndex,
-    };
-    nextMaterial.polygonOffset = true;
-    nextMaterial.polygonOffsetFactor = Math.min(Number(nextMaterial.polygonOffsetFactor) || 0, -(stackIndex + 1));
-    nextMaterial.polygonOffsetUnits = Math.min(Number(nextMaterial.polygonOffsetUnits) || 0, -(stackIndex * 2));
-    nextMaterial.needsUpdate = true;
-
-    return nextMaterial;
-}
-
-function applyCoincidentVisualMeshStacking(meshRoot: THREE.Object3D, stackIndex: number): void {
-    if (stackIndex <= 0) {
-        return;
-    }
-
-    meshRoot.userData.mjcfCoincidentVisualStackIndex = stackIndex;
-    meshRoot.traverse((child: any) => {
-        if (!child.isMesh) {
-            return;
-        }
-
-        child.renderOrder = Math.max(Number(child.renderOrder) || 0, stackIndex);
-        child.userData = {
-            ...(child.userData ?? {}),
-            mjcfCoincidentVisualStackIndex: stackIndex,
-        };
-
-        if (Array.isArray(child.material)) {
-            child.material = child.material.map((material: THREE.Material) =>
-                cloneCoincidentVisualOffsetMaterial(material, stackIndex),
-            );
-            return;
-        }
-
-        if (child.material) {
-            child.material = cloneCoincidentVisualOffsetMaterial(child.material as THREE.Material, stackIndex);
-        }
-    });
-}
-
 function resolveRuntimeJointType(joint: MJCFHierarchyJoint): 'revolute' | 'continuous' | 'prismatic' | 'ball' | 'floating' {
     if (joint.type === 'hinge') {
         return joint.range ? 'revolute' : 'continuous';
@@ -220,6 +117,18 @@ function resolveRuntimeJointType(joint: MJCFHierarchyJoint): 'revolute' | 'conti
     }
 
     return 'continuous';
+}
+
+function resolveInitialRuntimeJointValue(joint: MJCFHierarchyJoint): number | null {
+    if (!Number.isFinite(joint.ref)) {
+        return null;
+    }
+
+    if (joint.type === 'hinge' || joint.type === 'slide') {
+        return joint.ref ?? null;
+    }
+
+    return null;
 }
 
 const textureLoader = new THREE.TextureLoader();
@@ -304,13 +213,22 @@ async function applyMaterialAssetToMesh(
     assets: Record<string, string>,
     sourceFileDir: string,
     materialName?: string,
+    inheritedGeomRgba?: [number, number, number, number],
+    hasExplicitGeomRgba: boolean = false,
 ): Promise<void> {
     const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
     const rgba = materialDef.rgba || (materialDef.texture ? [1, 1, 1, 1] : [0.8, 0.8, 0.8, 1]);
     const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
     const g = Math.max(0, Math.min(1, rgba[1] ?? 0.8));
     const b = Math.max(0, Math.min(1, rgba[2] ?? 0.8));
-    const alpha = Math.max(0, Math.min(1, rgba[3] ?? 1));
+    const inheritedAlphaOverride = !hasExplicitGeomRgba
+        && Array.isArray(inheritedGeomRgba)
+        && inheritedGeomRgba.length >= 4
+        && Number.isFinite(inheritedGeomRgba[3])
+        && (inheritedGeomRgba[3] ?? 1) < 0.999
+        ? inheritedGeomRgba[3]
+        : null;
+    const alpha = Math.max(0, Math.min(1, inheritedAlphaOverride ?? (rgba[3] ?? 1)));
     const texture = await loadMaterialTexture(materialDef, textureMap, assets, sourceFileDir);
     const roughness = materialDef.shininess != null
         ? Math.max(0, Math.min(1, 1 - materialDef.shininess))
@@ -348,6 +266,24 @@ async function applyMaterialAssetToMesh(
         child.receiveShadow = true;
     });
 }
+
+function objectHasVisibleMaterial(mesh: THREE.Object3D): boolean {
+    let hasVisibleMaterial = false;
+
+    mesh.traverse((child: any) => {
+        if (hasVisibleMaterial || !child?.isMesh) {
+            return;
+        }
+
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        hasVisibleMaterial = materials.some((material: THREE.Material | undefined) => (
+            !material || (material.opacity ?? 1) > 1e-6
+        ));
+    });
+
+    return hasVisibleMaterial;
+}
+
 export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Promise<MJCFHierarchyResult> {
     const {
         bodies,
@@ -375,7 +311,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         targetGroup: THREE.Group
     ): Promise<void> {
         const geomRoles = assignMJCFBodyGeomRoles(geoms);
-        const coincidentVisualMeshStackIndices = buildCoincidentVisualMeshStackIndices(geomRoles);
 
         for (const [geomIndex, { geom, renderVisual: isVisualGeom, renderCollision: isCollisionGeom }] of geomRoles.entries()) {
             try {
@@ -393,6 +328,8 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                         assets,
                         sourceFileDir,
                         geom.material,
+                        geom.rgba,
+                        Boolean(geom.hasExplicitRgba),
                     );
                 }
 
@@ -405,6 +342,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                 }
 
                 mesh.name = geom.name || geom.type || 'geom';
+                const shouldRenderVisualMesh = objectHasVisibleMaterial(mesh);
 
                 const applyGeomTransformToContainer = (container: THREE.Object3D) => {
                     if (geom.pos) {
@@ -416,11 +354,12 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     }
                 };
 
-                if (isVisualGeom) {
+                if (isVisualGeom && shouldRenderVisualMesh) {
                     const visualGroup = new URDFVisual();
                     visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
                     visualGroup.urdfName = visualGroup.name;
                     visualGroup.userData.isVisualGroup = true;
+                    visualGroup.userData.visualOrder = geomIndex;
                     applyGeomTransformToContainer(visualGroup);
 
                     // Mark all meshes in this object as visual
@@ -432,7 +371,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                             child.userData.isVisualMesh = true;
                         }
                     });
-                    applyCoincidentVisualMeshStacking(mesh, coincidentVisualMeshStackIndices.get(geomIndex) ?? 0);
                     visualGroup.add(mesh);
                     targetGroup.add(visualGroup);
                 }
@@ -477,6 +415,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
                     visualGroup.urdfName = visualGroup.name;
                     visualGroup.userData.isVisualGroup = true;
+                    visualGroup.userData.visualOrder = geomIndex;
                     applyGeomTransformToContainer(visualGroup);
                     visualGroup.add(mesh);
                     targetGroup.add(visualGroup);
@@ -530,6 +469,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         (jointNode as any).isURDFJoint = true;
         (jointNode as any).type = 'URDFJoint';
         (jointNode as any).jointType = resolveRuntimeJointType(joint);
+        (jointNode as any).referencePosition = Number.isFinite(joint.ref) ? joint.ref : 0;
         jointNode.position.set(jointPos[0], jointPos[1], jointPos[2]);
         (jointNode as any).bodyOffsetGroup = bodyOffsetGroup;
 
@@ -548,6 +488,9 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         (jointNode as any).jointQuaternion = new THREE.Quaternion();
         (jointNode as any).setJointValue = function(value: number) {
             this.angle = value;
+            this.jointValue = value;
+            const referencePosition = Number.isFinite(this.referencePosition) ? this.referencePosition : 0;
+            const motionValue = value - referencePosition;
             const axis = this.axis ? this.axis.clone().normalize() : new THREE.Vector3(0, 0, 1);
 
             if (this.jointType === 'revolute' || this.jointType === 'continuous') {
@@ -557,7 +500,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                 }
 
                 const rotationQuat = new THREE.Quaternion();
-                rotationQuat.setFromAxisAngle(axis, value);
+                rotationQuat.setFromAxisAngle(axis, motionValue);
 
                 this.quaternion.copy(this.userData.initialQuaternion);
                 this.quaternion.multiply(rotationQuat);
@@ -568,7 +511,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     this.userData.initialPosition = this.position.clone();
                 }
                 this.position.copy(this.userData.initialPosition);
-                this.position.addScaledVector(axis, value);
+                this.position.addScaledVector(axis, motionValue);
                 this.updateMatrixWorld(true);
             }
         };
@@ -580,6 +523,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
             const rotationQuat = new THREE.Quaternion(value.x, value.y, value.z, value.w).normalize();
             this.jointQuaternion.copy(rotationQuat);
+            this.jointValue = rotationQuat;
             this.quaternion.copy(this.userData.initialQuaternion);
             this.quaternion.multiply(rotationQuat);
             this.updateMatrixWorld(true);
@@ -602,6 +546,11 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         attachmentGroup.position.set(-jointPos[0], -jointPos[1], -jointPos[2]);
         jointNode.add(attachmentGroup);
 
+        const initialJointValue = resolveInitialRuntimeJointValue(joint);
+        if (initialJointValue != null) {
+            (jointNode as any).setJointValue(initialJointValue);
+        }
+
         return { jointNode, attachmentGroup };
     }
 
@@ -622,6 +571,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
         const linkGroup = createLinkGroup(body.name);
         await addGeomsToGroup(body.geoms, linkGroup);
+        restackLinkVisualRoots(linkGroup);
         attachmentGroup.add(linkGroup);
 
         for (const childBody of body.children) {

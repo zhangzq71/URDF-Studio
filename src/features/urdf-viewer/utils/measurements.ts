@@ -271,9 +271,20 @@ function countNonZeroAxes(delta: MeasurementMetrics['absoluteDelta']): number {
   return [delta.x, delta.y, delta.z].filter((value) => value > AXIS_EPSILON).length;
 }
 
+function createMeasureGroupId(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  if (randomUuid) {
+    return `measure-group:${randomUuid()}`;
+  }
+
+  // Fallback keeps the viewer usable in non-secure contexts long enough to surface
+  // the real USD runtime environment error instead of crashing first on randomUUID().
+  return `measure-group:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function createMeasureGroup(): MeasureGroup {
   return {
-    id: `measure-group:${crypto.randomUUID()}`,
+    id: createMeasureGroupId(),
     activeSlot: 'first',
     first: null,
     second: null,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSelectionStore } from '@/store/selectionStore';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { createJointPanelStore } from '@/shared/utils/jointPanelStore';
 import {
@@ -54,6 +55,7 @@ export const useURDFViewerController = ({
   active = true,
   jointStateScopeKey = null,
 }: UseURDFViewerControllerProps) => {
+  const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const isOrbitDragging = useRef(false);
   const [robot, setRobot] = useState<any>(null);
   const [jointPanelRobot, setJointPanelRobot] = useState<any>(null);
@@ -209,6 +211,17 @@ export const useURDFViewerController = ({
 
     return { ...jointAnglesRef.current };
   }, [jointStateScopeKey]);
+
+  useEffect(() => {
+    if (!active) return;
+    setHoverFrozen(isDragging || transformPendingRef.current);
+  }, [active, isDragging, setHoverFrozen]);
+
+  useEffect(() => {
+    if (!active) {
+      setHoverFrozen(false);
+    }
+  }, [active, setHoverFrozen]);
 
   useEffect(() => {
     const releaseDragLock = () => setIsDragging(false);
@@ -434,17 +447,21 @@ export const useURDFViewerController = ({
   const handleTransformPending = useCallback(
     (pending: boolean) => {
       transformPendingRef.current = pending;
+      if (active) {
+        setHoverFrozen(pending || isDragging);
+      }
       onTransformPendingChange?.(pending);
     },
-    [onTransformPendingChange]
+    [active, isDragging, onTransformPendingChange, setHoverFrozen]
   );
 
   useEffect(() => {
     return () => {
       transformPendingRef.current = false;
+      setHoverFrozen(false);
       onTransformPendingChange?.(false);
     };
-  }, [onTransformPendingChange]);
+  }, [onTransformPendingChange, setHoverFrozen]);
 
   useEffect(() => {
     if (!jointControlRobot || (!jointAngleState && !jointMotionState)) return;

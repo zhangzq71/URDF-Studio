@@ -13,6 +13,7 @@ import {
     resolveClosedLoopJointMotionCompensation,
     resolveClosedLoopJointAngleCompensation,
     resolveClosedLoopJointOriginCompensation,
+    solveClosedLoopMotionCompensation,
 } from './closedLoops.ts';
 
 function installDomGlobals(): void {
@@ -120,7 +121,7 @@ const robotWithClosedLoop: RobotState = {
     ],
 };
 
-test('resolveClosedLoopJointOriginCompensation moves the opposite branch to preserve a connect loop', () => {
+test('resolveClosedLoopJointOriginCompensation moves the opposite branch to preserve a connect loop', { concurrency: false }, () => {
     const compensation = resolveClosedLoopJointOriginCompensation(
         robotWithClosedLoop,
         'joint_a',
@@ -138,7 +139,7 @@ test('resolveClosedLoopJointOriginCompensation moves the opposite branch to pres
     });
 });
 
-test('resolveClosedLoopJointOriginCompensation skips constraints fully inside the dragged subtree', () => {
+test('resolveClosedLoopJointOriginCompensation skips constraints fully inside the dragged subtree', { concurrency: false }, () => {
     const robot: RobotState = {
         ...robotWithClosedLoop,
         links: {
@@ -175,7 +176,7 @@ test('resolveClosedLoopJointOriginCompensation skips constraints fully inside th
     assert.deepEqual(compensation, {});
 });
 
-test('resolveClosedLoopJointAngleCompensation solves a mirrored loop by adjusting the opposite joint angle', () => {
+test('resolveClosedLoopJointAngleCompensation solves a mirrored loop by adjusting the opposite joint angle', { concurrency: false }, () => {
     const robot: RobotState = {
         ...robotWithClosedLoop,
         joints: {
@@ -211,7 +212,7 @@ test('resolveClosedLoopJointAngleCompensation solves a mirrored loop by adjustin
     assert.ok(Math.abs((compensation.joint_b ?? 0) - 0.42) < 1e-3);
 });
 
-test('resolveClosedLoopJointAngleCompensation reduces Cassie plantar loop error and solves passive joints', () => {
+test('resolveClosedLoopJointAngleCompensation reduces Cassie plantar loop error and solves passive joints', { concurrency: false }, () => {
     installDomGlobals();
 
     const xml = fs.readFileSync(
@@ -255,7 +256,7 @@ test('resolveClosedLoopJointAngleCompensation reduces Cassie plantar loop error 
     assert.ok(after < before, `expected closed-loop error to decrease, before=${before}, after=${after}`);
 });
 
-test('resolveClosedLoopJointMotionCompensation solves Cassie achilles loop with a ball joint quaternion', () => {
+test('resolveClosedLoopJointMotionCompensation solves Cassie achilles loop with a ball joint quaternion', { concurrency: false }, () => {
     installDomGlobals();
 
     const xml = fs.readFileSync(
@@ -301,4 +302,36 @@ test('resolveClosedLoopJointMotionCompensation solves Cassie achilles loop with 
 
     assert.ok(after < before, `expected achilles closed-loop error to decrease, before=${before}, after=${after}`);
     assert.ok(after < 1e-4, `expected achilles closed-loop error to be nearly closed, after=${after}`);
+});
+
+test('solveClosedLoopMotionCompensation solves Cassie bilateral loops in one coupled pass', { concurrency: false }, () => {
+    installDomGlobals();
+
+    const xml = fs.readFileSync(
+        'test/mujoco_menagerie-main/agility_cassie/cassie.xml',
+        'utf8',
+    );
+    const robot = parseMJCF(xml);
+
+    assert.ok(robot);
+    assert.ok(robot.closedLoopConstraints);
+    assert.equal(robot.closedLoopConstraints.length, 4);
+
+    const solution = solveClosedLoopMotionCompensation(robot, {
+        angles: {
+            'left-knee': -1.2,
+            'right-knee': -1.2,
+        },
+    });
+
+    assert.ok(solution.quaternions['left-achilles-rod']);
+    assert.ok(solution.quaternions['right-achilles-rod']);
+    assert.ok(typeof solution.angles['left-shin'] === 'number');
+    assert.ok(typeof solution.angles['right-shin'] === 'number');
+
+    assert.ok(solution.constraintErrors['mjcf-connect-left-achilles-rod-left-heel-spring'] < 1e-4);
+    assert.ok(solution.constraintErrors['mjcf-connect-right-achilles-rod-right-heel-spring'] < 1e-4);
+    assert.ok(solution.constraintErrors['mjcf-connect-left-plantar-rod-left-foot'] < 1e-4);
+    assert.ok(solution.constraintErrors['mjcf-connect-right-plantar-rod-right-foot'] < 1e-4);
+    assert.ok(solution.residual < 1e-4, `expected coupled residual to be nearly zero, residual=${solution.residual}`);
 });
