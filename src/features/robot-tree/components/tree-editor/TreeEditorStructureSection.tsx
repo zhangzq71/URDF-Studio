@@ -95,11 +95,24 @@ export function TreeEditorStructureSection({
             <div
               className="flex min-w-0 items-center gap-1 rounded-md border border-border-black bg-white px-1.5 py-0.5 dark:bg-panel-bg"
               title={currentFileName}
+              onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
             >
               <FileCode className="h-3 w-3 shrink-0 text-system-blue" />
-              <span className="truncate text-[9px] leading-none font-medium text-text-secondary dark:text-text-tertiary">
-                {currentFileName}
-              </span>
+              <input
+                type="text"
+                readOnly
+                value={currentFileName ?? ''}
+                aria-label={currentFileName ?? ''}
+                spellCheck={false}
+                className="min-w-0 flex-1 bg-transparent text-[9px] leading-none font-medium text-text-secondary outline-none dark:text-text-tertiary cursor-text"
+                onFocus={(event) => event.currentTarget.select()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  event.currentTarget.select();
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+              />
             </div>
           )}
         </div>

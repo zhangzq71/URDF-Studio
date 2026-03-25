@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { findAssetByPath } from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
-import { COLLISION_OVERLAY_RENDER_ORDER, createCollisionOverlayMaterial } from '@/features/urdf-viewer/utils/materials';
+import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
+import { COLLISION_OVERLAY_RENDER_ORDER, createCollisionOverlayMaterial } from '@/shared/utils/three/collisionOverlayMaterial';
 import { URDFCollider, URDFVisual } from '../urdf/loader/URDFClasses';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
@@ -304,7 +305,8 @@ async function applyMaterialAssetToMesh(
     sourceFileDir: string,
     materialName?: string,
 ): Promise<void> {
-    const rgba = materialDef.rgba || [0.8, 0.8, 0.8, 1];
+    const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
+    const rgba = materialDef.rgba || (materialDef.texture ? [1, 1, 1, 1] : [0.8, 0.8, 0.8, 1]);
     const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
     const g = Math.max(0, Math.min(1, rgba[1] ?? 0.8));
     const b = Math.max(0, Math.min(1, rgba[2] ?? 0.8));
@@ -323,12 +325,13 @@ async function applyMaterialAssetToMesh(
     mesh.traverse((child: any) => {
         if (!child.isMesh) return;
         child.material = createMatteMaterial({
-            color: new THREE.Color(r, g, b),
+            color: createThreeColorFromSRGB(r, g, b),
             opacity: alpha,
             transparent: alpha < 1,
             side: THREE.DoubleSide,
             map: texture,
             name: materialName || materialDef.name || 'mjcf_material_asset',
+            preserveExactColor: hasAuthoredRgba || Boolean(texture),
         });
         if (roughness != null) {
             child.material.roughness = roughness;

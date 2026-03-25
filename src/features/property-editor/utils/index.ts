@@ -1,5 +1,9 @@
 export { computeAutoAlign, convertGeometryType } from './geometryConversion';
 export {
+  resolveDetailLinkTabAfterGeometrySelection,
+  resolveDetailLinkTabAfterViewerMeshSelect,
+} from './detailLinkTab';
+export {
   analyzeCollisionOptimization,
   applyCollisionOptimizationOperationsToLinks,
   buildCollisionOptimizationOperations,

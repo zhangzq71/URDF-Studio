@@ -251,6 +251,170 @@ function colorArrayToHex(
   return `#${linearColor?.getHexString() ?? `${toHexChannel(to255(r))}${toHexChannel(to255(g))}${toHexChannel(to255(b))}`}`;
 }
 
+function normalizeScalarMaterialValue(
+  value: unknown,
+  options: { clamp01?: boolean; min?: number } = {},
+): number | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+
+  let nextValue = numeric;
+  if (typeof options.min === 'number') {
+    nextValue = Math.max(options.min, nextValue);
+  }
+  if (options.clamp01) {
+    nextValue = Math.max(0, Math.min(1, nextValue));
+  }
+
+  return nextValue;
+}
+
+function normalizeBooleanMaterialValue(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function normalizeColorMaterialValue(value: unknown): [number, number, number] | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as {
+    isColor?: unknown;
+    r?: unknown;
+    g?: unknown;
+    b?: unknown;
+    length?: unknown;
+  };
+
+  if (candidate.isColor === true) {
+    const r = Number(candidate.r);
+    const g = Number(candidate.g);
+    const b = Number(candidate.b);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+      return [r, g, b];
+    }
+  }
+
+  if (typeof candidate.length === 'number') {
+    const source = Array.from(value as ArrayLike<number>);
+    if (source.length >= 3) {
+      const normalized = source
+        .slice(0, 3)
+        .map((channel) => Number(channel));
+      if (normalized.every((channel) => Number.isFinite(channel))) {
+        return normalized as [number, number, number];
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeVector2MaterialValue(value: unknown): [number, number] | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as {
+    x?: unknown;
+    y?: unknown;
+    length?: unknown;
+  };
+
+  const x = Number(candidate.x);
+  const y = Number(candidate.y);
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    return [x, y];
+  }
+
+  if (typeof candidate.length === 'number') {
+    const source = Array.from(value as ArrayLike<number>);
+    if (source.length >= 2) {
+      const normalized = source
+        .slice(0, 2)
+        .map((channel) => Number(channel));
+      if (normalized.every((channel) => Number.isFinite(channel))) {
+        return normalized as [number, number];
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeTextureMaterialPath(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized || null;
+  }
+
+  if (typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as {
+    name?: unknown;
+    userData?: {
+      usdSourcePath?: unknown;
+    } | null;
+  };
+  const normalized = String(
+    candidate.userData?.usdSourcePath
+    || candidate.name
+    || '',
+  ).trim();
+  return normalized || null;
+}
+
+function hasSnapshotMaterialRecordContent(material: SnapshotMaterialRecord | null | undefined): boolean {
+  if (!material || typeof material !== 'object') {
+    return false;
+  }
+
+  return Object.values(material).some((value) => {
+    if (value == null) {
+      return false;
+    }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (ArrayBuffer.isView(value)) {
+      return value.byteLength > 0;
+    }
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+    return true;
+  });
+}
+
+function resolveSnapshotMaterialColorHex(
+  material: SnapshotMaterialRecord | null | undefined,
+): string | null {
+  const authoredColor = colorArrayToHex(material?.color, material?.opacity);
+  if (authoredColor) {
+    return authoredColor;
+  }
+
+  const opacity = normalizeScalarMaterialValue(material?.opacity, { clamp01: true });
+  const hasPrimaryTexture = Boolean(
+    normalizeTextureMaterialPath(material?.mapPath)
+    || normalizeTextureMaterialPath(material?.alphaMapPath),
+  );
+
+  if (hasPrimaryTexture && opacity !== null && opacity < 0.999) {
+    return colorArrayToHex([1, 1, 1], opacity);
+  }
+
+  return null;
+}
+
 function colorArrayToVertexColor(
   value: ArrayLike<number> | null | undefined,
 ): [number, number, number] | null {
@@ -457,6 +621,7 @@ function buildObjBlobFromDescriptor(
   }
 
   const indexValues = readRangeValues(buffers?.indices, ranges?.indices).map((value) => Number(value));
+  const uvValues = readRangeValues(buffers?.uvs, ranges?.uvs);
   const transformValues = readRangeValues(buffers?.transforms, ranges?.transform);
 
   const transform = transformValues.length >= 16
@@ -482,14 +647,38 @@ function buildObjBlobFromDescriptor(
   const fullTriangleIndices = indexValues.length >= 3
     ? indexValues
     : Array.from({ length: vertexCount }, (_, index) => index);
+  const subsetStart = descriptor.subsetSection
+    ? Math.max(0, Math.min(fullTriangleIndices.length, descriptor.subsetSection.start))
+    : 0;
+  const subsetEnd = descriptor.subsetSection
+    ? Math.max(
+      subsetStart,
+      Math.min(fullTriangleIndices.length, subsetStart + descriptor.subsetSection.length),
+    )
+    : fullTriangleIndices.length;
   const triangleIndices = descriptor.subsetSection
     ? (() => {
-        const start = Math.max(0, Math.min(fullTriangleIndices.length, descriptor.subsetSection.start));
-        const end = Math.max(start, Math.min(fullTriangleIndices.length, start + descriptor.subsetSection.length));
-        const sliced = fullTriangleIndices.slice(start, end);
+        const sliced = fullTriangleIndices.slice(subsetStart, subsetEnd);
         return sliced.length >= 3 ? sliced : [];
       })()
     : fullTriangleIndices;
+  const uvStride = Math.max(1, Number(ranges?.uvs?.stride || 2));
+  const uvCount = Math.floor(uvValues.length / uvStride);
+  const hasIndexedUvs = uvCount >= vertexCount;
+  const hasFaceVaryingUvs = indexValues.length >= 3 && uvCount === fullTriangleIndices.length;
+  const hasPerVertexUvs = hasIndexedUvs && !hasFaceVaryingUvs;
+
+  if (hasFaceVaryingUvs) {
+    for (let uvIndex = subsetStart; uvIndex < subsetEnd; uvIndex += 1) {
+      const offset = uvIndex * uvStride;
+      lines.push(`vt ${formatObjNumber(uvValues[offset] || 0)} ${formatObjNumber(uvValues[offset + 1] || 0)}`);
+    }
+  } else if (hasPerVertexUvs) {
+    for (let vertexIndex = 0; vertexIndex < vertexCount; vertexIndex += 1) {
+      const offset = vertexIndex * uvStride;
+      lines.push(`vt ${formatObjNumber(uvValues[offset] || 0)} ${formatObjNumber(uvValues[offset + 1] || 0)}`);
+    }
+  }
 
   for (let index = 0; index + 2 < triangleIndices.length; index += 3) {
     const a = Number(triangleIndices[index]) + 1;
@@ -498,6 +687,19 @@ function buildObjBlobFromDescriptor(
     if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c)) {
       continue;
     }
+    if (hasFaceVaryingUvs) {
+      const uvA = index + 1;
+      const uvB = index + 2;
+      const uvC = index + 3;
+      lines.push(`f ${a}/${uvA} ${b}/${uvB} ${c}/${uvC}`);
+      continue;
+    }
+
+    if (hasPerVertexUvs) {
+      lines.push(`f ${a}/${a} ${b}/${b} ${c}/${c}`);
+      continue;
+    }
+
     lines.push(`f ${a} ${b} ${c}`);
   }
 
@@ -751,32 +953,147 @@ function serializeLivePreferredMaterialRecord(material: unknown): SnapshotMateri
     return null;
   }
 
-  const candidate = material as {
-    name?: unknown;
-    opacity?: unknown;
-    color?: { r?: unknown; g?: unknown; b?: unknown } | null;
-    map?: { name?: unknown } | null;
+  const candidate = material as Record<string, unknown>;
+  const name = String(candidate.name || '').trim();
+  const record: SnapshotMaterialRecord = {
+    ...(name ? { name } : {}),
+    ...(normalizeBooleanMaterialValue(candidate.opacityEnabled) !== null
+      ? { opacityEnabled: normalizeBooleanMaterialValue(candidate.opacityEnabled) }
+      : {}),
+    ...(normalizeBooleanMaterialValue(candidate.opacityTextureEnabled) !== null
+      ? { opacityTextureEnabled: normalizeBooleanMaterialValue(candidate.opacityTextureEnabled) }
+      : {}),
+    ...(normalizeBooleanMaterialValue(candidate.emissiveEnabled) !== null
+      ? { emissiveEnabled: normalizeBooleanMaterialValue(candidate.emissiveEnabled) }
+      : {}),
+    ...(normalizeColorMaterialValue(candidate.color) ? { color: normalizeColorMaterialValue(candidate.color) } : {}),
+    ...(normalizeColorMaterialValue(candidate.emissive) ? { emissive: normalizeColorMaterialValue(candidate.emissive) } : {}),
+    ...(normalizeColorMaterialValue(candidate.specularColor) ? { specularColor: normalizeColorMaterialValue(candidate.specularColor) } : {}),
+    ...(normalizeColorMaterialValue(candidate.attenuationColor) ? { attenuationColor: normalizeColorMaterialValue(candidate.attenuationColor) } : {}),
+    ...(normalizeColorMaterialValue(candidate.sheenColor) ? { sheenColor: normalizeColorMaterialValue(candidate.sheenColor) } : {}),
+    ...(normalizeVector2MaterialValue(candidate.normalScale) ? { normalScale: normalizeVector2MaterialValue(candidate.normalScale) } : {}),
+    ...(normalizeVector2MaterialValue(candidate.clearcoatNormalScale)
+      ? { clearcoatNormalScale: normalizeVector2MaterialValue(candidate.clearcoatNormalScale) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.roughness, { clamp01: true }) !== null
+      ? { roughness: normalizeScalarMaterialValue(candidate.roughness, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.metalness, { clamp01: true }) !== null
+      ? { metalness: normalizeScalarMaterialValue(candidate.metalness, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.opacity, { clamp01: true }) !== null
+      ? { opacity: normalizeScalarMaterialValue(candidate.opacity, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.alphaTest, { clamp01: true }) !== null
+      ? { alphaTest: normalizeScalarMaterialValue(candidate.alphaTest, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.clearcoat, { clamp01: true }) !== null
+      ? { clearcoat: normalizeScalarMaterialValue(candidate.clearcoat, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.clearcoatRoughness, { clamp01: true }) !== null
+      ? { clearcoatRoughness: normalizeScalarMaterialValue(candidate.clearcoatRoughness, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.specularIntensity, { clamp01: true }) !== null
+      ? { specularIntensity: normalizeScalarMaterialValue(candidate.specularIntensity, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.transmission, { clamp01: true }) !== null
+      ? { transmission: normalizeScalarMaterialValue(candidate.transmission, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.thickness, { min: 0 }) !== null
+      ? { thickness: normalizeScalarMaterialValue(candidate.thickness, { min: 0 }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.attenuationDistance, { min: 0 }) !== null
+      ? { attenuationDistance: normalizeScalarMaterialValue(candidate.attenuationDistance, { min: 0 }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.aoMapIntensity, { clamp01: true }) !== null
+      ? { aoMapIntensity: normalizeScalarMaterialValue(candidate.aoMapIntensity, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.sheen, { clamp01: true }) !== null
+      ? { sheen: normalizeScalarMaterialValue(candidate.sheen, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.sheenRoughness, { clamp01: true }) !== null
+      ? { sheenRoughness: normalizeScalarMaterialValue(candidate.sheenRoughness, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.iridescence, { clamp01: true }) !== null
+      ? { iridescence: normalizeScalarMaterialValue(candidate.iridescence, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.iridescenceIOR, { min: 1 }) !== null
+      ? { iridescenceIOR: normalizeScalarMaterialValue(candidate.iridescenceIOR, { min: 1 }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.anisotropy, { clamp01: true }) !== null
+      ? { anisotropy: normalizeScalarMaterialValue(candidate.anisotropy, { clamp01: true }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.anisotropyRotation) !== null
+      ? { anisotropyRotation: normalizeScalarMaterialValue(candidate.anisotropyRotation) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.emissiveIntensity, { min: 0 }) !== null
+      ? { emissiveIntensity: normalizeScalarMaterialValue(candidate.emissiveIntensity, { min: 0 }) }
+      : {}),
+    ...(normalizeScalarMaterialValue(candidate.ior, { min: 1 }) !== null
+      ? { ior: normalizeScalarMaterialValue(candidate.ior, { min: 1 }) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.map) ? { mapPath: normalizeTextureMaterialPath(candidate.map) } : {}),
+    ...(normalizeTextureMaterialPath(candidate.emissiveMap)
+      ? { emissiveMapPath: normalizeTextureMaterialPath(candidate.emissiveMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.roughnessMap)
+      ? { roughnessMapPath: normalizeTextureMaterialPath(candidate.roughnessMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.metalnessMap)
+      ? { metalnessMapPath: normalizeTextureMaterialPath(candidate.metalnessMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.normalMap)
+      ? { normalMapPath: normalizeTextureMaterialPath(candidate.normalMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.aoMap)
+      ? { aoMapPath: normalizeTextureMaterialPath(candidate.aoMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.alphaMap)
+      ? { alphaMapPath: normalizeTextureMaterialPath(candidate.alphaMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.clearcoatMap)
+      ? { clearcoatMapPath: normalizeTextureMaterialPath(candidate.clearcoatMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.clearcoatRoughnessMap)
+      ? { clearcoatRoughnessMapPath: normalizeTextureMaterialPath(candidate.clearcoatRoughnessMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.clearcoatNormalMap)
+      ? { clearcoatNormalMapPath: normalizeTextureMaterialPath(candidate.clearcoatNormalMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.specularColorMap)
+      ? { specularColorMapPath: normalizeTextureMaterialPath(candidate.specularColorMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.specularIntensityMap)
+      ? { specularIntensityMapPath: normalizeTextureMaterialPath(candidate.specularIntensityMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.transmissionMap)
+      ? { transmissionMapPath: normalizeTextureMaterialPath(candidate.transmissionMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.thicknessMap)
+      ? { thicknessMapPath: normalizeTextureMaterialPath(candidate.thicknessMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.sheenColorMap)
+      ? { sheenColorMapPath: normalizeTextureMaterialPath(candidate.sheenColorMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.sheenRoughnessMap)
+      ? { sheenRoughnessMapPath: normalizeTextureMaterialPath(candidate.sheenRoughnessMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.anisotropyMap)
+      ? { anisotropyMapPath: normalizeTextureMaterialPath(candidate.anisotropyMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.iridescenceMap)
+      ? { iridescenceMapPath: normalizeTextureMaterialPath(candidate.iridescenceMap) }
+      : {}),
+    ...(normalizeTextureMaterialPath(candidate.iridescenceThicknessMap)
+      ? { iridescenceThicknessMapPath: normalizeTextureMaterialPath(candidate.iridescenceThicknessMap) }
+      : {}),
   };
 
-  const name = String(candidate.name || '').trim();
-  const opacity = Number(candidate.opacity);
-  const color = candidate.color && typeof candidate.color === 'object'
-    ? [candidate.color.r, candidate.color.g, candidate.color.b]
-      .map((value) => Number(value))
-      .filter((value) => Number.isFinite(value))
-    : null;
-  const mapPath = String(candidate.map?.name || '').trim();
-
-  if (!name && !mapPath && !color?.length && !Number.isFinite(opacity)) {
+  if (!hasSnapshotMaterialRecordContent(record)) {
     return null;
   }
 
-  return {
-    ...(name ? { name } : {}),
-    ...(color && color.length === 3 ? { color } : {}),
-    ...(Number.isFinite(opacity) ? { opacity } : {}),
-    ...(mapPath ? { mapPath } : {}),
-  };
+  return record;
 }
 
 function enrichSnapshotWithLivePreferredMaterials(
@@ -835,9 +1152,13 @@ function shouldAdoptSnapshotMaterialColor(color: string | null | undefined): boo
 function mergeLinkMaterial(
   robot: RobotState,
   linkId: string,
-  payload: { color?: string; texture?: string },
+  payload: {
+    color?: string;
+    texture?: string;
+    usdMaterial?: SnapshotMaterialRecord | null;
+  },
 ): void {
-  if (!payload.color && !payload.texture) {
+  if (!payload.color && !payload.texture && !hasSnapshotMaterialRecordContent(payload.usdMaterial)) {
     return;
   }
 
@@ -846,8 +1167,11 @@ function mergeLinkMaterial(
     ? payload.color
     : current.color;
   const nextTexture = current.texture || payload.texture;
+  const nextUsdMaterial = hasSnapshotMaterialRecordContent(payload.usdMaterial)
+    ? structuredClone(payload.usdMaterial)
+    : current.usdMaterial;
 
-  if (!nextColor && !nextTexture) {
+  if (!nextColor && !nextTexture && !hasSnapshotMaterialRecordContent(nextUsdMaterial)) {
     return;
   }
 
@@ -857,6 +1181,7 @@ function mergeLinkMaterial(
       ...(current || {}),
       ...(nextColor ? { color: nextColor } : {}),
       ...(nextTexture ? { texture: nextTexture } : {}),
+      ...(hasSnapshotMaterialRecordContent(nextUsdMaterial) ? { usdMaterial: nextUsdMaterial } : {}),
     },
   };
 }
@@ -866,12 +1191,12 @@ function applySnapshotMaterialRecordToLink(
   linkId: string,
   material: SnapshotMaterialRecord | null | undefined,
 ): boolean {
-  const color = colorArrayToHex(material?.color, material?.opacity);
-  const texture = material?.mapPath ? String(material.mapPath).trim() || undefined : undefined;
-
-  if (!color && !texture) {
+  if (!hasSnapshotMaterialRecordContent(material)) {
     return false;
   }
+
+  const color = resolveSnapshotMaterialColorHex(material);
+  const texture = material?.mapPath ? String(material.mapPath).trim() || undefined : undefined;
 
   const link = robot.links[linkId];
   if (!link) {
@@ -889,6 +1214,7 @@ function applySnapshotMaterialRecordToLink(
   mergeLinkMaterial(robot, linkId, {
     ...(color ? { color } : {}),
     ...(texture ? { texture } : {}),
+    usdMaterial: material,
   });
 
   return true;

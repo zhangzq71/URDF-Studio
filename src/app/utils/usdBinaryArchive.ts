@@ -1,4 +1,4 @@
-import { ensureUsdWasmRuntime } from '@/features/urdf-viewer/utils/usdWasmRuntime';
+import { ensureUsdWasmRuntime } from '@/features/urdf-viewer';
 
 type BinaryReadyUsdLayer = {
   Export?: (...args: unknown[]) => unknown;

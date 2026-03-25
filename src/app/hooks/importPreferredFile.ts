@@ -1,5 +1,5 @@
-import type { RobotFile } from '@/types';
-import { parseMJCF } from '@/core/parsers';
+import { GeometryType, type RobotFile } from '@/types';
+import { parseMJCF, resolveRobotFileData } from '@/core/parsers';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 
@@ -62,6 +62,13 @@ type MjcfCandidateStructure = {
   sceneHelperCount: number;
 };
 
+type ResolvedRobotRichness = {
+  renderableLinkCount: number;
+  visualGeometryCount: number;
+  collisionGeometryCount: number;
+  meshGeometryCount: number;
+};
+
 function collectMjcfCandidateStructure(content: string): MjcfCandidateStructure {
   const doc = parseMjcfDocument(content);
   const mujocoEl = doc?.querySelector('mujoco');
@@ -105,6 +112,86 @@ function compareMjcfCandidateStructure(left: MjcfCandidateStructure, right: Mjcf
   }
 
   return 0;
+}
+
+function summarizeResolvedRobotRichness(file: RobotFile, filePool: RobotFile[]): ResolvedRobotRichness | null {
+  const resolved = resolveRobotFileData(file, { availableFiles: filePool });
+  if (resolved.status !== 'ready') {
+    return null;
+  }
+
+  let renderableLinkCount = 0;
+  let visualGeometryCount = 0;
+  let collisionGeometryCount = 0;
+  let meshGeometryCount = 0;
+
+  Object.values(resolved.robotData.links).forEach((link) => {
+    let linkHasRenderableGeometry = false;
+
+    if (link.visual.type !== GeometryType.NONE) {
+      visualGeometryCount += 1;
+      linkHasRenderableGeometry = true;
+      if (link.visual.type === GeometryType.MESH) {
+        meshGeometryCount += 1;
+      }
+    }
+
+    if (link.collision.type !== GeometryType.NONE) {
+      collisionGeometryCount += 1;
+      linkHasRenderableGeometry = true;
+      if (link.collision.type === GeometryType.MESH) {
+        meshGeometryCount += 1;
+      }
+    }
+
+    (link.collisionBodies || []).forEach((body) => {
+      if (body.type === GeometryType.NONE) {
+        return;
+      }
+
+      collisionGeometryCount += 1;
+      linkHasRenderableGeometry = true;
+      if (body.type === GeometryType.MESH) {
+        meshGeometryCount += 1;
+      }
+    });
+
+    if (linkHasRenderableGeometry) {
+      renderableLinkCount += 1;
+    }
+  });
+
+  return {
+    renderableLinkCount,
+    visualGeometryCount,
+    collisionGeometryCount,
+    meshGeometryCount,
+  };
+}
+
+function isMateriallyRicherRobotCandidate(
+  candidate: ResolvedRobotRichness | null,
+  baseline: ResolvedRobotRichness | null,
+): boolean {
+  if (!candidate || !baseline) {
+    return false;
+  }
+
+  if (candidate.renderableLinkCount > baseline.renderableLinkCount
+    && candidate.visualGeometryCount > baseline.visualGeometryCount) {
+    return true;
+  }
+
+  if (candidate.meshGeometryCount > baseline.meshGeometryCount
+    && candidate.renderableLinkCount >= baseline.renderableLinkCount) {
+    return true;
+  }
+
+  if (candidate.visualGeometryCount >= baseline.visualGeometryCount + 3) {
+    return true;
+  }
+
+  return false;
 }
 
 export function pickPreferredMjcfImportFile(
@@ -159,10 +246,23 @@ export function pickPreferredImportFile(
   const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
   const preferredUrdf = robotDefinitionFiles.find((file) => file.format === 'urdf') ?? null;
   const preferredMjcf = pickPreferredMjcfImportFile(robotDefinitionFiles, filePool);
+  const preferredUrdfIsSelfContained = preferredUrdf
+    ? isUrdfSelfContainedInImportBundle(preferredUrdf, filePool)
+    : false;
+
+  const preferredUrdfRichness = preferredUrdf && preferredMjcf && preferredUrdfIsSelfContained
+    ? summarizeResolvedRobotRichness(preferredUrdf, filePool)
+    : null;
+  const preferredMjcfRichness = preferredUrdf && preferredMjcf && preferredUrdfIsSelfContained
+    ? summarizeResolvedRobotRichness(preferredMjcf, filePool)
+    : null;
 
   const shouldPreferMjcfOverUrdf = preferredUrdf !== null
     && preferredMjcf !== null
-    && !isUrdfSelfContainedInImportBundle(preferredUrdf, filePool);
+    && (
+      !preferredUrdfIsSelfContained
+      || isMateriallyRicherRobotCandidate(preferredMjcfRichness, preferredUrdfRichness)
+    );
 
   if (shouldPreferMjcfOverUrdf && preferredMjcf) {
     return preferredMjcf;

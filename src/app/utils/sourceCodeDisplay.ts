@@ -1,6 +1,8 @@
 import type { RobotFile } from '../../types/robot.ts';
 import type { SourceCodeDocumentFlavor } from '@/features/code-editor/types';
 
+export type { SourceCodeDocumentFlavor } from '@/features/code-editor/types';
+
 type SourceCodeFileLike = Pick<RobotFile, 'name' | 'format' | 'content'>;
 
 export function shouldUseEquivalentMjcfForUsdSource(

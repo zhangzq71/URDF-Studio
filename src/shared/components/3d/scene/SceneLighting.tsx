@@ -36,14 +36,14 @@ export function SceneLighting({
   const shouldUseShadows = enableShadows && (cameraFollowPrimary || effectiveTheme !== 'light');
   const resolvedShadowMapSize = shadowMapSize ?? (cameraFollowPrimary ? 1024 : 768);
   const staticDirectionalScale = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.4 : 0.42)
+    ? (effectiveTheme === 'light' ? 0.52 : 0.54)
     : 1;
-  const rimDirectionalScale = cameraFollowPrimary ? 0.08 : staticDirectionalScale;
+  const rimDirectionalScale = cameraFollowPrimary ? 0.22 : staticDirectionalScale;
   const ambientIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.22 : 0.2)
+    ? (effectiveTheme === 'light' ? 0.3 : 0.28)
     : (effectiveTheme === 'light' ? 0.68 : LIGHTING_CONFIG.ambientIntensity);
   const hemisphereIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.24 : 0.22)
+    ? (effectiveTheme === 'light' ? 0.32 : 0.3)
     : (effectiveTheme === 'light' ? 0.46 : LIGHTING_CONFIG.hemisphereIntensity);
   const cameraKeyIntensity = cameraFollowPrimary
     ? (
@@ -83,7 +83,7 @@ export function SceneLighting({
     scene.receiveShadow = true;
     gl.toneMapping = cameraFollowPrimary ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = cameraFollowPrimary
-      ? (effectiveTheme === 'light' ? 1.04 : 1.02)
+      ? (effectiveTheme === 'light' ? 1.08 : 1.06)
       : (effectiveTheme === 'light' ? 1.12 : 1.16);
     gl.outputColorSpace = THREE.SRGBColorSpace;
   }, [cameraFollowPrimary, effectiveTheme, gl, scene, shouldUseShadows]);

@@ -31,6 +31,10 @@ export type {
 } from './libraryFileExport';
 
 export { getDroppedFiles } from './fileTraverser';
+export {
+  createImportPathCollisionMap,
+  remapImportedPath,
+} from './libraryImportPathCollisions';
 
 export { exportProject } from './projectExport';
 export { importProject } from './projectImport';

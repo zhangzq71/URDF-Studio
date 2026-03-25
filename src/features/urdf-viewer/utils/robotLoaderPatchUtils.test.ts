@@ -60,3 +60,22 @@ test('updateVisualMaterial applies an explicit override across all mesh material
   assert.equal(disposedMaterials.has(authoredLightMaterial), true);
   assert.equal(disposedMaterials.has(authoredDarkMaterial), true);
 });
+
+test('updateVisualMaterial preserves exact authored white overrides without washing them gray', () => {
+  const authoredMaterial = new THREE.MeshPhongMaterial({
+    name: 'light',
+    color: new THREE.Color('#808080'),
+  });
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    authoredMaterial,
+  );
+  const disposedMaterials = new Set<THREE.Material>();
+
+  updateVisualMaterial(mesh, '#ffffff', disposedMaterials);
+
+  const nextMaterial = mesh.material as THREE.MeshStandardMaterial;
+  assert.equal(nextMaterial.color.getHexString(), 'ffffff');
+  assert.equal(nextMaterial.toneMapped, false);
+  assert.equal(nextMaterial.userData.urdfColorApplied, true);
+});

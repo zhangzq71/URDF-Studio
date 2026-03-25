@@ -6,7 +6,11 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 import { JSDOM } from 'jsdom';
 
-import { buildColladaRootNormalizationHints, createMeshLoader } from '@/core/loaders';
+import {
+  buildColladaRootNormalizationHints,
+  createMeshLoader,
+  markMaterialAsCoplanarOffset,
+} from '@/core/loaders';
 import { DEFAULT_LINK, GeometryType, type RobotState } from '@/types';
 
 import { __mjcfMeshExportInternals, prepareMjcfMeshExportAssets } from './mjcfMeshExport';
@@ -84,6 +88,56 @@ test('mjcf mesh export internals accept BufferGeometry-like objects from foreign
 
   assert.ok(bakedMesh, 'expected variant extraction to work for BufferGeometry-like meshes');
   assert.equal((bakedMesh!.geometry as THREE.BufferGeometry).getAttribute('position')?.count, 3);
+});
+
+test('mjcf mesh export internals bake duplicate coplanar anchor subsets in world space', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ], 3));
+  geometry.clearGroups();
+  geometry.addGroup(0, 3, 0);
+  geometry.addGroup(0, 3, 1);
+
+  const anchorMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff' });
+  anchorMaterial.name = 'logo.001';
+  const shellMaterial = markMaterialAsCoplanarOffset(new THREE.MeshStandardMaterial({ color: '#666666' }));
+  shellMaterial.name = 'shell';
+
+  const mesh = new THREE.Mesh(geometry, [anchorMaterial, shellMaterial]);
+  mesh.scale.setScalar(10);
+  mesh.updateMatrixWorld(true);
+
+  const bakedAnchorMesh = __mjcfMeshExportInternals.createBakedVariantMesh(
+    mesh,
+    anchorMaterial,
+    0,
+  );
+  assert.ok(bakedAnchorMesh, 'expected anchor material subset to remain exportable');
+
+  const bakedOffsetMesh = __mjcfMeshExportInternals.createBakedVariantMesh(
+    mesh,
+    shellMaterial,
+    1,
+  );
+  assert.equal(bakedOffsetMesh, null, 'expected exact duplicate shell subset to yield to the anchor subset');
+
+  const position = (bakedAnchorMesh!.geometry as THREE.BufferGeometry).getAttribute('position');
+  assert.ok(position, 'expected baked anchor mesh to retain positions');
+  assert.equal(position.count, 3);
+  assert.ok(Math.abs(position.getX(1) - 10) < 1e-6);
+  assert.ok(Math.abs(position.getY(2) - 10) < 1e-6);
+  for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex += 1) {
+    assert.ok(
+      Math.abs(position.getZ(vertexIndex) - 1e-4) < 1e-7,
+      'expected anchor subset to be lifted by a stable world-space offset',
+    );
+  }
+
+  (bakedAnchorMesh!.geometry as THREE.BufferGeometry).dispose();
+  (bakedAnchorMesh!.material as THREE.Material).dispose();
 });
 
 test('mjcf mesh export internals accept Color-like material values from foreign Three runtimes', () => {
@@ -452,6 +506,80 @@ test('prepareMjcfMeshExportAssets keeps the full converted OBJ when a multi-mate
   assert.equal(prepared.meshPathOverrides.get(sourcePath), 'dae/base.dae.obj');
   assert.ok(prepared.archiveFiles.has('dae/base.dae.obj'));
   assert.ok(prepared.visualMeshVariants.get(sourcePath)?.length);
+});
+
+test('prepareMjcfMeshExportAssets keeps the b2 base logo as a split visual variant', async () => {
+  const sourcePath = 'package://b2_description/meshes/base_link.dae';
+  const meshFilePath = 'test/unitree_ros/robots/b2_description/meshes/base_link.dae';
+  const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshFilePath, 'utf8')).toString('base64')}`;
+  const robot: RobotState = {
+    name: 'b2-base-visual-variants',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath: sourcePath,
+          authoredMaterials: [
+            { name: '磨砂铝合金_011-effect', color: '#bfbfbf' },
+            { name: 'logo_001-effect', color: '#ffffff' },
+            { name: '材质_023-effect', color: '#000000' },
+            { name: '材质_024-effect', color: '#010101' },
+          ],
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.5, y: 0.28, z: 0.15 },
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+        collisionBodies: [],
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+  const assets = {
+    [meshFilePath]: meshDataUrl,
+    [sourcePath]: meshDataUrl,
+    'base_link.dae': meshDataUrl,
+  };
+
+  const prepared = await prepareMjcfMeshExportAssets({
+    robot,
+    assets,
+  });
+
+  assert.equal(prepared.meshPathOverrides.get(sourcePath), undefined);
+  const variants = prepared.visualMeshVariants.get(sourcePath);
+  assert.ok(variants, 'expected split visual mesh variants for b2 base_link');
+  assert.equal(variants.length, 4);
+
+  const logoVariant = variants.find((variant) => (
+    /logo/i.test(variant.sourceMaterialName ?? '')
+    || /logo/i.test(variant.meshPath)
+  ));
+  assert.ok(logoVariant, 'expected b2 base export to keep a dedicated logo mesh variant');
+
+  const logoBlob = prepared.archiveFiles.get(logoVariant!.meshPath);
+  assert.ok(logoBlob, `expected archive blob for ${logoVariant!.meshPath}`);
+  assert.ok(
+    countObjFaces(await logoBlob!.text()) > 0,
+    'expected exported b2 logo OBJ to retain visible triangle faces',
+  );
 });
 
 test('prepareMjcfMeshExportAssets preserves go2w mirrored thigh geometry when splitting visual material variants', async () => {

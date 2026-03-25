@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { JSDOM } from 'jsdom';
 
-import { GeometryType, type RobotState } from '../../../types';
+import { GeometryType, JointType, type RobotState } from '../../../types';
 import { computeLinkWorldMatrices } from '@/core/robot/kinematics';
 
 import { generateMujocoXML } from './mjcfGenerator.ts';
@@ -161,6 +161,65 @@ test('generated MJCF keeps visual meshes in the visual-only group', () => {
     assert.ok(visualGeom);
     assert.equal(visualGeom.group, 1);
     assert.deepEqual(classifyMJCFGeom(visualGeom), { isVisual: true, isCollision: false });
+});
+
+test('generated MJCF carries USD snapshot material PBR fields into material assets', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'pbr-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.BOX,
+                    dimensions: { x: 1, y: 1, z: 1 },
+                    color: '#d6d9e4',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#000000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {
+            base_link: {
+                color: '#d6d9e4',
+                texture: 'textures/body_basecolor.png',
+                usdMaterial: {
+                    roughness: 0.25,
+                    metalness: 0.6,
+                    emissive: [0.4, 0.1, 0],
+                    emissiveIntensity: 0.5,
+                },
+            },
+        },
+    };
+
+    const generated = generateMujocoXML(robot, {
+        includeSceneHelpers: false,
+        meshdir: 'meshes/',
+        texturedir: 'textures/',
+    });
+
+    assert.match(generated, /<material name="base_link_mat"[^>]*texture="base_link_tex"/);
+    assert.match(generated, /shininess="0\.75"/);
+    assert.match(generated, /reflectance="0\.6"/);
+    assert.match(generated, /emission="0\.2"/);
 });
 
 test('generated MJCF keeps the root body at the world origin', () => {
@@ -384,7 +443,7 @@ test('generated MJCF preserves fixed synthetic world root transforms through par
             world_to_base: {
                 id: 'world_to_base',
                 name: 'world_to_base',
-                type: 'fixed',
+                type: JointType.FIXED,
                 parentLinkId: 'world',
                 childLinkId: 'base',
                 origin: {
@@ -393,11 +452,12 @@ test('generated MJCF preserves fixed synthetic world root transforms through par
                 },
                 axis: { x: 0, y: 0, z: 1 },
                 dynamics: { damping: 0, friction: 0 },
+                hardware: { armature: 0, motorType: '', motorId: '', motorDirection: 1 },
             },
             FR_thigh_joint: {
                 id: 'FR_thigh_joint',
                 name: 'FR_thigh_joint',
-                type: 'revolute',
+                type: JointType.REVOLUTE,
                 parentLinkId: 'base',
                 childLinkId: 'FR_thigh',
                 origin: {
@@ -407,6 +467,7 @@ test('generated MJCF preserves fixed synthetic world root transforms through par
                 axis: { x: 0, y: 1, z: 0 },
                 limit: { lower: -1, upper: 1, effort: 10, velocity: 10 },
                 dynamics: { damping: 0, friction: 0 },
+                hardware: { armature: 0, motorType: '', motorId: '', motorDirection: 1 },
             },
         },
         materials: {},

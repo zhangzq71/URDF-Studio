@@ -5,4 +5,8 @@ export * from './visualizationFactories';
 export * from './robotPositioning';
 export * from './jointTypes';
 export * from './viewerRobotData';
+export * from './viewerResourceScope';
 export * from './usdStageExport';
+export * from './usdExportBundle';
+export * from './usdWasmRuntime';
+export * from './usdPreloadSources';

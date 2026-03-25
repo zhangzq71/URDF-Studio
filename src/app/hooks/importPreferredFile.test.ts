@@ -33,6 +33,32 @@ function createRobotFile(name: string, format: RobotFile['format'], content = ''
   };
 }
 
+function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[] {
+  const rootDir = path.join(process.cwd(), relativeDir);
+
+  const walk = (currentDir: string): string[] => fs.readdirSync(currentDir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(currentDir, entry.name);
+    return entry.isDirectory() ? walk(fullPath) : [fullPath];
+  });
+
+  return walk(rootDir)
+    .sort()
+    .flatMap((fullPath) => {
+      const relativePath = path.relative(process.cwd(), fullPath).replace(/\\/g, '/');
+      const lowerPath = relativePath.toLowerCase();
+      if (lowerPath.endsWith('.urdf')) {
+        return [createRobotFile(relativePath, 'urdf', fs.readFileSync(fullPath, 'utf8'))];
+      }
+      if (lowerPath.endsWith('.xml')) {
+        return [createRobotFile(relativePath, 'mjcf', fs.readFileSync(fullPath, 'utf8'))];
+      }
+      if (lowerPath.endsWith('.stl') || lowerPath.endsWith('.obj') || lowerPath.endsWith('.dae')) {
+        return [createRobotFile(relativePath, 'mesh')];
+      }
+      return [];
+    });
+}
+
 test('pickPreferredImportFile prefers MJCF for mixed mujoco bundles with mismatched URDF package roots', () => {
   const urdfFile = createRobotFile(
     'b2_description_mujoco/xml/b2_description.urdf',
@@ -172,4 +198,12 @@ test('pickPreferredImportFile does not prefer MJCF solely because the bundle pat
   );
 
   assert.equal(preferredFile?.name, 'demo_mujoco/urdf/demo.urdf');
+});
+
+test('pickPreferredImportFile prefers the richer MJCF source-of-truth over a self-contained convenience URDF', () => {
+  const files = loadImportableRobotFilesFromDirectory('test/mujoco_menagerie-main/google_barkour_vb');
+
+  const preferredFile = pickPreferredImportFile(files, files);
+
+  assert.equal(preferredFile?.name, 'test/mujoco_menagerie-main/google_barkour_vb/barkour_vb.xml');
 });

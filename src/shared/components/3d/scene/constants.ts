@@ -15,12 +15,12 @@ export const LIGHTING_CONFIG = {
   rimLightPosition: [0, 5, -5] as [number, number, number],
   cameraKeyIntensityLight: 0.52,
   cameraKeyIntensityDark: 0.35,
-  cameraKeyPriorityIntensityLight: 0.66,
-  cameraKeyPriorityIntensityDark: 0.48,
-  cameraFillIntensityLight: 0.12,
-  cameraFillIntensityDark: 0.08,
-  cameraSoftFrontIntensityLight: 0.22,
-  cameraSoftFrontIntensityDark: 0.18,
+  cameraKeyPriorityIntensityLight: 0.78,
+  cameraKeyPriorityIntensityDark: 0.58,
+  cameraFillIntensityLight: 0.22,
+  cameraFillIntensityDark: 0.14,
+  cameraSoftFrontIntensityLight: 0.34,
+  cameraSoftFrontIntensityDark: 0.26,
 } as const;
 
 export const WORKSPACE_CANVAS_BACKGROUND = {

@@ -86,6 +86,11 @@ function patchGeometryCategory({
   targetGroup.userData.__patchToken = patchToken;
 
   const dims = geometry.dimensions || DEFAULT_VEC3;
+  const visualColor = geometry.color || '#808080';
+  const createVisualMaterial = () => createMatteMaterial({
+    color: visualColor,
+    preserveExactColor: Boolean(geometry.color),
+  });
   const addPrimitive = (mesh: THREE.Mesh) => {
     if (isCollision) {
       markCollisionObject(mesh, linkName);
@@ -105,14 +110,14 @@ function patchGeometryCategory({
   if (geometry.type === GeometryType.BOX) {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
-      isCollision ? collisionBaseMaterial : createMatteMaterial({ color: geometry.color || '#808080' }),
+      isCollision ? collisionBaseMaterial : createVisualMaterial(),
     );
     mesh.scale.set(dims.x || 0.1, dims.y || 0.1, dims.z || 0.1);
     addPrimitive(mesh);
   } else if (geometry.type === GeometryType.SPHERE) {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 30, 30),
-      isCollision ? collisionBaseMaterial : createMatteMaterial({ color: geometry.color || '#808080' }),
+      isCollision ? collisionBaseMaterial : createVisualMaterial(),
     );
     const sx = dims.x || 0.1;
     const sy = dims.y || sx;
@@ -122,7 +127,7 @@ function patchGeometryCategory({
   } else if (geometry.type === GeometryType.CYLINDER) {
     const mesh = new THREE.Mesh(
       new THREE.CylinderGeometry(1, 1, 1, 30),
-      isCollision ? collisionBaseMaterial : createMatteMaterial({ color: geometry.color || '#808080' }),
+      isCollision ? collisionBaseMaterial : createVisualMaterial(),
     );
     mesh.scale.set(dims.x || 0.05, dims.y || 0.5, dims.z || dims.x || 0.05);
     mesh.rotation.set(Math.PI / 2, 0, 0);
@@ -133,7 +138,7 @@ function patchGeometryCategory({
     const bodyLength = Math.max(totalLength - 2 * radius, 0);
     const mesh = new THREE.Mesh(
       new THREE.CapsuleGeometry(radius, bodyLength, 8, 16),
-      isCollision ? collisionBaseMaterial : createMatteMaterial({ color: geometry.color || '#808080' }),
+      isCollision ? collisionBaseMaterial : createVisualMaterial(),
     );
     mesh.rotation.set(Math.PI / 2, 0, 0);
     addPrimitive(mesh);

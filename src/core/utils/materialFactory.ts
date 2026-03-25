@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { parseThreeColorWithOpacity } from './color.ts';
 
 export const MATERIAL_CONFIG = {
-    roughness: 0.68,
-    metalness: 0.02,
-    envMapIntensity: 0.3,
+    roughness: 0.56,
+    metalness: 0.035,
+    envMapIntensity: 0.5,
     whiteColorMultiplier: 0.95,
 } as const;
 

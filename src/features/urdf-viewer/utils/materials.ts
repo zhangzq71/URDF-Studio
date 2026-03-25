@@ -6,6 +6,18 @@ export { disposeMaterial } from './dispose';
 export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
 export type { CreateMaterialOptions } from '@/shared/utils/materialFactory';
 import { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
+import {
+    COLLISION_OVERLAY_RENDER_ORDER,
+    collisionBaseMaterial,
+    configureCollisionOverlayMaterial,
+    createCollisionOverlayMaterial,
+} from '@/shared/utils/three/collisionOverlayMaterial';
+export {
+    COLLISION_OVERLAY_RENDER_ORDER,
+    collisionBaseMaterial,
+    configureCollisionOverlayMaterial,
+    createCollisionOverlayMaterial,
+} from '@/shared/utils/three/collisionOverlayMaterial';
 
 /**
  * Applies unified material properties to an existing mesh's materials.
@@ -147,46 +159,6 @@ measureSecondHighlightMaterial.userData.isSharedMaterial = true;
 measureSecondHighlightMaterial.userData.isHighlightMaterial = true;
 measureHoverHighlightMaterial.userData.isSharedMaterial = true;
 measureHoverHighlightMaterial.userData.isHighlightMaterial = true;
-
-export const collisionBaseMaterial = new THREE.MeshStandardMaterial({
-    color: 0xa855f7, // Purple-500
-    transparent: true,
-    opacity: 0.35,
-    roughness: 0.8,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-    depthWrite: false,      // Transparent overlays should not stamp the depth buffer
-    depthTest: false,       // Collision overlays must stay visible above visual meshes
-    polygonOffset: true,    // Prevent Z-fighting with ground plane
-    polygonOffsetFactor: -1.0,
-    polygonOffsetUnits: -4.0,
-});
-
-export const COLLISION_OVERLAY_RENDER_ORDER = 999;
-
-export function configureCollisionOverlayMaterial<T extends THREE.Material>(material: T): T {
-    material.transparent = true;
-    material.depthWrite = false;
-    material.depthTest = false;
-    material.polygonOffset = true;
-    material.polygonOffsetFactor = -1.0;
-    material.polygonOffsetUnits = -4.0;
-    material.userData.isCollisionMaterial = true;
-    return material;
-}
-
-export function createCollisionOverlayMaterial(name: string): THREE.MeshStandardMaterial {
-    return configureCollisionOverlayMaterial(createMatteMaterial({
-        color: 0xa855f7,
-        opacity: 0.35,
-        transparent: true,
-        name,
-    }));
-}
-
-configureCollisionOverlayMaterial(collisionBaseMaterial);
-// Prevent opacity modification on the shared singleton.
-collisionBaseMaterial.userData.isSharedMaterial = true;
 
 // Empty raycast function to disable raycast on collision meshes
 export const emptyRaycast = () => { };

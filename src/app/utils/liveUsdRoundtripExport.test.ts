@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import type { RobotFile } from '@/types';
 import { buildLiveUsdRoundtripArchive } from './liveUsdRoundtripExport.ts';
@@ -90,4 +91,45 @@ test('buildLiveUsdRoundtripArchive preserves root-level bundle paths without add
     ],
   );
   assert.equal(await archive.archiveFiles.get('b2.usd')?.text(), '#usda 1.0\n');
+});
+
+test('buildLiveUsdRoundtripArchive packages real unitree_model USD samples under their original bundle paths', async () => {
+  const samplePaths = [
+    'test/unitree_model/B2/usd/b2.usd',
+    'test/unitree_model/Go2/usd/go2.usd',
+    'test/unitree_model/Go2W/usd/go2w.usd',
+  ];
+
+  for (const samplePath of samplePaths) {
+    const content = await readFile(samplePath, 'utf8');
+    const virtualPath = samplePath.replace(/^test\//, '').replace(/\\/g, '/');
+
+    const sourceFile: RobotFile = {
+      name: virtualPath,
+      content,
+      format: 'usd',
+    };
+
+    const archive = await buildLiveUsdRoundtripArchive({
+      sourceFile,
+      availableFiles: [sourceFile],
+      assets: {},
+      allFileContents: {},
+      targetWindow: {
+        exportLoadedStageSnapshot: async () => ({
+          ok: true,
+          content,
+          outputFileName: virtualPath.split('/').pop() || 'model.usd',
+          outputVirtualPath: `/${virtualPath}`,
+        }),
+      },
+    });
+
+    const expectedEntryPath = virtualPath.replace(/^unitree_model\//, '');
+    const expectedArchiveName = `${expectedEntryPath.split('/').pop()?.replace(/\.usd$/i, '') || 'model'}.zip`;
+
+    assert.equal(archive.archiveFileName, expectedArchiveName);
+    assert.deepEqual(Array.from(archive.archiveFiles.keys()).sort(), [expectedEntryPath]);
+    assert.equal(await archive.archiveFiles.get(expectedEntryPath)?.text(), content);
+  }
 });

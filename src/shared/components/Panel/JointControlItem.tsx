@@ -390,6 +390,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
 
     const mainValueFieldWidthClassName = 'w-[2.35rem]';
     const limitFieldBaseClassName = 'flex h-4 items-center rounded border px-0.5 py-0 font-mono tabular-nums text-[9px] leading-none transition-colors';
+    const limitFieldColumnWidthClassName = 'min-w-[2.35rem]';
     const limitInputWidthClassName = 'w-[2.35rem]';
 
     const renderValueDisplay = () => (
@@ -514,7 +515,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
 
             <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] items-center gap-1">
                 <div 
-                    className="relative h-4 min-w-0"
+                    className={`relative h-4 ${limitFieldColumnWidthClassName}`}
                     onClick={(e) => {
                         if (!hasFiniteLimits) return;
                         e.stopPropagation();
@@ -532,7 +533,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleLimitCommit('lower', lowerInput);
                             }}
-                            className={`absolute left-0 top-0 ${limitFieldBaseClassName} ${limitInputWidthClassName} border-border-strong bg-input-bg text-right text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20`}
+                            className={`absolute left-0 top-0 z-20 ${limitFieldBaseClassName} ${limitInputWidthClassName} border-border-strong bg-input-bg text-right text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20`}
                         />
                     ) : (
                         <div className={`${limitFieldBaseClassName} w-fit cursor-text justify-end border-transparent text-right text-text-tertiary hover:border-border-strong/70 hover:text-system-blue`}>
@@ -606,7 +607,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                 </div>
 
                 <div 
-                    className="relative h-4 min-w-0"
+                    className={`relative h-4 ${limitFieldColumnWidthClassName}`}
                     onClick={(e) => {
                         if (!hasFiniteLimits) return;
                         e.stopPropagation();
@@ -624,7 +625,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleLimitCommit('upper', upperInput);
                             }}
-                            className={`absolute right-0 top-0 ${limitFieldBaseClassName} ${limitInputWidthClassName} border-border-strong bg-input-bg text-left text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20`}
+                            className={`absolute right-0 top-0 z-20 ${limitFieldBaseClassName} ${limitInputWidthClassName} border-border-strong bg-input-bg text-left text-text-primary outline-none focus:border-system-blue focus:ring-1 focus:ring-system-blue/20`}
                         />
                     ) : (
                         <div className={`${limitFieldBaseClassName} ml-auto w-fit cursor-text justify-start border-transparent text-left text-text-tertiary hover:border-border-strong/70 hover:text-system-blue`}>

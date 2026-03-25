@@ -1,51 +1,35 @@
 import * as THREE from 'three';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 import type { JointQuaternion, RobotState, UrdfJoint, UrdfLink, UrdfVisual } from '../../../types/index.ts';
-import { compressMesh } from '../../../core/stl-compressor/meshCompressor.ts';
-import { calculateBoundingBox } from '../../../core/stl-compressor/stlParser.ts';
-import type { STLMeshData } from '../../../core/stl-compressor/types.ts';
 import {
   buildColladaRootNormalizationHints,
-  shouldNormalizeColladaRoot,
   type ColladaRootNormalizationHints,
 } from '../../../core/loaders/colladaRootNormalization.ts';
 import { normalizeTexturePathForExport } from '../../../core/parsers/meshPathUtils.ts';
-import { createMatteMaterial } from '../../../core/utils/materialFactory.ts';
 import { parseThreeColorWithOpacity } from '../../../core/utils/color.ts';
-import { disposeMaterial, disposeObject3D } from '../../../shared/utils/three/dispose.ts';
+import { disposeObject3D } from '../../../shared/utils/three/dispose.ts';
 import { computeUsdInertiaProperties } from '../../../shared/utils/inertiaUsd.ts';
+import {
+  createUsdAssetRegistry,
+  resolveUsdAssetUrl,
+  type UsdAssetRegistry,
+} from './usdAssetRegistry.ts';
+import { isUsdMeshObject } from './usdMaterialNormalization.ts';
+import {
+  USD_GEOMETRY_TYPES as GEOMETRY_TYPES,
+  buildUsdVisualSceneNode,
+  getUsdGeometryType as getGeometryType,
+  type UsdMaterialMetadata,
+  type UsdMeshCompressionOptions,
+} from './usdSceneNodeFactory.ts';
 
-const GEOMETRY_TYPES = {
-  BOX: 'box',
-  CYLINDER: 'cylinder',
-  SPHERE: 'sphere',
-  CAPSULE: 'capsule',
-  MESH: 'mesh',
-  NONE: 'none',
-} as const;
-
-type DescriptorRole = 'visual' | 'collision';
-
-type AssetRegistry = {
-  direct: Map<string, string>;
-  lowercase: Map<string, string>;
-  filenameLower: Map<string, string>;
-};
+export type { UsdMeshCompressionOptions } from './usdSceneNodeFactory.ts';
 
 type SerializedPrimitiveType = 'Cube' | 'Sphere' | 'Cylinder' | 'Capsule';
 
 type LinkPathMaps = {
   linkPaths: Map<string, string>;
   childIdsByParent: Map<string, string[]>;
-};
-
-type UsdMaterialMetadata = {
-  color?: string;
-  texture?: string;
 };
 
 type UsdTextureRecord = {
@@ -92,11 +76,6 @@ const USD_EXPORT_OBJECT_YIELD_INTERVAL = 8;
 const USD_EXPORT_VERTEX_YIELD_INTERVAL = 4096;
 const USD_EXPORT_RECORD_YIELD_INTERVAL = 4;
 
-export interface UsdMeshCompressionOptions {
-  enabled: boolean;
-  quality: number;
-}
-
 export type ExportRobotToUsdPhase = 'links' | 'geometry' | 'scene' | 'assets';
 
 export interface ExportRobotToUsdProgress {
@@ -130,351 +109,8 @@ export interface ExportRobotToUsdPayload {
   archiveFiles: Map<string, Blob>;
 }
 
-function normalizeRelativePath(path: string): string {
-  const segments = path.split('/');
-  const stack: string[] = [];
-
-  for (const segment of segments) {
-    if (!segment || segment === '.') continue;
-    if (segment === '..') {
-      if (stack.length > 0) stack.pop();
-      continue;
-    }
-    stack.push(segment);
-  }
-
-  return stack.join('/');
-}
-
-function stripPackagePrefix(path: string): string {
-  if (!path.startsWith('package://')) return path;
-  const withoutScheme = path.slice('package://'.length);
-  const slashIndex = withoutScheme.indexOf('/');
-  return slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1) : withoutScheme;
-}
-
-function stripBlobPrefix(path: string): string {
-  if (!path.startsWith('blob:')) return path;
-  const slashIndex = path.indexOf('/', 5);
-  return slashIndex >= 0 ? path.slice(slashIndex + 1) : path;
-}
-
-function normalizeMeshPathForExport(meshPath: string): string {
-  const raw = String(meshPath || '').trim();
-  if (!raw) return '';
-
-  let normalized = raw.replace(/\\/g, '/');
-  normalized = stripBlobPrefix(normalized);
-  normalized = stripPackagePrefix(normalized);
-  normalized = normalized.replace(/^[A-Za-z]:\//, '');
-  normalized = normalized.replace(/^\/+/, '');
-  normalized = normalized.replace(/^(\.\/)+/, '');
-  normalized = normalizeRelativePath(normalized);
-
-  const lower = normalized.toLowerCase();
-  const meshDirIndex = lower.indexOf('/meshes/');
-  if (meshDirIndex >= 0) {
-    normalized = normalized.slice(meshDirIndex + '/meshes/'.length);
-  } else if (lower.startsWith('meshes/')) {
-    normalized = normalized.slice('meshes/'.length);
-  } else if (lower.startsWith('mesh/')) {
-    normalized = normalized.slice('mesh/'.length);
-  }
-
-  normalized = normalizeRelativePath(normalized);
-
-  if (!normalized) {
-    return raw.split(/[\\/]/).pop() || '';
-  }
-
-  return normalized;
-}
-
-function buildLookupCandidates(path: string): string[] {
-  const raw = String(path || '').trim();
-  if (!raw) return [];
-
-  const slashNormalized = raw.replace(/\\/g, '/');
-  const strippedPackage = stripPackagePrefix(slashNormalized);
-  const strippedBlob = stripBlobPrefix(slashNormalized);
-  const strippedBoth = stripPackagePrefix(strippedBlob);
-  const relative = normalizeRelativePath(
-    strippedBoth.replace(/^\/+/, '').replace(/^(\.\/)+/, ''),
-  );
-  const exportRelative = normalizeMeshPathForExport(raw);
-  const filename = (exportRelative || relative || strippedBoth).split('/').pop() || '';
-
-  const values = [
-    raw,
-    slashNormalized,
-    strippedPackage,
-    strippedBlob,
-    strippedBoth,
-    relative,
-    exportRelative,
-    filename,
-    exportRelative ? `meshes/${exportRelative}` : '',
-    exportRelative ? `/meshes/${exportRelative}` : '',
-    filename ? `meshes/${filename}` : '',
-    filename ? `/meshes/${filename}` : '',
-  ];
-
-  return values.filter((value, index) => value && values.indexOf(value) === index);
-}
-
-function createAssetRegistry(
-  assets: Record<string, string>,
-  extraMeshFiles?: Map<string, Blob>,
-): { registry: AssetRegistry; tempObjectUrls: string[] } {
-  const registry: AssetRegistry = {
-    direct: new Map(),
-    lowercase: new Map(),
-    filenameLower: new Map(),
-  };
-  const tempObjectUrls: string[] = [];
-
-  const register = (key: string, url: string) => {
-    for (const candidate of buildLookupCandidates(key)) {
-      registry.direct.set(candidate, url);
-      registry.lowercase.set(candidate.toLowerCase(), url);
-
-      const filename = candidate.split('/').pop();
-      if (filename) {
-        registry.filenameLower.set(filename.toLowerCase(), url);
-      }
-    }
-  };
-
-  Object.entries(assets).forEach(([key, url]) => register(key, url));
-
-  extraMeshFiles?.forEach((blob, key) => {
-    const objectUrl = URL.createObjectURL(blob);
-    tempObjectUrls.push(objectUrl);
-    register(key, objectUrl);
-    register(normalizeMeshPathForExport(key), objectUrl);
-  });
-
-  return { registry, tempObjectUrls };
-}
-
-function resolveAssetUrl(path: string, registry: AssetRegistry): string | null {
-  if (!path) return null;
-  if (/^(?:blob:|data:|https?:\/\/)/i.test(path)) {
-    return path;
-  }
-
-  for (const candidate of buildLookupCandidates(path)) {
-    const directMatch = registry.direct.get(candidate);
-    if (directMatch) return directMatch;
-
-    const lowerMatch = registry.lowercase.get(candidate.toLowerCase());
-    if (lowerMatch) return lowerMatch;
-  }
-
-  const lowerPath = path.toLowerCase();
-  for (const [candidate, url] of registry.lowercase.entries()) {
-    if (candidate.endsWith(lowerPath)) {
-      return url;
-    }
-  }
-
-  const filename = lowerPath.split('/').pop();
-  if (filename) {
-    const filenameMatch = registry.filenameLower.get(filename);
-    if (filenameMatch) return filenameMatch;
-  }
-
-  return null;
-}
-
-function createTextureAwareLoadingManager(registry: AssetRegistry): THREE.LoadingManager {
-  const manager = new THREE.LoadingManager();
-  manager.setURLModifier((url) => resolveAssetUrl(url, registry) ?? url);
-  return manager;
-}
-
-function createBaseMaterial(color: string | undefined): THREE.MeshStandardMaterial {
-  return createMatteMaterial({
-    color: color || '#808080',
-    side: THREE.FrontSide,
-    preserveExactColor: true,
-  });
-}
-
-function isMeshObject(value: unknown): value is THREE.Mesh {
-  return Boolean(
-    value
-    && typeof value === 'object'
-    && (value as THREE.Mesh).isMesh
-    && 'geometry' in (value as Record<string, unknown>),
-  );
-}
-
-function isMeshStandardMaterial(material: THREE.Material): material is THREE.MeshStandardMaterial {
-  return Boolean((material as THREE.MeshStandardMaterial).isMeshStandardMaterial);
-}
-
 function isThreeColor(value: unknown): value is THREE.Color {
   return Boolean(value && typeof value === 'object' && (value as THREE.Color).isColor);
-}
-
-function convertMaterialToStandard(
-  material: THREE.Material,
-  fallbackColor: string | undefined,
-): THREE.MeshStandardMaterial {
-  if (isMeshStandardMaterial(material)) {
-    const cloned = material.clone();
-    cloned.side = THREE.FrontSide;
-    cloned.needsUpdate = true;
-    return cloned;
-  }
-
-  const nextMaterial = createBaseMaterial(fallbackColor);
-  const source = material as THREE.MeshStandardMaterial & {
-    color?: THREE.Color;
-    map?: THREE.Texture | null;
-  };
-
-  if (source.color) {
-    nextMaterial.color.copy(source.color);
-  }
-
-  if (source.map) {
-    nextMaterial.map = source.map;
-  }
-
-  nextMaterial.transparent = material.transparent || material.opacity < 1;
-  nextMaterial.opacity = material.opacity ?? 1;
-  nextMaterial.name = material.name;
-  nextMaterial.side = THREE.FrontSide;
-  nextMaterial.needsUpdate = true;
-
-  disposeMaterial(material, false);
-  return nextMaterial;
-}
-
-function normalizeRenderableMaterials(object: THREE.Object3D, fallbackColor: string | undefined): void {
-  object.traverse((child) => {
-    if (!isMeshObject(child)) return;
-
-    if (Array.isArray(child.material)) {
-      child.material = child.material.map((material) =>
-        convertMaterialToStandard(material, fallbackColor),
-      );
-      return;
-    }
-
-    if (!child.material) {
-      child.material = createBaseMaterial(fallbackColor);
-      return;
-    }
-
-    child.material = convertMaterialToStandard(child.material, fallbackColor);
-  });
-}
-
-function createUsdMaterialVariantMesh(
-  mesh: THREE.Mesh,
-  material: THREE.Material,
-  variantIndex: number,
-  materialIndex: number,
-): THREE.Mesh | null {
-  if (!(mesh.geometry instanceof THREE.BufferGeometry)) {
-    return null;
-  }
-
-  const geometry = mesh.geometry.clone();
-  const filteredGroups = geometry.groups.filter((group) => (group.materialIndex ?? 0) === materialIndex);
-  if (filteredGroups.length === 0) {
-    geometry.dispose();
-    return null;
-  }
-
-  geometry.clearGroups();
-  filteredGroups.forEach((group) => {
-    geometry.addGroup(group.start, group.count, 0);
-  });
-
-  const variant = new THREE.Mesh(geometry, material.clone());
-  variant.name = variantIndex === 0
-    ? (mesh.name || 'mesh')
-    : `${mesh.name || 'mesh'}_${materialIndex}`;
-  variant.position.copy(mesh.position);
-  variant.quaternion.copy(mesh.quaternion);
-  variant.scale.copy(mesh.scale);
-  variant.rotation.order = mesh.rotation.order;
-  variant.castShadow = mesh.castShadow;
-  variant.receiveShadow = mesh.receiveShadow;
-  variant.frustumCulled = mesh.frustumCulled;
-  variant.matrixAutoUpdate = mesh.matrixAutoUpdate;
-  variant.matrix.copy(mesh.matrix);
-  variant.visible = mesh.visible;
-  variant.renderOrder = mesh.renderOrder;
-  variant.userData = {
-    ...mesh.userData,
-    usdSerializeFilteredGroups: true,
-  };
-
-  return variant;
-}
-
-function expandMultiMaterialMeshesForUsd(root: THREE.Object3D): void {
-  const replacements: Array<{
-    mesh: THREE.Mesh;
-    parent: THREE.Object3D;
-    insertionIndex: number;
-    variants: THREE.Mesh[];
-  }> = [];
-
-  root.traverse((child) => {
-    if (!isMeshObject(child) || !Array.isArray(child.material) || !child.parent) {
-      return;
-    }
-
-    if (!(child.geometry instanceof THREE.BufferGeometry) || child.material.length <= 1) {
-      return;
-    }
-
-    const materialIndexes = Array.from(new Set(
-      child.geometry.groups.map((group) => group.materialIndex ?? 0),
-    )).filter((index) => Number.isInteger(index) && index >= 0);
-
-    if (materialIndexes.length <= 1) {
-      return;
-    }
-
-    const variants = materialIndexes
-      .map((materialIndex, variantIndex) => {
-        const material = child.material[materialIndex];
-        if (!material) {
-          return null;
-        }
-        return createUsdMaterialVariantMesh(child, material, variantIndex, materialIndex);
-      })
-      .filter((variant): variant is THREE.Mesh => Boolean(variant));
-
-    if (variants.length <= 1) {
-      variants.forEach((variant) => disposeObject3D(variant, true));
-      return;
-    }
-
-    replacements.push({
-      mesh: child,
-      parent: child.parent,
-      insertionIndex: child.parent.children.indexOf(child),
-      variants,
-    });
-  });
-
-  replacements.forEach(({ mesh, parent, insertionIndex, variants }) => {
-    parent.remove(mesh);
-    variants.forEach((variant) => parent.add(variant));
-
-    const appendedVariants = parent.children.splice(parent.children.length - variants.length, variants.length);
-    parent.children.splice(Math.max(0, insertionIndex), 0, ...appendedVariants);
-
-    disposeObject3D(mesh, true);
-  });
 }
 
 function resolveLinkMaterialEntry(robot: RobotState, link: UrdfLink): UsdMaterialMetadata {
@@ -486,368 +122,6 @@ function resolveLinkMaterialEntry(robot: RobotState, link: UrdfLink): UsdMateria
     color: entry.color || (entry.texture ? '#ffffff' : link.visual.color || undefined),
     texture: entry.texture || undefined,
   };
-}
-
-async function loadMeshObject(
-  visual: UrdfVisual,
-  registry: AssetRegistry,
-  colorOverride?: string,
-  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null,
-): Promise<THREE.Object3D | null> {
-  const meshPath = String(visual.meshPath || '').trim();
-  if (!meshPath) {
-    return null;
-  }
-
-  const resolvedUrl = resolveAssetUrl(meshPath, registry);
-  if (!resolvedUrl) {
-    console.warn(`[USD export] Mesh asset not found for: ${meshPath}`);
-    return null;
-  }
-
-  const manager = createTextureAwareLoadingManager(registry);
-  const lowerPath = meshPath.toLowerCase();
-
-  if (lowerPath.endsWith('.stl')) {
-    const loader = new STLLoader(manager);
-    const geometry = await loader.loadAsync(resolvedUrl);
-    return new THREE.Mesh(geometry, createBaseMaterial(colorOverride || visual.color));
-  }
-
-  if (lowerPath.endsWith('.obj')) {
-    const loader = new OBJLoader(manager);
-    const object = await loader.loadAsync(resolvedUrl);
-    normalizeRenderableMaterials(object, colorOverride || visual.color);
-    expandMultiMaterialMeshesForUsd(object);
-    return object;
-  }
-
-  if (lowerPath.endsWith('.dae')) {
-    const loader = new ColladaLoader(manager);
-    const normalizeColladaRoot = shouldNormalizeColladaRoot(
-      meshPath,
-      colladaRootNormalizationHints,
-    );
-    let collada: Awaited<ReturnType<ColladaLoader['loadAsync']>>;
-
-    if (normalizeColladaRoot && typeof DOMParser === 'function') {
-      // Go2/go2w DAE assets already encode their authored pose in the URDF
-      // hierarchy, so exporting ColladaLoader's Z-up correction would
-      // double-rotate the mesh in the round-tripped USD stage.
-      const fileLoader = new THREE.FileLoader(manager);
-      const text = await new Promise<string>((resolve, reject) => {
-        fileLoader.load(resolvedUrl, (data) => resolve(data as string), undefined, reject);
-      });
-      const patchedText = text.replace(/<up_axis>\s*Z_UP\s*<\/up_axis>/g, '<up_axis>Y_UP</up_axis>');
-      const baseUrl = THREE.LoaderUtils.extractUrlBase(resolvedUrl);
-      collada = loader.parse(patchedText, baseUrl);
-    } else {
-      collada = await loader.loadAsync(resolvedUrl);
-    }
-
-    normalizeRenderableMaterials(collada.scene, colorOverride || visual.color);
-    expandMultiMaterialMeshesForUsd(collada.scene);
-    if (normalizeColladaRoot) {
-      collada.scene.rotation.set(0, 0, 0);
-      collada.scene.updateMatrix();
-    }
-    return collada.scene;
-  }
-
-  if (lowerPath.endsWith('.gltf') || lowerPath.endsWith('.glb')) {
-    const loader = new GLTFLoader(manager);
-    const gltf = await loader.loadAsync(resolvedUrl);
-    normalizeRenderableMaterials(gltf.scene, colorOverride || visual.color);
-    expandMultiMaterialMeshesForUsd(gltf.scene);
-    return gltf.scene;
-  }
-
-  console.warn(`[USD export] Unsupported mesh format for: ${meshPath}`);
-  return null;
-}
-
-function getGeometryType(value: string | null | undefined): string {
-  return String(value || '').trim().toLowerCase();
-}
-
-function getVisualScale(visual: UrdfVisual): THREE.Vector3 {
-  const type = getGeometryType(visual.type);
-  if (type === GEOMETRY_TYPES.BOX) {
-    return new THREE.Vector3(
-      visual.dimensions.x || 1,
-      visual.dimensions.y || 1,
-      visual.dimensions.z || 1,
-    );
-  }
-
-  if (type === GEOMETRY_TYPES.SPHERE) {
-    const diameter = (visual.dimensions.x || 0.5) * 2;
-    return new THREE.Vector3(diameter, diameter, diameter);
-  }
-
-  if (type === GEOMETRY_TYPES.CYLINDER || type === GEOMETRY_TYPES.CAPSULE) {
-    const diameter = (visual.dimensions.x || 0.5) * 2;
-    return new THREE.Vector3(
-      diameter,
-      diameter,
-      visual.dimensions.y || 1,
-    );
-  }
-
-  return new THREE.Vector3(
-    visual.dimensions.x || 1,
-    visual.dimensions.y || 1,
-    visual.dimensions.z || 1,
-  );
-}
-
-function applyVisualOrigin(object: THREE.Object3D, visual: UrdfVisual): void {
-  object.position.set(
-    visual.origin?.xyz?.x ?? 0,
-    visual.origin?.xyz?.y ?? 0,
-    visual.origin?.xyz?.z ?? 0,
-  );
-  object.quaternion.copy(rpyToQuaternion(
-    visual.origin?.rpy?.r ?? 0,
-    visual.origin?.rpy?.p ?? 0,
-    visual.origin?.rpy?.y ?? 0,
-  ));
-}
-
-function createPrimitiveSceneNode(
-  visual: UrdfVisual,
-  role: DescriptorRole,
-  materialState?: UsdMaterialMetadata,
-): THREE.Object3D | null {
-  const type = getGeometryType(visual.type);
-  const primitiveType: SerializedPrimitiveType | null = type === GEOMETRY_TYPES.BOX
-    ? 'Cube'
-    : type === GEOMETRY_TYPES.SPHERE
-      ? 'Sphere'
-      : type === GEOMETRY_TYPES.CYLINDER
-        ? 'Cylinder'
-        : type === GEOMETRY_TYPES.CAPSULE
-          ? 'Capsule'
-          : null;
-
-  if (!primitiveType) {
-    return null;
-  }
-
-  const anchor = new THREE.Group();
-  applyVisualOrigin(anchor, visual);
-  anchor.scale.copy(getVisualScale(visual));
-  anchor.name = role;
-  if (role === 'collision') {
-    anchor.userData.usdPurpose = 'guide';
-    anchor.userData.usdCollision = true;
-  }
-
-  const primitive = new THREE.Object3D();
-  primitive.name = type || primitiveType.toLowerCase();
-  primitive.userData.usdGeomType = primitiveType;
-  primitive.userData.usdDisplayColor = materialState?.color || visual.color || null;
-  if (role === 'collision') {
-    primitive.userData.usdPurpose = 'guide';
-    primitive.userData.usdCollision = true;
-  }
-  anchor.add(primitive);
-
-  return anchor;
-}
-
-function applyExplicitMeshDisplayColor(root: THREE.Object3D, color: string | undefined): void {
-  if (!color) {
-    return;
-  }
-
-  root.traverse((child) => {
-    if (!isMeshObject(child)) {
-      return;
-    }
-
-    child.userData.usdDisplayColor = color;
-  });
-}
-
-async function createMeshSceneNode(
-  visual: UrdfVisual,
-  role: DescriptorRole,
-  registry: AssetRegistry,
-  materialState?: UsdMaterialMetadata,
-  meshCompression?: UsdMeshCompressionOptions,
-  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null,
-): Promise<THREE.Object3D | null> {
-  const object = await loadMeshObject(
-    visual,
-    registry,
-    materialState?.color,
-    colladaRootNormalizationHints,
-  );
-  if (!object) {
-    return null;
-  }
-
-  if (meshCompression?.enabled && meshCompression.quality < 100) {
-    applyMeshCompression(object, meshCompression.quality);
-  }
-
-  const anchor = new THREE.Group();
-  anchor.name = role;
-  applyVisualOrigin(anchor, visual);
-  anchor.scale.copy(getVisualScale(visual));
-  if (role === 'collision') {
-    anchor.userData.usdPurpose = 'guide';
-    anchor.userData.usdCollision = true;
-    anchor.userData.usdMeshCollision = true;
-  }
-
-  if (role === 'collision') {
-    object.traverse((child) => {
-      child.userData.usdPurpose = 'guide';
-      child.userData.usdCollision = true;
-      child.userData.usdMeshCollision = isMeshObject(child);
-    });
-  }
-
-  applyExplicitMeshDisplayColor(object, materialState?.color);
-
-  anchor.add(object);
-  return anchor;
-}
-
-async function buildVisualSceneNode(
-  visual: UrdfVisual,
-  role: DescriptorRole,
-  registry: AssetRegistry,
-  materialState?: UsdMaterialMetadata,
-  meshCompression?: UsdMeshCompressionOptions,
-  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null,
-): Promise<THREE.Object3D | null> {
-  const type = getGeometryType(visual.type);
-  if (type === GEOMETRY_TYPES.NONE) {
-    return null;
-  }
-
-  if (type === GEOMETRY_TYPES.MESH) {
-    return createMeshSceneNode(
-      visual,
-      role,
-      registry,
-      materialState,
-      meshCompression,
-      colladaRootNormalizationHints,
-    );
-  }
-
-  return createPrimitiveSceneNode(visual, role, materialState);
-}
-
-function createGeometryCompressionMeshData(
-  geometry: THREE.BufferGeometry,
-): { meshData: STLMeshData; workingGeometry: THREE.BufferGeometry } | null {
-  const workingGeometry = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const position = workingGeometry.getAttribute('position');
-  if (!position || position.count < 3 || position.count % 3 !== 0) {
-    workingGeometry.dispose();
-    return null;
-  }
-
-  if (!workingGeometry.getAttribute('normal')) {
-    workingGeometry.computeVertexNormals();
-  }
-
-  const normal = workingGeometry.getAttribute('normal');
-  if (!normal || normal.count !== position.count) {
-    workingGeometry.dispose();
-    return null;
-  }
-
-  const vertices = new Float32Array(position.count * 3);
-  const normals = new Float32Array(normal.count * 3);
-  for (let index = 0; index < position.count; index += 1) {
-    const offset = index * 3;
-    vertices[offset] = position.getX(index);
-    vertices[offset + 1] = position.getY(index);
-    vertices[offset + 2] = position.getZ(index);
-    normals[offset] = normal.getX(index);
-    normals[offset + 1] = normal.getY(index);
-    normals[offset + 2] = normal.getZ(index);
-  }
-
-  const triangleCount = position.count / 3;
-  const fileSize = 84 + triangleCount * 50;
-
-  return {
-    meshData: {
-      filename: 'usd-export-mesh.stl',
-      fileSize,
-      triangleCount,
-      vertices,
-      normals,
-      boundingBox: calculateBoundingBox(vertices),
-      isCompressed: false,
-      originalTriangleCount: triangleCount,
-      originalFileSize: fileSize,
-    },
-    workingGeometry,
-  };
-}
-
-function simplifyGeometryForUsd(
-  geometry: THREE.BufferGeometry,
-  quality: number,
-): THREE.BufferGeometry | null {
-  const compressionInput = createGeometryCompressionMeshData(geometry);
-  if (!compressionInput) {
-    return null;
-  }
-
-  const { meshData, workingGeometry } = compressionInput;
-
-  try {
-    const compressed = compressMesh(meshData, quality);
-    if (compressed.triangleCount >= meshData.triangleCount || compressed.vertices.length === 0) {
-      return null;
-    }
-
-    const simplified = new THREE.BufferGeometry();
-    simplified.setAttribute('position', new THREE.BufferAttribute(compressed.vertices.slice(), 3));
-    simplified.setAttribute('normal', new THREE.BufferAttribute(compressed.normals.slice(), 3));
-    simplified.computeBoundingBox();
-    simplified.computeBoundingSphere();
-    return simplified;
-  } finally {
-    workingGeometry.dispose();
-  }
-}
-
-function applyMeshCompression(object: THREE.Object3D, quality: number): void {
-  if (!(quality > 0 && quality < 100)) {
-    return;
-  }
-
-  const simplifiedGeometries = new Map<THREE.BufferGeometry, THREE.BufferGeometry | null>();
-
-  object.traverse((child) => {
-    if (!isMeshObject(child)) {
-      return;
-    }
-
-    const originalGeometry = child.geometry;
-    if (!simplifiedGeometries.has(originalGeometry)) {
-      const simplified = simplifyGeometryForUsd(originalGeometry, quality);
-      simplifiedGeometries.set(originalGeometry, simplified);
-      if (simplified) {
-        originalGeometry.dispose();
-      }
-    }
-
-    const simplifiedGeometry = simplifiedGeometries.get(originalGeometry);
-    if (simplifiedGeometry) {
-      child.geometry = simplifiedGeometry;
-    }
-  });
 }
 
 function makeIndent(depth: number): string {
@@ -1076,7 +350,7 @@ function parseDisplayColor(value: string | null | undefined): { color: THREE.Col
 }
 
 function getRenderableTextureRecord(object: THREE.Object3D): UsdTextureRecord | null {
-  if (!isMeshObject(object) || !object.geometry.getAttribute('uv')) {
+  if (!isUsdMeshObject(object) || !object.geometry.getAttribute('uv')) {
     return null;
   }
 
@@ -1115,7 +389,7 @@ function getRenderableAppearance(object: THREE.Object3D): UsdRenderableAppearanc
     };
   }
 
-  if (!isMeshObject(object)) {
+  if (!isUsdMeshObject(object)) {
     return null;
   }
 
@@ -1344,7 +618,7 @@ function applyUsdMaterialMetadata(
 
   node.traverse((child) => {
     if (child === node) return;
-    if (!(child.userData.usdGeomType || isMeshObject(child))) {
+    if (!(child.userData.usdGeomType || isUsdMeshObject(child))) {
       return;
     }
 
@@ -1398,7 +672,7 @@ async function collectUsdSerializationContext(
   const objects: THREE.Object3D[] = [];
 
   sceneRoot.traverse((object) => {
-    if (object.userData.usdGeomType || isMeshObject(object)) {
+    if (object.userData.usdGeomType || isUsdMeshObject(object)) {
       objects.push(object);
     }
   });
@@ -1439,7 +713,7 @@ async function collectUsdSerializationContext(
       materialByObject.set(object, record);
     }
 
-    if (isMeshObject(object)) {
+    if (isUsdMeshObject(object)) {
       const cachedGeometryRecord = geometryByBuffer.get(object.geometry);
       if (cachedGeometryRecord) {
         geometryByObject.set(object, cachedGeometryRecord);
@@ -1612,9 +886,9 @@ async function serializeSceneNode(
   const childIndent = makeIndent(depth + 1);
   const primitiveType = object.userData.usdGeomType as SerializedPrimitiveType | undefined;
   const name = sanitizeUsdIdentifier(forcedName || object.name || primitiveType || 'Node');
-  const typeName = primitiveType || (isMeshObject(object) ? 'Mesh' : 'Xform');
+  const typeName = primitiveType || (isUsdMeshObject(object) ? 'Mesh' : 'Xform');
   const materialRecord = context.materialByObject.get(object);
-  const geometryRecord = isMeshObject(object) ? context.geometryByObject.get(object) : undefined;
+  const geometryRecord = isUsdMeshObject(object) ? context.geometryByObject.get(object) : undefined;
   const primMetadata: string[] = [];
   if (materialRecord) {
     primMetadata.push('prepend apiSchemas = ["MaterialBindingAPI"]');
@@ -1644,7 +918,7 @@ async function serializeSceneNode(
     serializePrimitiveAttributes(lines, childDepth, primitiveType);
     serializeDisplayColor(lines, childDepth, object);
     serializeMaterialBinding(lines, childDepth, object, context);
-  } else if (isMeshObject(object)) {
+  } else if (isUsdMeshObject(object)) {
     if (!geometryRecord) {
       const inlineGeometry = await extractUsdMeshGeometryData(object);
       if (inlineGeometry) {
@@ -1990,7 +1264,7 @@ async function buildLinkSceneNode(
   linkId: string,
   childIdsByParent: Map<string, string[]>,
   jointsByChild: Map<string, UrdfJoint>,
-  registry: AssetRegistry,
+  registry: UsdAssetRegistry,
   meshCompression?: UsdMeshCompressionOptions,
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null,
   onLinkVisit?: (link: UrdfLink) => void | Promise<void>,
@@ -2016,14 +1290,14 @@ async function buildLinkSceneNode(
     const materialState = resolveLinkMaterialEntry(robot, link);
 
     for (const [index, visual] of visuals.entries()) {
-      const visualNode = await buildVisualSceneNode(
+      const visualNode = await buildUsdVisualSceneNode({
         visual,
-        'visual',
+        role: 'visual',
         registry,
         materialState,
         meshCompression,
         colladaRootNormalizationHints,
-      );
+      });
       if (!visualNode) continue;
       visualNode.name = `visual_${index}`;
       if (materialState.color || materialState.texture) {
@@ -2043,14 +1317,13 @@ async function buildLinkSceneNode(
     collidersScope.name = 'collisions';
 
     for (const [index, collision] of collisions.entries()) {
-      const collisionNode = await buildVisualSceneNode(
-        collision,
-        'collision',
+      const collisionNode = await buildUsdVisualSceneNode({
+        visual: collision,
+        role: 'collision',
         registry,
-        undefined,
         meshCompression,
         colladaRootNormalizationHints,
-      );
+      });
       if (!collisionNode) continue;
       collisionNode.name = `collision_${index}`;
       collisionNode.userData.usdPurpose = 'guide';
@@ -2274,7 +1547,7 @@ function createArchiveFiles(
 async function collectUsdAssetFiles(
   sceneRoot: THREE.Object3D,
   context: UsdSerializationContext,
-  registry: AssetRegistry,
+  registry: UsdAssetRegistry,
   onProgress?: (progress: ExportRobotToUsdProgress) => void,
 ): Promise<Map<string, Blob>> {
   const textureFiles = new Map<string, string>();
@@ -2306,7 +1579,7 @@ async function collectUsdAssetFiles(
   for (let index = 0; index < textureEntries.length; index += 1) {
     const [exportPath, sourcePath] = textureEntries[index];
     const label = normalizeUsdProgressLabel(exportPath, 'asset');
-    const resolvedUrl = resolveAssetUrl(sourcePath, registry);
+    const resolvedUrl = resolveUsdAssetUrl(sourcePath, registry);
     if (!resolvedUrl) {
       console.warn(`[USD export] Texture asset not found for: ${sourcePath}`);
       advanceUsdProgress(progressTracker, label);
@@ -2343,7 +1616,7 @@ export async function exportRobotToUsd({
   const normalizedExportName = sanitizeUsdIdentifier(exportName || robot.name || 'robot');
   const configStem = `${normalizedExportName}${normalizedExportName.includes('description') ? '' : '_description'}`;
   const rootPrimName = configStem;
-  const { registry, tempObjectUrls } = createAssetRegistry(assets, extraMeshFiles);
+  const { registry, tempObjectUrls } = createUsdAssetRegistry(assets, extraMeshFiles);
   const colladaRootNormalizationHints = buildColladaRootNormalizationHints(robot.links);
 
   const jointsByChild = new Map<string, UrdfJoint>();

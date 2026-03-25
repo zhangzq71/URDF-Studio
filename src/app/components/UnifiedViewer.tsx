@@ -7,9 +7,16 @@ import { useResolvedTheme } from '@/shared/hooks';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
 import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
-import { useURDFViewerController, URDFViewerPanels, URDFViewerScene, type ToolMode, type ViewerJointMotionStateValue } from '@/features/urdf-viewer';
-import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
-import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/urdf-viewer/utils/viewerResourceScope';
+import {
+  useURDFViewerController,
+  URDFViewerPanels,
+  URDFViewerScene,
+  createStableViewerResourceScope,
+  type ToolMode,
+  type ViewerJointMotionStateValue,
+  type ViewerRobotDataResolution,
+  type ViewerResourceScope,
+} from '@/features/urdf-viewer';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
 import {
   createInitialUnifiedViewerMountState,

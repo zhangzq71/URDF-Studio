@@ -16,9 +16,9 @@ import {
   type ExportDialogConfig,
   type ExportProgressState,
 } from '@/features/file-io';
+import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import { translations } from '@/shared/i18n';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
-import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import { addRobotAssetsToZip } from '../utils/exportArchiveAssets';
 import { resolveCurrentUsdExportMode } from '../utils/currentUsdExportMode';
 import { flushPendingHistory } from '../utils/pendingHistory';

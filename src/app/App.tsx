@@ -14,7 +14,7 @@ import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemb
 import { resolveRobotFileData } from '@/core/parsers';
 import type { MotorSpec, RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { translations, type Language } from '@/shared/i18n';
-import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
+import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,

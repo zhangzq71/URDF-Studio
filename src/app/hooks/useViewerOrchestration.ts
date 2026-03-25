@@ -4,7 +4,7 @@ import type { RobotState } from '@/types';
 import {
   resolveDetailLinkTabAfterGeometrySelection,
   resolveDetailLinkTabAfterViewerMeshSelect,
-} from '@/features/property-editor/utils/detailLinkTab';
+} from '@/features/property-editor/utils';
 
 interface UseViewerOrchestrationOptions {
   setSelection: (selection: RobotState['selection']) => void;

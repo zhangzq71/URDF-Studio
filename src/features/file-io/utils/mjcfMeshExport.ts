@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 
-import { createLoadingManager, createMeshLoader, buildColladaRootNormalizationHints } from '@/core/loaders';
+import {
+  createLoadingManager,
+  createMeshLoader,
+  buildColladaRootNormalizationHints,
+  isCoplanarOffsetMaterial,
+} from '@/core/loaders';
 import { collectExplicitlyScaledMeshPaths } from '@/core/loaders/meshScaleHints';
 import { normalizeMeshPathForExport } from '@/core/parsers/meshPathUtils';
 import { GeometryType, type RobotState } from '@/types';
@@ -66,6 +71,14 @@ export interface MjcfVisualMeshVariant {
 interface ExtractedVisualMeshVariant extends MjcfVisualMeshVariant {
   blob: Blob;
 }
+
+interface PendingVisualMeshVariant {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  meshName: string;
+}
+
+const COPLANAR_ANCHOR_BAKE_OFFSET = 1e-4;
 
 function sanitizeVariantSegment(value: string | undefined): string {
   return String(value || '')
@@ -179,30 +192,179 @@ function getUsableGeometryIndex(
   return index && index.count > 0 ? index : null;
 }
 
+function getTriangleVertexIndex(
+  indexArray: ArrayLike<number> | null,
+  start: number,
+  offset: number,
+): number {
+  const pointer = start + offset;
+  return indexArray ? Number(indexArray[pointer] ?? 0) : pointer;
+}
+
+function buildTriangleVertexKey(
+  positionArray: ArrayLike<number>,
+  vertexIndex: number,
+  itemSize: number,
+): string {
+  const start = vertexIndex * itemSize;
+  const x = Number(positionArray[start] ?? 0).toFixed(6);
+  const y = Number(positionArray[start + 1] ?? 0).toFixed(6);
+  const z = Number(positionArray[start + 2] ?? 0).toFixed(6);
+  return `${x},${y},${z}`;
+}
+
+function buildTriangleKey(
+  positionArray: ArrayLike<number>,
+  itemSize: number,
+  indexArray: ArrayLike<number> | null,
+  start: number,
+): string {
+  const vertices = [
+    buildTriangleVertexKey(positionArray, getTriangleVertexIndex(indexArray, start, 0), itemSize),
+    buildTriangleVertexKey(positionArray, getTriangleVertexIndex(indexArray, start, 1), itemSize),
+    buildTriangleVertexKey(positionArray, getTriangleVertexIndex(indexArray, start, 2), itemSize),
+  ];
+  vertices.sort();
+  return vertices.join('|');
+}
+
+function pickPreferredTriangleOwner(
+  materialIndexes: Iterable<number>,
+  materials: readonly THREE.Material[],
+): number | null {
+  let preferredMaterialIndex: number | null = null;
+
+  for (const materialIndex of materialIndexes) {
+    if (preferredMaterialIndex == null) {
+      preferredMaterialIndex = materialIndex;
+      continue;
+    }
+
+    const preferredMaterial = materials[preferredMaterialIndex];
+    const candidateMaterial = materials[materialIndex];
+    const preferredIsOffset = isCoplanarOffsetMaterial(preferredMaterial);
+    const candidateIsOffset = isCoplanarOffsetMaterial(candidateMaterial);
+
+    if (preferredIsOffset !== candidateIsOffset) {
+      if (!candidateIsOffset) {
+        preferredMaterialIndex = materialIndex;
+      }
+      continue;
+    }
+
+    if (materialIndex < preferredMaterialIndex) {
+      preferredMaterialIndex = materialIndex;
+    }
+  }
+
+  return preferredMaterialIndex;
+}
+
+function buildDuplicateTriangleOwnerMap(
+  sourceGeometry: THREE.BufferGeometry,
+  materials: readonly THREE.Material[],
+): Map<string, number> {
+  const positionAttribute = sourceGeometry.getAttribute('position');
+  if (!positionAttribute || positionAttribute.itemSize < 3 || sourceGeometry.groups.length < 2) {
+    return new Map();
+  }
+
+  const triangleOwners = new Map<string, Set<number>>();
+  const positionArray = positionAttribute.array;
+  const indexArray = getUsableGeometryIndex(sourceGeometry)?.array ?? null;
+
+  sourceGeometry.groups.forEach((group) => {
+    const materialIndex = group.materialIndex ?? 0;
+    const groupEnd = group.start + group.count;
+    for (let triangleStart = group.start; triangleStart + 2 < groupEnd; triangleStart += 3) {
+      const triangleKey = buildTriangleKey(
+        positionArray,
+        positionAttribute.itemSize,
+        indexArray,
+        triangleStart,
+      );
+      const owners = triangleOwners.get(triangleKey) ?? new Set<number>();
+      owners.add(materialIndex);
+      triangleOwners.set(triangleKey, owners);
+    }
+  });
+
+  const preferredOwners = new Map<string, number>();
+  triangleOwners.forEach((owners, triangleKey) => {
+    if (owners.size < 2) {
+      return;
+    }
+
+    const hasCoplanarAdjustedOwner = Array.from(owners).some((materialIndex) => (
+      isCoplanarOffsetMaterial(materials[materialIndex])
+    ));
+    if (!hasCoplanarAdjustedOwner) {
+      return;
+    }
+
+    const preferredOwner = pickPreferredTriangleOwner(owners, materials);
+    if (preferredOwner != null) {
+      preferredOwners.set(triangleKey, preferredOwner);
+    }
+  });
+
+  return preferredOwners;
+}
+
 function buildIndexedGeometrySubset(
   sourceGeometry: THREE.BufferGeometry,
   relevantGroups: readonly THREE.Group[],
+  preferredTriangleOwners: ReadonlyMap<string, number>,
+  targetMaterialIndex: number,
 ): THREE.BufferGeometry | null {
   const sourceIndex = getUsableGeometryIndex(sourceGeometry);
   if (!sourceIndex || relevantGroups.length === 0) {
     return null;
   }
 
+  const positionAttribute = sourceGeometry.getAttribute('position');
+  if (!positionAttribute) {
+    return null;
+  }
+
   const indexRemap = new Map<number, number>();
   const sourceVertexIndexes: number[] = [];
   const nextIndexes: number[] = [];
+  const emittedTriangles = new Set<string>();
+  const positionArray = positionAttribute.array;
+  const indexArray = sourceIndex.array;
 
   relevantGroups.forEach((group) => {
     const groupEnd = group.start + group.count;
-    for (let indexOffset = group.start; indexOffset < groupEnd; indexOffset += 1) {
-      const sourceVertexIndex = sourceIndex.getX(indexOffset);
-      let nextVertexIndex = indexRemap.get(sourceVertexIndex);
-      if (nextVertexIndex == null) {
-        nextVertexIndex = sourceVertexIndexes.length;
-        indexRemap.set(sourceVertexIndex, nextVertexIndex);
-        sourceVertexIndexes.push(sourceVertexIndex);
+    for (let triangleStart = group.start; triangleStart + 2 < groupEnd; triangleStart += 3) {
+      const triangleKey = buildTriangleKey(
+        positionArray,
+        positionAttribute.itemSize,
+        indexArray,
+        triangleStart,
+      );
+      const preferredOwner = preferredTriangleOwners.get(triangleKey);
+      if (preferredOwner != null && preferredOwner !== targetMaterialIndex) {
+        continue;
       }
-      nextIndexes.push(nextVertexIndex);
+      const shouldDeduplicateTriangle = preferredOwner != null;
+      if (shouldDeduplicateTriangle && emittedTriangles.has(triangleKey)) {
+        continue;
+      }
+      if (shouldDeduplicateTriangle) {
+        emittedTriangles.add(triangleKey);
+      }
+
+      for (let offset = 0; offset < 3; offset += 1) {
+        const sourceVertexIndex = sourceIndex.getX(triangleStart + offset);
+        let nextVertexIndex = indexRemap.get(sourceVertexIndex);
+        if (nextVertexIndex == null) {
+          nextVertexIndex = sourceVertexIndexes.length;
+          indexRemap.set(sourceVertexIndex, nextVertexIndex);
+          sourceVertexIndexes.push(sourceVertexIndex);
+        }
+        nextIndexes.push(nextVertexIndex);
+      }
     }
   });
 
@@ -231,6 +393,8 @@ function buildIndexedGeometrySubset(
 function buildNonIndexedGeometrySubset(
   sourceGeometry: THREE.BufferGeometry,
   relevantGroups: readonly THREE.Group[],
+  preferredTriangleOwners: ReadonlyMap<string, number>,
+  targetMaterialIndex: number,
 ): THREE.BufferGeometry | null {
   const positionAttribute = sourceGeometry.getAttribute('position');
   if (!positionAttribute || relevantGroups.length === 0) {
@@ -238,10 +402,30 @@ function buildNonIndexedGeometrySubset(
   }
 
   const vertexIndexes: number[] = [];
+  const emittedTriangles = new Set<string>();
+  const positionArray = positionAttribute.array;
   relevantGroups.forEach((group) => {
     const groupEnd = group.start + group.count;
-    for (let vertexIndex = group.start; vertexIndex < groupEnd; vertexIndex += 1) {
-      vertexIndexes.push(vertexIndex);
+    for (let triangleStart = group.start; triangleStart + 2 < groupEnd; triangleStart += 3) {
+      const triangleKey = buildTriangleKey(
+        positionArray,
+        positionAttribute.itemSize,
+        null,
+        triangleStart,
+      );
+      const preferredOwner = preferredTriangleOwners.get(triangleKey);
+      if (preferredOwner != null && preferredOwner !== targetMaterialIndex) {
+        continue;
+      }
+      const shouldDeduplicateTriangle = preferredOwner != null;
+      if (shouldDeduplicateTriangle && emittedTriangles.has(triangleKey)) {
+        continue;
+      }
+      if (shouldDeduplicateTriangle) {
+        emittedTriangles.add(triangleKey);
+      }
+
+      vertexIndexes.push(triangleStart, triangleStart + 1, triangleStart + 2);
     }
   });
 
@@ -268,6 +452,7 @@ function buildNonIndexedGeometrySubset(
 
 function extractGeometryForMaterial(
   sourceGeometry: THREE.BufferGeometry,
+  materials: readonly THREE.Material[],
   materialIndex: number,
 ): THREE.BufferGeometry | null {
   const relevantGroups = sourceGeometry.groups.filter((group) => (group.materialIndex ?? 0) === materialIndex);
@@ -275,11 +460,228 @@ function extractGeometryForMaterial(
     return null;
   }
 
+  const preferredTriangleOwners = buildDuplicateTriangleOwnerMap(sourceGeometry, materials);
+
   if (getUsableGeometryIndex(sourceGeometry)) {
-    return buildIndexedGeometrySubset(sourceGeometry, relevantGroups);
+    return buildIndexedGeometrySubset(sourceGeometry, relevantGroups, preferredTriangleOwners, materialIndex);
   }
 
-  return buildNonIndexedGeometrySubset(sourceGeometry, relevantGroups);
+  return buildNonIndexedGeometrySubset(sourceGeometry, relevantGroups, preferredTriangleOwners, materialIndex);
+}
+
+function buildSceneVariantTriangleOwnerMap(
+  variants: readonly PendingVisualMeshVariant[],
+): Map<string, number> {
+  const triangleOwners = new Map<string, Set<number>>();
+
+  variants.forEach((variant, variantIndex) => {
+    const positionAttribute = variant.geometry.getAttribute('position');
+    if (!positionAttribute) {
+      return;
+    }
+
+    const indexArray = getUsableGeometryIndex(variant.geometry)?.array ?? null;
+    const positionArray = positionAttribute.array;
+    const triangleCount = indexArray
+      ? Math.floor(indexArray.length / 3)
+      : Math.floor(positionAttribute.count / 3);
+
+    for (let triangleIndex = 0; triangleIndex < triangleCount; triangleIndex += 1) {
+      const triangleKey = buildTriangleKey(
+        positionArray,
+        positionAttribute.itemSize,
+        indexArray,
+        triangleIndex * 3,
+      );
+      const owners = triangleOwners.get(triangleKey) ?? new Set<number>();
+      owners.add(variantIndex);
+      triangleOwners.set(triangleKey, owners);
+    }
+  });
+
+  const preferredOwners = new Map<string, number>();
+  triangleOwners.forEach((owners, triangleKey) => {
+    if (owners.size < 2) {
+      return;
+    }
+
+    const hasCoplanarAdjustedOwner = Array.from(owners).some((variantIndex) => (
+      isCoplanarOffsetMaterial(variants[variantIndex]?.material)
+    ));
+    if (!hasCoplanarAdjustedOwner) {
+      return;
+    }
+
+    const preferredOwner = pickPreferredTriangleOwner(
+      Array.from(owners),
+      variants.map((variant) => variant.material),
+    );
+    if (preferredOwner != null) {
+      preferredOwners.set(triangleKey, preferredOwner);
+    }
+  });
+
+  return preferredOwners;
+}
+
+function buildSceneVariantGeometrySubset(
+  sourceGeometry: THREE.BufferGeometry,
+  preferredTriangleOwners: ReadonlyMap<string, number>,
+  targetVariantIndex: number,
+): THREE.BufferGeometry | null {
+  const positionAttribute = sourceGeometry.getAttribute('position');
+  if (!positionAttribute) {
+    return null;
+  }
+
+  const indexAttribute = getUsableGeometryIndex(sourceGeometry);
+  const indexArray = indexAttribute?.array ?? null;
+  const positionArray = positionAttribute.array;
+  const triangleCount = indexArray
+    ? Math.floor(indexArray.length / 3)
+    : Math.floor(positionAttribute.count / 3);
+  if (triangleCount <= 0) {
+    return null;
+  }
+
+  const emittedTriangles = new Set<string>();
+
+  if (indexArray) {
+    const indexRemap = new Map<number, number>();
+    const sourceVertexIndexes: number[] = [];
+    const nextIndexes: number[] = [];
+
+    for (let triangleIndex = 0; triangleIndex < triangleCount; triangleIndex += 1) {
+      const triangleStart = triangleIndex * 3;
+      const triangleKey = buildTriangleKey(
+        positionArray,
+        positionAttribute.itemSize,
+        indexArray,
+        triangleStart,
+      );
+      const preferredOwner = preferredTriangleOwners.get(triangleKey);
+      if (preferredOwner != null && preferredOwner !== targetVariantIndex) {
+        continue;
+      }
+      const shouldDeduplicateTriangle = preferredOwner != null;
+      if (shouldDeduplicateTriangle && emittedTriangles.has(triangleKey)) {
+        continue;
+      }
+      if (shouldDeduplicateTriangle) {
+        emittedTriangles.add(triangleKey);
+      }
+
+      for (let offset = 0; offset < 3; offset += 1) {
+        const sourceVertexIndex = Number(indexArray[triangleStart + offset] ?? 0);
+        let nextVertexIndex = indexRemap.get(sourceVertexIndex);
+        if (nextVertexIndex == null) {
+          nextVertexIndex = sourceVertexIndexes.length;
+          indexRemap.set(sourceVertexIndex, nextVertexIndex);
+          sourceVertexIndexes.push(sourceVertexIndex);
+        }
+        nextIndexes.push(nextVertexIndex);
+      }
+    }
+
+    if (nextIndexes.length === 0 || sourceVertexIndexes.length === 0) {
+      return null;
+    }
+
+    const subsetGeometry = new THREE.BufferGeometry();
+    Object.entries(sourceGeometry.attributes).forEach(([attributeName, attribute]) => {
+      subsetGeometry.setAttribute(attributeName, cloneAttributeSubset(attribute, sourceVertexIndexes));
+    });
+    subsetGeometry.setIndex(nextIndexes);
+    subsetGeometry.computeBoundingBox();
+    subsetGeometry.computeBoundingSphere();
+    return subsetGeometry;
+  }
+
+  const vertexIndexes: number[] = [];
+  for (let triangleIndex = 0; triangleIndex < triangleCount; triangleIndex += 1) {
+    const triangleStart = triangleIndex * 3;
+    const triangleKey = buildTriangleKey(
+      positionArray,
+      positionAttribute.itemSize,
+      null,
+      triangleStart,
+    );
+    const preferredOwner = preferredTriangleOwners.get(triangleKey);
+    if (preferredOwner != null && preferredOwner !== targetVariantIndex) {
+      continue;
+    }
+    const shouldDeduplicateTriangle = preferredOwner != null;
+    if (shouldDeduplicateTriangle && emittedTriangles.has(triangleKey)) {
+      continue;
+    }
+    if (shouldDeduplicateTriangle) {
+      emittedTriangles.add(triangleKey);
+    }
+
+    vertexIndexes.push(triangleStart, triangleStart + 1, triangleStart + 2);
+  }
+
+  if (vertexIndexes.length === 0) {
+    return null;
+  }
+
+  const subsetGeometry = new THREE.BufferGeometry();
+  Object.entries(sourceGeometry.attributes).forEach(([attributeName, attribute]) => {
+    subsetGeometry.setAttribute(attributeName, cloneAttributeSubset(attribute, vertexIndexes));
+  });
+  subsetGeometry.computeBoundingBox();
+  subsetGeometry.computeBoundingSphere();
+  return subsetGeometry;
+}
+
+function shouldBakeCoplanarAnchorOffset(
+  materials: readonly THREE.Material[],
+  materialIndex: number | undefined,
+): boolean {
+  if (materialIndex == null) {
+    return false;
+  }
+
+  const targetMaterial = materials[materialIndex];
+  if (!targetMaterial) {
+    return false;
+  }
+
+  return materials.some((candidateMaterial) => isCoplanarOffsetMaterial(candidateMaterial))
+    && !isCoplanarOffsetMaterial(targetMaterial);
+}
+
+function applyGeometryNormalOffset(
+  geometry: THREE.BufferGeometry,
+  distance: number,
+): void {
+  if (!Number.isFinite(distance) || Math.abs(distance) < 1e-9) {
+    return;
+  }
+
+  let normalAttribute = geometry.getAttribute('normal');
+  if (!normalAttribute) {
+    geometry.computeVertexNormals();
+    normalAttribute = geometry.getAttribute('normal');
+  }
+
+  const positionAttribute = geometry.getAttribute('position');
+  if (!positionAttribute || !normalAttribute) {
+    return;
+  }
+
+  for (let vertexIndex = 0; vertexIndex < positionAttribute.count; vertexIndex += 1) {
+    positionAttribute.setXYZ(
+      vertexIndex,
+      positionAttribute.getX(vertexIndex) + (normalAttribute.getX(vertexIndex) * distance),
+      positionAttribute.getY(vertexIndex) + (normalAttribute.getY(vertexIndex) * distance),
+      positionAttribute.getZ(vertexIndex) + (normalAttribute.getZ(vertexIndex) * distance),
+    );
+  }
+
+  positionAttribute.needsUpdate = true;
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
 }
 
 function createBakedVariantMesh(
@@ -292,19 +694,22 @@ function createBakedVariantMesh(
   }
 
   const geometry = mesh.geometry.clone();
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   if (materialIndex != null && geometry.groups.length > 0) {
-    const subsetGeometry = extractGeometryForMaterial(mesh.geometry, materialIndex);
+    const subsetGeometry = extractGeometryForMaterial(mesh.geometry, materials, materialIndex);
     geometry.dispose();
     if (!subsetGeometry) {
       return null;
     }
     subsetGeometry.clearGroups();
+    subsetGeometry.applyMatrix4(mesh.matrixWorld);
+    if (shouldBakeCoplanarAnchorOffset(materials, materialIndex)) {
+      applyGeometryNormalOffset(subsetGeometry, COPLANAR_ANCHOR_BAKE_OFFSET);
+    }
     subsetGeometry.computeBoundingBox();
     subsetGeometry.computeBoundingSphere();
     const bakedMaterial = material.clone();
     bakedMaterial.name = material.name;
-
-    subsetGeometry.applyMatrix4(mesh.matrixWorld);
     const bakedMesh = new THREE.Mesh(subsetGeometry, bakedMaterial);
     bakedMesh.name = mesh.name || material.name || 'mesh_variant';
     bakedMesh.updateMatrixWorld(true);
@@ -333,9 +738,9 @@ function extractVisualMeshVariants(
   objExporter: OBJExporter,
 ): ExtractedVisualMeshVariant[] {
   const variantFiles: ExtractedVisualMeshVariant[] = [];
+  const pendingVariants: PendingVisualMeshVariant[] = [];
   meshObject.updateMatrixWorld(true);
 
-  let variantIndex = 0;
   meshObject.traverse((child) => {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh || !mesh.material) {
@@ -361,32 +766,61 @@ function extractVisualMeshVariants(
       }
 
       try {
-        const exportPath = buildConvertedVisualVariantPath(
-          sourceMeshPath,
-          material.name,
-          variantIndex,
-          usedArchivePaths,
-        );
-        if (!exportPath) {
-          return;
-        }
-
-        const exportedObj = objExporter.parse(bakedMesh);
-        if (exportedObj.trim().length === 0) {
-          return;
-        }
-
-        variantFiles.push({
-          meshPath: exportPath,
-          color: colorToHex(getMaterialColor(material)),
-          sourceMaterialName: material.name || undefined,
-          blob: new Blob([exportedObj], { type: 'text/plain' }),
+        pendingVariants.push({
+          geometry: bakedMesh.geometry.clone(),
+          material: (bakedMesh.material as THREE.Material).clone(),
+          meshName: bakedMesh.name || material.name || 'mesh_variant',
         });
-        variantIndex += 1;
       } finally {
         disposeObject3D(bakedMesh, true);
       }
     });
+  });
+
+  const preferredTriangleOwners = buildSceneVariantTriangleOwnerMap(pendingVariants);
+
+  pendingVariants.forEach((variant, variantIndex) => {
+    const filteredGeometry = buildSceneVariantGeometrySubset(
+      variant.geometry,
+      preferredTriangleOwners,
+      variantIndex,
+    );
+
+    try {
+      if (!filteredGeometry) {
+        return;
+      }
+
+      const exportPath = buildConvertedVisualVariantPath(
+        sourceMeshPath,
+        variant.material.name,
+        variantIndex,
+        usedArchivePaths,
+      );
+      if (!exportPath) {
+        return;
+      }
+
+      const exportMesh = new THREE.Mesh(filteredGeometry, variant.material);
+      exportMesh.name = variant.meshName;
+      exportMesh.updateMatrixWorld(true);
+      const exportedObj = objExporter.parse(exportMesh);
+      disposeObject3D(exportMesh, true);
+
+      if (exportedObj.trim().length === 0) {
+        return;
+      }
+
+      variantFiles.push({
+        meshPath: exportPath,
+        color: colorToHex(getMaterialColor(variant.material)),
+        sourceMaterialName: variant.material.name || undefined,
+        blob: new Blob([exportedObj], { type: 'text/plain' }),
+      });
+    } finally {
+      variant.geometry.dispose();
+      variant.material.dispose();
+    }
   });
 
   return variantFiles;

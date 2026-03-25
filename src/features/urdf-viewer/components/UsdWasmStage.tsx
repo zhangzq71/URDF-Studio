@@ -49,6 +49,7 @@ import {
   setUsdHoverPointerState,
 } from '../utils/usdHoverPointerState';
 import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
+import { hasPickableMaterial, isInternalHelperObject, isVisibleInHierarchy } from '../utils/pickFilter';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import { resolveUsdMeasureTargetFromSelection } from '../utils/measureTargetResolvers';
 import { reconcileUsdCollisionMeshAssignments } from '../utils/usdCollisionMeshAssignments';
@@ -1465,9 +1466,15 @@ export function UsdWasmStage({
     }
 
     const { meshMetaByObject, pickMeshes } = rebuildRuntimeMeshIndex();
-    const hits = raycaster.intersectObjects(pickMeshes, false);
+    const hits = raycaster.intersectObjects(pickMeshes, false).sort((left, right) => left.distance - right.distance);
     for (const hit of hits) {
-      if (hit.object.visible === false || isGizmoObject(hit.object)) {
+      if (
+        hit.object.visible === false
+        || isGizmoObject(hit.object)
+        || isInternalHelperObject(hit.object)
+        || !isVisibleInHierarchy(hit.object)
+        || ((hit.object as THREE.Mesh).isMesh && !hasPickableMaterial((hit.object as THREE.Mesh).material))
+      ) {
         continue;
       }
 

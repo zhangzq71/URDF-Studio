@@ -78,23 +78,23 @@ export async function initializeViewerScene(options) {
     renderer.toneMapping = NeutralToneMapping;
     renderer.shadowMap.enabled = false;
     renderer.shadowMap.type = VSMShadowMap;
-    renderer.toneMappingExposure = 0.95;
+    renderer.toneMappingExposure = 1.06;
     renderer.setClearColor(0xd7dde8, 1);
     // Keep a deterministic direct-light baseline so dark materials do not collapse
     // into black silhouettes when environment lighting is weak or delayed.
     if (parseQueryBoolean(params.get("fallbackLights"), true)) {
-        const ambient = new AmbientLight(0xffffff, parseNonNegativeNumber(params.get("ambientIntensity"), 0.38));
+        const ambient = new AmbientLight(0xffffff, parseNonNegativeNumber(params.get("ambientIntensity"), 0.46));
         ambient.name = "ViewerAmbientLight";
         scene.add(ambient);
-        const keyLight = new DirectionalLight(0xffffff, parseNonNegativeNumber(params.get("keyLightIntensity"), 1.15));
+        const keyLight = new DirectionalLight(0xffffff, parseNonNegativeNumber(params.get("keyLightIntensity"), 1.25));
         keyLight.name = "ViewerKeyLight";
         keyLight.position.set(6, 8, 6);
         scene.add(keyLight);
-        const fillLight = new DirectionalLight(0xd7e6ff, parseNonNegativeNumber(params.get("fillLightIntensity"), 0.55));
+        const fillLight = new DirectionalLight(0xd7e6ff, parseNonNegativeNumber(params.get("fillLightIntensity"), 0.8));
         fillLight.name = "ViewerFillLight";
         fillLight.position.set(-7, 4, -6);
         scene.add(fillLight);
-        const rimLight = new DirectionalLight(0xfff2d4, parseNonNegativeNumber(params.get("rimLightIntensity"), 0.35));
+        const rimLight = new DirectionalLight(0xfff2d4, parseNonNegativeNumber(params.get("rimLightIntensity"), 0.48));
         rimLight.name = "ViewerRimLight";
         rimLight.position.set(0, 10, -10);
         scene.add(rimLight);

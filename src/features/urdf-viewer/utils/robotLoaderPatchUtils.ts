@@ -85,20 +85,21 @@ export function updateVisualMaterial(
 
   const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
 
-  const update = (mat: THREE.Material): THREE.Material => {
-    const map = (mat as any).map || null;
-    const next = createMatteMaterial({
-      color: colorOverride,
-      opacity: mat.opacity ?? 1,
-      transparent: mat.transparent || (mat.opacity ?? 1) < 1,
-      side: mat.side,
-      map,
-      name: mat.name,
-    });
-    next.userData.urdfColorApplied = true;
-    next.userData.urdfColor = new THREE.Color(colorOverride);
-    return next;
-  };
+    const update = (mat: THREE.Material): THREE.Material => {
+      const map = (mat as any).map || null;
+      const next = createMatteMaterial({
+        color: colorOverride,
+        opacity: mat.opacity ?? 1,
+        transparent: mat.transparent || (mat.opacity ?? 1) < 1,
+        side: mat.side,
+        map,
+        name: mat.name,
+        preserveExactColor: true,
+      });
+      next.userData.urdfColorApplied = true;
+      next.userData.urdfColor = new THREE.Color(colorOverride);
+      return next;
+    };
 
   if (Array.isArray(mesh.material)) {
     mesh.material = mesh.material.map((mat) => update(mat));

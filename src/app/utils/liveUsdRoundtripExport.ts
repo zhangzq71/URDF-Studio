@@ -1,5 +1,5 @@
 import type { RobotFile } from '@/types';
-import { exportUsdStageSnapshot } from '@/features/urdf-viewer/utils/usdStageExport';
+import { exportUsdStageSnapshot } from '@/features/urdf-viewer';
 
 import {
   buildUsdRoundtripArchive,

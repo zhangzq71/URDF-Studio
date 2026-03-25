@@ -145,6 +145,48 @@ test('the main joint value editor uses the compact width and font sizing', async
   dom.window.close();
 });
 
+test('limit editors reserve column width while editing so the slider cannot overlap them', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root);
+
+  const lowerLimitDisplay = Array.from(container.querySelectorAll('div')).find(
+    (node) => node.textContent === '-1.57',
+  );
+  assert.ok(lowerLimitDisplay, 'lower limit display should render');
+
+  await act(async () => {
+    lowerLimitDisplay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+
+  const lowerInput = container.querySelector('input[type="text"]');
+  assert.ok(lowerInput, 'lower limit editor should open');
+  assert.match(lowerInput.parentElement?.className ?? '', /min-w-\[2\.35rem\]/);
+
+  await act(async () => {
+    lowerInput.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+  });
+
+  const upperLimitDisplay = Array.from(container.querySelectorAll('div')).find(
+    (node) => node.textContent === '3.49',
+  );
+  assert.ok(upperLimitDisplay, 'upper limit display should render');
+
+  await act(async () => {
+    upperLimitDisplay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+
+  const editors = Array.from(container.querySelectorAll('input[type="text"]'));
+  const upperInput = editors.at(-1) ?? null;
+  assert.ok(upperInput, 'upper limit editor should open');
+  assert.match(upperInput.parentElement?.className ?? '', /min-w-\[2\.35rem\]/);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
 test('finite-limit sliders keep imported out-of-range poses visible instead of clamping them', async () => {
   const { dom, container, root } = createComponentRoot();
 

@@ -4,7 +4,7 @@ import {
   inferUsdBundleVirtualDirectory,
   isUsdPathWithinBundleDirectory,
   toVirtualUsdPath,
-} from '@/features/urdf-viewer/utils/usdPreloadSources';
+} from '@/features/urdf-viewer';
 
 interface UsdRoundtripStageExport {
   content: string;

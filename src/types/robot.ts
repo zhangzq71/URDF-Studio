@@ -2,6 +2,7 @@
  * Robot model related types
  */
 
+import type { UsdSceneMaterialRecord } from './usd';
 import type { Vector3, Euler, UrdfVisual } from './geometry';
 
 export enum JointType {
@@ -100,12 +101,18 @@ export interface RobotClosedLoopConstraint {
   source?: RobotClosedLoopConstraintSource;
 }
 
+export interface RobotMaterialState {
+  color?: string;
+  texture?: string;
+  usdMaterial?: UsdSceneMaterialRecord | null;
+}
+
 export interface RobotState {
   name: string;
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  materials?: Record<string, { color?: string; texture?: string }>;
+  materials?: Record<string, RobotMaterialState>;
   closedLoopConstraints?: RobotClosedLoopConstraint[];
   selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
 }
@@ -116,7 +123,7 @@ export interface RobotData {
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
-  materials?: Record<string, { color?: string; texture?: string }>;
+  materials?: Record<string, RobotMaterialState>;
   closedLoopConstraints?: RobotClosedLoopConstraint[];
 }
 

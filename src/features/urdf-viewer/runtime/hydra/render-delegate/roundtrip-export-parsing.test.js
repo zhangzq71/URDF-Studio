@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Color } from 'three';
+import { Color, MeshPhysicalMaterial, Texture } from 'three';
 
 import {
     parseColliderEntriesFromLayerText,
@@ -416,13 +416,32 @@ test('normalizeRobotSceneSnapshot serializes preferred live visual materials by 
             driver: () => null,
             allowDriverStageLookup: false,
         });
+        const preferredMaterial = new MeshPhysicalMaterial({
+            color: new Color('#d6d9e4'),
+            roughness: 0.28,
+            metalness: 0.63,
+            emissive: new Color('#223344'),
+            emissiveIntensity: 1.4,
+            opacity: 0.85,
+            transparent: true,
+            transmission: 0.18,
+            thickness: 0.12,
+            ior: 1.45,
+            clearcoat: 0.22,
+            clearcoatRoughness: 0.41,
+        });
+        preferredMaterial.name = 'Body';
+        preferredMaterial.map = new Texture();
+        preferredMaterial.map.name = 'textures/body_basecolor.png';
+        preferredMaterial.roughnessMap = new Texture();
+        preferredMaterial.roughnessMap.name = 'textures/body_roughness.png';
+        preferredMaterial.normalMap = new Texture();
+        preferredMaterial.normalMap.name = 'textures/body_normal.png';
+        preferredMaterial.alphaMap = new Texture();
+        preferredMaterial.alphaMap.name = 'textures/body_opacity.png';
         delegate.getPreferredVisualMaterialForLink = (linkPath) => (
             linkPath === '/Robot/base_link'
-                ? {
-                    name: 'Body',
-                    color: new Color('#d6d9e4'),
-                    opacity: 1,
-                }
+                ? preferredMaterial
                 : null
         );
 
@@ -456,12 +475,25 @@ test('normalizeRobotSceneSnapshot serializes preferred live visual materials by 
         assert.ok(snapshot.render.preferredVisualMaterialsByLinkPath);
         const preferredRecord = snapshot.render.preferredVisualMaterialsByLinkPath['/Robot/base_link'];
         assert.equal(preferredRecord.name, 'Body');
-        assert.equal(preferredRecord.opacity, 1);
         assert.ok(Array.isArray(preferredRecord.color));
         const expectedColor = new Color('#d6d9e4');
         assert.ok(Math.abs(preferredRecord.color[0] - expectedColor.r) < 1e-6);
         assert.ok(Math.abs(preferredRecord.color[1] - expectedColor.g) < 1e-6);
         assert.ok(Math.abs(preferredRecord.color[2] - expectedColor.b) < 1e-6);
+        assert.equal(preferredRecord.opacity, 0.85);
+        assert.equal(preferredRecord.roughness, 0.28);
+        assert.equal(preferredRecord.metalness, 0.63);
+        assert.ok(Array.isArray(preferredRecord.emissive));
+        assert.equal(preferredRecord.emissiveIntensity, 1.4);
+        assert.equal(preferredRecord.transmission, 0.18);
+        assert.equal(preferredRecord.thickness, 0.12);
+        assert.equal(preferredRecord.ior, 1.45);
+        assert.equal(preferredRecord.clearcoat, 0.22);
+        assert.equal(preferredRecord.clearcoatRoughness, 0.41);
+        assert.equal(preferredRecord.mapPath, 'textures/body_basecolor.png');
+        assert.equal(preferredRecord.roughnessMapPath, 'textures/body_roughness.png');
+        assert.equal(preferredRecord.normalMapPath, 'textures/body_normal.png');
+        assert.equal(preferredRecord.alphaMapPath, 'textures/body_opacity.png');
     }
     finally {
         globalThis.window = previousWindow;

@@ -121,7 +121,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
   const [contextLost, setContextLost] = useState(false);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const canvasContextMenuCleanupRef = useRef<(() => void) | null>(null);
-  const environmentIntensity = resolvedTheme === 'light' ? 0.24 : 0.22;
+  const environmentIntensity = resolvedTheme === 'light' ? 0.34 : 0.32;
   const {
     dpr,
     isInteracting,
