@@ -1,5 +1,11 @@
-import { createUsdPlaceholderRobotData, resolveRobotFileData } from '@/core/parsers/importRobotFile';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
+import {
+  createUsdPlaceholderRobotData,
+  resolveRobotFileData,
+  type RobotImportResult,
+} from '@/core/parsers/importRobotFile';
 import type { RobotData, RobotFile, RobotState } from '@/types';
+import { parseEditableRobotSourceWithWorker } from './robotImportWorkerBridge';
 
 type JsonLike =
   | null
@@ -49,6 +55,37 @@ export function createRobotSourceSnapshot(robot: RobotState): string {
   }));
 }
 
+interface CreateRobotSourceSnapshotFromUrdfContentOptions {
+  sourcePath: string;
+}
+
+export async function createRobotSourceSnapshotFromUrdfContent(
+  content: string,
+  { sourcePath }: CreateRobotSourceSnapshotFromUrdfContentOptions,
+): Promise<string | null> {
+  const parsed = await parseEditableRobotSourceWithWorker({
+    file: {
+      format: 'urdf',
+      name: sourcePath,
+    },
+    content,
+  });
+
+  if (!parsed) {
+    return null;
+  }
+
+  return createRobotSourceSnapshot(
+    rewriteRobotMeshPathsForSource(
+      {
+        ...parsed,
+        selection: { type: null, id: null },
+      },
+      sourcePath,
+    ),
+  );
+}
+
 interface PreferredMjcfContentOptions {
   sourceContent?: string | null;
   generatedContent?: string | null;
@@ -67,7 +104,7 @@ export function getPreferredMjcfContent({
   return sourceContent ?? generatedContent ?? null;
 }
 
-interface PreferredUrdfContentOptions {
+interface PreferredXmlContentOptions {
   fileContent?: string | null;
   originalContent?: string | null;
   generatedContent?: string | null;
@@ -81,17 +118,25 @@ interface UseEmptyRobotForUsdHydrationOptions {
   documentLoadFileName?: string | null;
 }
 
-export function getPreferredUrdfContent({
+function getPreferredXmlContent({
   fileContent,
   originalContent,
   generatedContent,
   hasStoreEdits,
-}: PreferredUrdfContentOptions): string | null {
+}: PreferredXmlContentOptions): string | null {
   if (hasStoreEdits) {
     return generatedContent ?? fileContent ?? originalContent ?? null;
   }
 
   return fileContent ?? originalContent ?? generatedContent ?? null;
+}
+
+export function getPreferredUrdfContent(options: PreferredXmlContentOptions): string | null {
+  return getPreferredXmlContent(options);
+}
+
+export function getPreferredXacroContent(options: PreferredXmlContentOptions): string | null {
+  return getPreferredXmlContent(options);
 }
 
 export function shouldUseEmptyRobotForUsdHydration({
@@ -111,6 +156,7 @@ export function shouldUseEmptyRobotForUsdHydration({
 interface CreatePreviewRobotStateOptions {
   availableFiles: RobotFile[];
   assets?: Record<string, string>;
+  allFileContents?: Record<string, string>;
   usdRobotData?: RobotData | null;
 }
 
@@ -119,15 +165,24 @@ export function createPreviewRobotState(
   {
     availableFiles,
     assets,
+    allFileContents,
     usdRobotData,
   }: CreatePreviewRobotStateOptions,
 ): RobotState | null {
   const resolved = resolveRobotFileData(file, {
     availableFiles,
     assets,
+    allFileContents,
     usdRobotData,
   });
 
+  return createPreviewRobotStateFromImportResult(file, resolved);
+}
+
+export function createPreviewRobotStateFromImportResult(
+  file: RobotFile,
+  resolved: RobotImportResult,
+): RobotState | null {
   if (resolved.status === 'ready') {
     return {
       ...resolved.robotData,

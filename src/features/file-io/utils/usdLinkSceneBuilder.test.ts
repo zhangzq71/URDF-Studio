@@ -54,6 +54,12 @@ const createTwoLinkRobot = (): RobotState => {
           color: '#4f46e5',
           origin: { xyz: { x: 0.25, y: 0.5, z: 0.75 }, rpy: { r: 0, p: 0, y: 0 } },
         },
+        visualBodies: [{
+          type: GeometryType.SPHERE,
+          dimensions: { x: 0.15, y: 0, z: 0 },
+          color: '#f97316',
+          origin: { xyz: { x: -0.25, y: 0, z: 0.1 }, rpy: { r: 0, p: 0, y: 0 } },
+        }],
         collision: {
           type: GeometryType.BOX,
           dimensions: { x: 0.5, y: 0.3, z: 0.2 },
@@ -119,6 +125,8 @@ test('buildUsdLinkSceneRoot builds visual and collision scopes with joint-author
   assert.equal(baseVisual.userData.usdMaterial.color, '#12ab34');
   assert.equal(baseVisual.userData.usdMaterial.texture, 'textures/base_color.png');
   assert.equal(baseVisual.getObjectByName('box')?.userData.usdDisplayColor, '#12ab34');
+  assert.equal(visuals.children[1]?.name, 'visual_1');
+  assert.equal(visuals.children[1]?.getObjectByName('sphere')?.userData.usdDisplayColor, '#12ab34');
 
   const childLink = root.getObjectByName('link1');
   assert.ok(childLink instanceof THREE.Group);

@@ -1,16 +1,26 @@
 import {
-  prepareImportPayload,
   type PrepareImportPayloadArgs,
   type ImportPreparationFileDescriptor,
   type PreparedImportPayload,
   type PrepareImportWorkerRequest,
   type PrepareImportWorkerResponse,
 } from '@/app/utils/importPreparation';
+import { hydratePreparedImportPayloadFromWorker } from '@/app/utils/importPreparationTransfer';
 
 interface PendingWorkerRequest {
   resolve: (value: PreparedImportPayload) => void;
   reject: (error: unknown) => void;
 }
+
+const EMPTY_PREPARED_IMPORT_PAYLOAD: PreparedImportPayload = {
+  robotFiles: [],
+  assetFiles: [],
+  usdSourceFiles: [],
+  libraryFiles: [],
+  textFiles: [],
+  preferredFileName: null,
+  preResolvedImports: [],
+};
 
 const pendingWorkerRequests = new Map<number, PendingWorkerRequest>();
 let requestIdCounter = 0;
@@ -55,16 +65,17 @@ function handleSharedWorkerMessage(event: MessageEvent<PrepareImportWorkerRespon
   }
 
   if (message.type === 'prepare-import-error') {
+    workerUnavailable = true;
     pendingRequest.reject(new Error(message.error || 'Import preparation worker failed'));
+    disposeSharedWorker();
     return;
   }
 
-  pendingRequest.resolve(message.payload ?? {
-    robotFiles: [],
-    assetFiles: [],
-    usdSourceFiles: [],
-    libraryFiles: [],
-  });
+  pendingRequest.resolve(
+    message.payload
+      ? hydratePreparedImportPayloadFromWorker(message.payload)
+      : EMPTY_PREPARED_IMPORT_PAYLOAD,
+  );
 }
 
 function handleSharedWorkerError(event: ErrorEvent): void {
@@ -89,49 +100,55 @@ function ensureSharedWorker(): Worker {
 export async function prepareImportPayloadWithWorker(
   args: PrepareImportPayloadArgs,
 ): Promise<PreparedImportPayload> {
-  if (workerUnavailable || typeof Worker === 'undefined') {
-    return prepareImportPayload(args);
+  if (workerUnavailable) {
+    throw new Error('Import preparation worker is unavailable');
   }
 
-  try {
-    return await new Promise<PreparedImportPayload>((resolve, reject) => {
-      const requestId = ++requestIdCounter;
-      const worker = ensureSharedWorker();
-      const files: ImportPreparationFileDescriptor[] = [...args.files].map((input) => {
-        if (input instanceof File) {
-          return {
-            file: input,
-            relativePath: input.webkitRelativePath || input.name,
-          };
-        }
+  if (typeof Worker === 'undefined') {
+    throw new Error('Web Worker is not available in this environment');
+  }
 
-        return {
-          file: input.file,
-          relativePath: input.relativePath || input.file.webkitRelativePath || input.file.name,
-        };
-      });
-      const request: PrepareImportWorkerRequest = {
-        type: 'prepare-import',
-        requestId,
-        files,
-        existingPaths: [...args.existingPaths],
-      };
+  return new Promise<PreparedImportPayload>((resolve, reject) => {
+    const requestId = ++requestIdCounter;
+    let worker: Worker;
 
-      pendingWorkerRequests.set(requestId, { resolve, reject });
-
-      try {
-        worker.postMessage(request);
-      } catch (error) {
-        clearPendingWorkerRequest(requestId);
-        reject(error);
-      }
-    });
-  } catch (error) {
-    if (workerUnavailable) {
-      console.warn('Import preparation worker unavailable, falling back to main thread', error);
-    } else {
-      console.warn('Import preparation worker failed for this request, retrying on main thread', error);
+    try {
+      worker = ensureSharedWorker();
+    } catch (error) {
+      workerUnavailable = true;
+      reject(error);
+      return;
     }
-    return prepareImportPayload(args);
-  }
+
+    const files: ImportPreparationFileDescriptor[] = [...args.files].map((input) => {
+      if (input instanceof File) {
+        return {
+          file: input,
+          relativePath: input.webkitRelativePath || input.name,
+        };
+      }
+
+      return {
+        file: input.file,
+        relativePath: input.relativePath || input.file.webkitRelativePath || input.file.name,
+      };
+    });
+    const request: PrepareImportWorkerRequest = {
+      type: 'prepare-import',
+      requestId,
+      files,
+      existingPaths: [...args.existingPaths],
+    };
+
+    pendingWorkerRequests.set(requestId, { resolve, reject });
+
+    try {
+      worker.postMessage(request);
+    } catch (error) {
+      workerUnavailable = true;
+      clearPendingWorkerRequest(requestId);
+      disposeSharedWorker(error);
+      reject(error);
+    }
+  });
 }

@@ -203,7 +203,7 @@ export function useLibraryFileActions({
   ]);
 
   const handleExportLibraryFile = useCallback((file: RobotFile) => {
-    if (file.format !== 'urdf' && file.format !== 'mjcf') {
+    if (file.format !== 'urdf' && file.format !== 'mjcf' && file.format !== 'xacro' && file.format !== 'sdf') {
       showToast(t.onlyUrdfMjcfExport, 'info');
       return;
     }

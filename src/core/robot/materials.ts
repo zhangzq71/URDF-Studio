@@ -1,4 +1,5 @@
 import { GeometryType, type RobotData, type UrdfLink } from '@/types';
+import { getVisualGeometryEntries } from './visualBodies';
 
 type RobotMaterials = RobotData['materials'];
 type RobotMaterialEntry = NonNullable<RobotMaterials>[string];
@@ -36,7 +37,7 @@ export function syncRobotMaterialsForLinkUpdate(
   previousLink?: UrdfLink,
 ): RobotMaterials | undefined {
   const existingEntry = resolveExistingMaterialEntry(materials, nextLink, previousLink);
-  const shouldTrackEntry = nextLink.visual.type !== GeometryType.NONE
+  const shouldTrackEntry = getVisualGeometryEntries(nextLink).length > 0
     || Boolean(existingEntry?.color || existingEntry?.texture || existingEntry?.usdMaterial);
 
   if (!shouldTrackEntry) {
@@ -89,7 +90,6 @@ export function syncRobotVisualColorsFromMaterials<T extends Pick<RobotData, 'li
         robot.materials?.[link.id]?.color
         || robot.materials?.[link.name]?.color,
       );
-
       if (
         !materialColor
         || link.visual.type === GeometryType.NONE

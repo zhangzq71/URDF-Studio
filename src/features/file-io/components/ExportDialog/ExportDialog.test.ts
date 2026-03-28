@@ -114,7 +114,7 @@ async function changeRangeValue(input: HTMLInputElement, value: number) {
   });
 }
 
-test('MJCF, URDF, and USD exports expose a custom compression mode with a slider', async () => {
+test('MJCF, URDF, SDF, and USD exports expose a custom compression mode with a slider', async () => {
   const { dom, container, root } = createComponentRoot();
 
   try {
@@ -126,6 +126,10 @@ test('MJCF, URDF, and USD exports expose a custom compression mode with a slider
     await click(getButtonByText(container, 'URDF'));
     await click(getButtonByText(container, '自定义'));
     assert.ok(getQualitySlider(container), 'URDF custom compression slider should render');
+
+    await click(getButtonByText(container, 'SDF'));
+    await click(getButtonByText(container, '自定义'));
+    assert.ok(getQualitySlider(container), 'SDF custom compression slider should render');
 
     await click(getButtonByText(container, 'USD'));
     await click(getButtonByText(container, '自定义'));

@@ -76,15 +76,15 @@ function MeasureSlotChip({
                     onActivate();
                 }
             }}
-            className={`flex w-full items-center gap-1.5 rounded-md border px-1.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+            className={`flex w-full items-center gap-[5px] rounded-[10px] border px-[5px] py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
                 isActive
-                    ? 'border-system-blue bg-system-blue/10'
+                    ? 'border-system-blue/75 bg-system-blue/10 shadow-[inset_0_0_0_1px_rgba(0,122,255,0.06)]'
                     : target
-                        ? 'border-system-blue/35 bg-system-blue/5 hover:bg-system-blue/10'
+                        ? 'border-system-blue/25 bg-system-blue/5 hover:border-system-blue/40 hover:bg-system-blue/8'
                         : 'border-border-black/60 bg-panel-bg hover:bg-element-hover'
             }`}
         >
-            <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold ${
+            <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[8px] border text-[9px] font-semibold ${
                 isActive
                     ? 'border-system-blue bg-system-blue-solid text-white'
                     : 'border-border-black/60 bg-element-bg text-text-secondary'
@@ -92,7 +92,7 @@ function MeasureSlotChip({
                 {indexLabel}
             </span>
 
-            <span className={`min-w-0 flex-1 truncate text-[10px] ${
+            <span className={`min-w-0 flex-1 truncate text-[9px] leading-none ${
                 target
                     ? 'font-medium text-text-primary'
                     : isActive
@@ -105,7 +105,7 @@ function MeasureSlotChip({
             {target && (
                 <button
                     type="button"
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
+                    className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[8px] text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
                     aria-label={clearLabel}
                     onClick={(event) => {
                         event.stopPropagation();
@@ -119,7 +119,7 @@ function MeasureSlotChip({
                         }
                     }}
                 >
-                    <X className="h-3 w-3" />
+                    <X className="h-2.5 w-2.5" />
                 </button>
             )}
         </div>
@@ -194,7 +194,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
             zIndex={50}
             panelClassName="measure-panel"
         >
-            <div className="space-y-1.5 p-1.5">
+            <div className="space-y-[5px] p-[5px]">
                 <div className="rounded-md border border-border-black/60 bg-panel-bg p-1">
                     <div className="mb-1 flex items-center justify-between">
                         <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">{t.measureGroups}</span>

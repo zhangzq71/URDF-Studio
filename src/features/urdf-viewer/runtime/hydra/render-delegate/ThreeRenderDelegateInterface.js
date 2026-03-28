@@ -4045,7 +4045,6 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             // The instancer will manage the display of instances.
             mesh._mesh.visible = false;
             mesh.isPrototype = true;
-            // console.log("Hiding prototype mesh:", id, "for instancer:", instancerId);
         }
         this.meshes[normalizedId] = mesh;
         this._meshMutationVersion = Number(this._meshMutationVersion || 0) + 1;

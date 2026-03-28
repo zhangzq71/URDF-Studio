@@ -126,14 +126,16 @@ export const WorldOriginAxes = ({
   opacity = 1,
   renderOrder = 10,
 }: WorldOriginAxesProps) => (
-  <ThickerAxes
-    size={size}
-    position={[0, 0, lift]}
-    depthTest
-    depthWrite={opacity >= 1}
-    renderOrder={renderOrder}
-    opacity={opacity}
-  />
+  <group userData={{ isHelper: true, excludeFromSceneBounds: true }}>
+    <ThickerAxes
+      size={size}
+      position={[0, 0, lift]}
+      depthTest
+      depthWrite={opacity >= 1}
+      renderOrder={renderOrder}
+      opacity={opacity}
+    />
+  </group>
 );
 
 // Alias for backwards compatibility

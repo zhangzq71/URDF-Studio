@@ -84,7 +84,7 @@ export class JointPanelController {
             joints = await this.requestJointInfos();
         }
         catch (error) {
-            console.warn("Failed to refresh joint panel.", error);
+            console.error("Failed to refresh joint panel.", error);
             this.setVisible(true);
             this.renderStatus("Failed to load joint list.");
             return;

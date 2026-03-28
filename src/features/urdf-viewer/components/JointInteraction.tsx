@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo, useEffect, useCallback } from 'react'
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { UnifiedTransformControls } from '@/shared/components/3d';
+import { hasEffectivelyFiniteJointLimits } from '@/shared/utils/jointUnits';
 import type { JointInteractionProps } from '../types';
 
 export const JointInteraction: React.FC<JointInteractionProps> = ({
@@ -167,9 +168,7 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
 
             // Apply limits for revolute joints
             const limit = joint.limit;
-            const hasFiniteLimit = limit
-                && Number.isFinite(limit.lower)
-                && Number.isFinite(limit.upper);
+            const hasFiniteLimit = hasEffectivelyFiniteJointLimits(limit);
             if (joint.jointType === 'revolute' && hasFiniteLimit) {
                 newValue = Math.max(limit.lower, Math.min(limit.upper, newValue));
             }

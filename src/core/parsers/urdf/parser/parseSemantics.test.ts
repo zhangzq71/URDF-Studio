@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 import { isSyntheticWorldRoot } from '@/core/robot';
+import { GeometryType } from '@/types';
 import { parseURDF } from './index.ts';
 import { generateURDF } from '../urdfGenerator.ts';
 
@@ -80,6 +81,141 @@ test('generateURDF falls back to robot materials when exporting visual colors', 
   });
 
   assert.match(urdf, /<material name="base_link_mat">[\s\S]*?<color rgba="0\.07059216 0\.20392549 0\.33725882 1\.00000000"/);
+});
+
+test('generateURDF serializes additional visualBodies as extra visual tags', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="multi_visual_export">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="1 1 1" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+
+  robot.links.base_link.visualBodies = [{
+    type: GeometryType.MESH,
+    dimensions: { x: 0.5, y: 0.5, z: 0.5 },
+    color: '#abcdef',
+    meshPath: 'meshes/extra_part.dae',
+    origin: {
+      xyz: { x: 0.1, y: 0.2, z: 0.3 },
+      rpy: { r: 0, p: 0, y: 0.4 },
+    },
+  }];
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.equal((urdf.match(/<visual>/g) || []).length, 2);
+  assert.match(urdf, /<origin xyz="0\.1 0\.2 0\.3" rpy="0 0 0\.4" \/>/);
+  assert.match(urdf, /<mesh filename="package:\/\/multi_visual_export\/meshes\/extra_part\.dae" scale="0\.5 0\.5 0\.5" \/>/);
+  assert.match(urdf, /<material name="base_link_mat_1">[\s\S]*?<color rgba="0\.67059216 0\.80392549 0\.93725882 1\.00000000"/);
+});
+
+test('parseURDF preserves additional visuals on the same link as visualBodies', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="multi_visual_parse">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="1 2 3" />
+      </geometry>
+    </visual>
+    <visual>
+      <origin xyz="0.5 0 0" rpy="0 0 0.25" />
+      <geometry>
+        <mesh filename="meshes/extra_part.stl" />
+      </geometry>
+      <material name="painted">
+        <color rgba="0.2 0.4 0.6 1" />
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="1 2 3" />
+      </geometry>
+    </collision>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+  assert.equal(robot.links.base_link.visual.type, GeometryType.BOX);
+  assert.equal(robot.links.base_link.visualBodies?.length, 1);
+  assert.equal(robot.links.base_link.visualBodies?.[0]?.type, GeometryType.MESH);
+  assert.equal(robot.links.base_link.visualBodies?.[0]?.meshPath, 'meshes/extra_part.stl');
+  assert.deepEqual(robot.links.base_link.visualBodies?.[0]?.origin.xyz, { x: 0.5, y: 0, z: 0 });
+  assert.deepEqual(robot.links.base_link.visualBodies?.[0]?.origin.rpy, { r: 0, p: 0, y: 0.25 });
+  assert.equal(robot.links.base_link.visualBodies?.[0]?.color, '#336699');
+  assert.equal(robot.links.base_link.visualBodies?.[0]?.materialSource, 'inline');
+});
+
+test('parseURDF preserves SO101 multi-part link visuals from source files', () => {
+  const source = fs.readFileSync(
+    'test/awesome_robot_descriptions_repos/SO-ARM100/Simulation/SO101/so101_new_calib.urdf',
+    'utf8',
+  );
+  const robot = parseURDF(source);
+
+  assert.ok(robot);
+  assert.equal(robot.links.base_link.visual.meshPath, 'assets/base_motor_holder_so101_v1.stl');
+  assert.equal(robot.links.base_link.visualBodies?.length, 3);
+  assert.deepEqual(
+    robot.links.base_link.visualBodies?.map((body) => body.meshPath),
+    [
+      'assets/base_so101_v2.stl',
+      'assets/sts3215_03a_v1.stl',
+      'assets/waveshare_mounting_plate_so101_v2.stl',
+    ],
+  );
+  assert.equal(robot.links.shoulder_link.visualBodies?.length, 2);
+  assert.deepEqual(
+    robot.links.shoulder_link.visualBodies?.map((body) => body.meshPath),
+    [
+      'assets/motor_holder_so101_base_v1.stl',
+      'assets/rotation_pitch_so101_v1.stl',
+    ],
+  );
+  assert.equal(robot.links.lower_arm_link.visualBodies?.length, 2);
+});
+
+test('parseURDF preserves SO101 old calib yellow/black visual colors from ROS source files', () => {
+  const source = fs.readFileSync(
+    'test/awesome_robot_descriptions_repos/SO-ARM100/Simulation/SO101/so101_old_calib.urdf',
+    'utf8',
+  );
+  const robot = parseURDF(source);
+
+  assert.ok(robot);
+  const baseColors = new Map(
+    [robot.links.base.visual, ...(robot.links.base.visualBodies ?? [])]
+      .map((body) => [body.meshPath, body.color]),
+  );
+  const shoulderColors = new Map(
+    [robot.links.shoulder.visual, ...(robot.links.shoulder.visualBodies ?? [])]
+      .map((body) => [body.meshPath, body.color]),
+  );
+  const wristColors = new Map(
+    [robot.links.wrist.visual, ...(robot.links.wrist.visualBodies ?? [])]
+      .map((body) => [body.meshPath, body.color]),
+  );
+
+  assert.equal(baseColors.get('assets/base_motor_holder_so101_v1.stl'), '#ffd11e');
+  assert.equal(baseColors.get('assets/base_so101_v2.stl'), '#ffd11e');
+  assert.equal(baseColors.get('assets/sts3215_03a_v1.stl'), '#191919');
+  assert.equal(baseColors.get('assets/waveshare_mounting_plate_so101_v2.stl'), '#ffd11e');
+  assert.equal(shoulderColors.get('assets/sts3215_03a_v1.stl'), '#191919');
+  assert.equal(shoulderColors.get('assets/motor_holder_so101_base_v1.stl'), '#ffd11e');
+  assert.equal(shoulderColors.get('assets/rotation_pitch_so101_v1.stl'), '#ffd11e');
+  assert.equal(wristColors.get('assets/sts3215_03a_no_horn_v1.stl'), '#191919');
+  assert.equal(wristColors.get('assets/wrist_roll_pitch_so101_v2.stl'), '#ffd11e');
+  assert.equal(robot.links.jaw.visual.color, '#ffd11e');
 });
 
 test('generateURDF omits inline mesh colors when the mesh export already carries baked colors', () => {

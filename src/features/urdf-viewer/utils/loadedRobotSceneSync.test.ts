@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom';
 
 import { URDFLink, URDFVisual } from '@/core/parsers/urdf/loader/URDFClasses';
 
-import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial } from './materials';
+import { COLLISION_OVERLAY_RENDER_ORDER, MATERIAL_CONFIG, collisionBaseMaterial } from './materials';
 import { parseURDFMaterials } from './urdfMaterials';
 import { syncLoadedRobotScene } from './loadedRobotSceneSync';
 
@@ -95,9 +95,9 @@ test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte mate
     secondaryMaterial.color.toArray().map((value) => Number(value.toFixed(4))),
     toLinearTuple(0.05, 0.05, 0.05),
   );
-  assert.equal(primaryMaterial.roughness, 0.68);
-  assert.equal(primaryMaterial.metalness, 0.02);
-  assert.equal(primaryMaterial.envMapIntensity, 0.3);
+  assert.equal(primaryMaterial.roughness, MATERIAL_CONFIG.roughness);
+  assert.equal(primaryMaterial.metalness, MATERIAL_CONFIG.metalness);
+  assert.equal(primaryMaterial.envMapIntensity, MATERIAL_CONFIG.envMapIntensity);
   assert.equal(primaryMaterial.toneMapped, false);
   assert.equal(secondaryMaterial.toneMapped, false);
 });
@@ -138,9 +138,9 @@ test('syncLoadedRobotScene upgrades MJCF visual meshes to the shared matte viewe
   assert.equal(mjcfMesh.userData.parentLinkName, 'base_link');
   assert.equal(mjcfMesh.userData.isVisualMesh, true);
   assert.equal(mjcfMesh.userData.isCollisionMesh, false);
-  assert.equal(mjcfMesh.material.roughness, 0.68);
-  assert.equal(mjcfMesh.material.metalness, 0.02);
-  assert.equal(mjcfMesh.material.envMapIntensity, 0.3);
+  assert.equal(mjcfMesh.material.roughness, MATERIAL_CONFIG.roughness);
+  assert.equal(mjcfMesh.material.metalness, MATERIAL_CONFIG.metalness);
+  assert.equal(mjcfMesh.material.envMapIntensity, MATERIAL_CONFIG.envMapIntensity);
 });
 
 test('syncLoadedRobotScene keeps collision meshes as always-on-top overlays', () => {
@@ -180,4 +180,78 @@ test('syncLoadedRobotScene keeps collision meshes as always-on-top overlays', ()
   assert.equal(collisionMesh.renderOrder, COLLISION_OVERLAY_RENDER_ORDER);
   assert.equal(collisionBaseMaterial.depthTest, false);
   assert.equal(collisionBaseMaterial.depthWrite, false);
+});
+
+test('syncLoadedRobotScene traverses each collider subtree only once', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.name = 'base_collision';
+  (collisionGroup as any).isURDFCollider = true;
+
+  const nestedGroup = new THREE.Group();
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  nestedGroup.add(collisionMesh);
+  collisionGroup.add(nestedGroup);
+  link.add(collisionGroup);
+  robot.add(link);
+  (robot as any).links = { base_link: link };
+
+  const originalTraverse = collisionGroup.traverse.bind(collisionGroup);
+  let traverseCalls = 0;
+  collisionGroup.traverse = ((callback: (object: THREE.Object3D) => void) => {
+    traverseCalls += 1;
+    return originalTraverse(callback);
+  }) as typeof collisionGroup.traverse;
+
+  syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: true,
+    showVisual: true,
+    urdfMaterials: null,
+  });
+
+  assert.equal(traverseCalls, 0);
+  assert.equal(collisionMesh.userData.parentLinkName, 'base_link');
+});
+
+test('syncLoadedRobotScene skips hidden collider subtree processing when collisions are disabled', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.name = 'base_collision';
+  (collisionGroup as any).isURDFCollider = true;
+
+  const collisionMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    collisionMaterial,
+  );
+  collisionGroup.add(collisionMesh);
+  link.add(collisionGroup);
+  robot.add(link);
+  (robot as any).links = { base_link: link };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.linkMeshMap.has('base_link:collision'), false);
+  assert.equal(collisionGroup.visible, false);
+  assert.equal(collisionGroup.userData.parentLinkName, 'base_link');
+  assert.equal(collisionMesh.userData.isCollisionMesh, undefined);
+  assert.equal(collisionMesh.userData.parentLinkName, undefined);
+  assert.equal(collisionMesh.material, collisionMaterial);
 });

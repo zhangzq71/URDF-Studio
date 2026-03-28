@@ -517,6 +517,92 @@ test('restacks coincident MJCF visual roots to preserve authored overlay order',
     assert.equal(membraneMesh.material.depthWrite, false);
 });
 
+test('restacks coincident MJCF visual roots across fixed child bodies in world space', async () => {
+    const rootGroup = new THREE.Group();
+    await buildMJCFHierarchy({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'finger_base',
+                        pos: [0, 0, 0],
+                        geoms: [
+                            {
+                                name: 'finger_base_inner',
+                                type: 'box',
+                                size: [0.05, 0.04, 0.03],
+                                pos: [0.01, 0.02, 0.03],
+                                quat: [1, 0, 0, 0],
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                        ],
+                        joints: [],
+                        children: [
+                            {
+                                name: 'finger_base_shell_body',
+                                pos: [0, 0, 0],
+                                geoms: [
+                                    {
+                                        name: 'finger_base_outer',
+                                        type: 'box',
+                                        size: [0.051, 0.041, 0.031],
+                                        pos: [0.01, 0.02, 0.03],
+                                        quat: [1, 0, 0, 0],
+                                        rgba: [0.05, 0.05, 0.05, 1],
+                                        hasExplicitRgba: true,
+                                        contype: 0,
+                                        conaffinity: 0,
+                                    },
+                                ],
+                                joints: [],
+                                children: [],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map(),
+        assets: {},
+        meshCache: new Map(),
+        compilerSettings: {
+            angleUnit: 'radian',
+            meshdir: '',
+            texturedir: '',
+            eulerSequence: 'xyz',
+        },
+        materialMap: new Map(),
+        textureMap: new Map(),
+        sourceFileDir: '',
+    });
+
+    const visualGroups = new Map<string, THREE.Object3D>();
+    rootGroup.traverse((child: any) => {
+        if (child?.isURDFVisual) {
+            visualGroups.set(child.name, child);
+        }
+    });
+
+    const innerVisual = visualGroups.get('finger_base_inner');
+    const outerVisual = visualGroups.get('finger_base_outer');
+    assert.ok(innerVisual);
+    assert.ok(outerVisual);
+    assert.equal(innerVisual.userData.visualStackIndex, 0);
+    assert.equal(outerVisual.userData.visualStackIndex, 1);
+
+    const outerMesh = outerVisual.children.find((child: any) => child?.isMesh) as THREE.Mesh | undefined;
+    assert.ok(outerMesh);
+    assert.equal(outerMesh.renderOrder, 1);
+    assert.ok(outerMesh.material instanceof THREE.MeshStandardMaterial);
+    assert.equal(outerMesh.material.polygonOffset, true);
+});
+
 test('reports geom build progress while constructing the hierarchy', async () => {
     const rootGroup = new THREE.Group();
     const progressUpdates: Array<[number, number]> = [];

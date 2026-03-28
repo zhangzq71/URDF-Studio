@@ -13,6 +13,11 @@ export interface DocumentLoadState {
   fileName: string | null;
   format: RobotFile['format'] | null;
   error: string | null;
+  phase?: string | null;
+  message?: string | null;
+  progressPercent?: number | null;
+  loadedCount?: number | null;
+  totalCount?: number | null;
 }
 
 const DEFAULT_DOCUMENT_LOAD_STATE: DocumentLoadState = {
@@ -104,6 +109,52 @@ function pruneUsdPreparedExportCaches(
   return nextCaches;
 }
 
+function collectBlobUrlUsageCounts(assets: Record<string, string>): Map<string, number> {
+  const usageCounts = new Map<string, number>();
+
+  Object.values(assets).forEach((url) => {
+    if (!url.startsWith('blob:')) {
+      return;
+    }
+
+    usageCounts.set(url, (usageCounts.get(url) ?? 0) + 1);
+  });
+
+  return usageCounts;
+}
+
+function revokeBlobUrls(urls: Iterable<string>): void {
+  Array.from(new Set(urls)).forEach((url) => {
+    if (url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+    }
+  });
+}
+
+function revokeReplacedBlobUrls(
+  previousAssets: Record<string, string>,
+  nextAssets: Record<string, string>,
+  keysToCheck?: Iterable<string>,
+): void {
+  const nextBlobUrlUsageCounts = collectBlobUrlUsageCounts(nextAssets);
+  const targetKeys = keysToCheck ? Array.from(keysToCheck) : Object.keys(previousAssets);
+
+  targetKeys.forEach((key) => {
+    const previousUrl = previousAssets[key];
+    if (!previousUrl?.startsWith('blob:')) {
+      return;
+    }
+
+    if (previousUrl === nextAssets[key]) {
+      return;
+    }
+
+    if (!nextBlobUrlUsageCounts.has(previousUrl)) {
+      URL.revokeObjectURL(previousUrl);
+    }
+  });
+}
+
 interface AssetsState {
   // Mesh and texture assets (blob URLs)
   assets: Record<string, string>;
@@ -158,8 +209,8 @@ interface AssetsState {
   setOriginalUrdfContent: (content: string) => void;
 
   // Original file format
-  originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
-  setOriginalFileFormat: (format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null) => void;
+  originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | null;
+  setOriginalFileFormat: (format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | null) => void;
 
   // Upload a single file and create blob URL
   uploadAsset: (file: File) => string;
@@ -171,23 +222,26 @@ interface AssetsState {
 export const useAssetsStore = create<AssetsState>()((set, get) => ({
   // Assets (blob URLs)
   assets: {},
-  setAssets: (assets) => set({ assets }),
+  setAssets: (assets) =>
+    set((state) => {
+      revokeReplacedBlobUrls(state.assets, assets);
+      return { assets };
+    }),
   addAsset: (path, url) =>
-    set((state) => ({
-      assets: { ...state.assets, [path]: url },
-    })),
+    set((state) => {
+      const nextAssets = { ...state.assets, [path]: url };
+      revokeReplacedBlobUrls(state.assets, nextAssets, [path]);
+      return { assets: nextAssets };
+    }),
   addAssets: (newAssets) =>
-    set((state) => ({
-      assets: { ...state.assets, ...newAssets },
-    })),
+    set((state) => {
+      const nextAssets = { ...state.assets, ...newAssets };
+      revokeReplacedBlobUrls(state.assets, nextAssets, Object.keys(newAssets));
+      return { assets: nextAssets };
+    }),
   getAsset: (path) => get().assets[path],
   clearAssets: () => {
-    // Revoke all existing blob URLs before clearing
-    Object.values(get().assets).forEach((url) => {
-      if (url.startsWith('blob:')) {
-        URL.revokeObjectURL(url);
-      }
-    });
+    revokeBlobUrls(Object.values(get().assets));
     set({ assets: {} });
   },
 
@@ -586,18 +640,16 @@ export const useAssetsStore = create<AssetsState>()((set, get) => ({
   // Upload helper
   uploadAsset: (file) => {
     const url = URL.createObjectURL(file);
-    set((state) => ({
-      assets: { ...state.assets, [file.name]: url },
-    }));
+    set((state) => {
+      const nextAssets = { ...state.assets, [file.name]: url };
+      revokeReplacedBlobUrls(state.assets, nextAssets, [file.name]);
+      return { assets: nextAssets };
+    });
     return url;
   },
 
   // Cleanup
   revokeAllAssets: () => {
-    Object.values(get().assets).forEach((url) => {
-      if (url.startsWith('blob:')) {
-        URL.revokeObjectURL(url);
-      }
-    });
+    revokeBlobUrls(Object.values(get().assets));
   },
 }));

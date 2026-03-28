@@ -280,14 +280,14 @@ function expandIncludesRecursive(
 
     const resolvedPath = resolveFileInMap(includePath, indexedFileMap, basePath);
     if (!resolvedPath) {
-      console.warn(`[MJCF] Include file not found: ${includePath}`);
+      console.error(`[MJCF] Include file not found: ${includePath}`);
       includeEl.remove();
       return;
     }
 
     const normalizedResolvedPath = normalizePath(resolvedPath);
     if (includeStack.includes(normalizedResolvedPath)) {
-      console.warn(`[MJCF] Circular include detected: ${normalizedResolvedPath}`);
+      console.error(`[MJCF] Circular include detected: ${normalizedResolvedPath}`);
       includeEl.remove();
       return;
     }
@@ -364,21 +364,21 @@ function expandAttachedModelsRecursive(
 
     const modelFile = modelAssetByName.get(modelName);
     if (!modelFile) {
-      console.warn(`[MJCF] Attached model asset not found: ${modelName}`);
+      console.error(`[MJCF] Attached model asset not found: ${modelName}`);
       attachEl.remove();
       return;
     }
 
     const resolvedPath = resolveFileInMap(modelFile, indexedFileMap, basePath);
     if (!resolvedPath) {
-      console.warn(`[MJCF] Attached model file not found: ${modelFile}`);
+      console.error(`[MJCF] Attached model file not found: ${modelFile}`);
       attachEl.remove();
       return;
     }
 
     const normalizedResolvedPath = normalizePath(resolvedPath);
     if (attachStack.includes(normalizedResolvedPath)) {
-      console.warn(`[MJCF] Circular attach detected: ${normalizedResolvedPath}`);
+      console.error(`[MJCF] Circular attach detected: ${normalizedResolvedPath}`);
       attachEl.remove();
       return;
     }
@@ -402,7 +402,7 @@ function expandAttachedModelsRecursive(
       .find((bodyEl) => bodyEl.getAttribute('name')?.trim() === prefixedBodyName);
 
     if (!attachedRootBody) {
-      console.warn(`[MJCF] Attached body not found: ${bodyName} in ${resolvedPath}`);
+      console.error(`[MJCF] Attached body not found: ${bodyName} in ${resolvedPath}`);
       attachEl.remove();
       return;
     }

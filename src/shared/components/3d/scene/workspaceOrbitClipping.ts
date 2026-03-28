@@ -2,12 +2,14 @@ import * as THREE from 'three';
 
 export const DEFAULT_WORKSPACE_ORBIT_CLIPPING = {
   minDistance: 0.002,
-  nearFactor: 0.001,
+  // Keep the perspective depth range tighter so dense shells do not start
+  // z-fighting and leaking bright internals at medium/far zoom levels.
+  nearFactor: 0.01,
   minNear: 0.001,
-  maxNear: 0.02,
-  farFactor: 260,
-  minFar: 80,
-  maxFar: 8000,
+  maxNear: 0.25,
+  farFactor: 140,
+  minFar: 20,
+  maxFar: 6000,
 } as const;
 
 export interface WorkspaceOrbitClippingOptions {
@@ -18,11 +20,45 @@ export interface WorkspaceOrbitClippingOptions {
   farFactor?: number;
   minFar?: number;
   maxFar?: number;
+  sceneBounds?: THREE.Box3 | null;
 }
 
 type OrbitTargetLike = {
   target: THREE.Vector3;
 };
+
+function getMaxDistanceFromTargetToBounds(
+  target: THREE.Vector3,
+  bounds: THREE.Box3,
+): number | null {
+  if (bounds.isEmpty()) {
+    return null;
+  }
+
+  const corners: [number, number, number][] = [
+    [bounds.min.x, bounds.min.y, bounds.min.z],
+    [bounds.min.x, bounds.min.y, bounds.max.z],
+    [bounds.min.x, bounds.max.y, bounds.min.z],
+    [bounds.min.x, bounds.max.y, bounds.max.z],
+    [bounds.max.x, bounds.min.y, bounds.min.z],
+    [bounds.max.x, bounds.min.y, bounds.max.z],
+    [bounds.max.x, bounds.max.y, bounds.min.z],
+    [bounds.max.x, bounds.max.y, bounds.max.z],
+  ];
+
+  let maxDistance = 0;
+  for (const [x, y, z] of corners) {
+    const distance = target.distanceTo(_corner.set(x, y, z));
+    if (!Number.isFinite(distance)) {
+      return null;
+    }
+    maxDistance = Math.max(maxDistance, distance);
+  }
+
+  return maxDistance;
+}
+
+const _corner = new THREE.Vector3();
 
 export function syncWorkspacePerspectiveClipPlanes(
   camera: THREE.Camera,
@@ -47,7 +83,7 @@ export function syncWorkspacePerspectiveClipPlanes(
     config.minNear,
     config.maxNear,
   );
-  const nextFar = Math.max(
+  const distanceBasedFar = Math.max(
     nextNear + 10,
     THREE.MathUtils.clamp(
       distance * config.farFactor,
@@ -55,6 +91,22 @@ export function syncWorkspacePerspectiveClipPlanes(
       config.maxFar,
     ),
   );
+  const targetDistanceToSceneBounds = config.sceneBounds
+    ? getMaxDistanceFromTargetToBounds(controls.target, config.sceneBounds)
+    : null;
+  const boundsLimitedFar = targetDistanceToSceneBounds === null
+    ? null
+    : Math.max(
+      nextNear + 10,
+      THREE.MathUtils.clamp(
+        distance + targetDistanceToSceneBounds + Math.max(2, targetDistanceToSceneBounds * 0.08),
+        config.minFar,
+        config.maxFar,
+      ),
+    );
+  const nextFar = boundsLimitedFar === null
+    ? distanceBasedFar
+    : Math.min(distanceBasedFar, boundsLimitedFar);
 
   if (
     Math.abs(camera.near - nextNear) < 1e-5

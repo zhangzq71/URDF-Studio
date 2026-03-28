@@ -1,4 +1,4 @@
-export type SourceCodeDocumentFlavor = 'urdf' | 'mjcf' | 'usd' | 'equivalent-mjcf' | 'xacro';
+export type SourceCodeDocumentFlavor = 'urdf' | 'mjcf' | 'usd' | 'equivalent-mjcf' | 'xacro' | 'sdf';
 
 export type SourceCodeEditorLanguageId = 'urdf' | 'xacro' | 'xml' | 'plaintext';
 

@@ -7,6 +7,11 @@ import { resolveEffectiveTheme } from './themeUtils';
 interface ReferenceGridProps {
   theme: Theme;
   groundOffset?: number;
+  centerX?: number;
+  centerY?: number;
+  size?: number;
+  fadeDistance?: number;
+  fadeFrom?: number;
 }
 
 const REFERENCE_GRID_RENDER_ORDER = -100;
@@ -21,7 +26,15 @@ const REFERENCE_GRID_STYLE = {
   },
 } as const;
 
-export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
+export function ReferenceGrid({
+  theme,
+  groundOffset,
+  centerX = 0,
+  centerY = 0,
+  size = 20,
+  fadeDistance = 20 * 100,
+  fadeFrom = 1,
+}: ReferenceGridProps) {
   const gridRef = useRef<THREE.Mesh>(null);
   const groundPlaneOffset = groundOffset ?? 0;
   const effectiveTheme = resolveEffectiveTheme(theme);
@@ -44,12 +57,12 @@ export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
     <Grid
       ref={gridRef}
       name="ReferenceGrid"
+      userData={{ isHelper: true, excludeFromSceneBounds: true }}
       renderOrder={REFERENCE_GRID_RENDER_ORDER}
+      args={[size, size]}
       side={THREE.DoubleSide}
-      infiniteGrid
-      followCamera
-      fadeDistance={100}
-      fadeFrom={0.58}
+      fadeDistance={fadeDistance}
+      fadeFrom={fadeFrom}
       fadeStrength={0.86}
       sectionSize={1}
       cellSize={0.1}
@@ -58,7 +71,7 @@ export function ReferenceGrid({ theme, groundOffset }: ReferenceGridProps) {
       cellColor={gridStyle.cellColor}
       sectionColor={gridStyle.sectionColor}
       rotation={[Math.PI / 2, 0, 0]}
-      position={[0, 0, groundPlaneOffset]}
+      position={[centerX, centerY, groundPlaneOffset]}
       receiveShadow={false}
     />
   );

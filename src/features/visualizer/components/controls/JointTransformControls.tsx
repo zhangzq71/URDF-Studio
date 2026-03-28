@@ -1,5 +1,5 @@
-import { memo, useCallback, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { JointType, RobotState } from '@/types';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
@@ -30,6 +30,7 @@ export const JointTransformControls = memo(function JointTransformControls({
   transformMode,
   transformControlsState,
 }: JointTransformControlsProps) {
+  const { invalidate } = useThree();
   const {
     transformControlRef,
     rotateTransformControlRef,
@@ -39,6 +40,7 @@ export const JointTransformControls = memo(function JointTransformControls({
   const [translateProxy, setTranslateProxy] = useState<THREE.Group | null>(null);
   const translateProxyRef = useRef<THREE.Group | null>(null);
   const isTranslateDraggingRef = useRef(false);
+  const lastActiveControlRef = useRef<'translate' | 'rotate' | null>(null);
   const worldPositionRef = useRef(new THREE.Vector3());
   const parentQuaternionRef = useRef(new THREE.Quaternion());
   const localPositionRef = useRef(new THREE.Vector3());
@@ -71,7 +73,7 @@ export const JointTransformControls = memo(function JointTransformControls({
     syncTranslateProxy(proxy);
   }, [syncTranslateProxy]);
 
-  const handleTranslateChange = useCallback(() => {
+  const applyTranslateProxyToPivot = useCallback(() => {
     const proxy = translateProxyRef.current;
     if (proxy && selectedJointPivot) {
       proxy.updateMatrixWorld(true);
@@ -86,24 +88,102 @@ export const JointTransformControls = memo(function JointTransformControls({
       selectedJointPivot.position.copy(localPositionRef.current);
       selectedJointPivot.updateMatrixWorld(true);
     }
+  }, [selectedJointPivot]);
 
-    handleObjectChange();
-  }, [handleObjectChange, selectedJointPivot]);
+  useEffect(() => {
+    if (!isTranslateDraggingRef.current) {
+      syncTranslateProxy(translateProxyRef.current);
+    }
+  }, [jointId, selectedJointPivot, syncTranslateProxy]);
 
-  const handleDraggingChanged = useCallback(() => {
-    const isTranslateDragging = Boolean(transformControlRef.current?.dragging);
+  const handleJointObjectChange = useCallback(() => {
+    const translateControls = transformControlRef.current;
+    const rotateControls = rotateTransformControlRef.current;
+
+    if (translateControls?.dragging) {
+      isTranslateDraggingRef.current = true;
+      lastActiveControlRef.current = 'translate';
+      applyTranslateProxyToPivot();
+      handleObjectChange();
+      invalidate();
+      return;
+    }
+
+    if (rotateControls?.dragging) {
+      lastActiveControlRef.current = 'rotate';
+      handleRotateObjectChange();
+      invalidate();
+    }
+  }, [
+    applyTranslateProxyToPivot,
+    handleObjectChange,
+    handleRotateObjectChange,
+    invalidate,
+    rotateTransformControlRef,
+    transformControlRef,
+  ]);
+
+  const handleDraggingChanged = useCallback((event?: { value?: boolean }) => {
+    const translateControls = transformControlRef.current;
+    const rotateControls = rotateTransformControlRef.current;
+
+    if (event?.value) {
+      if (translateControls?.dragging) {
+        isTranslateDraggingRef.current = true;
+        lastActiveControlRef.current = 'translate';
+      } else if (rotateControls?.dragging) {
+        lastActiveControlRef.current = 'rotate';
+      }
+      return;
+    }
+
+    const isTranslateDragging = Boolean(translateControls?.dragging);
     isTranslateDraggingRef.current = isTranslateDragging;
 
     if (!isTranslateDragging) {
       syncTranslateProxy(translateProxyRef.current);
+      if (lastActiveControlRef.current === 'translate') {
+        lastActiveControlRef.current = null;
+      }
     }
-  }, [syncTranslateProxy, transformControlRef]);
+    if (!rotateControls?.dragging && lastActiveControlRef.current === 'rotate') {
+      lastActiveControlRef.current = null;
+    }
+    invalidate();
+  }, [invalidate, rotateTransformControlRef, syncTranslateProxy, transformControlRef]);
 
   useFrame(() => {
-    if (!isTranslateDraggingRef.current) {
-      syncTranslateProxy(translateProxyRef.current);
+    const translateControls = transformControlRef.current;
+    const rotateControls = rotateTransformControlRef.current;
+
+    if (translateControls?.dragging) {
+      if (!isTranslateDraggingRef.current) {
+        isTranslateDraggingRef.current = true;
+        lastActiveControlRef.current = 'translate';
+      }
+      invalidate();
+      return;
     }
-  });
+
+    if (rotateControls?.dragging) {
+      lastActiveControlRef.current = 'rotate';
+      invalidate();
+      return;
+    }
+
+    if (isTranslateDraggingRef.current || lastActiveControlRef.current === 'translate') {
+      isTranslateDraggingRef.current = false;
+      lastActiveControlRef.current = null;
+      syncTranslateProxy(translateProxyRef.current);
+      invalidate();
+      return;
+    }
+
+    if (lastActiveControlRef.current === 'rotate') {
+      lastActiveControlRef.current = null;
+      invalidate();
+    }
+  }, 1000);
 
   if (mode !== 'skeleton') return null;
   if (!selectedJointPivot || !selectedJointMotion || !jointId || !joint) return null;
@@ -134,12 +214,7 @@ export const JointTransformControls = memo(function JointTransformControls({
           rotateSpace="local"
           hoverStyle="single-axis"
           displayStyle="thick-primary"
-          onChange={
-            transformMode === 'rotate'
-              ? handleRotateObjectChange
-              : handleTranslateChange
-          }
-          onRotateChange={handleRotateObjectChange}
+          onObjectChange={handleJointObjectChange}
           onDraggingChanged={handleDraggingChanged}
         />
       )}

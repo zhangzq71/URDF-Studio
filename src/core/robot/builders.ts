@@ -43,6 +43,7 @@ export const createLink = (options: Partial<UrdfLink> = {}): UrdfLink => {
             color: DEFAULT_VISUAL_COLOR,
             ...options.visual
         },
+        visualBodies: options.visualBodies?.map((body) => ({ ...body })) || [],
         collision: {
             ...DEFAULT_LINK.collision,
             ...options.collision
@@ -160,6 +161,7 @@ export const cloneLink = (link: UrdfLink, newId?: string): UrdfLink => {
         id,
         name: `${link.name}_copy`,
         visual: { ...link.visual },
+        visualBodies: link.visualBodies?.map((body) => ({ ...body })) || [],
         collision: { ...link.collision },
         collisionBodies: link.collisionBodies?.map((body) => ({ ...body })) || [],
         inertial: link.inertial ? {

@@ -71,7 +71,7 @@ export class RobotInspectorController {
             snapshot = await this.requestSnapshot();
         }
         catch (error) {
-            console.warn("Failed to refresh robot inspector.", error);
+            console.error("Failed to refresh robot inspector.", error);
             this.renderStatus("Failed to analyze robot metadata.");
             return;
         }

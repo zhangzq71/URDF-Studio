@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
+import { getVisualGeometryEntries } from '@/core/robot';
+import type { UrdfLink, UrdfVisual, UrdfVisualMaterial } from '@/types';
 
 // ============================================================
 // URDF Material Parser - Extract rgba colors from URDF XML
@@ -8,6 +10,46 @@ import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
 export interface URDFMaterialInfo {
     name?: string;
     rgba?: [number, number, number, number];
+}
+
+function toMaterialRgba(colorValue?: string, textureValue?: string): [number, number, number, number] | null {
+  const raw = String(colorValue || '').trim();
+  if (!raw) {
+    return textureValue ? [1, 1, 1, 1] : null;
+  }
+
+  const color = new THREE.Color(raw).convertLinearToSRGB();
+  return [color.r, color.g, color.b, 1];
+}
+
+function collectAuthoredMaterials(geometry: UrdfVisual): UrdfVisualMaterial[] {
+  return Array.isArray(geometry.authoredMaterials) ? geometry.authoredMaterials : [];
+}
+
+export function collectURDFMaterialsFromLinks(
+  links?: Record<string, UrdfLink> | null,
+): Map<string, URDFMaterialInfo> {
+  const namedMaterials = new Map<string, URDFMaterialInfo>();
+
+  if (!links) {
+    return namedMaterials;
+  }
+
+  for (const link of Object.values(links)) {
+    for (const entry of getVisualGeometryEntries(link)) {
+      for (const material of collectAuthoredMaterials(entry.geometry)) {
+        const name = material.name?.trim();
+        const rgba = toMaterialRgba(material.color, material.texture);
+        if (!name || !rgba) {
+          continue;
+        }
+
+        namedMaterials.set(name, { name, rgba });
+      }
+    }
+  }
+
+  return namedMaterials;
 }
 
 export function normalizeURDFMaterialName(name: string): string {
@@ -112,6 +154,18 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
   }
 
   return namedMaterials;
+}
+
+export function resolveURDFMaterialsForScene(
+  urdfContent: string,
+  robotLinks?: Record<string, UrdfLink> | null,
+): Map<string, URDFMaterialInfo> {
+  const materialsFromLinks = collectURDFMaterialsFromLinks(robotLinks);
+  if (materialsFromLinks.size > 0) {
+    return materialsFromLinks;
+  }
+
+  return parseURDFMaterials(urdfContent);
 }
 
 /**

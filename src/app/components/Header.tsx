@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { useUIStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 import { translations } from '@/shared/i18n';
 import { useActiveHistory } from '../hooks/useActiveHistory';
 import { HeaderActions } from './header/HeaderActions';
@@ -61,12 +62,16 @@ export function Header({
   const headerRef = React.useRef<HTMLElement | null>(null);
   const [activeMenu, setActiveMenu] = React.useState<HeaderMenuKey>(null);
 
-  const appMode = useUIStore((state) => state.appMode);
-  const setAppMode = useUIStore((state) => state.setAppMode);
-  const theme = useUIStore((state) => state.theme);
-  const setTheme = useUIStore((state) => state.setTheme);
-  const lang = useUIStore((state) => state.lang);
-  const setLang = useUIStore((state) => state.setLang);
+  const { appMode, setAppMode, theme, setTheme, lang, setLang } = useUIStore(
+    useShallow((state) => ({
+      appMode: state.appMode,
+      setAppMode: state.setAppMode,
+      theme: state.theme,
+      setTheme: state.setTheme,
+      lang: state.lang,
+      setLang: state.setLang,
+    })),
+  );
   const { undo, redo, canUndo, canRedo } = useActiveHistory();
   const responsive = useHeaderResponsiveLayout(headerRef);
   const t = translations[lang];

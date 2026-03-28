@@ -231,12 +231,6 @@ export const generateRobotFromPrompt = async (
   const openai = createOpenAIClient()
   const modelName = getModelName()
 
-  console.log('[AI Service] Configuration:', {
-    model: modelName,
-    baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-    hasApiKey: !!process.env.API_KEY
-  })
-
   const contextRobot = {
     name: currentRobot.name,
     links: Object.values(currentRobot.links).map(l => ({
@@ -296,8 +290,6 @@ export const generateRobotFromPrompt = async (
       }
     }
 
-    console.log('[AI Service] Raw response content:', content.substring(0, 200) + '...')
-
     const { result, error } = parseJSONResponse(content, lang)
     if (!result) {
       return {
@@ -307,16 +299,7 @@ export const generateRobotFromPrompt = async (
     }
 
     const parsedResult = result as Record<string, unknown>
-    console.log('[AI Service] Parsed JSON result:', parsedResult)
-    console.log('[AI Service] Result keys:', Object.keys(parsedResult))
-
     const data = extractRobotData(parsedResult)
-
-    console.log('[AI Service] Extracted data:', data ? 'Found robot data' : 'No robot data')
-    if (data) {
-      console.log('[AI Service] Data keys:', Object.keys(data))
-      console.log('[AI Service] Data content:', data)
-    }
 
     const explanationText = extractExplanationText(parsedResult, lang)
 
@@ -324,9 +307,6 @@ export const generateRobotFromPrompt = async (
     if (data) {
       const normalized = normalizeAIRobotResponse(data)
       if (normalized) {
-        console.log('[AI Service] Processed links:', Object.keys(normalized.links).length)
-        console.log('[AI Service] Processed joints:', Object.keys(normalized.joints).length)
-
         finalRobotState = {
           name: normalized.name,
           links: normalized.links,
@@ -357,12 +337,6 @@ export const generateRobotFromPrompt = async (
         explanation = text.processedRequestNoRobotData
       }
     }
-
-    console.log('[AI Service] Final response:', {
-      explanation: explanation?.substring(0, 50) + '...',
-      actionType,
-      hasRobotData: !!finalRobotState
-    })
 
     return {
       explanation,
@@ -442,8 +416,6 @@ export const runRobotInspection = async (
         ]
       }
     }
-
-    console.log('[Inspection] Raw response content:', content.substring(0, 200) + '...')
 
     const { result, error } = parseJSONResponse(content, lang)
     if (!result) {

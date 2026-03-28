@@ -1,9 +1,60 @@
 import * as THREE from 'three';
 
+export interface ResolvedLinkTarget {
+    linkId: string;
+    linkObject: THREE.Object3D;
+}
+
 export interface ResolvedSelectionTarget {
     urdfElement: THREE.Object3D | null;
     objectIndex: number;
     highlightTarget: THREE.Object3D;
+}
+
+export interface ResolvedSelectionHit extends ResolvedSelectionTarget {
+    linkId: string;
+    linkObject: THREE.Object3D;
+}
+
+export function resolveHitLinkTarget(
+    robot: THREE.Object3D | null,
+    hitObject: THREE.Object3D
+): ResolvedLinkTarget | null {
+    const robotLinks = (robot as { links?: Record<string, THREE.Object3D> } | null)?.links;
+    const metadataLinkId = typeof hitObject.userData?.parentLinkName === 'string'
+        ? hitObject.userData.parentLinkName.trim()
+        : '';
+
+    if (metadataLinkId) {
+        const metadataLinkObject = robotLinks?.[metadataLinkId] ?? null;
+        if (metadataLinkObject) {
+            return {
+                linkId: metadataLinkId,
+                linkObject: metadataLinkObject,
+            };
+        }
+    }
+
+    let current: THREE.Object3D | null = hitObject;
+    while (current) {
+        if (current.userData?.isGizmo) return null;
+        if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+            return {
+                linkId: current.name,
+                linkObject: current,
+            };
+        }
+        if (robotLinks?.[current.name]) {
+            return {
+                linkId: current.name,
+                linkObject: current,
+            };
+        }
+        if (current === robot) break;
+        current = current.parent;
+    }
+
+    return null;
 }
 
 export function resolveSelectionTarget(
@@ -46,5 +97,21 @@ export function resolveSelectionTarget(
         urdfElement,
         objectIndex,
         highlightTarget
+    };
+}
+
+export function resolveSelectionHit(
+    robot: THREE.Object3D | null,
+    hitObject: THREE.Object3D
+): ResolvedSelectionHit | null {
+    const resolvedLink = resolveHitLinkTarget(robot, hitObject);
+    if (!resolvedLink) {
+        return null;
+    }
+
+    return {
+        ...resolveSelectionTarget(hitObject, resolvedLink.linkObject),
+        linkId: resolvedLink.linkId,
+        linkObject: resolvedLink.linkObject,
     };
 }

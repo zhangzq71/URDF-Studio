@@ -18,6 +18,16 @@ test('resolveImportedAssetPath keeps package assets rooted at the package name',
   );
 });
 
+test('resolveImportedAssetPath keeps sdf model assets rooted at the model name', () => {
+  assert.equal(
+    resolveImportedAssetPath(
+      'model://bus_stop/meshes/base_link.dae',
+      'bus_stop/model.sdf',
+    ),
+    'bus_stop/meshes/base_link.dae',
+  );
+});
+
 test('resolveImportedAssetPath still resolves relative mesh paths against the source directory', () => {
   assert.equal(
     resolveImportedAssetPath(

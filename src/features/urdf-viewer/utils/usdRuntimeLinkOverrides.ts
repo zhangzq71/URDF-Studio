@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getCollisionGeometryByObjectIndex } from '@/core/robot';
+import { getCollisionGeometryByObjectIndex, getVisualGeometryByObjectIndex } from '@/core/robot';
 import { GeometryType, type UrdfLink, type UrdfVisual } from '@/types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
 
@@ -34,7 +34,7 @@ export function resolveUsdRuntimeGeometry(
   }
 
   if (role === 'visual') {
-    return link.visual;
+    return getVisualGeometryByObjectIndex(link, objectIndex ?? 0)?.geometry;
   }
 
   if (!Number.isInteger(objectIndex) || objectIndex < 0) {

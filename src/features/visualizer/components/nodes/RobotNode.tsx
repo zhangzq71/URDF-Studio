@@ -2,13 +2,14 @@ import { memo, useState, useEffect, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { RobotState, UrdfJoint } from '@/types';
-import { getCollisionGeometryEntries, isTransparentDisplayLink } from '@/core/robot';
+import { getCollisionGeometryEntries, getVisualGeometryEntries, isTransparentDisplayLink } from '@/core/robot';
 import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
 import { Language, translations } from '@/shared/i18n';
 import { GeometryRenderer } from './GeometryRenderer';
 import { JointNode } from './JointNode';
+import type { VisualizerHoverTarget } from '../../utils/hoverPicking';
 
 // Type definitions
 interface CommonVisualizerProps {
@@ -52,6 +53,10 @@ interface RobotNodeProps extends CommonVisualizerProps {
 }
 
 const EMPTY_CHILD_JOINTS: UrdfJoint[] = [];
+
+interface PropagationEventLike {
+  stopPropagation(): void;
+}
 
 /**
  * RobotNode - Renders a link in the robot hierarchy
@@ -103,14 +108,15 @@ export const RobotNode = memo(function RobotNode({
   const link = robot.links[linkId];
   if (!link) return null;
 
-  const handleLinkClick = (e: any, subType?: 'visual' | 'collision') => {
-    e.stopPropagation();
+  const handleLinkClick = (
+    event: PropagationEventLike,
+    resolvedTarget?: VisualizerHoverTarget | null,
+  ) => {
+    const targetLinkId = resolvedTarget?.id ?? linkId;
+    const targetSubType = selectionTarget || resolvedTarget?.subType;
 
-    // Override subType if selectionTarget is set (global override)
-    // Otherwise use the clicked subType (granular selection)
-    const targetSubType = selectionTarget || subType;
-
-    onSelect('link', linkId, targetSubType);
+    event.stopPropagation();
+    onSelect('link', targetLinkId, targetSubType);
   };
 
   const childJoints = childJointsByParent[linkId] ?? EMPTY_CHILD_JOINTS;
@@ -125,6 +131,7 @@ export const RobotNode = memo(function RobotNode({
   const [, setVisualRef] = useState<THREE.Group | null>(null);
   const [collisionRefs, setCollisionRefs] = useState<Record<number, THREE.Group | null>>({});
   const collisionRefHandlersRef = useRef<Record<number, (ref: THREE.Group | null) => void>>({});
+  const visualEntries = getVisualGeometryEntries(link);
   const collisionEntries = getCollisionGeometryEntries(link);
   const isCollisionSelected = isSelected && selectionSubType === 'collision';
   const selectedCollisionObjectIndex = isCollisionSelected ? robot.selection.objectIndex ?? 0 : null;
@@ -175,7 +182,11 @@ export const RobotNode = memo(function RobotNode({
   }, [linkId]);
 
   const showRootAxes = isRoot && ((mode === 'skeleton' && showSkeletonOrigin) || (mode === 'detail' && showDetailOrigin) || (mode === 'hardware' && showHardwareOrigin));
-  const shouldRenderGeometry = mode !== 'skeleton' || showGeometry || showCollision || Boolean(link.visual);
+  const shouldRenderGeometry = mode !== 'skeleton'
+    || showGeometry
+    || showCollision
+    || visualEntries.length > 0
+    || collisionEntries.length > 0;
   const showLinkLabel = (mode === 'detail' && showDetailLabels) || (mode === 'hardware' && showHardwareLabels);
   const showRootLabel = isRoot && ((mode === 'skeleton' && showLabels) || (mode === 'hardware' && showHardwareLabels));
 
@@ -259,22 +270,26 @@ export const RobotNode = memo(function RobotNode({
 
       {shouldRenderGeometry && (
         <>
-          {/* Visual Geometry */}
-          <GeometryRenderer
-            isCollision={false}
-            link={link}
-            mode={mode}
-            showGeometry={showGeometry}
-            showCollision={showCollision}
-            assets={assets}
-            isSelected={isSelected}
-            selectionSubType={selectionSubType}
-            onLinkClick={handleLinkClick}
-            setVisualRef={setVisualRef}
-            objectIndex={0}
-          colladaRootNormalizationHints={colladaRootNormalizationHints}
-          onMeshResolved={onMeshResolved}
-        />
+          {visualEntries.map((entry) => (
+            <GeometryRenderer
+              key={`visual-body-${linkId}-${entry.objectIndex}`}
+              isCollision={false}
+              link={link}
+              mode={mode}
+              showGeometry={showGeometry}
+              showCollision={showCollision}
+              assets={assets}
+              isSelected={isSelected}
+              selectionSubType={selectionSubType}
+              onLinkClick={handleLinkClick}
+              setVisualRef={entry.bodyIndex === null ? setVisualRef : undefined}
+              geometryData={entry.bodyIndex === null ? undefined : entry.geometry}
+              geometryId={entry.bodyIndex === null ? 'primary' : `extra-${entry.bodyIndex + 1}`}
+              objectIndex={entry.objectIndex}
+              colladaRootNormalizationHints={colladaRootNormalizationHints}
+              onMeshResolved={onMeshResolved}
+            />
+          ))}
 
           {collisionEntries.map((entry) => (
             <GeometryRenderer

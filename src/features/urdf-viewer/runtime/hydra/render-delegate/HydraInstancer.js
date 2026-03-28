@@ -13,12 +13,8 @@ class HydraInstancer {
         this._instanceIndices = null;
         this._id = normalizeHydraPath(id);
         this._interface = hydraInterface;
-        if (debugInstancer)
-            console.log("Created HydraInstancer", id);
     }
     updatePrimvar(name, data, dimension, interpolation) {
-        if (debugInstancer)
-            console.log(`Instancer ${this._id} updatePrimvar: ${name}`, dimension, interpolation);
         switch (name) {
             case 'translate':
                 this._translate = data;
@@ -39,12 +35,10 @@ class HydraInstancer {
                 this._instanceIndices = data;
                 break;
             default:
-                console.warn(`Instancer ${this._id} unsupported primvar: ${name}`);
+                console.error(`Instancer ${this._id} unsupported primvar: ${name}`);
         }
     }
     commit() {
-        if (debugInstancer)
-            console.log(`Committing Instancer ${this._id}`);
         this._instancedMeshes.forEach(mesh => {
             this._interface.config.usdRoot.remove(mesh);
             mesh.dispose();
@@ -55,8 +49,6 @@ class HydraInstancer {
             return mesh._instancerId === this._id;
         });
         if (prototypeIds.length === 0) {
-            if (debugInstancer)
-                console.warn(`Instancer ${this._id} has no prototypes.`);
             return;
         }
         let instanceCount = 0;

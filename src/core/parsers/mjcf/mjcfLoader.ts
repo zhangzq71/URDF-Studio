@@ -9,6 +9,7 @@ import { buildMJCFHierarchy } from './mjcfHierarchyBuilder';
 import { resolveMJCFMeshBackedPrimitiveGeoms } from './mjcfMeshBackedPrimitiveResolver';
 import { parseMJCFModel } from './mjcfModel';
 import { looksLikeMJCFDocument } from './mjcfUtils';
+import { createMainThreadYieldController, yieldToMainThread } from '@/core/utils/yieldToMainThread';
 
 interface MJCFBody {
     name: string;
@@ -64,11 +65,13 @@ export async function loadMJCFToThreeJS(
     };
 
     try {
+        const yieldIfNeeded = createMainThreadYieldController();
         emitProgress({
             phase: 'preparing-scene',
             progressPercent: 0,
         });
 
+        await yieldToMainThread();
         const parsedModel = parseMJCFModel(xmlContent);
         if (!parsedModel) {
             return null;
@@ -76,22 +79,27 @@ export async function loadMJCFToThreeJS(
 
         const modelName = parsedModel.modelName;
         const compilerSettings = parsedModel.compilerSettings;
-        console.log(`[MJCFLoader] Compiler settings: angle=${compilerSettings.angleUnit}, meshdir=${compilerSettings.meshdir}`);
 
         emitProgress({
             phase: 'preparing-scene',
             progressPercent: 16,
         });
+        await yieldIfNeeded();
+
+        const meshCache: MJCFMeshCache = new Map();
 
         await resolveMJCFMeshBackedPrimitiveGeoms(parsedModel, {
             assets,
+            meshCache,
             sourceFileDir,
+            yieldIfNeeded,
         });
 
         emitProgress({
             phase: 'preparing-scene',
             progressPercent: 28,
         });
+        await yieldIfNeeded();
 
         const meshMap = parsedModel.meshMap;
         const materialMap = parsedModel.materialMap;
@@ -101,8 +109,6 @@ export async function loadMJCFToThreeJS(
         const rootGroup = new THREE.Group();
         rootGroup.name = modelName;
         (rootGroup as any).isURDFRobot = true;
-
-        const meshCache: MJCFMeshCache = new Map<string, THREE.Object3D | THREE.BufferGeometry>();
 
         const { linksMap, jointsMap } = await buildMJCFHierarchy({
             bodies,
@@ -114,6 +120,7 @@ export async function loadMJCFToThreeJS(
             materialMap,
             textureMap,
             sourceFileDir,
+            yieldIfNeeded,
             onProgress: ({ processedGeoms, totalGeoms }) => {
                 const normalizedPercent = totalGeoms > 0
                     ? 28 + (processedGeoms / totalGeoms) * 60
@@ -132,11 +139,10 @@ export async function loadMJCFToThreeJS(
             phase: 'finalizing-scene',
             progressPercent: 96,
         });
+        await yieldIfNeeded();
 
         (rootGroup as any).links = linksMap;
         (rootGroup as any).joints = jointsMap;
-
-        console.log(`[MJCFLoader] Loaded model "${modelName}" with ${Object.keys(linksMap).length} links and ${Object.keys(jointsMap).length} joints`);
 
         emitProgress({
             phase: 'ready',

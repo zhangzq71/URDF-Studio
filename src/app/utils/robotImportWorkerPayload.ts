@@ -1,0 +1,314 @@
+import type { ResolveRobotFileDataOptions } from '@/core/parsers/importRobotFile';
+import type { RobotFile } from '@/types';
+import type { ParseEditableRobotSourceOptions } from './parseEditableRobotSource';
+import type { RobotImportWorkerContextSnapshot } from './robotImportWorker';
+
+export interface PreparedRobotImportWorkerDispatch<TOptions> {
+  options: TOptions;
+  contextCacheKey: string | null;
+  contextSnapshot: RobotImportWorkerContextSnapshot | null;
+}
+
+const objectIdentityTokens = new WeakMap<object, number>();
+let nextObjectIdentityToken = 1;
+
+function getObjectIdentityToken(value: unknown): number {
+  if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
+    return 0;
+  }
+
+  const objectValue = value as object;
+  const cachedToken = objectIdentityTokens.get(objectValue);
+  if (cachedToken) {
+    return cachedToken;
+  }
+
+  const nextToken = nextObjectIdentityToken++;
+  objectIdentityTokens.set(objectValue, nextToken);
+  return nextToken;
+}
+
+function buildContextCacheKey(
+  requestKind: 'resolve' | 'parse',
+  file: Pick<RobotFile, 'name' | 'format'>,
+  refs: {
+    availableFiles?: RobotFile[];
+    assets?: Record<string, string>;
+    allFileContents?: Record<string, string>;
+  },
+): string {
+  return [
+    requestKind,
+    file.format,
+    file.name,
+    `files:${getObjectIdentityToken(refs.availableFiles)}`,
+    `assets:${getObjectIdentityToken(refs.assets)}`,
+    `text:${getObjectIdentityToken(refs.allFileContents)}`,
+  ].join('|');
+}
+
+function hasContextSnapshotContent(snapshot: RobotImportWorkerContextSnapshot): boolean {
+  if ((snapshot.availableFiles?.length ?? 0) > 0) {
+    return true;
+  }
+
+  if (snapshot.assets && Object.keys(snapshot.assets).length > 0) {
+    return true;
+  }
+
+  if (snapshot.allFileContents && Object.keys(snapshot.allFileContents).length > 0) {
+    return true;
+  }
+
+  return false;
+}
+
+function filterAvailableFiles(
+  files: RobotFile[] | undefined,
+  allowedFormats: ReadonlySet<RobotFile['format']>,
+  sourceFile: RobotFile | Pick<RobotFile, 'name' | 'format'>,
+): RobotFile[] {
+  if (!files || files.length === 0) {
+    return [];
+  }
+
+  const filtered = files.filter((candidate) => allowedFormats.has(candidate.format));
+  const alreadyIncluded = filtered.some((candidate) => (
+    candidate.name === sourceFile.name && candidate.format === sourceFile.format
+  ));
+
+  if (!alreadyIncluded && allowedFormats.has(sourceFile.format as RobotFile['format'])) {
+    const sourceEntry = files.find((candidate) => (
+      candidate.name === sourceFile.name && candidate.format === sourceFile.format
+    ));
+    if (sourceEntry) {
+      filtered.push(sourceEntry);
+    }
+  }
+
+  return filtered;
+}
+
+export function buildResolveRobotImportWorkerDispatch(
+  file: RobotFile,
+  options: ResolveRobotFileDataOptions = {},
+): PreparedRobotImportWorkerDispatch<ResolveRobotFileDataOptions> {
+  switch (file.format) {
+    case 'urdf':
+    case 'mesh':
+      return {
+        options: {},
+        contextCacheKey: null,
+        contextSnapshot: null,
+      };
+    case 'usd':
+      return {
+        options: options.usdRobotData
+          ? { usdRobotData: options.usdRobotData }
+          : {},
+        contextCacheKey: null,
+        contextSnapshot: null,
+      };
+    case 'mjcf':
+    {
+      const contextSnapshot = {
+        availableFiles: filterAvailableFiles(
+          options.availableFiles,
+          new Set<RobotFile['format']>(['mjcf']),
+          file,
+        ),
+      };
+      return {
+        options: {},
+        contextCacheKey: hasContextSnapshotContent(contextSnapshot)
+          ? buildContextCacheKey('resolve', file, {
+            availableFiles: options.availableFiles,
+          })
+          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
+          ? contextSnapshot
+          : null,
+      };
+    }
+    case 'sdf':
+    {
+      const contextSnapshot = {
+        allFileContents: options.allFileContents ?? {},
+      };
+      return {
+        options: {},
+        contextCacheKey: hasContextSnapshotContent(contextSnapshot)
+          ? buildContextCacheKey('resolve', file, {
+            allFileContents: options.allFileContents,
+          })
+          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
+          ? contextSnapshot
+          : null,
+      };
+    }
+    case 'xacro':
+    {
+      const contextSnapshot = {
+        availableFiles: filterAvailableFiles(
+          options.availableFiles,
+          new Set<RobotFile['format']>(['urdf', 'xacro']),
+          file,
+        ),
+        allFileContents: options.allFileContents ?? {},
+      };
+      return {
+        options: {},
+        contextCacheKey: hasContextSnapshotContent(contextSnapshot)
+          ? buildContextCacheKey('resolve', file, {
+            availableFiles: options.availableFiles,
+            allFileContents: options.allFileContents,
+          })
+          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
+          ? contextSnapshot
+          : null,
+      };
+    }
+    default:
+      return {
+        options,
+        contextCacheKey: null,
+        contextSnapshot: null,
+      };
+  }
+}
+
+export function buildResolveRobotImportWorkerOptions(
+  file: RobotFile,
+  options: ResolveRobotFileDataOptions = {},
+): ResolveRobotFileDataOptions {
+  const preparedDispatch = buildResolveRobotImportWorkerDispatch(file, options);
+  return {
+    ...preparedDispatch.contextSnapshot,
+    ...preparedDispatch.options,
+  };
+}
+
+export function buildEditableRobotSourceWorkerDispatch(
+  options: ParseEditableRobotSourceOptions,
+): PreparedRobotImportWorkerDispatch<ParseEditableRobotSourceOptions> {
+  if (!options.file) {
+    return {
+      options: {
+        ...options,
+        availableFiles: [],
+        allFileContents: {},
+      },
+      contextCacheKey: null,
+      contextSnapshot: null,
+    };
+  }
+
+  switch (options.file.format) {
+    case 'urdf':
+      return {
+        options: {
+          ...options,
+          availableFiles: [],
+          allFileContents: {},
+        },
+        contextCacheKey: null,
+        contextSnapshot: null,
+      };
+    case 'mjcf':
+    {
+      const contextSnapshot = {
+        availableFiles: filterAvailableFiles(
+          options.availableFiles,
+          new Set<RobotFile['format']>(['mjcf']),
+          options.file,
+        ),
+      };
+      return {
+        options: {
+          ...options,
+          availableFiles: undefined,
+          allFileContents: undefined,
+        },
+        contextCacheKey: hasContextSnapshotContent(contextSnapshot)
+          ? buildContextCacheKey('parse', options.file, {
+            availableFiles: options.availableFiles,
+          })
+          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
+          ? contextSnapshot
+          : null,
+      };
+    }
+    case 'sdf':
+    {
+      const contextSnapshot = {
+        allFileContents: options.allFileContents ?? {},
+      };
+      return {
+        options: {
+          ...options,
+          availableFiles: undefined,
+          allFileContents: undefined,
+        },
+        contextCacheKey: hasContextSnapshotContent(contextSnapshot)
+          ? buildContextCacheKey('parse', options.file, {
+            allFileContents: options.allFileContents,
+          })
+          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
+          ? contextSnapshot
+          : null,
+      };
+    }
+    case 'xacro':
+    {
+      const contextSnapshot = {
+        availableFiles: filterAvailableFiles(
+          options.availableFiles,
+          new Set<RobotFile['format']>(['urdf', 'xacro']),
+          options.file,
+        ),
+        allFileContents: options.allFileContents ?? {},
+      };
+      return {
+        options: {
+          ...options,
+          availableFiles: undefined,
+          allFileContents: undefined,
+        },
+        contextCacheKey: hasContextSnapshotContent(contextSnapshot)
+          ? buildContextCacheKey('parse', options.file, {
+            availableFiles: options.availableFiles,
+            allFileContents: options.allFileContents,
+          })
+          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
+          ? contextSnapshot
+          : null,
+      };
+    }
+    default:
+      return {
+        options: {
+          ...options,
+          availableFiles: [],
+          allFileContents: {},
+        },
+        contextCacheKey: null,
+        contextSnapshot: null,
+      };
+  }
+}
+
+export function buildEditableRobotSourceWorkerOptions(
+  options: ParseEditableRobotSourceOptions,
+): ParseEditableRobotSourceOptions {
+  const preparedDispatch = buildEditableRobotSourceWorkerDispatch(options);
+  return {
+    ...preparedDispatch.options,
+    availableFiles: preparedDispatch.contextSnapshot?.availableFiles ?? preparedDispatch.options.availableFiles ?? [],
+    allFileContents: preparedDispatch.contextSnapshot?.allFileContents ?? preparedDispatch.options.allFileContents ?? {},
+  };
+}

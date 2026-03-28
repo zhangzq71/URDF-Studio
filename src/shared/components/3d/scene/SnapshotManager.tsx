@@ -86,6 +86,31 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
       onDone?.();
     };
 
+    const tryCaptureRendererCanvas = (
+      sourceCanvas: HTMLCanvasElement,
+      targetWidth: number,
+      targetHeight: number,
+    ) => {
+      const captureCanvas = document.createElement('canvas');
+      captureCanvas.width = targetWidth;
+      captureCanvas.height = targetHeight;
+      const ctx = captureCanvas.getContext('2d');
+
+      if (!ctx) {
+        return null;
+      }
+
+      try {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+        return captureCanvas;
+      } catch (error) {
+        console.warn('[Snapshot] Falling back to framebuffer capture.', error);
+        return null;
+      }
+    };
+
     const readFramebufferToCanvas = (width: number, height: number) => {
       const context = gl.getContext();
       const pixelBuffer = new Uint8Array(width * height * 4);
@@ -98,7 +123,6 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
         return captureCanvas;
       }
 
-      context.finish();
       context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixelBuffer);
 
       const imageData = ctx.createImageData(width, height);
@@ -175,11 +199,12 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
           const { scene: latestScene, camera: latestCamera } = get();
           restoreSnapshotGrid = hideSnapshotGrid(latestScene);
           gl.render(latestScene, latestCamera);
-          const capturedCanvas = readFramebufferToCanvas(baseWidth, baseHeight);
+          const capturedCanvas =
+            tryCaptureRendererCanvas(gl.domElement, targetWidth, targetHeight)
+            ?? createExportCanvas(readFramebufferToCanvas(baseWidth, baseHeight), targetWidth, targetHeight);
           restoreSnapshotGrid();
           restoreSnapshotGrid = null;
-          const exportCanvas = createExportCanvas(capturedCanvas, targetWidth, targetHeight);
-          downloadCanvas(exportCanvas, () => {
+          downloadCanvas(capturedCanvas, () => {
             invalidate();
             onDone?.();
           });

@@ -81,9 +81,6 @@ export class UsdFsHelper {
             return;
         }
         const allFilePaths = this.getAllLoadedFiles();
-        if (this.debugFileHandling) {
-            console.log("Clearing stage.", allFilePaths);
-        }
         for (const file of allFilePaths) {
             try {
                 usd.FS_unlink(file, true);

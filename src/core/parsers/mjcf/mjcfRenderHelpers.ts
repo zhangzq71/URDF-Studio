@@ -13,12 +13,14 @@ export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, num
 
     mesh.traverse((child: any) => {
         if (child.isMesh && child.material) {
+            const preferDoubleSide = Boolean(child.userData?.mjcfPreferDoubleSide) || alpha < 1.0;
             // Create unified matte material using the factory
             // This ensures MJCF and URDF have identical visual appearance
             const newMat = createMatteMaterial({
                 color,
                 opacity: alpha,
                 transparent: alpha < 1.0,
+                side: preferDoubleSide ? THREE.DoubleSide : THREE.FrontSide,
                 name: child.material?.name || 'mjcf_material',
                 preserveExactColor: true,
             });

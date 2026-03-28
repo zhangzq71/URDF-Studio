@@ -4,6 +4,7 @@
  */
 
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 import type { AssetFile } from '../types';
 import { isAssetFile } from './formatDetection';
 
@@ -36,9 +37,11 @@ export function collectReferencedMeshes(
   const referencedFiles = new Set<string>();
 
   Object.values(links).forEach((link) => {
-    if (link.visual.type === geometryType && link.visual.meshPath) {
-      referencedFiles.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === geometryType && entry.geometry.meshPath) {
+        referencedFiles.add(entry.geometry.meshPath);
+      }
+    });
     if (link.collision && link.collision.type === geometryType && link.collision.meshPath) {
       referencedFiles.add(link.collision.meshPath);
     }

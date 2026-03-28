@@ -11,5 +11,6 @@ test('urdf-viewer utils barrel exposes app-facing export helpers', async () => {
   assert.equal(typeof moduleUnderTest.resolveUsdExportSceneSnapshot, 'function');
   assert.equal(typeof moduleUnderTest.createStableViewerResourceScope, 'function');
   assert.equal(typeof moduleUnderTest.ensureUsdWasmRuntime, 'function');
+  assert.equal(typeof moduleUnderTest.prewarmUsdWasmRuntimeInBackground, 'function');
   assert.equal(typeof moduleUnderTest.toVirtualUsdPath, 'function');
 });

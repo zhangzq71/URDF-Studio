@@ -442,6 +442,35 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
         return;
       }
 
+      const translateHovered = hasHoveredHandle(translateControls);
+      const rotateHovered = hasHoveredHandle(rotateControls);
+
+      // If one gizmo already owns the hover, trust that state and skip the
+      // more expensive visible-hit traversal. This trims the "grab hitch"
+      // when the pointer first enters a handle in universal mode.
+      if (translateHovered !== rotateHovered) {
+        const activeOwner = translateHovered ? 'translate' : 'rotate';
+        universalOwnerRef.current = activeOwner;
+
+        if (activeOwner === 'rotate') {
+          if (!translateControls.dragging && translateControls.axis !== null) {
+            translateControls.axis = null;
+          }
+
+          rotateControls.enabled = rotateEnabled ?? enabled;
+          translateControls.enabled = false;
+          return;
+        }
+
+        if (!rotateControls.dragging && rotateControls.axis !== null) {
+          rotateControls.axis = null;
+        }
+
+        translateControls.enabled = enabled;
+        rotateControls.enabled = false;
+        return;
+      }
+
       const translateVisibleHit = resolveVisibleTranslateHit(translateControls, pointer);
       const rotateVisibleHit = resolveVisibleRotateHit(rotateControls, pointer);
 

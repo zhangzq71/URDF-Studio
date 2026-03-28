@@ -1,10 +1,10 @@
 import * as THREE from 'three';
+import { createMatteMaterial } from '@/shared/utils/materialFactory';
 
 /**
  * Material Cache - Prevents shader recompilation on every render
- * Caches materials based on their properties to improve performance
+ * and bounds long-session GPU memory growth.
  */
-const materialCache = new Map<string, THREE.Material>();
 const MAX_MATERIAL_CACHE_SIZE = 512;
 
 interface MaterialOptions {
@@ -17,11 +17,50 @@ interface MaterialOptions {
   emissiveIntensity: number;
 }
 
-/**
- * Get or create a cached material based on the provided properties
- * @returns A cached or newly created THREE.Material
- */
-export function getCachedMaterial({
+interface MaterialCacheEntry {
+  material: THREE.Material;
+  refCount: number;
+}
+
+const materialCache = new Map<string, MaterialCacheEntry>();
+
+export function buildMaterialCacheKey({
+  isSkeleton,
+  finalColor,
+  matOpacity,
+  matWireframe,
+  isCollision,
+  emissiveColor,
+  emissiveIntensity,
+}: MaterialOptions): string {
+  return `${isSkeleton}-${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
+}
+
+function touchMaterialCacheEntry(cacheKey: string, entry: MaterialCacheEntry): void {
+  materialCache.delete(cacheKey);
+  materialCache.set(cacheKey, entry);
+}
+
+function disposeUnusedCachedMaterials(): void {
+  if (materialCache.size <= MAX_MATERIAL_CACHE_SIZE) {
+    return;
+  }
+
+  for (const [cacheKey, entry] of materialCache) {
+    if (materialCache.size <= MAX_MATERIAL_CACHE_SIZE) {
+      break;
+    }
+
+    if (entry.refCount > 0) {
+      continue;
+    }
+
+    entry.material.dispose();
+    materialCache.delete(cacheKey);
+  }
+}
+
+function createCachedMaterial({
   isSkeleton,
   finalColor,
   matOpacity,
@@ -30,62 +69,83 @@ export function getCachedMaterial({
   emissiveColor,
   emissiveIntensity,
 }: MaterialOptions): THREE.Material {
-  // Generate a unique cache key based on visual properties only.
-  // Geometry dimensions are intentionally excluded: they affect BufferGeometry args,
-  // not the shader/material, so the same material can be reused across dimension changes.
-  const cacheKey = `${isSkeleton}-${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
-
-  let material = materialCache.get(cacheKey);
-  if (!material) {
-    if (isSkeleton) {
-      material = new THREE.MeshBasicMaterial({
-        color: finalColor,
-        transparent: true,
-        opacity: matOpacity,
-        wireframe: matWireframe,
-        side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
-        polygonOffset: isCollision,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-      });
-    } else {
-      material = new THREE.MeshPhysicalMaterial({
-        color: finalColor,
-        roughness: 0.15,
-        metalness: 0.3,
-        clearcoat: 0.3,
-        clearcoatRoughness: 0.1,
-        reflectivity: 0.8,
-        emissive: emissiveColor,
-        emissiveIntensity: emissiveIntensity,
-        transparent: isCollision,
-        opacity: matOpacity,
-        wireframe: matWireframe,
-        side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
-        polygonOffset: isCollision,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-      });
-    }
-    // Keep cache bounded to avoid unbounded GPU memory growth in long sessions.
-    // Note: do NOT dispose evicted materials here — they may still be referenced
-    // by active Three.js meshes (via <primitive object={material} />) and calling
-    // dispose() on a live material corrupts its GPU program, causing visual glitches.
-    if (materialCache.size >= MAX_MATERIAL_CACHE_SIZE) {
-      const oldestKey = materialCache.keys().next().value;
-      if (oldestKey !== undefined) {
-        materialCache.delete(oldestKey);
-      }
-    }
-    materialCache.set(cacheKey, material);
+  if (isSkeleton) {
+    return new THREE.MeshBasicMaterial({
+      color: finalColor,
+      transparent: true,
+      opacity: matOpacity,
+      wireframe: matWireframe,
+      side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
+      polygonOffset: isCollision,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+      toneMapped: false,
+    });
   }
-  return material;
+
+  const matteMaterial = createMatteMaterial({
+    color: finalColor,
+    opacity: matOpacity,
+    transparent: isCollision || matOpacity < 1,
+    side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
+    preserveExactColor: true,
+  });
+  matteMaterial.wireframe = matWireframe;
+  matteMaterial.emissive.set(emissiveColor);
+  matteMaterial.emissiveIntensity = emissiveIntensity;
+  matteMaterial.polygonOffset = isCollision;
+  matteMaterial.polygonOffsetFactor = -1;
+  matteMaterial.polygonOffsetUnits = -1;
+  return matteMaterial;
 }
 
 /**
- * Clear the material cache (useful for cleanup or testing)
+ * Get or create a cached material based on the provided properties.
+ * This does not claim ownership; callers that keep the material mounted
+ * should pair it with retain/release helpers.
  */
+export function getCachedMaterial(options: MaterialOptions): THREE.Material {
+  const cacheKey = buildMaterialCacheKey(options);
+  const existingEntry = materialCache.get(cacheKey);
+  if (existingEntry) {
+    touchMaterialCacheEntry(cacheKey, existingEntry);
+    return existingEntry.material;
+  }
+
+  const nextEntry: MaterialCacheEntry = {
+    material: createCachedMaterial(options),
+    refCount: 0,
+  };
+  materialCache.set(cacheKey, nextEntry);
+  disposeUnusedCachedMaterials();
+  return nextEntry.material;
+}
+
+export function retainCachedMaterial(cacheKey: string): void {
+  const entry = materialCache.get(cacheKey);
+  if (!entry) {
+    return;
+  }
+
+  entry.refCount += 1;
+  touchMaterialCacheEntry(cacheKey, entry);
+}
+
+export function releaseCachedMaterial(cacheKey: string): void {
+  const entry = materialCache.get(cacheKey);
+  if (!entry) {
+    return;
+  }
+
+  entry.refCount = Math.max(0, entry.refCount - 1);
+  if (entry.refCount === 0) {
+    disposeUnusedCachedMaterials();
+  }
+}
+
 export function clearMaterialCache(): void {
-  materialCache.forEach((material) => material.dispose());
+  materialCache.forEach((entry) => {
+    entry.material.dispose();
+  });
   materialCache.clear();
 }

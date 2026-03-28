@@ -2,7 +2,7 @@
 import { ThreeRenderDelegateInterface } from "../hydra/ThreeJsRenderDelegate.js";
 import { collectCameraFitSelection, fitCameraToSelection, scheduleCameraRefit } from "./camera.js";
 import { getDirectoryFromVirtualPath, isLikelyNonRenderableUsdConfig, normalizeUsdPath, parseBooleanFlag } from "./path-utils.js";
-import { resolveAxisAlignmentRotationX, resolveStageUpAxis } from "./stage-up-axis.js";
+import { applyStageAxisAlignmentToRoot } from "./stage-up-axis.js";
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -229,27 +229,6 @@ export async function loadUsdStage(args) {
         if (!profileLoad)
             return;
         markLoadPhase(`end:${status}`);
-        const phaseRows = profileMarks
-            .map((mark, index) => {
-            const previous = index > 0 ? profileMarks[index - 1].ms : 0;
-            const delta = Math.max(0, Math.round((mark.ms - previous) * 10) / 10);
-            return `${index.toString().padStart(2, "0")}. ${mark.label}: +${delta}ms (t=${mark.ms}ms)`;
-        })
-            .join("\n");
-        const callbackRows = Array.from(callbackProfileByName.entries())
-            .sort((a, b) => b[1].totalMs - a[1].totalMs)
-            .slice(0, 20)
-            .map(([name, stats]) => {
-            const total = Math.round(stats.totalMs * 10) / 10;
-            const max = Math.round(stats.maxMs * 10) / 10;
-            return `${name}: count=${stats.count}, total=${total}ms, max=${max}ms`;
-        })
-            .join("\n");
-        console.info([
-            `[LOAD PROFILE][${status}] ${normalizedPath}`,
-            phaseRows || "(no phases)",
-            callbackRows ? `[LOAD PROFILE][callbacks]\n${callbackRows}` : "",
-        ].filter(Boolean).join("\n"));
     };
     let eagerRenderCount = 0;
     const runEagerRender = (_phaseLabel, options = {}) => {
@@ -863,6 +842,23 @@ export async function loadUsdStage(args) {
             return null;
         }
     };
+    const syncStageAxisAlignment = () => {
+        const cachedSceneStageSnapshot = getRobotSceneStageSnapshot();
+        const previousRotationX = Number(window.usdRoot?.rotation?.x || 0);
+        const nextRotationX = applyStageAxisAlignmentToRoot(window.usdRoot, {
+            reportedUpAxis: cachedSceneStageSnapshot?.upAxis || null,
+            stage: window.usdStage,
+            targetUpAxis: "z",
+        });
+        const axisChanged = Math.abs(previousRotationX - nextRotationX) > 1e-6;
+        if (axisChanged) {
+            window.usdRoot?.updateMatrixWorld?.(true);
+        }
+        return {
+            cachedSceneStageSnapshot,
+            axisChanged,
+        };
+    };
     const getRobotMetadataSnapshotStats = () => {
         const activeRenderInterface = window.renderInterface;
         if (!activeRenderInterface || typeof activeRenderInterface.getCachedRobotMetadataSnapshot !== "function") {
@@ -1095,7 +1091,6 @@ export async function loadUsdStage(args) {
     setMessage("Finishing load...");
     setProgress(92);
     await yieldToMainThread();
-    const fallbackStageUpAxis = "y";
     window.usdStage = null;
     if (!isLoadStillActive())
         return state;
@@ -1159,7 +1154,7 @@ export async function loadUsdStage(args) {
             previousPendingResolvedPrim = pendingResolvedPrimCount;
             const elapsedMs = profileNow() - drainStartedAtMs;
             if ((finalSceneDrainBudgetMs > 0 && elapsedMs >= finalSceneDrainBudgetMs) || stagnantPassCount >= 6) {
-                console.warn(`[usd-loader] Strict one-shot drain stopped with ${stats.ready}/${Math.max(stats.total, 1)} meshes ready and ${pendingProtoCount} pending proto meshes.`);
+                console.error(`[usd-loader] Strict one-shot drain stopped with ${stats.ready}/${Math.max(stats.total, 1)} meshes ready and ${pendingProtoCount} pending proto meshes.`);
                 return;
             }
             let drewInBurst = false;
@@ -1180,7 +1175,7 @@ export async function loadUsdStage(args) {
     if (!isLoadStillActive())
         return state;
     markLoadPhase("strict-one-shot-drain-done");
-    const cachedSceneStageSnapshot = getRobotSceneStageSnapshot();
+    const { cachedSceneStageSnapshot } = syncStageAxisAlignment();
     state.timeout = 40;
     state.endTimeCode = 0;
     if (cachedSceneStageSnapshot) {
@@ -1189,18 +1184,6 @@ export async function loadUsdStage(args) {
         state.endTimeCode = Number.isFinite(stageEndTimeCode) && stageEndTimeCode > 0 ? stageEndTimeCode : 0;
         state.timeout = Number.isFinite(stageTimeCodesPerSecond) && stageTimeCodesPerSecond > 0 ? 1000 / stageTimeCodesPerSecond : 40;
     }
-    const stageUpAxis = resolveStageUpAxis({
-        reportedUpAxis: cachedSceneStageSnapshot?.upAxis || null,
-        stage: window.usdStage,
-        fallbackUpAxis: fallbackStageUpAxis,
-    });
-    if (!stageUpAxis) {
-        console.warn(`[usd-loader] Missing explicit upAxis metadata for stage: ${String(pathToLoad || "<unknown>")}`);
-    }
-    window.usdRoot.rotation.x = resolveAxisAlignmentRotationX({
-        sourceUpAxis: stageUpAxis,
-        targetUpAxis: "z",
-    });
     if (needsFinalProtoHydrationPass) {
         runProtoHydrationPass();
     }
@@ -1208,10 +1191,30 @@ export async function loadUsdStage(args) {
         runResolvedPrimHydrationPass({ force: true });
     }
     const getCameraFitSelection = () => collectCameraFitSelection(window.usdRoot);
-    const fitted = fitCameraToSelection(window.camera, window._controls, getCameraFitSelection(), 1.5, params);
-    if (!fitted) {
-        scheduleCameraRefit(window.camera, window._controls, getCameraFitSelection, params);
-    }
+    const refitCameraToUsdRoot = () => {
+        const fitted = fitCameraToSelection(window.camera, window._controls, getCameraFitSelection(), 1.5, params);
+        if (!fitted) {
+            scheduleCameraRefit(window.camera, window._controls, getCameraFitSelection, params);
+        }
+    };
+    const retryStageAxisAlignmentUntilStageMetadata = (attempt = 0) => {
+        if (!isLoadStillActive()) {
+            return;
+        }
+        const alignment = syncStageAxisAlignment();
+        if (alignment.axisChanged) {
+            refitCameraToUsdRoot();
+        }
+        const hasResolvedUpAxis = typeof alignment.cachedSceneStageSnapshot?.upAxis === "string"
+            && alignment.cachedSceneStageSnapshot.upAxis.trim().length > 0;
+        if (hasResolvedUpAxis || attempt >= 12) {
+            return;
+        }
+        setTimeout(() => {
+            retryStageAxisAlignmentUntilStageMetadata(attempt + 1);
+        }, 250);
+    };
+    refitCameraToUsdRoot();
     emitProgress({
         phase: "resolving-metadata",
         loadedCount: null,
@@ -1221,6 +1224,7 @@ export async function loadUsdStage(args) {
     await ensureRobotMetadataReadyBeforeInteractive();
     if (!isLoadStillActive())
         return state;
+    retryStageAxisAlignmentUntilStageMetadata();
     state.ready = true;
     rebuildLinkAxes();
     markLoadPhase("camera-and-link-axes-done");

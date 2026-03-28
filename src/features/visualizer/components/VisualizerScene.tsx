@@ -4,12 +4,19 @@ import { Html } from '@react-three/drei';
 import type { RobotState, UrdfJoint } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
-import { LoadingHud, UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE, buildLoadingHudState } from '@/shared/components/3d';
+import {
+  LoadingHud,
+  SceneCompileWarmup,
+  UnifiedTransformControls,
+  VISUALIZER_UNIFIED_GIZMO_SIZE,
+  buildLoadingHudState,
+} from '@/shared/components/3d';
 import { buildColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { useSelectionStore } from '@/store/selectionStore';
 import { RobotNode } from './nodes';
 import { ClosedLoopConstraintsOverlay } from './constraints';
 import { JointTransformControls } from './controls';
+import { VisualizerHoverController } from './VisualizerHoverController';
 import type { VisualizerController } from '../hooks/useVisualizerController';
 import { collectVisualizerMeshLoadKeys } from '../utils/visualizerMeshLoading';
 
@@ -27,6 +34,7 @@ interface VisualizerSceneProps {
   assets: Record<string, string>;
   lang: Language;
   controller: VisualizerController;
+  active?: boolean;
 }
 
 export const VisualizerScene = React.memo(({
@@ -37,6 +45,7 @@ export const VisualizerScene = React.memo(({
   assets,
   lang,
   controller,
+  active = true,
 }: VisualizerSceneProps) => {
   const t = translations[lang];
   const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
@@ -106,6 +115,25 @@ export const VisualizerScene = React.memo(({
     ? t.loadingRobotPreparing
     : t.loadingRobotStreamingMeshes;
   const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
+  const sceneCompileWarmupKey = React.useMemo(() => [
+    mode,
+    robot.rootLinkId,
+    String(Object.keys(robot.links).length),
+    String(Object.keys(robot.joints).length),
+    expectedMeshLoadSignature || 'inline-geometry',
+    state.showGeometry ? 'geometry-on' : 'geometry-off',
+    state.showVisual ? 'visual-on' : 'visual-off',
+    state.showCollision ? 'collision-on' : 'collision-off',
+  ].join('|'), [
+    expectedMeshLoadSignature,
+    mode,
+    robot.joints,
+    robot.links,
+    robot.rootLinkId,
+    state.showCollision,
+    state.showGeometry,
+    state.showVisual,
+  ]);
 
   React.useEffect(() => {
     setMeshLoadingState({
@@ -153,6 +181,8 @@ export const VisualizerScene = React.memo(({
 
   return (
     <>
+      <SceneCompileWarmup active={active && !isMeshLoading} warmupKey={sceneCompileWarmupKey} />
+      <VisualizerHoverController robotRootRef={robotRootRef} active={active} />
       <GroundedGroup ref={robotRootRef}>
         {mode === 'skeleton' && <ClosedLoopConstraintsOverlay robot={robot} />}
         <RobotNode
@@ -188,7 +218,7 @@ export const VisualizerScene = React.memo(({
           onMeshResolved={handleMeshResolved}
         />
       </GroundedGroup>
-      {isMeshLoading ? (
+      {active && isMeshLoading ? (
         <Html fullscreen>
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
             <LoadingHud

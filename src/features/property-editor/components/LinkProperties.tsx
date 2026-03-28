@@ -15,6 +15,7 @@ import {
   formatNumberWithMaxDecimals,
 } from '@/core/utils/numberPrecision';
 import {
+  composeInertiaTensorFromDerivedValues,
   computeInertialDerivedValues,
   computeLinkDensity,
 } from '@/shared/utils/inertialDerived';
@@ -37,6 +38,12 @@ const DEFAULT_INERTIAL = {
   origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
   inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
 };
+
+const DEFAULT_PRINCIPAL_AXES = [
+  { x: 1, y: 0, z: 0 },
+  { x: 0, y: 1, z: 0 },
+  { x: 0, y: 0, z: 1 },
+] as const;
 
 const formatReadonlyNumber = (value: number | null | undefined): string => {
   if (value === null || value === undefined || !Number.isFinite(value)) {
@@ -116,6 +123,32 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
   };
   const inertiaTensorFields = ['ixx', 'ixy', 'ixz', 'iyy', 'iyz', 'izz'] as const;
   const diagonalInertiaLabels = ['I1', 'I2', 'I3'] as const;
+  const diagonalInertiaValues = derivedInertial?.diagonalInertia ?? [
+    inertial.inertia.ixx,
+    inertial.inertia.iyy,
+    inertial.inertia.izz,
+  ];
+  const principalAxes = derivedInertial?.principalAxes ?? (DEFAULT_PRINCIPAL_AXES as [
+    { x: number; y: number; z: number },
+    { x: number; y: number; z: number },
+    { x: number; y: number; z: number },
+  ]);
+
+  const handleDiagonalInertiaChange = (index: 0 | 1 | 2, value: number) => {
+    const nextDiagonalInertia = [...diagonalInertiaValues] as [number, number, number];
+    nextDiagonalInertia[index] = value;
+
+    onUpdate('link', selection.id!, {
+      ...data,
+      inertial: {
+        ...inertial,
+        inertia: composeInertiaTensorFromDerivedValues(
+          nextDiagonalInertia,
+          principalAxes,
+        ),
+      },
+    });
+  };
 
   const nameField = (
     <InlineInputGroup label={t.name} labelWidthClassName="w-11">
@@ -204,19 +237,17 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
           </InlineInputGroup>
 
           <InputGroup label={t.diagonalInertia}>
-            <div
-              className="grid items-center gap-x-1 gap-y-1"
-              style={{ gridTemplateColumns: 'max-content minmax(0, 1fr) max-content minmax(0, 1fr) max-content minmax(0, 1fr)' }}
-            >
+            <div className="grid grid-cols-3 gap-1">
               {diagonalInertiaLabels.map((label, index) => (
-                <React.Fragment key={label}>
-                  <span className="whitespace-nowrap text-[8px] font-semibold leading-4 text-text-tertiary">
-                    {label}
-                  </span>
-                  <ReadonlyValueField className="justify-center text-center">
-                    {formatReadonlyNumber(derivedInertial?.diagonalInertia[index])}
-                  </ReadonlyValueField>
-                </React.Fragment>
+                <NumberInput
+                  key={label}
+                  label={label}
+                  value={diagonalInertiaValues[index]}
+                  min={0}
+                  step={0.01}
+                  precision={MAX_PROPERTY_DECIMALS}
+                  onChange={(value) => handleDiagonalInertiaChange(index as 0 | 1 | 2, value)}
+                />
               ))}
             </div>
           </InputGroup>

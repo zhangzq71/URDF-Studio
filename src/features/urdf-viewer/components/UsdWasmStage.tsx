@@ -6,6 +6,11 @@ import { getCollisionGeometryEntries } from '@/core/robot';
 import { getLowestMeshZ } from '@/shared/utils';
 import type { RobotFile, UrdfLink } from '@/types';
 import { disposeObject3D } from '@/shared/utils/three/dispose';
+import {
+  failFastInDev,
+  isDevelopmentBuild,
+  scheduleFailFastInDev,
+} from '@/core/utils/runtimeDiagnostics';
 import { UsdCollisionTransformControls, type UsdCollisionTransformTarget } from './UsdCollisionTransformControls';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import { LinkAxesController } from '../runtime/viewer/link-axes.js';
@@ -14,12 +19,17 @@ import { LinkRotationController } from '../runtime/viewer/link-rotation.js';
 import type {
   MeasureTargetResolver,
   ToolMode,
+  ViewerDocumentLoadEvent,
   URDFViewerProps,
   ViewerRuntimeStageBridge,
   UsdLoadingPhaseLabels,
   UsdLoadingProgress,
 } from '../types';
-import { disposeUsdDriver, ensureUsdWasmRuntime, type UsdWasmRuntime } from '../utils/usdWasmRuntime';
+import {
+  disposeUsdDriver,
+  ensureUsdWasmRuntime,
+  type UsdWasmRuntime,
+} from '../utils/usdWasmRuntime';
 import { collisionHighlightMaterial, highlightMaterial } from '../utils/materials';
 import { UsdJointAxesController } from '../utils/usdJointAxesController';
 import { createUsdJointAxesDisplayResolution } from '../utils/usdJointAxesDisplayResolution';
@@ -29,9 +39,10 @@ import {
   createCameraFrameStabilityKey,
 } from '../utils/cameraFrame';
 import {
-  buildUsdBundlePreloadEntries,
+  toVirtualUsdPath,
 } from '../utils/usdPreloadSources';
 import { hydrateUsdViewerRobotResolutionFromRuntime } from '../utils/usdRuntimeRobotHydration';
+import { scheduleUsdResolvedRobotRepublishAfterWarmup } from '../utils/usdResolvedRobotWarmup';
 import { resolveUsdSceneRobotResolution } from '../utils/usdSceneRobotResolution';
 import { resolveUsdRuntimeLinkPathForMesh } from '../utils/usdRuntimeMeshMapping';
 import { createUsdViewerRuntimeRobot } from '../utils/usdViewerRuntimeRobot';
@@ -46,9 +57,11 @@ import {
 import {
   clearUsdHoverPointerState,
   markUsdHoverRaycastDirty,
+  setUsdHoverPointerButtons,
   setUsdHoverPointerState,
+  shouldProcessUsdHoverRaycast,
 } from '../utils/usdHoverPointerState';
-import { choosePreferredHoverMatch, findNearestExpandedBoundsHit } from '../utils/hoverLinkBounds';
+import { resolvePreferredHoverMatch } from '../utils/hoverLinkBounds';
 import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 import { hasPickableMaterial, isInternalHelperObject, isVisibleInHierarchy } from '../utils/pickFilter';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
@@ -61,6 +74,13 @@ import {
 import { prepareUsdVisualMesh } from '../utils/usdVisualRendering';
 import { createEmbeddedUsdViewerLoadParams } from '../utils/usdViewerRenderParams';
 import { resolveUsdStageJointPreview, type UsdStageJointInfoLike } from '../utils/usdStageJointPreview';
+import {
+  prepareUsdStageOpenData,
+  type PreparedUsdPreloadFile,
+} from '../utils/usdStageOpenPreparation';
+import { prepareUsdStageOpenWithWorker } from '../utils/usdStageOpenPreparationWorkerBridge';
+import { loadPreparedUsdStageOpenDataCached } from '../utils/preparedUsdStageOpenCache';
+import { preloadUsdStageEntries } from '../utils/usdStagePreloadExecution';
 import {
   armSelectionMissGuard,
   disarmSelectionMissGuard,
@@ -109,6 +129,7 @@ interface UsdWasmStageProps {
   loadingDetailLabel: string;
   loadingPhaseLabels: UsdLoadingPhaseLabels;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   runtimeBridge?: ViewerRuntimeStageBridge;
   measureTargetResolverRef?: MutableRefObject<MeasureTargetResolver | null>;
 }
@@ -154,6 +175,8 @@ type RuntimeMeshIndex = {
   meshMetaByObject: Map<THREE.Object3D, RuntimeMeshMeta>;
   meshesByLinkKey: Map<string, THREE.Mesh[]>;
   pickMeshes: THREE.Mesh[];
+  pickMeshesByRole: Record<UsdMeshRole, THREE.Mesh[]>;
+  hoverBoundsCandidatesByRole: Record<UsdMeshRole, Array<{ mesh: THREE.Mesh; meta: RuntimeMeshMeta }>>;
 };
 
 type RuntimePreviewCollisionTransform = {
@@ -178,23 +201,6 @@ type HighlightedMeshSnapshot = {
 
 const USD_VISUAL_SEGMENT_PATTERN = /(?:^|\/)visuals?(?:$|[/.])/i;
 const USD_COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
-
-type PreloadEntry = {
-  path: string;
-  loadBlob: () => Promise<Blob>;
-};
-
-const dependencyStemByRootUsdFile: Record<string, string> = {
-  'g1_29dof_rev_1_0.usd': 'g1_29dof_rev_1_0',
-  'g1_23dof_rev_1_0.usd': 'g1_23dof_rev_1_0',
-  'go2.usd': 'go2_description',
-  'go2w.usd': 'go2w_description',
-  'h1.usd': 'h1',
-  'h1_2.usd': 'h1_2',
-  'h1_2_handless.usd': 'h1_2_handless',
-  'b2.usd': 'b2_description',
-  'b2w.usd': 'b2w_description',
-};
 
 function getPathBasename(path: string | null | undefined): string {
   const normalized = String(path || '').trim().replace(/[<>]/g, '');
@@ -363,18 +369,6 @@ function syncUsdVisualColorOverride(mesh: THREE.Mesh, colorOverride: string | nu
   mesh.material = overrideMaterial;
 }
 
-function toVirtualUsdPath(path: string): string {
-  const normalizedPath = path.replace(/\\/g, '/').replace(/^\/+/, '');
-  return `/${normalizedPath}`;
-}
-
-function getVirtualUsdDirectory(path: string): string {
-  const normalizedPath = toVirtualUsdPath(path);
-  const lastSlashIndex = normalizedPath.lastIndexOf('/');
-  if (lastSlashIndex < 0) return '/';
-  return normalizedPath.slice(0, lastSlashIndex + 1);
-}
-
 function getSharedConfigurationVirtualPath(path: string): string | null {
   const normalizedPath = toVirtualUsdPath(path);
   if (!normalizedPath.toLowerCase().includes('/configuration/')) return null;
@@ -384,36 +378,9 @@ function getSharedConfigurationVirtualPath(path: string): string | null {
   return `/configuration/${fileName}`;
 }
 
-function inferUsdDependencyStem(stagePath: string): string | null {
-  const normalizedPath = toVirtualUsdPath(stagePath).toLowerCase();
-  const fileName = normalizedPath.split('/').pop() || '';
-  if (!fileName) return null;
-
-  const mappedStem = dependencyStemByRootUsdFile[fileName];
-  if (mappedStem) return mappedStem;
-
-  const inferredStem = fileName.replace(/\.usd[a-z]?$/i, '');
-  if (!inferredStem) return null;
-  if (!normalizedPath.includes('/configuration/')) return inferredStem;
-
-  return inferredStem.replace(/_(base|physics|robot|sensor)$/i, '');
-}
-
-function buildCriticalUsdDependencyPaths(stagePath: string): string[] {
-  const normalizedStagePath = toVirtualUsdPath(stagePath);
-  const dependencyStem = inferUsdDependencyStem(normalizedStagePath);
-  if (!dependencyStem) return [];
-
-  const rootDirectory = getVirtualUsdDirectory(normalizedStagePath);
-  const configurationDirectory = rootDirectory.toLowerCase().endsWith('/configuration/')
-    ? rootDirectory
-    : `${rootDirectory}configuration/`;
-
-  const suffixes = dependencyStem === 'h1_2_handless'
-    ? ['base', 'physics', 'robot']
-    : ['base', 'physics', 'sensor'];
-
-  return suffixes.map((suffix) => `${configurationDirectory}${dependencyStem}_${suffix}.usd`);
+function isWorkerCapabilityError(error: unknown): boolean {
+  return error instanceof Error
+    && /Web Worker is not available in this environment/i.test(error.message);
 }
 
 function getRuntimeWindow(): RuntimeWindow {
@@ -429,21 +396,23 @@ function disposeUsdRootChildren(rootGroup: THREE.Group): void {
 
 async function preloadUsdEntry(
   runtime: UsdWasmRuntime,
-  entry: PreloadEntry,
+  entry: PreparedUsdPreloadFile,
   isActive: () => boolean,
 ): Promise<boolean> {
   if (!isActive()) return false;
 
-  let blob: Blob;
-  try {
-    blob = await entry.loadBlob();
-  } catch (error) {
-    console.warn(`Skipping USD dependency preload for ${entry.path}`, error);
+  const normalizedBytes = normalizePreparedUsdPreloadBytes(entry.bytes);
+  if (!normalizedBytes && !entry.blob) {
+    if (entry.error) {
+      console.error(`Skipping USD dependency preload for ${entry.path}`, entry.error);
+    }
     return false;
   }
   if (!isActive()) return false;
 
-  const loaded = await writeUsdBlobToVirtualPath(runtime, entry.path, blob, isActive);
+  const loaded = normalizedBytes
+    ? await writeUsdBytesToVirtualPath(runtime, entry.path, normalizedBytes, isActive)
+    : await writeUsdBlobToVirtualPath(runtime, entry.path, entry.blob!, isActive);
   if (!loaded) return false;
 
   const sharedConfigurationPath = getSharedConfigurationVirtualPath(entry.path);
@@ -452,10 +421,66 @@ async function preloadUsdEntry(
     && sharedConfigurationPath !== entry.path
     && !runtime.usdFsHelper.hasVirtualFilePath(sharedConfigurationPath)
   ) {
-    await writeUsdBlobToVirtualPath(runtime, sharedConfigurationPath, blob, isActive);
+    if (normalizedBytes) {
+      await writeUsdBytesToVirtualPath(runtime, sharedConfigurationPath, normalizedBytes, isActive);
+    } else {
+      await writeUsdBlobToVirtualPath(runtime, sharedConfigurationPath, entry.blob!, isActive);
+    }
   }
 
   return runtime.usdFsHelper.hasVirtualFilePath(entry.path);
+}
+
+function normalizePreparedUsdPreloadBytes(
+  bytes: PreparedUsdPreloadFile['bytes'],
+): Uint8Array | null {
+  if (!bytes) {
+    return null;
+  }
+
+  if (bytes instanceof Uint8Array) {
+    return bytes.byteLength > 0 ? bytes : null;
+  }
+
+  if (bytes instanceof ArrayBuffer) {
+    return bytes.byteLength > 0 ? new Uint8Array(bytes) : null;
+  }
+
+  return null;
+}
+
+async function writeUsdBytesToVirtualPath(
+  runtime: UsdWasmRuntime,
+  virtualPath: string,
+  bytes: Uint8Array,
+  isActive: () => boolean,
+): Promise<boolean> {
+  if (!isActive() || !runtime.usdFsHelper.canOperateOnUsdFilesystem()) return false;
+
+  const normalizedVirtualPath = toVirtualUsdPath(virtualPath);
+  const fileName = normalizedVirtualPath.split('/').pop() || 'resource.usd';
+  const lastSlashIndex = normalizedVirtualPath.lastIndexOf('/');
+  const directory = lastSlashIndex >= 0
+    ? normalizedVirtualPath.slice(0, lastSlashIndex + 1)
+    : '/';
+
+  if (
+    typeof runtime.USD.FS_createPath !== 'function'
+    || typeof runtime.USD.FS_createDataFile !== 'function'
+    || typeof runtime.USD.FS_unlink !== 'function'
+  ) {
+    return false;
+  }
+
+  runtime.USD.FS_createPath('', directory, true, true);
+  try {
+    runtime.USD.FS_unlink(normalizedVirtualPath);
+  } catch {}
+  runtime.usdFsHelper.untrackVirtualFilePath?.(normalizedVirtualPath);
+  runtime.USD.FS_createDataFile(directory, fileName, bytes, true, true, true);
+  runtime.usdFsHelper.trackVirtualFilePath?.(normalizedVirtualPath);
+
+  return runtime.usdFsHelper.hasVirtualFilePath(normalizedVirtualPath);
 }
 
 async function writeUsdBlobToVirtualPath(
@@ -466,43 +491,34 @@ async function writeUsdBlobToVirtualPath(
 ): Promise<boolean> {
   if (!isActive()) return false;
 
-  const fileName = virtualPath.split('/').pop() || 'resource.usd';
-  const browserFile = new File([blob], fileName, {
-    type: blob.type || 'application/octet-stream',
-  });
-
-  await runtime.loadVirtualFile({
-    USD: runtime.USD,
-    usdFsHelper: runtime.usdFsHelper,
-    messageLog: null,
-    file: browserFile,
-    fullPath: virtualPath,
-    isRootFile: false,
-    onLoadRootUsdPath: async () => {},
-  });
-
-  return runtime.usdFsHelper.hasVirtualFilePath(virtualPath);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  return writeUsdBytesToVirtualPath(runtime, virtualPath, bytes, isActive);
 }
 
 async function preloadUsdDependencies(
   runtime: UsdWasmRuntime,
-  entries: PreloadEntry[],
+  stageSourcePath: string,
+  entries: PreparedUsdPreloadFile[],
   isActive: () => boolean,
 ): Promise<void> {
-  for (const entry of entries) {
-    if (!isActive()) return;
-    await preloadUsdEntry(runtime, entry, isActive);
-  }
+  await preloadUsdStageEntries({
+    stageSourcePath,
+    entries,
+    isActive,
+    preloadEntry: async (entry, entryIsActive) => {
+      await preloadUsdEntry(runtime, entry, entryIsActive);
+    },
+  });
 }
 
 async function ensureCriticalUsdDependenciesLoaded(
   runtime: UsdWasmRuntime,
   stagePath: string,
-  entries: PreloadEntry[],
+  requiredPaths: string[],
+  entries: PreparedUsdPreloadFile[],
   isActive: () => boolean,
 ): Promise<void> {
   const entryByPath = new Map(entries.map((entry) => [entry.path, entry]));
-  const requiredPaths = buildCriticalUsdDependencyPaths(stagePath);
   if (requiredPaths.length === 0) return;
 
   const missingPaths: string[] = [];
@@ -534,7 +550,7 @@ async function ensureCriticalUsdDependenciesLoaded(
             }
           }
         } catch (error) {
-          console.warn(`Skipping shared USD configuration preload for ${requiredPath}`, error);
+          console.error(`Skipping shared USD configuration preload for ${requiredPath}`, error);
         }
       }
     }
@@ -545,11 +561,12 @@ async function ensureCriticalUsdDependenciesLoaded(
   }
 
   if (missingPaths.length > 0) {
-    console.warn('Critical USD dependency paths are missing before stage load.', {
-      stagePath,
-      missingPaths,
-      availableEntryPaths: Array.from(entryByPath.keys()),
-    });
+    throw failFastInDev(
+      'UsdWasmStage:ensureCriticalUsdDependenciesLoaded',
+      new Error(
+        `Critical USD dependencies are missing for "${stagePath}": ${missingPaths.join(', ')}`,
+      ),
+    );
   }
 }
 
@@ -591,6 +608,7 @@ export function UsdWasmStage({
   loadingDetailLabel,
   loadingPhaseLabels,
   onRobotDataResolved,
+  onDocumentLoadEvent,
   runtimeBridge,
   measureTargetResolverRef,
 }: UsdWasmStageProps) {
@@ -619,6 +637,14 @@ export function UsdWasmStage({
   const meshMetaByObjectRef = useRef(new Map<THREE.Object3D, RuntimeMeshMeta>());
   const meshesByLinkKeyRef = useRef(new Map<string, THREE.Mesh[]>());
   const pickMeshesRef = useRef<THREE.Object3D[]>([]);
+  const pickMeshesByRoleRef = useRef<RuntimeMeshIndex['pickMeshesByRole']>({
+    visual: [],
+    collision: [],
+  });
+  const hoverBoundsCandidatesByRoleRef = useRef<RuntimeMeshIndex['hoverBoundsCandidatesByRole']>({
+    visual: [],
+    collision: [],
+  });
   const baseLocalMatrixByMeshRef = useRef<WeakMap<THREE.Object3D, THREE.Matrix4>>(new WeakMap());
   const highlightedMeshesRef = useRef(new Map<THREE.Mesh, HighlightedMeshSnapshot>());
   const initialGroundedLowestZRef = useRef<number | null>(null);
@@ -649,7 +675,10 @@ export function UsdWasmStage({
   const [visibleStagePath, setVisibleStagePath] = useState<string | null>(null);
   const [previewCollisionTransform, setPreviewCollisionTransform] = useState<RuntimePreviewCollisionTransform | null>(null);
   const runtimeDecorationRefreshTimerRef = useRef<number | null>(null);
-  const interactionPolicy = useMemo(() => resolveUsdStageInteractionPolicy(mode), [mode]);
+  const interactionPolicy = useMemo(
+    () => resolveUsdStageInteractionPolicy(mode, toolMode),
+    [mode, toolMode],
+  );
   const jointRotationRuntime = useMemo(() => (
     resolveUsdStageJointRotationRuntime({
       mode,
@@ -663,9 +692,10 @@ export function UsdWasmStage({
   const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
   const gizmoTargetsCacheKeyRef = useRef('');
   const gizmoTargetsUpdatedAtRef = useRef(0);
-  const hoverPointerClientRef = useRef<{ x: number; y: number } | null>(null);
+  const hoverPointerLocalRef = useRef<{ x: number; y: number } | null>(null);
   const hoverPointerInsideRef = useRef(false);
   const hoverNeedsRaycastRef = useRef(false);
+  const hoverPointerButtonsRef = useRef(0);
   const lastHoverCameraPositionRef = useRef(new THREE.Vector3());
   const lastHoverCameraQuaternionRef = useRef(new THREE.Quaternion());
   const runtimePointerRef = useRef(new THREE.Vector2());
@@ -680,6 +710,9 @@ export function UsdWasmStage({
     ? loadingPhaseLabels[loadingProgress.phase]
     : null;
   const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
+  const emitDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
+    onDocumentLoadEvent?.(event);
+  }, [onDocumentLoadEvent]);
 
   useEffect(() => {
     activeRef.current = active;
@@ -841,6 +874,14 @@ export function UsdWasmStage({
     const nextMeshMetaByObject = new Map<THREE.Object3D, RuntimeMeshMeta>();
     const nextMeshesByLinkKey = new Map<string, THREE.Mesh[]>();
     const nextPickMeshes: THREE.Mesh[] = [];
+    const nextPickMeshesByRole: RuntimeMeshIndex['pickMeshesByRole'] = {
+      visual: [],
+      collision: [],
+    };
+    const nextHoverBoundsCandidatesByRole: RuntimeMeshIndex['hoverBoundsCandidatesByRole'] = {
+      visual: [],
+      collision: [],
+    };
     const nextCollisionMeshGroups = new Map<string, Array<{ mesh: THREE.Mesh; meta: RuntimeMeshMeta }>>();
     const nextCollisionAssignments = new Map<string, number | undefined>();
     const nextCollisionCountByLinkPath = new Map<string, number>();
@@ -901,6 +942,8 @@ export function UsdWasmStage({
       };
       nextMeshMetaByObject.set(mesh, meta);
       nextPickMeshes.push(mesh);
+      nextPickMeshesByRole[role].push(mesh);
+      nextHoverBoundsCandidatesByRole[role].push({ mesh, meta });
 
       const key = `${linkPath}:${role}`;
       const meshes = nextMeshesByLinkKey.get(key) || [];
@@ -962,12 +1005,34 @@ export function UsdWasmStage({
     meshMetaByObjectRef.current = nextMeshMetaByObject;
     meshesByLinkKeyRef.current = nextMeshesByLinkKey;
     pickMeshesRef.current = nextPickMeshes;
+    pickMeshesByRoleRef.current = nextPickMeshesByRole;
+    hoverBoundsCandidatesByRoleRef.current = nextHoverBoundsCandidatesByRole;
     return {
       meshMetaByObject: nextMeshMetaByObject,
       meshesByLinkKey: nextMeshesByLinkKey,
       pickMeshes: nextPickMeshes,
+      pickMeshesByRole: nextPickMeshesByRole,
+      hoverBoundsCandidatesByRole: nextHoverBoundsCandidatesByRole,
     };
   }, [robotLinks]);
+
+  const getRuntimeMeshIndex = useCallback((): RuntimeMeshIndex => {
+    const renderInterface = renderInterfaceRef.current;
+    const hasCachedIndex = meshMetaByObjectRef.current.size > 0 || pickMeshesRef.current.length > 0;
+    const hasRuntimeMeshes = Object.keys(renderInterface?.meshes || {}).length > 0;
+
+    if (hasCachedIndex || !hasRuntimeMeshes) {
+      return {
+        meshMetaByObject: meshMetaByObjectRef.current,
+        meshesByLinkKey: meshesByLinkKeyRef.current,
+        pickMeshes: pickMeshesRef.current as THREE.Mesh[],
+        pickMeshesByRole: pickMeshesByRoleRef.current,
+        hoverBoundsCandidatesByRole: hoverBoundsCandidatesByRoleRef.current,
+      };
+    }
+
+    return rebuildRuntimeMeshIndex();
+  }, [rebuildRuntimeMeshIndex]);
 
   const getGizmoTargets = useCallback(() => {
     const nextCacheKey = [
@@ -1045,7 +1110,7 @@ export function UsdWasmStage({
       return;
     }
 
-    const { meshesByLinkKey } = rebuildRuntimeMeshIndex();
+    const { meshesByLinkKey } = getRuntimeMeshIndex();
     const meshes = meshesByLinkKey.get(`${targetLinkPath}:${targetRole}`) || [];
     for (const mesh of meshes) {
       if (!mesh.visible || mesh.userData?.isGizmo) continue;
@@ -1062,7 +1127,7 @@ export function UsdWasmStage({
       mesh.material = targetRole === 'collision' ? collisionHighlightMaterial : highlightMaterial;
       mesh.renderOrder = targetRole === 'collision' ? 1000 : 1001;
     }
-  }, [highlightMode, rebuildRuntimeMeshIndex, showCollision, showVisual]);
+  }, [getRuntimeMeshIndex, highlightMode, showCollision, showVisual]);
 
   const syncUsdHighlights = useCallback(() => {
     revertUsdHighlights();
@@ -1436,9 +1501,9 @@ export function UsdWasmStage({
     }
   }, [onRuntimeActiveJointChange, onRuntimeJointAnglesChange]);
 
-  const pickRuntimeMeshMetaAtClientPoint = useCallback((
-    clientX: number,
-    clientY: number,
+  const pickRuntimeMeshMetaAtLocalPoint = useCallback((
+    localX: number,
+    localY: number,
     options: { allowBoundsFallback?: boolean } = {},
   ): RuntimeMeshMeta | null => {
     if (!camera) return null;
@@ -1450,15 +1515,16 @@ export function UsdWasmStage({
     );
     if (!interactiveSubType) return null;
 
-    const rect = gl.domElement.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+    const width = gl.domElement.clientWidth;
+    const height = gl.domElement.clientHeight;
+    if (width <= 0 || height <= 0) return null;
+    if (localX < 0 || localX > width || localY < 0 || localY > height) {
       return null;
     }
 
     const pointer = runtimePointerRef.current.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
+      (localX / width) * 2 - 1,
+      -(localY / height) * 2 + 1,
     );
     const raycaster = runtimeRaycasterRef.current;
     raycaster.setFromCamera(pointer, camera);
@@ -1471,8 +1537,8 @@ export function UsdWasmStage({
       return null;
     }
 
-    const { meshMetaByObject, pickMeshes } = rebuildRuntimeMeshIndex();
-    const hits = raycaster.intersectObjects(pickMeshes, false).sort((left, right) => left.distance - right.distance);
+    const { meshMetaByObject, pickMeshesByRole, hoverBoundsCandidatesByRole } = getRuntimeMeshIndex();
+    const hits = raycaster.intersectObjects(pickMeshesByRole[interactiveSubType], false);
 
     let exactHoverMatch: { meta: RuntimeMeshMeta; distance: number } | null = null;
     for (const hit of hits) {
@@ -1503,47 +1569,41 @@ export function UsdWasmStage({
       return exactHoverMatch?.meta ?? null;
     }
 
-    const hoverBoundsCandidates: { mesh: THREE.Mesh; meta: RuntimeMeshMeta }[] = [];
-    for (const mesh of pickMeshes) {
-      const meta = meshMetaByObject.get(mesh);
-      if (!meta || meta.role !== interactiveSubType) {
-        continue;
-      }
-
-      hoverBoundsCandidates.push({ mesh, meta });
-    }
-
-    const preferredHoverMatch = choosePreferredHoverMatch(
-      exactHoverMatch,
-      findNearestExpandedBoundsHit(
-        raycaster.ray,
-        hoverBoundsCandidates,
-        (meta) => meta.linkPath,
-      ),
-      (meta) => meta.linkPath,
-    );
+    const preferredHoverMatch = resolvePreferredHoverMatch({
+      exactMatch: exactHoverMatch,
+      ray: raycaster.ray,
+      candidates: hoverBoundsCandidatesByRole[interactiveSubType],
+      getLinkKey: (meta) => meta.linkPath,
+      boundsOptions: {
+        camera,
+        viewportWidth: width,
+        viewportHeight: height,
+        pointerScreenX: localX,
+        pointerScreenY: localY,
+      },
+    });
 
     if (!preferredHoverMatch) {
       return null;
     }
 
     if (
-      preferredHoverMatch === exactHoverMatch
+      preferredHoverMatch.source === 'exact'
       || !exactHoverMatch
-      || preferredHoverMatch.meta.linkPath === exactHoverMatch.meta.linkPath
+      || preferredHoverMatch.match.meta.linkPath === exactHoverMatch.meta.linkPath
     ) {
-      return preferredHoverMatch.meta;
+      return preferredHoverMatch.match.meta;
     }
 
     return {
-      ...preferredHoverMatch.meta,
+      ...preferredHoverMatch.match.meta,
       objectIndex: undefined,
     };
-  }, [camera, getGizmoTargets, gl.domElement, highlightMode, rebuildRuntimeMeshIndex]);
+  }, [camera, getGizmoTargets, getRuntimeMeshIndex, gl.domElement, highlightMode]);
 
   const pickRuntimeMeshMetaAtPointer = useCallback((event: PointerEvent | MouseEvent): RuntimeMeshMeta | null => (
-    pickRuntimeMeshMetaAtClientPoint(event.clientX, event.clientY)
-  ), [pickRuntimeMeshMetaAtClientPoint]);
+    pickRuntimeMeshMetaAtLocalPoint(event.offsetX, event.offsetY)
+  ), [pickRuntimeMeshMetaAtLocalPoint]);
 
   const refreshRuntimeDecorationsRef = useRef(refreshRuntimeDecorations);
   const syncRuntimeJointPanelRobotRef = useRef(syncRuntimeJointPanelRobot);
@@ -1721,10 +1781,11 @@ export function UsdWasmStage({
 
     const handlePointerDownCapture = (event: PointerEvent) => {
       setUsdHoverPointerState({
-        hoverPointerClientRef,
+        hoverPointerLocalRef,
         hoverPointerInsideRef,
         hoverNeedsRaycastRef,
-      }, { x: event.clientX, y: event.clientY }, invalidate);
+        hoverPointerButtonsRef,
+      }, { x: event.offsetX, y: event.offsetY }, invalidate, event.buttons);
       const pickedMeshMeta = pickRuntimeMeshMetaAtPointer(event);
       lastPointerDownMeshMetaRef.current = pickedMeshMeta;
       if (pickedMeshMeta) {
@@ -1743,7 +1804,8 @@ export function UsdWasmStage({
     const clearPointerDownMeta = () => {
       lastPointerDownMeshMetaRef.current = null;
     };
-    const handlePointerUp = () => {
+    const handlePointerUp = (event: PointerEvent) => {
+      setUsdHoverPointerButtons(hoverPointerButtonsRef, event.buttons, invalidate);
       scheduleSelectionMissGuardReset({
         justSelectedRef,
         timerRef: selectionResetTimerRef,
@@ -1781,25 +1843,31 @@ export function UsdWasmStage({
   useEffect(() => {
     const domElement = gl.domElement;
     if (!domElement) return;
-    const updatePointer = (clientX: number, clientY: number) => {
+    const updatePointer = (
+      localX: number,
+      localY: number,
+      buttons = hoverPointerButtonsRef.current,
+    ) => {
       setUsdHoverPointerState({
-        hoverPointerClientRef,
+        hoverPointerLocalRef,
         hoverPointerInsideRef,
         hoverNeedsRaycastRef,
-      }, { x: clientX, y: clientY }, invalidate);
+        hoverPointerButtonsRef,
+      }, { x: localX, y: localY }, invalidate, buttons);
     };
 
     const handlePointerEnter = (event: PointerEvent) => {
-      updatePointer(event.clientX, event.clientY);
+      updatePointer(event.offsetX, event.offsetY, event.buttons);
     };
     const handlePointerMove = (event: PointerEvent) => {
-      updatePointer(event.clientX, event.clientY);
+      updatePointer(event.offsetX, event.offsetY, event.buttons);
     };
     const handlePointerLeave = () => {
       clearUsdHoverPointerState({
-        hoverPointerClientRef,
+        hoverPointerLocalRef,
         hoverPointerInsideRef,
         hoverNeedsRaycastRef,
+        hoverPointerButtonsRef,
       }, invalidate);
       clearRuntimeHover();
     };
@@ -1835,7 +1903,15 @@ export function UsdWasmStage({
     setErrorMessage(null);
     setLoadingProgress({
       phase: 'checking-path',
-      progressPercent: 0,
+      progressPercent: null,
+      message: null,
+      loadedCount: null,
+      totalCount: null,
+    });
+    emitDocumentLoadEvent({
+      status: 'loading',
+      phase: 'checking-path',
+      progressPercent: null,
       message: null,
       loadedCount: null,
       totalCount: null,
@@ -1852,6 +1928,8 @@ export function UsdWasmStage({
       meshMetaByObjectRef.current.clear();
       meshesByLinkKeyRef.current.clear();
       pickMeshesRef.current = [];
+      pickMeshesByRoleRef.current = { visual: [], collision: [] };
+      hoverBoundsCandidatesByRoleRef.current = { visual: [], collision: [] };
       baseLocalMatrixByMeshRef.current = new WeakMap();
       revertUsdHighlights();
       lastRuntimeSelectionRef.current = { type: null, id: null, subType: undefined, objectIndex: undefined };
@@ -1860,9 +1938,10 @@ export function UsdWasmStage({
       lastRuntimeHoverRef.current = { type: null, id: null, subType: undefined, objectIndex: undefined };
       onRuntimeActiveJointChangeRef.current?.(null);
       clearUsdHoverPointerState({
-        hoverPointerClientRef,
+        hoverPointerLocalRef,
         hoverPointerInsideRef,
         hoverNeedsRaycastRef,
+        hoverPointerButtonsRef,
       });
       onHover?.(null, null);
       onRuntimeRobotResolvedRef.current?.(null);
@@ -1902,6 +1981,43 @@ export function UsdWasmStage({
 
     const loadUsdStageIntoScene = async () => {
       const isActive = isCurrentLoadActive;
+      const preparedStageOpenDataPromise = loadPreparedUsdStageOpenDataCached(
+        sourceFile,
+        availableFiles,
+        assets,
+        () => prepareUsdStageOpenWithWorker(
+          sourceFile,
+          availableFiles,
+          assets,
+        ).catch((error) => {
+          const workerPreparationError = new Error(
+            `USD stage worker preparation failed for "${sourceFile.name}".`,
+            { cause: error },
+          );
+          if (isWorkerCapabilityError(error)) {
+            scheduleFailFastInDev(
+              'UsdWasmStage:prepareUsdStageOpenWithWorker',
+              workerPreparationError,
+              'warn',
+            );
+            return prepareUsdStageOpenData(sourceFile, availableFiles, assets);
+          }
+          if (isDevelopmentBuild()) {
+            throw workerPreparationError;
+          }
+          throw failFastInDev(
+            'UsdWasmStage:prepareUsdStageOpenWithWorker',
+            workerPreparationError,
+          );
+        }),
+      );
+      const runtimePromise = ensureUsdWasmRuntime();
+      void runtimePromise.catch((error) => {
+        scheduleFailFastInDev(
+          'UsdWasmStage:ensureUsdWasmRuntime',
+          new Error(`Failed to initialize USD runtime for "${sourceFile.name}".`, { cause: error }),
+        );
+      });
 
       runtimeWindow.camera = camera;
       runtimeWindow._controls = controls as ViewerControls;
@@ -1921,16 +2037,33 @@ export function UsdWasmStage({
       clearCurrentStage();
 
       try {
-        const runtime = await ensureUsdWasmRuntime();
+        const runtime = await runtimePromise;
         if (!isActive()) return;
 
         runtimeRef.current = runtime;
         runtimeWindow.USD = runtime.USD;
 
-        const preloadEntries = buildUsdBundlePreloadEntries(sourceFile, availableFiles, assets);
-        const stageSourcePath = currentStageSourcePath;
-        await preloadUsdDependencies(runtime, preloadEntries, isActive);
-        await ensureCriticalUsdDependenciesLoaded(runtime, stageSourcePath, preloadEntries, isActive);
+        let preparedStageOpenData = await preparedStageOpenDataPromise;
+        if (!isActive()) return;
+
+        const stageSourcePath = preparedStageOpenData.stageSourcePath;
+        const preparedRootStageFile = preparedStageOpenData.preloadFiles.find((entry) => entry.path === stageSourcePath);
+        if (
+          !preparedRootStageFile
+          || (!preparedRootStageFile.blob && !normalizePreparedUsdPreloadBytes(preparedRootStageFile.bytes))
+        ) {
+          preparedStageOpenData = await prepareUsdStageOpenData(sourceFile, availableFiles, assets);
+          if (!isActive()) return;
+        }
+
+        await preloadUsdDependencies(runtime, stageSourcePath, preparedStageOpenData.preloadFiles, isActive);
+        await ensureCriticalUsdDependenciesLoaded(
+          runtime,
+          stageSourcePath,
+          preparedStageOpenData.criticalDependencyPaths,
+          preparedStageOpenData.preloadFiles,
+          isActive,
+        );
         if (!isActive()) return;
 
         const params = createEmbeddedUsdViewerLoadParams(runtime.threadCount);
@@ -1980,6 +2113,14 @@ export function UsdWasmStage({
                 ? nextProgress.totalCount ?? null
                 : current?.totalCount ?? null,
             }));
+            emitDocumentLoadEvent({
+              status: 'loading',
+              phase: nextProgress.phase,
+              progressPercent: nextProgress.progressPercent ?? null,
+              message: nextProgress.message ?? null,
+              loadedCount: nextProgress.loadedCount ?? null,
+              totalCount: nextProgress.totalCount ?? null,
+            });
           },
         });
         if (!isActive()) {
@@ -2037,23 +2178,34 @@ export function UsdWasmStage({
           linkRotationController.setStageSourcePath(stageSourcePath);
           linkRotationController.setRenderInterface(renderInterface);
           linkRotationController.prewarmInteractivePoseCaches();
-          window.requestAnimationFrame(() => {
-            if (!isActive()) return;
-            void linkRotationController.prewarmJointCatalog().then(() => {
-              if (!isActive()) return;
-              syncRuntimeJointPanelRobotRef.current();
-              emitRuntimeJointAnglesChangeRef.current();
-            });
-          });
 
           linkDynamicsController.setStageSourcePath(stageSourcePath);
           linkDynamicsController.setCurrentLinkFrameResolver((linkPath) => (
             linkRotationController.getCurrentLinkFrameMatrix(linkPath)
           ));
-          void linkDynamicsController.prewarmCatalogForInteractive(renderInterface);
+
+          // Some large USD robots expose complete runtime link transforms a beat later than
+          // the first scene snapshot. Republish once the warmups settle so exports use the
+          // stabilized RobotData instead of the speculative initial adaptation.
+          scheduleUsdResolvedRobotRepublishAfterWarmup({
+            isActive,
+            requestAnimationFrame: (callback) => window.requestAnimationFrame(callback),
+            startWarmups: () => [
+              Promise.resolve(linkRotationController.prewarmJointCatalog()),
+              Promise.resolve(linkDynamicsController.prewarmCatalogForInteractive(renderInterface)),
+            ],
+            onSettled: () => {
+              publishResolvedRobotData({ allowWarmup: true });
+              syncRuntimeJointPanelRobotRef.current();
+              emitRuntimeJointAnglesChangeRef.current();
+              refreshRuntimeDecorationsRef.current();
+            },
+          });
         }
 
         if (renderInterface) {
+          // Publish the first interactive RobotData from the warmed runtime path.
+          // Skipping the warmup here can leave quadrupeds in an all-zero fallback pose.
           publishResolvedRobotData({ allowWarmup: true });
         }
 
@@ -2076,16 +2228,34 @@ export function UsdWasmStage({
             });
             setVisibleStagePath(sourceFile.name);
             setIsLoading(false);
+            emitDocumentLoadEvent({
+              status: 'ready',
+              phase: 'ready',
+              progressPercent: 100,
+              message: null,
+              loadedCount: null,
+              totalCount: null,
+            });
             invalidate();
           },
         });
       } catch (error) {
         if (!isActive()) return;
         console.error('Failed to load USD stage', error);
-        setErrorMessage(error instanceof Error ? error.message : 'Failed to load USD stage');
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load USD stage';
+        setErrorMessage(errorMessage);
         setVisibleStagePath(null);
         setIsLoading(false);
         setLoadingProgress(null);
+        emitDocumentLoadEvent({
+          status: 'error',
+          phase: null,
+          progressPercent: null,
+          message: null,
+          loadedCount: null,
+          totalCount: null,
+          error: errorMessage,
+        });
       }
     };
 
@@ -2104,6 +2274,7 @@ export function UsdWasmStage({
     camera,
     captureUsdInitialGroundBaseline,
     controls,
+    emitDocumentLoadEvent,
     gl,
     invalidate,
     sampleUsdAutoFrameBounds,
@@ -2122,7 +2293,8 @@ export function UsdWasmStage({
 
   useFrame(() => {
     if (activeRef.current && interactionPolicy.enableContinuousHover && hoverSelectionEnabled && onHover) {
-      const pointer = hoverPointerClientRef.current;
+      const pointer = hoverPointerLocalRef.current;
+      const isDragging = (linkRotationControllerRef.current as { dragging?: boolean }).dragging === true;
       const cameraMoved = !camera.position.equals(lastHoverCameraPositionRef.current)
         || !camera.quaternion.equals(lastHoverCameraQuaternionRef.current);
 
@@ -2132,16 +2304,23 @@ export function UsdWasmStage({
         markUsdHoverRaycastDirty(hoverNeedsRaycastRef);
       }
 
-      if (
-        hoverPointerInsideRef.current
-        && pointer
-        && hoverNeedsRaycastRef.current
-        && justSelectedRef?.current !== true
-        && (linkRotationControllerRef.current as { dragging?: boolean }).dragging !== true
-      ) {
+      const shouldProcessHover = shouldProcessUsdHoverRaycast({
+        hoverPointerInside: hoverPointerInsideRef.current,
+        pointer,
+        hoverNeedsRaycast: hoverNeedsRaycastRef.current,
+        hoverPointerButtons: hoverPointerButtonsRef.current,
+        justSelected: justSelectedRef?.current === true,
+        dragging: isDragging,
+      });
+
+      if (!shouldProcessHover && hoverPointerButtonsRef.current !== 0) {
+        clearRuntimeHover();
+      }
+
+      if (shouldProcessHover) {
         hoverNeedsRaycastRef.current = false;
 
-        const meta = pickRuntimeMeshMetaAtClientPoint(pointer.x, pointer.y, { allowBoundsFallback: true });
+        const meta = pickRuntimeMeshMetaAtLocalPoint(pointer.x, pointer.y, { allowBoundsFallback: true });
         if (!meta) {
           clearRuntimeHover();
         } else {
@@ -2198,7 +2377,7 @@ export function UsdWasmStage({
         onTransformPending={handleUsdCollisionTransformPending}
         setIsDragging={setIsDragging ?? (() => {})}
       />
-      {isLoading && (
+      {isLoading && !onDocumentLoadEvent && (
         <Html fullscreen>
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
             <ViewerLoadingHud

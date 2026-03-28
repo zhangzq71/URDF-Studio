@@ -104,8 +104,6 @@ export function processCapsuleGeometries(
             return;
         }
 
-        console.log(`[CapsulePostProcessor] Found ${capsules.length} capsule geometries to process`);
-
         // Build a map of link names to capsule definitions
         interface CapsuleDefinition {
             linkName: string;
@@ -214,8 +212,6 @@ export function processCapsuleGeometries(
                 const capsuleDefs = capsuleMap.get(linkName);
 
                 if (capsuleDefs && capsuleDefs.length > 0) {
-                    console.log(`[CapsulePostProcessor] Processing ${capsuleDefs.length} capsule(s) for link "${linkName}"`);
-
                     capsuleDefs.forEach(def => {
                         const capsuleGroup = createCapsuleGeometry(def.radius, def.length);
 
@@ -294,7 +290,6 @@ export function processCapsuleGeometries(
             }
         });
 
-        console.log('[CapsulePostProcessor] Capsule post-processing complete');
     } catch (error) {
         console.error('[CapsulePostProcessor] Error processing capsules:', error);
     }

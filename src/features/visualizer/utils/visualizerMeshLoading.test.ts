@@ -50,6 +50,7 @@ function createRobotState(link: Partial<UrdfLink>): RobotState {
 test('collectVisualizerMeshLoadKeys keeps skeleton mesh loads even when geometry is hidden', () => {
   const robot = createRobotState({
     visual: createMeshGeometry('meshes/base.stl'),
+    visualBodies: [createMeshGeometry('meshes/extra.obj')],
   });
 
   const keys = collectVisualizerMeshLoadKeys({
@@ -59,10 +60,14 @@ test('collectVisualizerMeshLoadKeys keeps skeleton mesh loads even when geometry
     showCollision: false,
     assets: {
       'meshes/base.stl': 'blob:base',
+      'meshes/extra.obj': 'blob:extra',
     },
   });
 
-  assert.deepEqual(keys, ['base|visual|primary|0|meshes/base.stl']);
+  assert.deepEqual(keys, [
+    'base|visual|primary|0|meshes/base.stl',
+    'base|visual|extra-1|1|meshes/extra.obj',
+  ]);
 });
 
 test('collectVisualizerMeshLoadKeys skips hidden detail collisions until collision display is enabled', () => {
@@ -93,9 +98,32 @@ test('collectVisualizerMeshLoadKeys skips hidden detail collisions until collisi
   assert.deepEqual(visibleKeys, ['base|collision|primary|0|meshes/collision.obj']);
 });
 
-test('collectVisualizerMeshLoadKeys ignores missing or unsupported mesh assets', () => {
+test('collectVisualizerMeshLoadKeys includes gltf/glb assets in supported mesh preload tracking', () => {
   const robot = createRobotState({
     visual: createMeshGeometry('meshes/base.glb'),
+    collisionBodies: [createMeshGeometry('meshes/extra.gltf')],
+  });
+
+  const keys = collectVisualizerMeshLoadKeys({
+    robot,
+    mode: 'detail',
+    showGeometry: true,
+    showCollision: true,
+    assets: {
+      'meshes/base.glb': 'blob:base',
+      'meshes/extra.gltf': 'blob:extra',
+    },
+  });
+
+  assert.deepEqual(keys, [
+    'base|visual|primary|0|meshes/base.glb',
+    'base|collision|extra-1|1|meshes/extra.gltf',
+  ]);
+});
+
+test('collectVisualizerMeshLoadKeys ignores missing or unsupported mesh assets', () => {
+  const robot = createRobotState({
+    visual: createMeshGeometry('meshes/base.fbx'),
     collisionBodies: [createMeshGeometry('meshes/extra.dae')],
   });
 
@@ -105,7 +133,7 @@ test('collectVisualizerMeshLoadKeys ignores missing or unsupported mesh assets',
     showGeometry: true,
     showCollision: true,
     assets: {
-      'meshes/base.stl': 'blob:other',
+      'meshes/base.fbx': 'blob:other',
     },
   });
 

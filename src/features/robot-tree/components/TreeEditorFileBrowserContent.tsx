@@ -66,7 +66,7 @@ export function TreeEditorFileBrowserContent({
       style={shouldFillSpace ? undefined : { height: isOpen ? `${height}px` : 'auto' }}
     >
       <div
-        className="flex items-center justify-between px-3 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
+        className="flex items-center justify-between px-2.5 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
         onClick={onToggleOpen}
       >
         <div className="flex items-center gap-2">
@@ -99,7 +99,7 @@ export function TreeEditorFileBrowserContent({
       </div>
 
       {isOpen && isProMode && availableFiles.length > 0 && (
-        <div className="px-3 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
+        <div className="px-2.5 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
           <span className="text-[9px] leading-none text-system-blue">{t.clickToAddComponent}</span>
         </div>
       )}
@@ -115,27 +115,31 @@ export function TreeEditorFileBrowserContent({
             <div className="text-xs text-text-tertiary text-center py-4 italic">{t.dropOrImport}</div>
           ) : (
             fileTree.map((node) => (
-              <FileTreeNodeComponent
+              <div
                 key={node.path}
-                node={node}
-                depth={0}
-                editingFolderPath={editingFolderPath}
-                folderRenameDraft={folderRenameDraft}
-                folderRenameInputRef={folderRenameInputRef}
-                onLoadRobot={onFileActivate}
-                onAddAsComponent={isProMode ? onAddComponent : undefined}
-                onCancelFolderRename={onCancelFolderRename}
-                onCommitFolderRename={onCommitFolderRename}
-                onDeleteFromLibrary={onDeleteFromLibrary}
-                onFileContextMenu={onFileContextMenu}
-                onFolderRenameDraftChange={onFolderRenameDraftChange}
-                onFolderContextMenu={onFolderContextMenu}
-                expandedFolders={expandedFolders}
-                toggleFolder={toggleFolder}
-                showAddAsComponent={isProMode}
-                selectedFileName={isProMode ? previewFileName : undefined}
-                t={t}
-              />
+                style={{ containIntrinsicSize: '40px', contentVisibility: 'auto' }}
+              >
+                <FileTreeNodeComponent
+                  node={node}
+                  depth={0}
+                  editingFolderPath={editingFolderPath}
+                  folderRenameDraft={folderRenameDraft}
+                  folderRenameInputRef={folderRenameInputRef}
+                  onLoadRobot={onFileActivate}
+                  onAddAsComponent={isProMode ? onAddComponent : undefined}
+                  onCancelFolderRename={onCancelFolderRename}
+                  onCommitFolderRename={onCommitFolderRename}
+                  onDeleteFromLibrary={onDeleteFromLibrary}
+                  onFileContextMenu={onFileContextMenu}
+                  onFolderRenameDraftChange={onFolderRenameDraftChange}
+                  onFolderContextMenu={onFolderContextMenu}
+                  expandedFolders={expandedFolders}
+                  toggleFolder={toggleFolder}
+                  showAddAsComponent={isProMode}
+                  selectedFileName={isProMode ? previewFileName : undefined}
+                  t={t}
+                />
+              </div>
             ))
           )}
         </div>

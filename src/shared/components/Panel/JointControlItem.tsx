@@ -7,6 +7,7 @@ import {
     getDefaultJointLimit,
     getJointSliderStep,
     getJointValueUnitLabel,
+    hasEffectivelyFiniteJointLimits,
     isAngularJointType,
     normalizeJointTypeValue,
     supportsFiniteJointLimits,
@@ -70,8 +71,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     }, [joint.id, limit.lower, limit.upper, limit.effort, limit.velocity]);
 
     const hasFiniteLimits = supportsAdjustableLimits
-        && Number.isFinite(localLimits.lower)
-        && Number.isFinite(localLimits.upper);
+        && hasEffectivelyFiniteJointLimits(localLimits);
 
     const formatLimitInputValue = (limitValue: number | undefined) => (
         Number.isFinite(limitValue) ? Number(limitValue).toFixed(2) : ''
@@ -129,6 +129,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const continuousSliderAnchorRef = useRef(value);
     const [sliderPreviewValue, setSliderPreviewValue] = useState(value);
     const [isSliderDragging, setIsSliderDragging] = useState(false);
+    const sliderShellRef = useRef<HTMLDivElement>(null);
 
     const syncContinuousSliderAnchor = useCallback((nextAnchor: number) => {
         continuousSliderAnchorRef.current = nextAnchor;
@@ -163,6 +164,27 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
         ? ((sliderValue - sliderMin) / sliderRange) * 100
         : 0;
     const clampedSliderPercentage = Math.min(Math.max(sliderPercentage, 0), 100);
+    const clampSliderValue = useCallback((nextValue: number) => {
+        if (!Number.isFinite(nextValue)) {
+            return sliderMin;
+        }
+
+        return Math.min(Math.max(nextValue, sliderMin), sliderMax);
+    }, [sliderMax, sliderMin]);
+
+    const snapSliderValue = useCallback((nextValue: number) => {
+        const clampedValue = clampSliderValue(nextValue);
+
+        if (!Number.isFinite(step) || step <= 0) {
+            return clampedValue;
+        }
+
+        const steppedValue = sliderMin + Math.round((clampedValue - sliderMin) / step) * step;
+        const stepDecimals = `${step}`.split('.')[1]?.length ?? 0;
+        const precision = Math.min(stepDecimals + 2, 10);
+
+        return clampSliderValue(Number(steppedValue.toFixed(precision)));
+    }, [clampSliderValue, sliderMin, step]);
 
     const [inputValue, setInputValue] = useState(displayValue.toFixed(2));
     const [isEditingValue, setIsEditingValue] = useState(false);
@@ -260,27 +282,67 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
         handleJointAngleChange(name, nextValue);
     }, [angleUnit, handleJointAngleChange, isContinuousJoint, jointType, name]);
 
+    const updateSliderValueFromClientX = useCallback((clientX: number) => {
+        const sliderShell = sliderShellRef.current;
+        if (!sliderShell) {
+            return;
+        }
+
+        const rect = sliderShell.getBoundingClientRect();
+        if (rect.width <= 0) {
+            return;
+        }
+
+        const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+        const rawSliderValue = sliderMin + ratio * (sliderMax - sliderMin);
+        handleSliderInput(snapSliderValue(rawSliderValue));
+    }, [handleSliderInput, sliderMax, sliderMin, snapSliderValue]);
+
+    const handleSliderShellDragStart = useCallback((clientX: number) => {
+        handleSliderChangeStart();
+        updateSliderValueFromClientX(clientX);
+    }, [handleSliderChangeStart, updateSliderValueFromClientX]);
+
     useEffect(() => {
         if (!isSliderDragging) {
             return;
         }
 
+        const handleWindowPointerMove = (event: PointerEvent) => {
+            updateSliderValueFromClientX(event.clientX);
+        };
+
+        const handleWindowTouchMove = (event: TouchEvent) => {
+            const touch = event.touches[0];
+            if (!touch) {
+                return;
+            }
+
+            updateSliderValueFromClientX(touch.clientX);
+        };
+
         const handleWindowPointerUp = () => {
             handleSliderChangeEnd();
         };
 
+        window.addEventListener('pointermove', handleWindowPointerMove);
+        window.addEventListener('touchmove', handleWindowTouchMove, { passive: true });
         window.addEventListener('pointerup', handleWindowPointerUp);
+        window.addEventListener('pointercancel', handleWindowPointerUp);
         window.addEventListener('mouseup', handleWindowPointerUp);
         window.addEventListener('touchend', handleWindowPointerUp);
         window.addEventListener('blur', handleWindowPointerUp);
 
         return () => {
+            window.removeEventListener('pointermove', handleWindowPointerMove);
+            window.removeEventListener('touchmove', handleWindowTouchMove);
             window.removeEventListener('pointerup', handleWindowPointerUp);
+            window.removeEventListener('pointercancel', handleWindowPointerUp);
             window.removeEventListener('mouseup', handleWindowPointerUp);
             window.removeEventListener('touchend', handleWindowPointerUp);
             window.removeEventListener('blur', handleWindowPointerUp);
         };
-    }, [handleSliderChangeEnd, isSliderDragging]);
+    }, [handleSliderChangeEnd, isSliderDragging, updateSliderValueFromClientX]);
 
     useEffect(() => {
         const currentParsed = parseFloat(inputValue);
@@ -543,8 +605,29 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                 </div>
 
                 <div
+                    ref={sliderShellRef}
                     className="relative flex min-w-0 items-center"
                     data-testid="joint-slider-shell"
+                    onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleSliderShellDragStart(event.clientX);
+                    }}
+                    onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleSliderShellDragStart(event.clientX);
+                    }}
+                    onTouchStart={(event) => {
+                        const touch = event.touches[0];
+                        if (!touch) {
+                            return;
+                        }
+
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleSliderShellDragStart(touch.clientX);
+                    }}
                 >
                     <div className="pointer-events-none absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 overflow-hidden rounded-full bg-slider-track">
                         <div
@@ -601,7 +684,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             handleSliderChangeEnd();
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="relative z-10 block h-4 w-full cursor-pointer appearance-none bg-transparent opacity-0"
+                        className="relative z-10 block h-5 w-full cursor-pointer appearance-none bg-transparent opacity-0"
                         style={{ accentColor: 'var(--ui-slider-accent)' }}
                     />
                 </div>

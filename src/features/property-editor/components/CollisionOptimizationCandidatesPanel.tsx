@@ -48,6 +48,7 @@ export interface CollisionOptimizationCandidatesPanelLabels {
 }
 
 export interface CollisionOptimizationCandidatesPanelProps {
+  activeCandidateKey?: string | null;
   source: CollisionOptimizationSource;
   analysis: CollisionOptimizationAnalysis | null;
   candidates: CollisionOptimizationCandidate[];
@@ -66,15 +67,14 @@ export interface CollisionOptimizationCandidatesPanelProps {
   graphLabels: CollisionOptimizationPlanarGraphLabels;
   formatGeometryType: (type: GeometryType | null | undefined) => string;
   getStatusLabel: (candidate: CollisionOptimizationCandidate) => string;
-  getCandidateOverrideOptions: (candidate: CollisionOptimizationCandidate) => GeometryType[];
   canCreateManualPair: (sourceTargetId: string, targetTargetId: string) => boolean;
+  onActivateCandidate?: (candidateKey: string, candidate: CollisionOptimizationCandidate) => void;
   onScopeChange: (scope: CollisionOptimizationScope) => void;
   onViewModeChange: (mode: CollisionOptimizationCandidatesViewMode) => void;
   onSelectAll: () => void;
   onClearAll: () => void;
   onClearManualPairs: () => void;
   onToggleCandidate: (candidateKey: string) => void;
-  onSetCandidateOverride: (candidate: CollisionOptimizationCandidate, nextType: GeometryType) => void;
   onSelectTarget?: (target: CollisionTargetRef) => void;
   onHoverTarget?: (target: CollisionTargetRef | null) => void;
   onManualConnectionStart?: (target: CollisionTargetRef) => void;
@@ -122,6 +122,7 @@ function HeaderBadge({
 }
 
 export function CollisionOptimizationCandidatesPanel({
+  activeCandidateKey = null,
   source,
   analysis,
   candidates,
@@ -140,15 +141,14 @@ export function CollisionOptimizationCandidatesPanel({
   graphLabels,
   formatGeometryType,
   getStatusLabel,
-  getCandidateOverrideOptions,
   canCreateManualPair,
+  onActivateCandidate,
   onScopeChange,
   onViewModeChange,
   onSelectAll,
   onClearAll,
   onClearManualPairs,
   onToggleCandidate,
-  onSetCandidateOverride,
   onSelectTarget,
   onHoverTarget,
   onManualConnectionStart,
@@ -250,17 +250,17 @@ export function CollisionOptimizationCandidatesPanel({
         ) : (
           <div className="h-full overflow-y-auto">
             <CollisionOptimizationCandidateList
+              activeCandidateKey={activeCandidateKey}
               candidates={candidates}
               checkedCandidateKeys={checkedCandidateKeys}
               selection={selection}
               labels={listLabels}
               formatGeometryType={formatGeometryType}
               getStatusLabel={getStatusLabel}
-              getCandidateOverrideOptions={getCandidateOverrideOptions}
+              onActivateCandidate={onActivateCandidate}
               onSelectTarget={onSelectTarget}
               onHoverTarget={onHoverTarget}
               onToggleCandidate={onToggleCandidate}
-              onSetCandidateOverride={onSetCandidateOverride}
             />
           </div>
         )}

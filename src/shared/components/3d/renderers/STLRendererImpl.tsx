@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from 'react';
-import { useLoader } from '@react-three/fiber';
+import { use, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { createGeometryFromSerializedStlData } from '@/core/loaders/stlGeometryData';
+import { loadSerializedStlGeometryData } from '@/core/loaders/stlParseWorkerBridge';
 
 interface ScaleProps {
   x: number;
@@ -17,8 +17,14 @@ interface STLRendererImplProps {
 }
 
 export function STLRendererImpl({ url, material, scale, onResolved }: STLRendererImplProps) {
-  const geometry = useLoader(STLLoader, url);
-  const clone = useMemo(() => geometry.clone(), [geometry]);
+  const serializedGeometry = use(useMemo(
+    () => loadSerializedStlGeometryData(url),
+    [url],
+  ));
+  const clone = useMemo(
+    () => createGeometryFromSerializedStlData(serializedGeometry),
+    [serializedGeometry],
+  );
 
   useEffect(() => {
     onResolved?.();

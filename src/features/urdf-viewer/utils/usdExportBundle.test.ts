@@ -1141,6 +1141,237 @@ test('buildUsdExportBundleFromSnapshot splits geom subsets into separate export 
   assert.match(secondSubsetObj, /^v 0 0 0 0 1 0$/m);
 });
 
+test('buildUsdExportBundleFromSnapshot uses authored multi-material colors when snapshot materials are unavailable', () => {
+  const { positions, indices } = createTriangleBuffers();
+
+  const snapshot = {
+    stageSourcePath: '/robots/b2/b2.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/FR_calf', null],
+      ] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/FR_calf'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/b2/b2.usd',
+      linkParentPairs: [
+        ['/Robot/FR_calf', null],
+      ] as Array<[string, string | null]>,
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/FR_calf': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/FR_calf/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/FR_calf/visuals/FR_calf',
+          primType: 'mesh',
+          geometry: {
+            geomSubsetSections: [
+              { start: 0, length: 3 },
+              { start: 3, length: 3 },
+            ],
+          },
+          ranges: {
+            positions: { offset: 0, count: 18, stride: 3 },
+            indices: { offset: 0, count: 6, stride: 1 },
+          },
+        },
+      ],
+      materials: [],
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs: new Float32Array(0),
+      transforms: new Float32Array(0),
+      rangesByMeshId: {},
+    },
+  };
+
+  const currentRobot: RobotState = {
+    name: 'b2_export',
+    rootLinkId: 'FR_calf',
+    selection: { type: null, id: null },
+    links: {
+      FR_calf: {
+        id: 'FR_calf',
+        name: 'FR_calf',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#3b82f6',
+          authoredMaterials: [
+            { name: '磨砂铝合金_018-effect', color: '#bfbfbf' },
+            { name: '材质_005-effect', color: '#121212' },
+          ],
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ef4444',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 0.404,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {
+      FR_calf: {
+        color: '#3b82f6',
+      },
+    },
+  };
+
+  const bundle = buildUsdExportBundleFromSnapshot(snapshot, {
+    fileName: 'b2.usd',
+    currentRobot,
+  });
+
+  assert.ok(bundle);
+  assert.equal(bundle.robot.links.FR_calf.visual.color, '#bfbfbf');
+  assert.equal(bundle.robot.materials?.FR_calf?.color, '#bfbfbf');
+
+  const syntheticVisualLink = Object.values(bundle.robot.links).find((link) => link.id !== 'FR_calf');
+  assert.ok(syntheticVisualLink, 'expected an extra fixed visual attachment link for the second authored material');
+  assert.equal(syntheticVisualLink!.visual.color, '#121212');
+  assert.equal(bundle.robot.materials?.[syntheticVisualLink!.id]?.color, '#121212');
+});
+
+test('buildUsdExportBundleFromSnapshot reuses preferred visual material colors for extra visual attachments', () => {
+  const { positions, indices } = createTriangleBuffers();
+  const preferredColor = new THREE.Color(0.74, 0.74, 0.74);
+  const expectedHex = `#${preferredColor.getHexString()}`;
+
+  const snapshot = {
+    stageSourcePath: '/robots/b2/b2.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [
+        ['/Robot/FR_calf', null],
+      ] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/FR_calf'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/b2/b2.usd',
+      linkParentPairs: [
+        ['/Robot/FR_calf', null],
+      ] as Array<[string, string | null]>,
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/FR_calf': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/FR_calf/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/FR_calf/visuals/FR_calf',
+          primType: 'mesh',
+          geometry: {
+            geomSubsetSections: [
+              { start: 0, length: 3 },
+              { start: 3, length: 3 },
+            ],
+          },
+          ranges: {
+            positions: { offset: 0, count: 18, stride: 3 },
+            indices: { offset: 0, count: 6, stride: 1 },
+          },
+        },
+      ],
+      materials: [],
+      preferredVisualMaterialsByLinkPath: {
+        '/Robot/FR_calf': {
+          name: 'Calf',
+          color: [preferredColor.r, preferredColor.g, preferredColor.b, 1],
+        },
+      },
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs: new Float32Array(0),
+      transforms: new Float32Array(0),
+      rangesByMeshId: {},
+    },
+  };
+
+  const currentRobot: RobotState = {
+    name: 'b2_export',
+    rootLinkId: 'FR_calf',
+    selection: { type: null, id: null },
+    links: {
+      FR_calf: {
+        id: 'FR_calf',
+        name: 'FR_calf',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#3b82f6',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ef4444',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 0.404,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {
+      FR_calf: {
+        color: '#3b82f6',
+      },
+    },
+  };
+
+  const bundle = buildUsdExportBundleFromSnapshot(snapshot, {
+    fileName: 'b2.usd',
+    currentRobot,
+  });
+
+  assert.ok(bundle);
+  assert.equal(bundle.robot.links.FR_calf.visual.color, expectedHex);
+
+  const syntheticVisualLink = Object.values(bundle.robot.links).find((link) => link.id !== 'FR_calf');
+  assert.ok(syntheticVisualLink, 'expected an extra fixed visual attachment link for the second visual subset');
+  assert.equal(syntheticVisualLink!.visual.color, expectedHex);
+  assert.equal(bundle.robot.materials?.[syntheticVisualLink!.id]?.color, expectedHex);
+});
+
 test('prepareUsdExportCacheFromSnapshot materializes exportable mesh paths and reusable mesh files', async () => {
   const { positions, indices } = createTriangleBuffers();
 

@@ -4,11 +4,13 @@ import { GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { Theme } from '@/types';
 import {
+  AdaptiveGroundPlane,
   SceneLighting,
   SnapshotManager,
-  ReferenceGrid,
+  STUDIO_ENVIRONMENT_INTENSITY,
   CanvasResizeSync,
   NeutralStudioEnvironment,
+  useAdaptiveInteractionQuality,
   WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
   WORKSPACE_DEFAULT_CAMERA_FOV,
@@ -18,74 +20,6 @@ import {
 } from '@/shared/components/3d';
 import { useEffectiveTheme } from '@/shared/hooks';
 import { attachContextMenuBlocker } from '@/shared/utils';
-
-const INTERACTION_RECOVERY_DELAY_MS = 180;
-const RESTING_DPR_CAP = 1.75;
-// Keep the same DPR while orbiting; dropping to 1.0 makes the whole scene,
-// especially the reference grid, look blurry on HiDPI displays.
-const INTERACTION_DPR_CAP = RESTING_DPR_CAP;
-
-function useAdaptiveInteractionQuality() {
-  const [isInteracting, setIsInteracting] = useState(false);
-  const interactionTimeoutRef = useRef<number | null>(null);
-
-  const clearInteractionTimeout = useCallback(() => {
-    if (typeof window === 'undefined' || interactionTimeoutRef.current === null) {
-      return;
-    }
-
-    window.clearTimeout(interactionTimeoutRef.current);
-    interactionTimeoutRef.current = null;
-  }, []);
-
-  const beginInteraction = useCallback(() => {
-    clearInteractionTimeout();
-    setIsInteracting(true);
-  }, [clearInteractionTimeout]);
-
-  const endInteraction = useCallback(
-    (delay = INTERACTION_RECOVERY_DELAY_MS) => {
-      if (typeof window === 'undefined') {
-        setIsInteracting(false);
-        return;
-      }
-
-      clearInteractionTimeout();
-      interactionTimeoutRef.current = window.setTimeout(() => {
-        interactionTimeoutRef.current = null;
-        setIsInteracting(false);
-      }, delay);
-    },
-    [clearInteractionTimeout]
-  );
-
-  const pulseInteraction = useCallback(
-    (delay = INTERACTION_RECOVERY_DELAY_MS) => {
-      beginInteraction();
-      endInteraction(delay);
-    },
-    [beginInteraction, endInteraction]
-  );
-
-  useEffect(() => () => clearInteractionTimeout(), [clearInteractionTimeout]);
-
-  const dpr = useMemo(() => {
-    if (typeof window === 'undefined') {
-      return isInteracting ? INTERACTION_DPR_CAP : RESTING_DPR_CAP;
-    }
-
-    const devicePixelRatio = window.devicePixelRatio || 1;
-    return Math.min(devicePixelRatio, isInteracting ? INTERACTION_DPR_CAP : RESTING_DPR_CAP);
-  }, [isInteracting]);
-
-  return {
-    dpr,
-    isInteracting,
-    beginInteraction,
-    endInteraction,
-    pulseInteraction,
-  };
-}
 
 interface VisualizerCanvasProps {
   theme: Theme;
@@ -190,14 +124,14 @@ export const VisualizerCanvas = memo(function VisualizerCanvas({
           <WorkspaceOrbitControls onStart={beginInteraction} onEnd={() => endInteraction()} />
           {/* Pass effective theme to SceneLighting and ReferenceGrid */}
           <SceneLighting theme={effectiveTheme} enableShadows={!isInteracting} />
-          <NeutralStudioEnvironment intensity={effectiveTheme === 'light' ? 0.46 : 0.46} />
+          <NeutralStudioEnvironment intensity={STUDIO_ENVIRONMENT_INTENSITY.workspace[effectiveTheme]} />
           <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
 
           {/* Render robot and controls passed as children */}
           {children}
 
           {/* Reference Grid */}
-          <ReferenceGrid theme={effectiveTheme} />
+          <AdaptiveGroundPlane theme={effectiveTheme} />
           <WorldOriginAxes />
 
           {/* Axis Gizmo */}

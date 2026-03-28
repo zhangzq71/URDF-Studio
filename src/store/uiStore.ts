@@ -23,6 +23,7 @@ export interface ViewConfig {
 export interface ViewOptions {
   showGrid: boolean;
   showAxes: boolean;
+  showUsageGuide: boolean;
   showJointAxes: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
@@ -39,6 +40,12 @@ export interface PanelsState {
 export interface SidebarState {
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+}
+
+export interface PanelLayoutState {
+  propertyEditorWidth: number;
+  treeFileBrowserHeight: number;
+  treeSidebarWidth: number;
 }
 
 interface UIState {
@@ -79,6 +86,10 @@ interface UIState {
   // Sidebar Tab (structure/workspace)
   sidebarTab: 'structure' | 'workspace';
   setSidebarTab: (tab: 'structure' | 'workspace') => void;
+
+  // Resizable panel layout
+  panelLayout: PanelLayoutState;
+  setPanelLayout: <K extends keyof PanelLayoutState>(key: K, value: PanelLayoutState[K]) => void;
 
   // Settings modal
   isSettingsOpen: boolean;
@@ -127,6 +138,7 @@ const defaultViewConfig: ViewConfig = {
 const defaultViewOptions: ViewOptions = {
   showGrid: true,
   showAxes: true,
+  showUsageGuide: true,
   showJointAxes: false,
   showInertia: false,
   showCenterOfMass: false,
@@ -141,6 +153,12 @@ const defaultPanels: PanelsState = {
 const defaultSidebar: SidebarState = {
   leftCollapsed: false,
   rightCollapsed: false,
+};
+
+const defaultPanelLayout: PanelLayoutState = {
+  propertyEditorWidth: 248,
+  treeFileBrowserHeight: 216,
+  treeSidebarWidth: 264,
 };
 
 // Detect system language
@@ -306,6 +324,13 @@ export const useUIStore = create<UIState>()(
       sidebarTab: 'structure',
       setSidebarTab: (tab) => set({ sidebarTab: tab }),
 
+      // Resizable panel layout
+      panelLayout: defaultPanelLayout,
+      setPanelLayout: (key, value) =>
+        set((state) => ({
+          panelLayout: { ...state.panelLayout, [key]: value },
+        })),
+
       // Settings modal
       isSettingsOpen: false,
       settingsPos: { x: 0, y: 0 }, // Will be calculated on open
@@ -315,9 +340,11 @@ export const useUIStore = create<UIState>()(
           // Only calculate center if no pos provided AND current pos is default (0,0)
           if (!newPos && state.settingsPos.x === 0 && state.settingsPos.y === 0) {
              if (typeof window !== 'undefined') {
+                const defaultWidth = 296;
+                const defaultHeight = 360;
                 newPos = {
-                    x: Math.max(0, window.innerWidth / 2 - 160), // 320px width / 2
-                    y: Math.max(0, window.innerHeight / 2 - 200) // Approx height / 2
+                    x: Math.max(12, window.innerWidth / 2 - defaultWidth / 2),
+                    y: Math.max(12, window.innerHeight / 2 - defaultHeight / 2),
                 };
              } else {
                 newPos = { x: 100, y: 100 };
@@ -368,18 +395,35 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 5,
+      version: 6,
       migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
         }
 
-        return persistedState;
+        const state = persistedState as {
+          panelLayout?: Partial<PanelLayoutState>;
+          viewOptions?: Partial<ViewOptions>;
+        };
+
+        return {
+          ...state,
+          viewOptions: {
+            ...defaultViewOptions,
+            ...state.viewOptions,
+          },
+          panelLayout: {
+            ...defaultPanelLayout,
+            ...state.panelLayout,
+          },
+        };
       },
       partialize: (state) => ({
         theme: state.theme,
         lang: state.lang,
         sidebar: state.sidebar,
+        viewOptions: state.viewOptions,
+        panelLayout: state.panelLayout,
         showImportWarning: state.showImportWarning,
         panelSections: state.panelSections,
         fontSize: state.fontSize,

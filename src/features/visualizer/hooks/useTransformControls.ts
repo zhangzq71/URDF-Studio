@@ -5,6 +5,10 @@ import { RobotState } from '@/types';
 import { useRobotStore } from '@/store/robotStore';
 import { useSelectionStore } from '@/store/selectionStore';
 
+const PREVIEW_POSITION_EPSILON_SQ = 1e-12;
+const PREVIEW_ROTATION_EPSILON = 1e-10;
+const PREVIEW_ANGLE_EPSILON = 1e-6;
+
 interface PendingEdit {
   axis: string;
   value: number;
@@ -59,6 +63,9 @@ export function useTransformControls(
   const isDraggingControlRef = useRef(false);
   const currentAxisRef = useRef<string | null>(null);
   const startValueRef = useRef<number>(0);
+  const lastPreviewPositionRef = useRef<THREE.Vector3 | null>(null);
+  const lastPreviewQuaternionRef = useRef<THREE.Quaternion | null>(null);
+  const lastPreviewAngleRef = useRef<number | null>(null);
   const {
     onPreviewObjectChange,
     onPreviewRotateChange,
@@ -82,6 +89,12 @@ export function useTransformControls(
     },
     []
   );
+
+  const resetPreviewCache = useCallback(() => {
+    lastPreviewPositionRef.current = null;
+    lastPreviewQuaternionRef.current = null;
+    lastPreviewAngleRef.current = null;
+  }, []);
 
   const persistSelectedObject = useCallback(() => {
     if (!selectedObject || !robot.selection.id) return;
@@ -153,9 +166,10 @@ export function useTransformControls(
       selectedObject.position.copy(originalPositionRef.current);
       selectedObject.quaternion.copy(originalQuaternionRef.current);
     }
+    resetPreviewCache();
     onResetPreview?.();
     setPendingEdit(null);
-  }, [onResetPreview, pendingEdit, robot.selection.id, robot.selection.type, selectedObject]);
+  }, [onResetPreview, pendingEdit, resetPreviewCache, robot.selection.id, robot.selection.type, selectedObject]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -165,9 +179,10 @@ export function useTransformControls(
         selectedObject.position.copy(originalPositionRef.current);
         selectedObject.quaternion.copy(originalQuaternionRef.current);
       }
+      resetPreviewCache();
       onResetPreview?.();
     };
-  }, [onResetPreview, pendingEdit, selectedObject, setHoverFrozen]);
+  }, [onResetPreview, pendingEdit, resetPreviewCache, selectedObject, setHoverFrozen]);
 
   // Update original refs when target object changes
   useEffect(() => {
@@ -175,7 +190,8 @@ export function useTransformControls(
       originalPositionRef.current.copy(selectedObject.position);
       originalQuaternionRef.current.copy(selectedObject.quaternion);
     }
-  }, [selectedObject]);
+    resetPreviewCache();
+  }, [resetPreviewCache, selectedObject]);
 
   // Helper functions
   const radToDeg = (rad: number) => rad * (180 / Math.PI);
@@ -239,22 +255,48 @@ export function useTransformControls(
 
     persistSelectedObject();
 
+    resetPreviewCache();
     setPendingEdit(null);
-  }, [applyAxisRotationValue, pendingEdit, persistSelectedObject, robot.selection.id, selectedObject]);
+  }, [applyAxisRotationValue, pendingEdit, persistSelectedObject, resetPreviewCache, robot.selection.id, selectedObject]);
 
   const handleCancel = useCallback(() => {
     if (selectedObject) {
       selectedObject.position.copy(originalPositionRef.current);
       selectedObject.quaternion.copy(originalQuaternionRef.current);
     }
+    resetPreviewCache();
     onResetPreview?.();
     setPendingEdit(null);
-  }, [onResetPreview, selectedObject]);
+  }, [onResetPreview, resetPreviewCache, selectedObject]);
 
   const handleObjectChange = useCallback(() => {
-    if (mode === 'skeleton' && selectedObject && robot.selection.type === 'joint' && onPreviewObjectChange) {
-      onPreviewObjectChange(selectedObject, robot.selection.id);
+    if (mode !== 'skeleton' || !selectedObject || robot.selection.type !== 'joint' || !onPreviewObjectChange) {
+      return;
     }
+
+    const previousPosition = lastPreviewPositionRef.current;
+    const previousQuaternion = lastPreviewQuaternionRef.current;
+    const positionChanged =
+      !previousPosition ||
+      previousPosition.distanceToSquared(selectedObject.position) > PREVIEW_POSITION_EPSILON_SQ;
+    const quaternionChanged =
+      !previousQuaternion ||
+      Math.abs(1 - Math.abs(previousQuaternion.dot(selectedObject.quaternion))) > PREVIEW_ROTATION_EPSILON;
+
+    if (!positionChanged && !quaternionChanged) {
+      return;
+    }
+
+    if (!lastPreviewPositionRef.current) {
+      lastPreviewPositionRef.current = new THREE.Vector3();
+    }
+    if (!lastPreviewQuaternionRef.current) {
+      lastPreviewQuaternionRef.current = new THREE.Quaternion();
+    }
+
+    lastPreviewPositionRef.current.copy(selectedObject.position);
+    lastPreviewQuaternionRef.current.copy(selectedObject.quaternion);
+    onPreviewObjectChange(selectedObject, robot.selection.id);
   }, [mode, onPreviewObjectChange, robot.selection.id, robot.selection.type, selectedObject]);
 
   const handleRotateObjectChange = useCallback(() => {
@@ -264,6 +306,14 @@ export function useTransformControls(
       return;
     }
 
+    if (
+      lastPreviewAngleRef.current !== null &&
+      Math.abs(lastPreviewAngleRef.current - nextAngle) <= PREVIEW_ANGLE_EPSILON
+    ) {
+      return;
+    }
+
+    lastPreviewAngleRef.current = nextAngle;
     onPreviewRotateChange?.(selectedJointEntry.id, nextAngle);
   }, [extractSelectedJointAngle, getSelectedJoint, onPreviewRotateChange]);
 

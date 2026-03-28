@@ -416,6 +416,7 @@ export const getDocumentLanguageId = (
       return 'xacro';
     case 'usd':
       return 'plaintext';
+    case 'sdf':
     case 'mjcf':
     case 'equivalent-mjcf':
     default:

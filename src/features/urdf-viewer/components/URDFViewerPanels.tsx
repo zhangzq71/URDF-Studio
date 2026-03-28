@@ -1,5 +1,4 @@
 import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
-import { ViewModeBadge } from '@/shared/components/3d';
 import { MeasurePanel } from './MeasurePanel';
 import { ViewerOptionsPanel } from './ViewerOptionsPanel';
 import { ViewerToolbar } from './ViewerToolbar';
@@ -44,8 +43,6 @@ export const URDFViewerPanels = ({
 
   return (
     <>
-      <ViewModeBadge label={`${mode === 'hardware' ? t.hardware : t.detail} ${t.modeLabel}`} />
-
       <ViewerOptionsPanel
         showOptionsPanel={showOptionsPanel}
         optionsPanelRef={controller.optionsPanelRef}

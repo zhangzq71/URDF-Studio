@@ -4,7 +4,7 @@
  */
 
 /** Supported robot file formats */
-export type FileFormat = 'urdf' | 'mjcf' | 'usd' | 'xacro';
+export type FileFormat = 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf';
 
 /** Asset file with blob data */
 export interface AssetFile {

@@ -10,9 +10,13 @@ export interface FileTreeNode {
   file?: RobotFile;
 }
 
+interface MutableFileTreeNode extends FileTreeNode {
+  childrenMap?: Map<string, MutableFileTreeNode>;
+}
+
 // Build a tree structure from flat file list
 export function buildFileTree(files: RobotFile[]): FileTreeNode[] {
-  const root: FileTreeNode[] = [];
+  const root = new Map<string, MutableFileTreeNode>();
 
   for (const file of files) {
     const parts = file.name.split('/').filter((part) => part.length > 0);
@@ -24,41 +28,42 @@ export function buildFileTree(files: RobotFile[]): FileTreeNode[] {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       const isLast = i === parts.length - 1;
 
-      let existing = currentLevel.find((node) => node.name === part);
+      let existing = currentLevel.get(part);
 
       if (!existing) {
-        const newNode: FileTreeNode = {
+        existing = {
           name: part,
           path: currentPath,
           isFolder: !isLast,
-          children: isLast ? undefined : [],
+          childrenMap: isLast ? undefined : new Map<string, MutableFileTreeNode>(),
           file: isLast ? file : undefined,
         };
-
-        currentLevel.push(newNode);
-        existing = newNode;
+        currentLevel.set(part, existing);
       }
 
-      if (!isLast && existing.children) {
-        currentLevel = existing.children;
+      if (!isLast && existing.childrenMap) {
+        currentLevel = existing.childrenMap;
       }
     }
   }
 
-  const sortNodes = (nodes: FileTreeNode[]): FileTreeNode[] => {
-    return nodes
+  const finalizeNodes = (nodes: Iterable<MutableFileTreeNode>): FileTreeNode[] => {
+    return Array.from(nodes)
       .sort((a, b) => {
         if (a.isFolder && !b.isFolder) return -1;
         if (!a.isFolder && b.isFolder) return 1;
         return a.name.localeCompare(b.name);
       })
       .map((node) => ({
-        ...node,
-        children: node.children ? sortNodes(node.children) : undefined,
+        name: node.name,
+        path: node.path,
+        isFolder: node.isFolder,
+        file: node.file,
+        children: node.childrenMap ? finalizeNodes(node.childrenMap.values()) : undefined,
       }));
   };
 
-  return sortNodes(root);
+  return finalizeNodes(root.values());
 }
 
 // Get file icon based on extension
@@ -74,6 +79,8 @@ export function getFileIcon(filename: string, isFolder: boolean, isOpen: boolean
   switch (ext) {
     case 'urdf':
       return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-system-blue' });
+    case 'sdf':
+      return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-teal-500' });
     case 'xacro':
       return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-text-secondary' });
     case 'xml':

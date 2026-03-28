@@ -12,6 +12,7 @@ import {
   type UrdfVisualMaterial,
 } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import { getVisualGeometryEntries } from '@/core/robot';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
   MAX_PROPERTY_DECIMALS,
@@ -53,10 +54,28 @@ const hexToRgba = (hex: string): string => {
 function resolveLinkExportMaterial(
   robot: RobotState,
   link: UrdfLink,
+  visual: UrdfLink['visual'],
+  options: {
+    isPrimaryVisual?: boolean;
+    visualCount?: number;
+  } = {},
 ): { color?: string; texture?: string } {
   const material = robot.materials?.[link.id] || robot.materials?.[link.name];
+  const visualCount = options.visualCount ?? getVisualGeometryEntries(link).length;
+  const isPrimaryVisual = options.isPrimaryVisual ?? true;
+
+  // `robot.materials` is a link-level cache and cannot safely describe multiple
+  // independently colored visuals on the same link. Preserve per-visual
+  // authored colors/materials for additional visuals instead of flattening the
+  // whole link to the primary visual color during source regeneration.
+  if (visualCount > 1 && !isPrimaryVisual) {
+    return {
+      color: visual.color,
+    };
+  }
+
   return {
-    color: material?.color || (!material?.texture ? link.visual.color : undefined),
+    color: material?.color || (!material?.texture ? visual.color : undefined),
     texture: material?.texture,
   };
 }
@@ -220,45 +239,49 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
   Object.values(links).forEach((link) => {
     xml += `  <link name="${link.name}">\n`;
 
-    // Visual
-    if (link.visual.type !== GeometryType.NONE) {
-        const visualMaterial = resolveLinkExportMaterial(robot, link);
+    const visualEntries = getVisualGeometryEntries(link);
+    visualEntries.forEach((entry, index) => {
+        const visual = entry.geometry;
+        const visualMaterial = resolveLinkExportMaterial(robot, link, visual, {
+          isPrimaryVisual: entry.bodyIndex === null,
+          visualCount: visualEntries.length,
+        });
         const hasExplicitVisualMaterialOverride = Boolean(visualMaterial.color || visualMaterial.texture);
         const authoredMaterials = hasExplicitVisualMaterialOverride
           ? undefined
-          : link.visual.authoredMaterials;
+          : visual.authoredMaterials;
         xml += `    <visual>\n`;
-        if (link.visual.origin) {
-            xml += `      <origin xyz="${vecStr(link.visual.origin.xyz)}" rpy="${rotStr(link.visual.origin.rpy)}" />\n`;
+        if (visual.origin) {
+            xml += `      <origin xyz="${vecStr(visual.origin.xyz)}" rpy="${rotStr(visual.origin.rpy)}" />\n`;
         }
 
         xml += `      <geometry>\n`;
-        if (link.visual.type === GeometryType.BOX) {
-          xml += `        <box size="${vecStr(link.visual.dimensions)}" />\n`;
-        } else if (link.visual.type === GeometryType.CYLINDER) {
-          xml += `        <cylinder radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
-        } else if (link.visual.type === GeometryType.SPHERE) {
-          xml += `        <sphere radius="${formatShape(link.visual.dimensions.x)}" />\n`;
-        } else if (link.visual.type === GeometryType.CAPSULE) {
-          xml += `        <capsule radius="${formatShape(link.visual.dimensions.x)}" length="${formatShape(link.visual.dimensions.y)}" />\n`;
-        } else if (link.visual.type === GeometryType.MESH) {
-           const meshPath = link.visual.meshPath
+        if (visual.type === GeometryType.BOX) {
+          xml += `        <box size="${vecStr(visual.dimensions)}" />\n`;
+        } else if (visual.type === GeometryType.CYLINDER) {
+          xml += `        <cylinder radius="${formatShape(visual.dimensions.x)}" length="${formatShape(visual.dimensions.y)}" />\n`;
+        } else if (visual.type === GeometryType.SPHERE) {
+          xml += `        <sphere radius="${formatShape(visual.dimensions.x)}" />\n`;
+        } else if (visual.type === GeometryType.CAPSULE) {
+          xml += `        <capsule radius="${formatShape(visual.dimensions.x)}" length="${formatShape(visual.dimensions.y)}" />\n`;
+        } else if (visual.type === GeometryType.MESH) {
+           const meshPath = visual.meshPath
              ? (preserveMeshPaths
-               ? link.visual.meshPath.replace(/\\/g, '/')
-               : normalizeMeshPathForExport(link.visual.meshPath))
+               ? visual.meshPath.replace(/\\/g, '/')
+               : normalizeMeshPathForExport(visual.meshPath))
              : 'part.stl';
            const filename = preserveMeshPaths
              ? (meshPath || 'part.stl')
              : useRelativePaths
                ? `meshes/${meshPath || 'part.stl'}`
                : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
-           const scaleAttribute = formatUrdfMeshScaleAttribute(link.visual.dimensions, formatShape);
+           const scaleAttribute = formatUrdfMeshScaleAttribute(visual.dimensions, formatShape);
            xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
         }
         xml += `      </geometry>\n`;
         const shouldEmitVisualColor = !(
-          link.visual.type === GeometryType.MESH
-          && shouldOmitMeshMaterial(link.visual.meshPath)
+          visual.type === GeometryType.MESH
+          && shouldOmitMeshMaterial(visual.meshPath)
         );
         if (shouldEmitVisualColor && authoredMaterials && authoredMaterials.length > 0) {
           authoredMaterials.forEach((material) => {
@@ -273,7 +296,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
         } else if ((shouldEmitVisualColor && visualMaterial.color) || visualMaterial.texture) {
           xml += generateUrdfMaterialXml(
             {
-              name: `${link.id}_mat`,
+              name: index === 0 ? `${link.id}_mat` : `${link.id}_mat_${index}`,
               color: shouldEmitVisualColor ? visualMaterial.color : undefined,
               texture: visualMaterial.texture,
             },
@@ -284,7 +307,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
           );
         }
         xml += `    </visual>\n`;
-    }
+    });
 
     // Collision (primary + additional bodies on the same link)
     xml += generateCollisionElement(
@@ -417,6 +440,28 @@ export const generateRos1Transmissions = (
   return xml;
 };
 
+function resolveRos1GazeboNamespace(robotName?: string): string {
+  const normalizedName = String(robotName || 'robot').trim() || 'robot';
+  const namespaceRoot = normalizedName.replace(/_description$/i, '') || 'robot';
+  return `/${namespaceRoot}_gazebo`;
+}
+
+export const generateRos1Control = (
+  robot: RobotState,
+  hwInterface: RosHardwareInterface = 'effort',
+  robotName?: string,
+): string => {
+  const controlName = robotName || robot.name || 'robot';
+  let xml = generateRos1Transmissions(robot, hwInterface);
+  xml += `  <gazebo>\n`;
+  xml += `    <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">\n`;
+  xml += `      <robotNamespace>${resolveRos1GazeboNamespace(controlName)}</robotNamespace>\n`;
+  xml += `      <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>\n`;
+  xml += `    </plugin>\n`;
+  xml += `  </gazebo>\n`;
+  return xml;
+};
+
 /**
  * Generate ROS2 <ros2_control> block + Gazebo plugin tag.
  * These are appended inside the <robot> element before the closing tag.
@@ -432,7 +477,7 @@ export const generateRos2Control = (
 
   let xml = `  <ros2_control name="${ctrlName}" type="system">\n`;
   xml += `    <hardware>\n`;
-  xml += `      <plugin>mock_components/GenericSystem</plugin>\n`;
+  xml += `      <plugin>gazebo_ros2_control/GazeboSystem</plugin>\n`;
   xml += `    </hardware>\n`;
 
   Object.values(joints).forEach((j) => {
@@ -452,12 +497,58 @@ export const generateRos2Control = (
 
   xml += `  <gazebo>\n`;
   xml += `    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">\n`;
-  xml += `      <robot_sim_type>gazebo_ros2_control/GazeboSystem</robot_sim_type>\n`;
+  xml += `      <robot_param>robot_description</robot_param>\n`;
+  xml += `      <robot_param_node>robot_state_publisher</robot_param_node>\n`;
   xml += `    </plugin>\n`;
   xml += `  </gazebo>\n`;
 
   return xml;
 };
+
+export const ensureXacroNamespace = (xml: string): string => {
+  if (/xmlns:xacro\s*=/.test(xml)) {
+    return xml;
+  }
+
+  return xml.replace(/<robot\b([^>]*)>/, (_match, attrs: string) => {
+    const separator = attrs.trim().length > 0 ? ' ' : '';
+    return `<robot${attrs}${separator}xmlns:xacro="http://www.ros.org/wiki/xacro">`;
+  });
+};
+
+function indentXmlBlock(content: string, indent: string): string {
+  return content
+    .split('\n')
+    .map((line) => (line.length > 0 ? `${indent}${line}` : line))
+    .join('\n');
+}
+
+function generateProfileParameterizedXacro(
+  robot: RobotState,
+  defaultRosVersion: 'ros1' | 'ros2',
+  hwInterface: RosHardwareInterface = 'effort',
+): string {
+  const rosVersions: Array<'ros1' | 'ros2'> = ['ros1', 'ros2'];
+  const hwInterfaces: RosHardwareInterface[] = ['effort', 'position', 'velocity'];
+  const branches = rosVersions.flatMap((rosVersion) => hwInterfaces.map((hardwareInterface) => {
+    const block = rosVersion === 'ros1'
+      ? generateRos1Control(robot, hardwareInterface)
+      : generateRos2Control(robot, hardwareInterface);
+    return [
+      `  <xacro:if value="\${xacro.arg('ros_profile') == '${rosVersion}' and xacro.arg('ros_hardware_interface') == '${hardwareInterface}'}">`,
+      indentXmlBlock(block, '    '),
+      `  </xacro:if>`,
+      '',
+    ].join('\n');
+  }));
+
+  return [
+    `  <xacro:arg name="ros_profile" default="${defaultRosVersion}" />`,
+    `  <xacro:arg name="ros_hardware_interface" default="${hwInterface}" />`,
+    '',
+    ...branches,
+  ].join('\n');
+}
 
 /**
  * Inject ROS1 or ROS2 Gazebo tags into an already-generated URDF string.
@@ -469,8 +560,6 @@ export const injectGazeboTags = (
   rosVersion: 'ros1' | 'ros2',
   hwInterface: RosHardwareInterface = 'effort',
 ): string => {
-  const extra = rosVersion === 'ros1'
-    ? generateRos1Transmissions(robot, hwInterface)
-    : generateRos2Control(robot, hwInterface);
-  return urdfXml.replace(/(<\/robot>)\s*$/, `\n${extra}</robot>`);
+  const extra = generateProfileParameterizedXacro(robot, rosVersion, hwInterface);
+  return ensureXacroNamespace(urdfXml).replace(/(<\/robot>)\s*$/, `\n${extra}</robot>`);
 };

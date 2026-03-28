@@ -71,7 +71,7 @@ test('scheduleStabilizedAutoFrame stops once the sampled bounds stay stable', ()
   assert.equal(scheduler.tasks[1].delayMs, 80);
 
   runNextScheduledTask(scheduler.tasks);
-  assert.deepEqual(appliedKeys, ['frame-a', 'frame-a']);
+  assert.deepEqual(appliedKeys, ['frame-a']);
   assert.deepEqual(settledReasons, ['stable']);
   assert.equal(
     scheduler.tasks.filter((task) => !task.cancelled).length,
@@ -79,8 +79,9 @@ test('scheduleStabilizedAutoFrame stops once the sampled bounds stay stable', ()
   );
 });
 
-test('scheduleStabilizedAutoFrame settles as exhausted after the final retry', () => {
+test('scheduleStabilizedAutoFrame applies only the final sample when retries are exhausted', () => {
   const scheduler = createTestScheduler();
+  const appliedKeys: string[] = [];
   const settledReasons: Array<'stable' | 'exhausted'> = [];
   let sampleIndex = 0;
 
@@ -89,7 +90,10 @@ test('scheduleStabilizedAutoFrame settles as exhausted after the final retry', (
       stabilityKey: `frame-${sampleIndex++}`,
       state: null,
     }),
-    applyFrame: () => false,
+    applyFrame: ({ stabilityKey }) => {
+      appliedKeys.push(String(stabilityKey));
+      return true;
+    },
     isActive: () => true,
     delays: [0, 80, 160],
     onSettled: (reason) => {
@@ -103,6 +107,7 @@ test('scheduleStabilizedAutoFrame settles as exhausted after the final retry', (
   runNextScheduledTask(scheduler.tasks);
   runNextScheduledTask(scheduler.tasks);
 
+  assert.deepEqual(appliedKeys, ['frame-2']);
   assert.deepEqual(settledReasons, ['exhausted']);
   assert.equal(
     scheduler.tasks.filter((task) => !task.cancelled).length,

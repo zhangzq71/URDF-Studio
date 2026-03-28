@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { GeometryType, type RobotFile, type UrdfLink } from '@/types';
 
 import {
+  buildViewerRobotLinksScopeSignature,
   createStableViewerResourceScope,
   type ViewerResourceScope,
 } from './viewerResourceScope';
@@ -74,6 +75,29 @@ test('createStableViewerResourceScope reuses the previous scope when unrelated a
     'robots/go1/meshes/base.dae': 'blob:go1-base',
     'robots/go1/materials/body.png': 'blob:go1-body',
   });
+});
+
+test('buildViewerRobotLinksScopeSignature stays stable when mesh references do not change', () => {
+  const initial = buildViewerRobotLinksScopeSignature({
+    base_link: createMeshLink('robots/go1/meshes/base.dae'),
+  });
+
+  const next = buildViewerRobotLinksScopeSignature({
+    base_link: {
+      ...createMeshLink('robots/go1/meshes/base.dae'),
+      visible: false,
+      collisionBodies: [
+        {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: undefined,
+          color: '#ff0000',
+        },
+      ],
+    },
+  });
+
+  assert.equal(next, initial);
 });
 
 test('createStableViewerResourceScope updates the scope when a relevant asset changes', () => {
@@ -239,5 +263,33 @@ test('createStableViewerResourceScope keeps sibling mesh assets for xml-based MJ
     'robots/b2_description_mujoco/xml/b2.xml': 'blob:b2-xml',
     'robots/b2_description_mujoco/xml/scene.xml': 'blob:b2-scene',
     'robots/b2_description_mujoco/meshes/base_link.obj': 'blob:b2-base',
+  });
+});
+
+test('createStableViewerResourceScope retains repo-rooted sibling package assets that the mesh loader can resolve', () => {
+  const scoped = createStableViewerResourceScope(null, {
+    assets: {
+      'halodi-robot-models/eve_r3_description/urdf/eve_r3_robotiq_2f_85.urdf': 'blob:eve-urdf',
+      'halodi-robot-models/robotiq_2f_85_gripper_visualization/meshes/visual/robotiq_arg2f_85_inner_knuckle.dae': 'blob:visual-knuckle',
+      'halodi-robot-models/robotiq_2f_85_gripper_visualization/meshes/collision/robotiq_arg2f_85_inner_knuckle.dae': 'blob:collision-knuckle',
+      'robots/go1/meshes/base.dae': 'blob:go1-base',
+    },
+    availableFiles: [],
+    sourceFile: {
+      name: 'halodi-robot-models/eve_r3_description/urdf/eve_r3_robotiq_2f_85.urdf',
+      content: '<robot name="eve_r3" />',
+      format: 'urdf',
+    },
+    sourceFilePath: 'halodi-robot-models/eve_r3_description/urdf/eve_r3_robotiq_2f_85.urdf',
+    robotLinks: {
+      gripper_link: createMeshLink(
+        'package://robotiq_2f_85_gripper_visualization/meshes/visual/robotiq_arg2f_85_inner_knuckle.dae',
+      ),
+    },
+  });
+
+  assert.deepEqual(scoped.assets, {
+    'halodi-robot-models/eve_r3_description/urdf/eve_r3_robotiq_2f_85.urdf': 'blob:eve-urdf',
+    'halodi-robot-models/robotiq_2f_85_gripper_visualization/meshes/visual/robotiq_arg2f_85_inner_knuckle.dae': 'blob:visual-knuckle',
   });
 });

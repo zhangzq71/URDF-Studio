@@ -153,7 +153,7 @@ export function useCameraFocus({
     useEffect(() => {
         if (!active) return;
         if (!focusTarget || !robot || !resolvedFocusObject) return;
-        frameObject(resolvedFocusObject, new THREE.Box3().setFromObject(resolvedFocusObject));
+        frameObject(resolvedFocusObject, computeVisibleBounds(resolvedFocusObject));
     }, [active, focusTarget, frameObject, resolvedFocusObject, robot]);
 
     useEffect(() => {

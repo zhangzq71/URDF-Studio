@@ -29,7 +29,7 @@ export interface FileTreeNodeComponentProps {
   t: TranslationKeys;
 }
 
-export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
+const FileTreeNodeComponentBase: React.FC<FileTreeNodeComponentProps> = ({
   node,
   depth,
   editingFolderPath,
@@ -167,6 +167,8 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
             className={`text-[9px] px-1 rounded font-medium ${
               node.file.format === 'urdf'
                 ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue'
+                : node.file.format === 'sdf'
+                  ? 'bg-teal-100 dark:bg-teal-900/25 text-teal-700 dark:text-teal-300'
                 : node.file.format === 'xacro'
                   ? 'bg-element-bg dark:bg-element-hover text-text-secondary'
                   : node.file.format === 'mjcf'
@@ -240,3 +242,6 @@ export const FileTreeNodeComponent: React.FC<FileTreeNodeComponentProps> = ({
     </div>
   );
 };
+
+export const FileTreeNodeComponent = React.memo(FileTreeNodeComponentBase);
+FileTreeNodeComponent.displayName = 'FileTreeNodeComponent';

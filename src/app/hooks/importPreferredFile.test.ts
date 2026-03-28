@@ -5,6 +5,7 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
 import type { RobotFile } from '@/types';
+import { detectImportFormat } from '@/app/utils/importPreparation';
 import {
   isUrdfSelfContainedInImportBundle,
   pickPreferredMjcfImportFile,
@@ -46,11 +47,15 @@ function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[]
     .flatMap((fullPath) => {
       const relativePath = path.relative(process.cwd(), fullPath).replace(/\\/g, '/');
       const lowerPath = relativePath.toLowerCase();
-      if (lowerPath.endsWith('.urdf')) {
-        return [createRobotFile(relativePath, 'urdf', fs.readFileSync(fullPath, 'utf8'))];
-      }
-      if (lowerPath.endsWith('.xml')) {
-        return [createRobotFile(relativePath, 'mjcf', fs.readFileSync(fullPath, 'utf8'))];
+      if (
+        lowerPath.endsWith('.urdf')
+        || lowerPath.endsWith('.xml')
+        || lowerPath.endsWith('.xacro')
+        || lowerPath.endsWith('.urdf.xacro')
+      ) {
+        const content = fs.readFileSync(fullPath, 'utf8');
+        const format = detectImportFormat(content, relativePath);
+        return format ? [createRobotFile(relativePath, format, content)] : [];
       }
       if (lowerPath.endsWith('.stl') || lowerPath.endsWith('.obj') || lowerPath.endsWith('.dae')) {
         return [createRobotFile(relativePath, 'mesh')];
@@ -135,6 +140,26 @@ test('isUrdfSelfContainedInImportBundle detects missing package roots', () => {
   assert.equal(isUrdfSelfContainedInImportBundle(urdfFile, [urdfFile, meshFile]), false);
 });
 
+test('isUrdfSelfContainedInImportBundle accepts folder imports whose repo root differs from the package name', () => {
+  const urdfFile = createRobotFile(
+    'talos-data/urdf/talos_left_arm.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="talos">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://talos_data/meshes/arm/arm_1_collision.STL" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const meshFile = createRobotFile('talos-data/meshes/arm/arm_1_collision.STL', 'mesh');
+
+  assert.equal(isUrdfSelfContainedInImportBundle(urdfFile, [urdfFile, meshFile]), true);
+});
+
 test('pickPreferredMjcfImportFile prefers direct robot definitions over wrapper scenes without relying on names', () => {
   const robotFile = createRobotFile(
     'demo_bundle/robot_model.xml',
@@ -206,4 +231,15 @@ test('pickPreferredImportFile prefers the richer MJCF source-of-truth over a sel
   const preferredFile = pickPreferredImportFile(files, files);
 
   assert.equal(preferredFile?.name, 'test/mujoco_menagerie-main/google_barkour_vb/barkour_vb.xml');
+});
+
+test('pickPreferredImportFile prefers the richest self-contained URDF over helper subassemblies in talos-data', () => {
+  const files = loadImportableRobotFilesFromDirectory('test/awesome_robot_descriptions_repos/talos-data');
+
+  const preferredFile = pickPreferredImportFile(files, files);
+
+  assert.equal(
+    preferredFile?.name,
+    'test/awesome_robot_descriptions_repos/talos-data/urdf/talos_full.urdf',
+  );
 });

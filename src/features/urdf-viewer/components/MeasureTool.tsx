@@ -5,6 +5,8 @@ import type { MeasureToolProps, URDFViewerProps } from '../types';
 import {
     applyMeasurePick,
     clearActiveMeasureGroup,
+    getActiveMeasureGroup,
+    getMeasurementMetrics,
     getMeasureStateMeasurements,
     setMeasureHoverTarget,
     undoMeasureState,
@@ -21,9 +23,20 @@ const MEASURE_AXIS_COLORS = {
 } as const;
 const MEASURE_AXIS_EPSILON = 1e-6;
 const MEASURE_RENDER_ORDER = 2400;
-const MEASURE_LABEL_Z_INDEX_RANGE: [number, number] = [4, 0];
-const MEASURE_TOTAL_LABEL_DISTANCE_FACTOR = 12;
-const MEASURE_AXIS_LABEL_DISTANCE_FACTOR = 14;
+const MEASURE_LABEL_Z_INDEX_RANGE: [number, number] = [120, 0];
+const MEASURE_TOTAL_LABEL_DISTANCE_FACTOR = 6;
+const MEASURE_AXIS_LABEL_DISTANCE_FACTOR = 5.4;
+const MEASURE_AXIS_DASH_SIZE = 0.03;
+const MEASURE_AXIS_GAP_SIZE = 0.018;
+const MEASURE_SELECTION_COLORS = {
+    first: '#0ea5e9',
+    second: '#10b981',
+    hover: '#f59e0b',
+} as const;
+const MEASURE_MARKER_Z_INDEX_RANGE: [number, number] = [132, 0];
+const MEASURE_MARKER_DISTANCE_FACTOR = 4.8;
+const MEASURE_PREVIEW_LINE_COLOR = '#f59e0b';
+const MEASURE_PREVIEW_LABEL_DISTANCE_FACTOR = 5.2;
 const SCENE_LABEL_DECIMALS = 3;
 const LABEL_OFFSET_PATTERN = [
     new THREE.Vector3(0, 1, 0),
@@ -84,6 +97,147 @@ function formatMeasurementDistance(value: number): string {
     return `${value.toFixed(SCENE_LABEL_DECIMALS)}m`;
 }
 
+const MeasurePreviewItem = memo(({
+    start,
+    end,
+    showDecomposition,
+}: {
+    start: NonNullable<MeasureToolProps['measureState']['hoverTarget']>;
+    end: NonNullable<MeasureToolProps['measureState']['hoverTarget']>;
+    showDecomposition: boolean;
+}) => {
+    const metrics = useMemo(
+        () => ({
+            ...getMeasurementMetrics(start.point, end.point),
+            first: { point: start.point },
+            second: { point: end.point },
+        }),
+        [end.point, start.point],
+    );
+    const decompositionSegments = useMemo(
+        () => buildDecompositionSegments(metrics as MeasureMeasurement),
+        [metrics],
+    );
+    const midpoint = useMemo(
+        () => new THREE.Vector3().addVectors(start.point, end.point).multiplyScalar(0.5),
+        [end.point, start.point],
+    );
+    const labelPosition = useMemo(
+        () => midpoint.clone().add(new THREE.Vector3(0, clamp(metrics.distance * 0.03, 0.012, 0.028), 0)),
+        [metrics.distance, midpoint],
+    );
+
+    return (
+        <group>
+            <Line
+                points={[start.point, end.point]}
+                color={MEASURE_PREVIEW_LINE_COLOR}
+                lineWidth={1.6}
+                dashed
+                dashSize={0.026}
+                gapSize={0.015}
+                depthTest={false}
+                depthWrite={false}
+                transparent
+                opacity={0.86}
+                renderOrder={MEASURE_RENDER_ORDER + 1}
+            />
+            {showDecomposition && decompositionSegments.map((segment) => (
+                <Line
+                    key={`preview:${segment.axis}`}
+                    points={segment.points}
+                    color={MEASURE_AXIS_COLORS[segment.axis]}
+                    lineWidth={1.15}
+                    dashed
+                    dashSize={MEASURE_AXIS_DASH_SIZE}
+                    gapSize={MEASURE_AXIS_GAP_SIZE}
+                    depthTest={false}
+                    depthWrite={false}
+                    transparent
+                    opacity={0.72}
+                    renderOrder={MEASURE_RENDER_ORDER + 1}
+                />
+            ))}
+            <Html
+                center
+                position={labelPosition}
+                transform
+                sprite
+                distanceFactor={MEASURE_PREVIEW_LABEL_DISTANCE_FACTOR}
+                className="pointer-events-none select-none"
+                zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
+            >
+                <div className="rounded-full border border-amber-200/30 bg-amber-500/92 px-2 py-[2px] font-mono text-[9px] font-semibold whitespace-nowrap text-white shadow-[0_8px_20px_rgba(15,23,42,0.3)]">
+                    {formatMeasurementDistance(metrics.distance)}
+                </div>
+            </Html>
+        </group>
+    );
+});
+
+function areSameTarget(
+    left: MeasureToolProps['measureState']['hoverTarget'],
+    right: MeasureToolProps['measureState']['hoverTarget'],
+): boolean {
+    if (!left || !right) {
+        return false;
+    }
+
+    return left.key === right.key
+        && left.objectType === right.objectType
+        && left.objectIndex === right.objectIndex
+        && left.point.distanceToSquared(right.point) <= 1e-12;
+}
+
+const MeasureTargetMarker = memo(({
+    target,
+    tone,
+    badge,
+}: {
+    target: NonNullable<MeasureToolProps['measureState']['hoverTarget']>;
+    tone: string;
+    badge: string;
+}) => {
+    const outerRadius = badge === '1' || badge === '2' ? 0.0052 : 0.0044;
+    const innerRadius = outerRadius * 0.48;
+    const labelPosition = useMemo(
+        () => target.point.clone().add(new THREE.Vector3(0, outerRadius * 3.4, 0)),
+        [outerRadius, target.point],
+    );
+
+    return (
+        <group>
+            <mesh position={target.point} renderOrder={MEASURE_RENDER_ORDER + 4}>
+                <sphereGeometry args={[outerRadius, 18, 18]} />
+                <meshBasicMaterial color={tone} depthTest={false} depthWrite={false} transparent opacity={0.18} />
+            </mesh>
+            <mesh position={target.point} renderOrder={MEASURE_RENDER_ORDER + 5}>
+                <sphereGeometry args={[innerRadius, 18, 18]} />
+                <meshBasicMaterial color={tone} depthTest={false} depthWrite={false} transparent opacity={0.96} />
+            </mesh>
+            <Html
+                center
+                position={labelPosition}
+                transform
+                sprite
+                distanceFactor={MEASURE_MARKER_DISTANCE_FACTOR}
+                className="pointer-events-none select-none"
+                zIndexRange={MEASURE_MARKER_Z_INDEX_RANGE}
+            >
+                <div
+                    className="rounded-full border px-1.5 py-px font-mono text-[9px] font-semibold whitespace-nowrap text-white shadow-[0_8px_20px_rgba(15,23,42,0.28)]"
+                    style={{
+                        backgroundColor: `${tone}EE`,
+                        borderColor: `${tone}55`,
+                    }}
+                >
+                    {badge}
+                </div>
+            </Html>
+        </group>
+    );
+});
+
 const MeasurementItem = memo(({
     measurement,
     measurementIndex,
@@ -113,11 +267,11 @@ const MeasurementItem = memo(({
         [measurement],
     );
     const endpointRadius = useMemo(
-        () => clamp(measurement.distance * 0.01, 0.0028, 0.008),
+        () => clamp(measurement.distance * 0.0065, 0.0018, 0.0052),
         [measurement.distance],
     );
     const labelLift = useMemo(
-        () => clamp(measurement.distance * 0.028, 0.008, 0.026),
+        () => clamp(measurement.distance * 0.038, 0.012, 0.034),
         [measurement.distance],
     );
     const labelOffset = useMemo(() => (
@@ -144,21 +298,21 @@ const MeasurementItem = memo(({
     return (
         <group>
             <mesh position={measurement.first.point} renderOrder={MEASURE_RENDER_ORDER + 2}>
-                <sphereGeometry args={[endpointRadius, 18, 18]} />
-                <meshBasicMaterial color={MEASURE_LINE_COLOR} depthTest={false} depthWrite={false} transparent opacity={0.98} />
+                <sphereGeometry args={[endpointRadius, 16, 16]} />
+                <meshBasicMaterial color={MEASURE_LINE_COLOR} depthTest={false} depthWrite={false} transparent opacity={0.92} />
             </mesh>
             <mesh position={measurement.second.point} renderOrder={MEASURE_RENDER_ORDER + 2}>
-                <sphereGeometry args={[endpointRadius, 18, 18]} />
-                <meshBasicMaterial color={MEASURE_LINE_COLOR} depthTest={false} depthWrite={false} transparent opacity={0.98} />
+                <sphereGeometry args={[endpointRadius, 16, 16]} />
+                <meshBasicMaterial color={MEASURE_LINE_COLOR} depthTest={false} depthWrite={false} transparent opacity={0.92} />
             </mesh>
             <Line
                 points={[measurement.first.point, measurement.second.point]}
                 color={MEASURE_LINE_COLOR}
-                lineWidth={2.2}
+                lineWidth={2}
                 depthTest={false}
                 depthWrite={false}
                 transparent
-                opacity={0.98}
+                opacity={0.96}
                 renderOrder={MEASURE_RENDER_ORDER}
             />
             {showDecomposition && decompositionSegments.map((segment) => (
@@ -166,11 +320,14 @@ const MeasurementItem = memo(({
                     key={`${measurement.id}:${segment.axis}`}
                     points={segment.points}
                     color={MEASURE_AXIS_COLORS[segment.axis]}
-                    lineWidth={1.5}
+                    lineWidth={1.35}
+                    dashed
+                    dashSize={MEASURE_AXIS_DASH_SIZE}
+                    gapSize={MEASURE_AXIS_GAP_SIZE}
                     depthTest={false}
                     depthWrite={false}
                     transparent
-                    opacity={0.95}
+                    opacity={0.92}
                     renderOrder={MEASURE_RENDER_ORDER + 1}
                 />
             ))}
@@ -181,13 +338,12 @@ const MeasurementItem = memo(({
                     position={segmentLabel.position}
                     transform
                     sprite
-                    occlude
                     distanceFactor={MEASURE_AXIS_LABEL_DISTANCE_FACTOR}
-                    style={{ pointerEvents: 'none' }}
+                    className="pointer-events-none select-none"
                     zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
                 >
                     <div
-                        className="rounded border border-white/15 px-1 py-px font-mono text-[8px] whitespace-nowrap text-white/95 shadow-lg"
+                        className="rounded-full border border-white/18 px-1.5 py-px font-mono text-[9px] font-semibold whitespace-nowrap text-white/96 shadow-[0_8px_22px_rgba(15,23,42,0.35)]"
                         style={{ backgroundColor: `${MEASURE_AXIS_COLORS[segmentLabel.axis]}E6` }}
                     >
                         {segmentLabel.text}
@@ -199,14 +355,15 @@ const MeasurementItem = memo(({
                 position={totalLabelPosition}
                 transform
                 sprite
-                occlude
                 distanceFactor={MEASURE_TOTAL_LABEL_DISTANCE_FACTOR}
-                style={{ pointerEvents: 'none' }}
+                className="pointer-events-none select-none"
                 zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
             >
                 <div
-                    className={`group flex cursor-pointer items-center gap-1 rounded border border-white/10 bg-red-500/92 px-1 py-px font-mono text-[8px] whitespace-nowrap text-white shadow-lg transition-colors pointer-events-auto ${
-                        isHovered ? 'bg-red-600/95' : 'hover:bg-red-600/95'
+                    className={`group flex cursor-pointer items-center gap-1 rounded-full border px-2 py-[2px] font-mono text-[10px] font-semibold whitespace-nowrap text-white shadow-[0_10px_28px_rgba(15,23,42,0.38)] transition-colors pointer-events-auto ${
+                        isHovered
+                            ? 'border-red-300/35 bg-red-600/94'
+                            : 'border-red-200/22 bg-red-500/90 hover:border-red-300/35 hover:bg-red-600/94'
                     }`}
                     onMouseEnter={onHover}
                     onMouseLeave={onLeave}
@@ -218,7 +375,7 @@ const MeasurementItem = memo(({
                 >
                     G{measurement.groupIndex} {distance}
                     <svg
-                        className={`h-2 w-2 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}
+                        className={`h-2.5 w-2.5 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -375,9 +532,71 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
         () => getMeasureStateMeasurements(measureState),
         [measureState],
     );
+    const activeGroup = useMemo(
+        () => getActiveMeasureGroup(measureState),
+        [measureState],
+    );
+    const hoverBadge = activeGroup.activeSlot === 'second' ? '2' : '1';
+    const shouldShowHoverMarker = Boolean(
+        active
+        && measureState.hoverTarget
+        && !areSameTarget(measureState.hoverTarget, activeGroup.first)
+        && !areSameTarget(measureState.hoverTarget, activeGroup.second),
+    );
+    const shouldShowFirstMarker = active && Boolean(activeGroup.first) && !activeGroup.second;
+    const shouldShowSecondMarker = active && Boolean(activeGroup.second) && !activeGroup.first;
+    const previewTargets = useMemo(() => {
+        if (!active || !measureState.hoverTarget) {
+            return null;
+        }
+
+        if (activeGroup.first && !activeGroup.second && !areSameTarget(activeGroup.first, measureState.hoverTarget)) {
+            return {
+                start: activeGroup.first,
+                end: measureState.hoverTarget,
+            };
+        }
+
+        if (activeGroup.second && !activeGroup.first && !areSameTarget(activeGroup.second, measureState.hoverTarget)) {
+            return {
+                start: measureState.hoverTarget,
+                end: activeGroup.second,
+            };
+        }
+
+        return null;
+    }, [active, activeGroup.first, activeGroup.second, measureState.hoverTarget]);
 
     return (
         <group>
+            {shouldShowFirstMarker && activeGroup.first ? (
+                <MeasureTargetMarker
+                    target={activeGroup.first}
+                    tone={MEASURE_SELECTION_COLORS.first}
+                    badge="1"
+                />
+            ) : null}
+            {shouldShowSecondMarker && activeGroup.second ? (
+                <MeasureTargetMarker
+                    target={activeGroup.second}
+                    tone={MEASURE_SELECTION_COLORS.second}
+                    badge="2"
+                />
+            ) : null}
+            {shouldShowHoverMarker && measureState.hoverTarget ? (
+                <MeasureTargetMarker
+                    target={measureState.hoverTarget}
+                    tone={MEASURE_SELECTION_COLORS.hover}
+                    badge={hoverBadge}
+                />
+            ) : null}
+            {previewTargets ? (
+                <MeasurePreviewItem
+                    start={previewTargets.start}
+                    end={previewTargets.end}
+                    showDecomposition={showDecomposition}
+                />
+            ) : null}
             {active && measurements.map((measurement, index) => (
                 <MeasurementItem
                     key={measurement.id}

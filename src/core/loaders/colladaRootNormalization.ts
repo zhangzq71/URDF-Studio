@@ -1,5 +1,6 @@
 import { GeometryType, type UrdfLink, type UrdfVisual } from '@/types';
 import { buildMeshLookupCandidates } from '@/core/parsers/meshPathUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 
 import { cleanFilePath } from './pathNormalization';
 
@@ -66,7 +67,9 @@ export function shouldNormalizeColladaGeometry(
 
 function* iterateMeshGeometries(links: Record<string, UrdfLink>): Generator<UrdfVisual> {
   for (const link of Object.values(links)) {
-    yield link.visual;
+    for (const entry of getVisualGeometryEntries(link)) {
+      yield entry.geometry;
+    }
     yield link.collision;
 
     for (const collisionBody of link.collisionBodies ?? []) {

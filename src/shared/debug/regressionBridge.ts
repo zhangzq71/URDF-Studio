@@ -58,6 +58,32 @@ interface RuntimeLinkSummary {
   collisionGroupCount: number;
   visualMeshCount: number;
   collisionMeshCount: number;
+  placeholderMeshCount: number;
+  visiblePlaceholderMeshCount: number;
+  hiddenPlaceholderMeshCount: number;
+  visualPlaceholderMeshCount: number;
+  visibleVisualPlaceholderMeshCount: number;
+  collisionPlaceholderMeshCount: number;
+  texturedVisualMeshCount: number;
+}
+
+interface RuntimeMaterialSummary {
+  type: string;
+  name: string | null;
+  hasTexture: boolean;
+  color: string | null;
+  transparent: boolean;
+  opacity: number | null;
+}
+
+interface RuntimeVisualMeshSummary {
+  link: string;
+  name: string;
+  visible: boolean;
+  effectiveVisible: boolean;
+  isPlaceholder: boolean;
+  missingMeshPath: string | null;
+  materials: RuntimeMaterialSummary[];
 }
 
 interface RegressionSnapshot {
@@ -268,12 +294,32 @@ function resolveRuntimeLinkName(object: any): string | null {
   return null;
 }
 
+function isEffectivelyVisible(object: any): boolean {
+  let current = object;
+  while (current) {
+    if (current.visible === false) {
+      return false;
+    }
+    current = current.parent;
+  }
+
+  return true;
+}
+
 function summarizeRuntimeRobot(robot: any) {
   if (!robot) {
     return null;
   }
 
   const linkMap = new Map<string, RuntimeLinkSummary>();
+  const placeholderMeshes: Array<{
+    link: string;
+    name: string;
+    missingMeshPath: string | null;
+    visible: boolean;
+    effectiveVisible: boolean;
+  }> = [];
+  const visualMeshes: RuntimeVisualMeshSummary[] = [];
   const helperCounts = {
     centerOfMass: 0,
     inertiaBox: 0,
@@ -294,9 +340,34 @@ function summarizeRuntimeRobot(robot: any) {
       collisionGroupCount: 0,
       visualMeshCount: 0,
       collisionMeshCount: 0,
+      placeholderMeshCount: 0,
+      visiblePlaceholderMeshCount: 0,
+      hiddenPlaceholderMeshCount: 0,
+      visualPlaceholderMeshCount: 0,
+      visibleVisualPlaceholderMeshCount: 0,
+      collisionPlaceholderMeshCount: 0,
+      texturedVisualMeshCount: 0,
     };
     linkMap.set(linkName, created);
     return created;
+  };
+
+  const summarizeRuntimeMaterial = (material: any): RuntimeMaterialSummary => {
+    const hasTexture = Boolean(material?.map);
+    const color = material?.color?.isColor
+      ? `#${material.color.getHexString()}`
+      : null;
+
+    return {
+      type: typeof material?.type === 'string' ? material.type : 'UnknownMaterial',
+      name: typeof material?.name === 'string' && material.name.trim()
+        ? material.name
+        : null,
+      hasTexture,
+      color,
+      transparent: material?.transparent === true,
+      opacity: typeof material?.opacity === 'number' ? material.opacity : null,
+    };
   };
 
   robot.traverse((child: any) => {
@@ -308,10 +379,65 @@ function summarizeRuntimeRobot(robot: any) {
     const linkName = resolveRuntimeLinkName(child);
     if (linkName) {
       const entry = getOrCreateLinkSummary(linkName);
+      const isMesh = child.isMesh === true;
+      const isVisualMesh = isMesh && child.userData?.isVisualMesh === true;
+      const isCollisionMesh = isMesh && child.userData?.isCollisionMesh === true;
+      const isPlaceholder = isMesh && child.userData?.isPlaceholder === true;
+      const effectiveVisible = isMesh ? isEffectivelyVisible(child) : false;
+
       if (child.userData?.isVisualGroup) entry.visualGroupCount += 1;
       if (child.userData?.isCollisionGroup || child.isURDFCollider) entry.collisionGroupCount += 1;
-      if (child.isMesh && child.userData?.isVisualMesh) entry.visualMeshCount += 1;
-      if (child.isMesh && child.userData?.isCollisionMesh) entry.collisionMeshCount += 1;
+      if (isVisualMesh) entry.visualMeshCount += 1;
+      if (isCollisionMesh) entry.collisionMeshCount += 1;
+
+      if (isPlaceholder) {
+        entry.placeholderMeshCount += 1;
+        if (effectiveVisible) {
+          entry.visiblePlaceholderMeshCount += 1;
+        } else {
+          entry.hiddenPlaceholderMeshCount += 1;
+        }
+        if (isVisualMesh) {
+          entry.visualPlaceholderMeshCount += 1;
+          if (effectiveVisible) {
+            entry.visibleVisualPlaceholderMeshCount += 1;
+          }
+        }
+        if (isCollisionMesh) {
+          entry.collisionPlaceholderMeshCount += 1;
+        }
+      }
+
+      if (isVisualMesh) {
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        const summarizedMaterials = materials.map(summarizeRuntimeMaterial);
+        if (summarizedMaterials.some((material) => material.hasTexture)) {
+          entry.texturedVisualMeshCount += 1;
+        }
+
+        const visualMeshSummary: RuntimeVisualMeshSummary = {
+          link: linkName,
+          name: typeof child.name === 'string' ? child.name : '',
+          visible: child.visible !== false,
+          effectiveVisible,
+          isPlaceholder,
+          missingMeshPath: typeof child.userData?.missingMeshPath === 'string'
+            ? child.userData.missingMeshPath
+            : null,
+          materials: summarizedMaterials,
+        };
+        visualMeshes.push(visualMeshSummary);
+
+        if (visualMeshSummary.isPlaceholder) {
+          placeholderMeshes.push({
+            link: linkName,
+            name: visualMeshSummary.name,
+            missingMeshPath: visualMeshSummary.missingMeshPath,
+            visible: visualMeshSummary.visible,
+            effectiveVisible: visualMeshSummary.effectiveVisible,
+          });
+        }
+      }
     }
   });
 
@@ -341,8 +467,17 @@ function summarizeRuntimeRobot(robot: any) {
     collisionGroupCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionGroupCount, 0),
     visualMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualMeshCount, 0),
     collisionMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionMeshCount, 0),
+    placeholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.placeholderMeshCount, 0),
+    visiblePlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visiblePlaceholderMeshCount, 0),
+    hiddenPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.hiddenPlaceholderMeshCount, 0),
+    visualPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualPlaceholderMeshCount, 0),
+    visibleVisualPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visibleVisualPlaceholderMeshCount, 0),
+    collisionPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionPlaceholderMeshCount, 0),
+    texturedVisualMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.texturedVisualMeshCount, 0),
     helpers: helperCounts,
     links: Array.from(linkMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    placeholderMeshes: placeholderMeshes.sort((a, b) => `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`)),
+    visualMeshes: visualMeshes.sort((a, b) => `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`)),
     joints: runtimeJoints.sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

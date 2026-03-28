@@ -153,7 +153,7 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
               }
             }
           } catch (err) {
-            console.warn('Failed to parse motor spec', f.path);
+            console.error('Failed to parse motor spec', f.path, err);
           }
         });
         setMotorLibrary(newLibrary);

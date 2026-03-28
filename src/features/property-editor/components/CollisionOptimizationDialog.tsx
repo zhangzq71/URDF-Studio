@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Boxes,
+  ChevronDown,
+  ChevronRight,
   CheckSquare2,
   RefreshCw,
   ShieldAlert,
@@ -39,6 +41,7 @@ import {
   type CollisionOptimizationCandidatesViewMode,
 } from './CollisionOptimizationCandidatesPanel';
 import type { CollisionOptimizationPlanarGraphConnectionState } from './CollisionOptimizationPlanarGraph';
+import { CollisionOptimizationStrategyPanel } from './CollisionOptimizationStrategyPanel';
 
 interface CollisionOptimizationDialogProps {
   source: CollisionOptimizationSource;
@@ -432,9 +435,19 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     strategySphere: t.sphere,
     strategyCylinder: t.cylinder,
     strategyCapsule: t.capsule,
+    defaultStrategies: t.collisionOptimizerDefaultStrategies,
+    showDefaultStrategies: t.collisionOptimizerShowDefaultStrategies,
+    hideDefaultStrategies: t.collisionOptimizerHideDefaultStrategies,
+    selectCandidateHint: t.collisionOptimizerSelectCandidateHint,
+    selectedCandidate: t.collisionOptimizerSelectedCandidate,
+    includeCandidate: t.collisionOptimizerIncludeCandidate,
+    excludeCandidate: t.collisionOptimizerExcludeCandidate,
     meshStrategyLabel: t.collisionOptimizerMeshStrategyLabel,
+    meshStrategyDesc: t.collisionOptimizerMeshStrategyDesc,
     cylinderStrategyLabel: t.collisionOptimizerCylinderStrategyLabel,
+    cylinderStrategyDesc: t.collisionOptimizerCylinderStrategyDesc,
     rodBoxStrategyLabel: t.collisionOptimizerRodBoxStrategyLabel,
+    rodBoxStrategyDesc: t.collisionOptimizerRodBoxStrategyDesc,
     coaxialMergeStrategyLabel: t.collisionOptimizerCoaxialMergeStrategyLabel,
     coaxialMergeStrategyDesc: t.collisionOptimizerCoaxialMergeStrategyDesc,
     rules: t.collisionOptimizerRules,
@@ -456,6 +469,13 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     missingMeshPath: t.collisionOptimizerMissingMeshPath,
     meshAnalysisFailed: t.collisionOptimizerMeshAnalysisFailed,
     noRuleMatch: t.collisionOptimizerNoRuleMatch,
+    reasonMeshSmart: t.collisionOptimizerReasonMeshSmart,
+    reasonMeshManual: t.collisionOptimizerReasonMeshManual,
+    reasonCylinder: t.collisionOptimizerReasonCylinder,
+    reasonRodBox: t.collisionOptimizerReasonRodBox,
+    reasonRodBoxCylinder: t.collisionOptimizerReasonRodBoxCylinder,
+    reasonCoaxialCapsule: t.collisionOptimizerReasonCoaxialCapsule,
+    reasonCoaxialCylinder: t.collisionOptimizerReasonCoaxialCylinder,
     totalCollisions: t.collisionOptimizerStatsTotal,
     meshCollisions: t.collisionOptimizerStatsMeshes,
     eligible: t.collisionOptimizerStatsOptimizable,
@@ -493,7 +513,9 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
   const [analysis, setAnalysis] = useState<CollisionOptimizationAnalysis | null>(null);
   const [checkedCandidateKeys, setCheckedCandidateKeys] = useState<Set<string>>(new Set());
   const [candidateTypeOverrides, setCandidateTypeOverrides] = useState<Record<string, GeometryType | undefined>>({});
+  const [activeCandidateKey, setActiveCandidateKey] = useState<string | null>(null);
   const [stackedPanel, setStackedPanel] = useState<'candidates' | 'settings'>('candidates');
+  const [showDefaultStrategies, setShowDefaultStrategies] = useState(false);
   const [candidatesViewMode, setCandidatesViewMode] = useState<CollisionOptimizationCandidatesViewMode>('list');
   const [manualMergePairs, setManualMergePairs] = useState<CollisionOptimizationManualMergePair[]>([]);
   const [manualConnection, setManualConnection] = useState<CollisionOptimizationPlanarGraphConnectionState | null>(null);
@@ -603,6 +625,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     hasCustomCheckedSelectionRef.current = false;
     setCheckedCandidateKeys(new Set());
     setCandidateTypeOverrides({});
+    setActiveCandidateKey(null);
     setManualMergePairs([]);
     setManualConnection(null);
 
@@ -746,6 +769,10 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     () => displayCandidates.filter((candidate) => checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate))),
     [checkedCandidateKeys, displayCandidates],
   );
+  const activeCandidate = useMemo(
+    () => displayCandidates.find((candidate) => createCollisionOptimizationCandidateKey(candidate) === activeCandidateKey) ?? null,
+    [activeCandidateKey, displayCandidates],
+  );
   const selectedCandidateCount = selectedCandidates.length;
   const activeOperations = useMemo(
     () => buildCollisionOptimizationOperations(
@@ -773,6 +800,24 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     () => analysis ? countSameLinkOverlapWarnings(analysis.targets, analysis.meshAnalysisByTargetId, overridesByTargetId) : 0,
     [analysis, overridesByTargetId],
   );
+
+  useEffect(() => {
+    if (!selectedTargetId) {
+      return;
+    }
+
+    const matchedCandidate = displayCandidates.find((candidate) =>
+      candidate.target.id === selectedTargetId
+      || candidate.secondaryTarget?.id === selectedTargetId
+    );
+
+    if (!matchedCandidate) {
+      return;
+    }
+
+    const matchedCandidateKey = createCollisionOptimizationCandidateKey(matchedCandidate);
+    setActiveCandidateKey((previous) => previous === matchedCandidateKey ? previous : matchedCandidateKey);
+  }, [displayCandidates, selectedTargetId]);
 
   useEffect(() => {
     const validCandidateKeys = new Set(
@@ -804,6 +849,18 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       });
       return changed ? next : previous;
     });
+
+    setActiveCandidateKey((previous) => {
+      if (previous && validCandidateKeys.has(previous)) {
+        return previous;
+      }
+
+      if (displayCandidates.length === 0) {
+        return null;
+      }
+
+      return createCollisionOptimizationCandidateKey(displayCandidates[0]);
+    });
   }, [displayCandidates]);
 
   const toggleCandidate = useCallback((candidateKey: string) => {
@@ -819,23 +876,28 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     });
   }, []);
 
+  const activateCandidate = useCallback((candidateKey: string, _candidate: CollisionOptimizationCandidate) => {
+    setActiveCandidateKey(candidateKey);
+  }, []);
+
   const setCandidateOverride = useCallback((candidate: CollisionOptimizationCandidate, nextType: GeometryType) => {
     const candidateKey = createCollisionOptimizationCandidateKey(candidate);
     setCandidateTypeOverrides((previous) => ({
       ...previous,
       [candidateKey]: nextType,
     }));
-    if (!candidate.secondaryTarget && nextType === candidate.currentType) {
-      hasCustomCheckedSelectionRef.current = true;
-      setCheckedCandidateKeys((previous) => {
-        if (!previous.has(candidateKey)) {
-          return previous;
-        }
-        const next = new Set(previous);
+    setActiveCandidateKey(candidateKey);
+    hasCustomCheckedSelectionRef.current = true;
+    setCheckedCandidateKeys((previous) => {
+      const next = new Set(previous);
+      if (!candidate.secondaryTarget && nextType === candidate.currentType) {
         next.delete(candidateKey);
         return next;
-      });
-    }
+      }
+
+      next.add(candidateKey);
+      return next;
+    });
   }, []);
 
   const handleSelectAll = useCallback(() => {
@@ -996,6 +1058,73 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     }
   }, [copy]);
 
+  const getReasonLabel = useCallback((candidate: CollisionOptimizationCandidate) => {
+    switch (candidate.reason) {
+      case 'mesh-smart-fit':
+        return copy.reasonMeshSmart;
+      case 'mesh-manual-fit':
+        return copy.reasonMeshManual;
+      case 'cylinder-to-capsule':
+        return copy.reasonCylinder;
+      case 'rod-box-to-capsule':
+        return copy.reasonRodBox;
+      case 'rod-box-to-cylinder':
+        return copy.reasonRodBoxCylinder;
+      case 'coaxial-merge-to-capsule':
+        return copy.reasonCoaxialCapsule;
+      case 'coaxial-merge-to-cylinder':
+        return copy.reasonCoaxialCylinder;
+      default:
+        return null;
+    }
+  }, [copy]);
+
+  const activeCandidateStrategyField = useMemo(() => {
+    if (!activeCandidate) {
+      return null;
+    }
+
+    if (activeCandidate.secondaryTarget) {
+      return {
+        label: copy.coaxialMergeStrategyLabel,
+        desc: copy.coaxialMergeStrategyDesc,
+      };
+    }
+
+    if (activeCandidate.currentType === GeometryType.MESH) {
+      return {
+        label: copy.meshStrategyLabel,
+        desc: copy.meshStrategyDesc,
+      };
+    }
+
+    if (activeCandidate.currentType === GeometryType.CYLINDER) {
+      return {
+        label: copy.cylinderStrategyLabel,
+        desc: copy.cylinderStrategyDesc,
+      };
+    }
+
+    if (activeCandidate.currentType === GeometryType.BOX) {
+      return {
+        label: copy.rodBoxStrategyLabel,
+        desc: copy.rodBoxStrategyDesc,
+      };
+    }
+
+    return null;
+  }, [
+    activeCandidate,
+    copy.coaxialMergeStrategyDesc,
+    copy.coaxialMergeStrategyLabel,
+    copy.cylinderStrategyDesc,
+    copy.cylinderStrategyLabel,
+    copy.meshStrategyDesc,
+    copy.meshStrategyLabel,
+    copy.rodBoxStrategyDesc,
+    copy.rodBoxStrategyLabel,
+  ]);
+
   const isSelectedScopeWithoutSelection = scope === 'selected'
     && (!selection?.id || selection.subType !== 'collision' || selection.type !== 'link');
 
@@ -1024,19 +1153,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     clearAll: copy.clearAll,
     collisionIndex: copy.collisionIndex,
     component: copy.component,
-    current: copy.current,
-    depth: t.depth,
-    height: t.height,
     jointPair: copy.jointPair,
     mergeTo: copy.mergeTo,
     noCandidates: copy.noCandidates,
-    primary: copy.primary,
-    radius: t.radius,
     selectedCount: copy.selectedCount,
-    suggested: copy.suggested,
-    totalLength: t.totalLength,
-    width: t.width,
-  }), [copy, t.depth, t.height, t.radius, t.totalLength, t.width]);
+  }), [copy]);
   const graphLabels = useMemo(() => ({
     autoPair: copy.autoPair,
     collisionIndex: copy.collisionIndex,
@@ -1145,7 +1266,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                   active={stackedPanel === 'settings'}
                   onClick={() => setStackedPanel('settings')}
                   icon={<Wand2 className="h-3.5 w-3.5 shrink-0" />}
-                  label={copy.panelSettings}
+                  label={copy.strategies}
                 />
               </div>
             </div>
@@ -1154,6 +1275,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
           <div className={`grid flex-1 min-h-0 gap-2.5 ${mainPanelsGridClass}`}>
             {showCandidatesPanel && (
               <CollisionOptimizationCandidatesPanel
+                activeCandidateKey={activeCandidateKey}
                 source={source}
                 analysis={analysis}
                 candidates={displayCandidates}
@@ -1172,15 +1294,14 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                 graphLabels={graphLabels}
                 formatGeometryType={formatGeometryType}
                 getStatusLabel={getStatusLabel}
-                getCandidateOverrideOptions={getCandidateOverrideOptions}
                 canCreateManualPair={canCreateManualPair}
+                onActivateCandidate={activateCandidate}
                 onScopeChange={setScope}
                 onViewModeChange={setCandidatesViewMode}
                 onSelectAll={handleSelectAll}
                 onClearAll={handleClearAll}
                 onClearManualPairs={handleClearManualPairs}
                 onToggleCandidate={toggleCandidate}
-                onSetCandidateOverride={setCandidateOverride}
                 onSelectTarget={onSelectTarget}
                 onManualConnectionStart={handleManualConnectionStart}
                 onManualConnectionMove={handleManualConnectionMove}
@@ -1192,68 +1313,110 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
             {showSettingsPanel && (
               <div className="min-h-0 flex flex-col overflow-hidden rounded-xl border border-border-black bg-element-bg">
                 <div className="shrink-0 border-b border-border-black bg-panel-bg px-2.5 py-2">
-                  <div className="text-[11px] font-semibold text-text-primary">{copy.panelSettings}</div>
+                  <div className="text-[11px] font-semibold text-text-primary">{copy.strategies}</div>
                 </div>
 
                 <div className={`flex-1 min-h-0 overflow-y-auto px-2.5 py-2.5 ${settingsLayoutClass}`}>
                   <div className="space-y-2.5">
-                    <div className="rounded-xl border border-border-black bg-element-bg px-2.5 py-2.5">
-                      <SectionLabel>{copy.strategies}</SectionLabel>
+                    <CollisionOptimizationStrategyPanel
+                      activeCandidate={activeCandidate}
+                      activeCandidateKey={activeCandidateKey}
+                      getCandidateOverrideOptions={getCandidateOverrideOptions}
+                      getReasonLabel={getReasonLabel}
+                      getStatusLabel={getStatusLabel}
+                      isChecked={activeCandidate ? checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(activeCandidate)) : false}
+                      labels={{
+                        current: copy.current,
+                        excludeCandidate: copy.excludeCandidate,
+                        includeCandidate: copy.includeCandidate,
+                        reason: copy.reason,
+                        selectCandidateHint: copy.selectCandidateHint,
+                        selectedCandidate: copy.selectedCandidate,
+                        status: copy.status,
+                        suggested: copy.suggested,
+                      }}
+                      onSelectTarget={onSelectTarget}
+                      onSetCandidateOverride={setCandidateOverride}
+                      onToggleCandidate={toggleCandidate}
+                      formatGeometryType={formatGeometryType}
+                      strategyField={activeCandidateStrategyField}
+                    />
 
-                      <div className={`grid gap-2 ${strategyGridClass}`}>
-                        <StrategyField label={copy.meshStrategyLabel}>
-                          {meshStrategyOptions.map((option) => (
-                            <OptionButton
-                              key={option.value}
-                              active={meshStrategy === option.value}
-                              onClick={() => setMeshStrategy(option.value)}
-                            >
-                              {option.label}
-                            </OptionButton>
-                          ))}
-                        </StrategyField>
-
-                        <StrategyField label={copy.cylinderStrategyLabel}>
-                          {cylinderStrategyOptions.map((option) => (
-                            <OptionButton
-                              key={option.value}
-                              active={cylinderStrategy === option.value}
-                              onClick={() => setCylinderStrategy(option.value)}
-                            >
-                              {option.label}
-                            </OptionButton>
-                          ))}
-                        </StrategyField>
-
-                        <div className={isWideLayout ? 'col-span-2' : ''}>
-                          <StrategyField label={copy.rodBoxStrategyLabel}>
-                            {rodBoxStrategyOptions.map((option) => (
-                              <OptionButton
-                                key={option.value}
-                                active={rodBoxStrategy === option.value}
-                                onClick={() => setRodBoxStrategy(option.value)}
-                              >
-                                {option.label}
-                              </OptionButton>
-                            ))}
-                          </StrategyField>
-                        </div>
-
-                        <div className={isWideLayout ? 'col-span-2' : ''}>
-                          <StrategyField label={copy.coaxialMergeStrategyLabel} desc={copy.coaxialMergeStrategyDesc}>
-                            {coaxialMergeStrategyOptions.map((option) => (
-                              <OptionButton
-                                key={option.value}
-                                active={coaxialJointMergeStrategy === option.value}
-                                onClick={() => setCoaxialJointMergeStrategy(option.value)}
-                              >
-                                {option.label}
-                              </OptionButton>
-                            ))}
-                          </StrategyField>
+                    <button
+                      type="button"
+                      onClick={() => setShowDefaultStrategies((previous) => !previous)}
+                      className="flex w-full items-center justify-between rounded-xl border border-border-black bg-element-bg px-2.5 py-2 text-left transition-colors hover:bg-panel-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+                    >
+                      <div>
+                        <div className="text-[11px] font-semibold text-text-primary">{copy.defaultStrategies}</div>
+                        <div className="mt-0.5 text-[10px] text-text-tertiary">
+                          {showDefaultStrategies ? copy.hideDefaultStrategies : copy.showDefaultStrategies}
                         </div>
                       </div>
-                    </div>
+                      {showDefaultStrategies ? (
+                        <ChevronDown className="h-4 w-4 text-text-tertiary" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-text-tertiary" />
+                      )}
+                    </button>
+
+                    {showDefaultStrategies ? (
+                      <div className="rounded-xl border border-border-black bg-element-bg px-2.5 py-2.5">
+                        <div className={`grid gap-2 ${strategyGridClass}`}>
+                          <StrategyField label={copy.meshStrategyLabel} desc={copy.meshStrategyDesc}>
+                            {meshStrategyOptions.map((option) => (
+                              <OptionButton
+                                key={option.value}
+                                active={meshStrategy === option.value}
+                                onClick={() => setMeshStrategy(option.value)}
+                              >
+                                {option.label}
+                              </OptionButton>
+                            ))}
+                          </StrategyField>
+
+                          <StrategyField label={copy.cylinderStrategyLabel} desc={copy.cylinderStrategyDesc}>
+                            {cylinderStrategyOptions.map((option) => (
+                              <OptionButton
+                                key={option.value}
+                                active={cylinderStrategy === option.value}
+                                onClick={() => setCylinderStrategy(option.value)}
+                              >
+                                {option.label}
+                              </OptionButton>
+                            ))}
+                          </StrategyField>
+
+                          <div className={isWideLayout ? 'col-span-2' : ''}>
+                            <StrategyField label={copy.rodBoxStrategyLabel} desc={copy.rodBoxStrategyDesc}>
+                              {rodBoxStrategyOptions.map((option) => (
+                                <OptionButton
+                                  key={option.value}
+                                  active={rodBoxStrategy === option.value}
+                                  onClick={() => setRodBoxStrategy(option.value)}
+                                >
+                                  {option.label}
+                                </OptionButton>
+                              ))}
+                            </StrategyField>
+                          </div>
+
+                          <div className={isWideLayout ? 'col-span-2' : ''}>
+                            <StrategyField label={copy.coaxialMergeStrategyLabel} desc={copy.coaxialMergeStrategyDesc}>
+                              {coaxialMergeStrategyOptions.map((option) => (
+                                <OptionButton
+                                  key={option.value}
+                                  active={coaxialJointMergeStrategy === option.value}
+                                  onClick={() => setCoaxialJointMergeStrategy(option.value)}
+                                >
+                                  {option.label}
+                                </OptionButton>
+                              ))}
+                            </StrategyField>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-2.5">

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from './JointControlItem';
@@ -30,6 +30,104 @@ interface JointsPanelProps {
     onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }
 
+interface JointPanelItemBindingProps {
+    name: string;
+    joint: any;
+    angleUnit: 'rad' | 'deg';
+    jointPanelStore: JointPanelStore;
+    setActiveJoint: (name: string | null) => void;
+    handleJointAngleChange: (name: string, angle: number) => void;
+    handleJointChangeCommit: (name: string, angle: number) => void;
+    onSelect?: (type: 'link' | 'joint', id: string) => void;
+    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
+    isAdvanced?: boolean;
+    onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
+}
+
+interface JointPanelItemSnapshot {
+    value: number;
+    isActive: boolean;
+}
+
+function areJointPanelItemSnapshotsEqual(a: JointPanelItemSnapshot, b: JointPanelItemSnapshot) {
+    return a.value === b.value && a.isActive === b.isActive;
+}
+
+function resolveJointPanelItemSnapshot(
+    jointPanelStore: JointPanelStore,
+    name: string,
+    joint: any,
+): JointPanelItemSnapshot {
+    const snapshot = jointPanelStore.getSnapshot();
+
+    return {
+        value: resolveViewerJointAngleValue(snapshot.jointAngles, name, joint, 0),
+        isActive: snapshot.activeJoint === name,
+    };
+}
+
+function useJointPanelItemSnapshot(
+    jointPanelStore: JointPanelStore,
+    name: string,
+    joint: any,
+) {
+    const getSnapshot = useCallback(
+        () => resolveJointPanelItemSnapshot(jointPanelStore, name, joint),
+        [jointPanelStore, joint, name],
+    );
+
+    const [itemSnapshot, setItemSnapshot] = useState<JointPanelItemSnapshot>(() => getSnapshot());
+
+    useEffect(() => {
+        const syncSnapshot = () => {
+            setItemSnapshot((previousSnapshot) => {
+                const nextSnapshot = getSnapshot();
+                return areJointPanelItemSnapshotsEqual(previousSnapshot, nextSnapshot)
+                    ? previousSnapshot
+                    : nextSnapshot;
+            });
+        };
+
+        syncSnapshot();
+        return jointPanelStore.subscribe(syncSnapshot);
+    }, [getSnapshot, jointPanelStore]);
+
+    return itemSnapshot;
+}
+
+const JointPanelItemBinding = React.memo(function JointPanelItemBinding({
+    name,
+    joint,
+    angleUnit,
+    jointPanelStore,
+    setActiveJoint,
+    handleJointAngleChange,
+    handleJointChangeCommit,
+    onSelect,
+    onHover,
+    isAdvanced = false,
+    onUpdate,
+}: JointPanelItemBindingProps) {
+    const { value, isActive } = useJointPanelItemSnapshot(jointPanelStore, name, joint);
+
+    return (
+        <JointControlItem
+            name={name}
+            joint={joint}
+            value={value}
+            angleUnit={angleUnit}
+            isActive={isActive}
+            setActiveJoint={setActiveJoint}
+            handleJointAngleChange={handleJointAngleChange}
+            handleJointChangeCommit={handleJointChangeCommit}
+            onSelect={onSelect}
+            onHover={onHover}
+            isAdvanced={isAdvanced}
+            onUpdate={onUpdate}
+        />
+    );
+});
+
 export const JointsPanel: React.FC<JointsPanelProps> = ({
     showJointPanel,
     robot,
@@ -57,10 +155,9 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     const shouldShow = showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
     const [isAdvanced, setIsAdvanced] = useState(false);
     const onHoverRef = useRef(onHover);
-    const { jointAngles, activeJoint } = useSyncExternalStore(
-        jointPanelStore.subscribe,
-        jointPanelStore.getSnapshot,
-        jointPanelStore.getSnapshot,
+    const jointEntries = useMemo(
+        () => Object.entries(robot?.joints ?? {}).filter(([_, joint]) => isSingleDofJoint(joint)),
+        [robot?.joints],
     );
 
     useEffect(() => {
@@ -124,25 +221,22 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             panelClassName="urdf-joint-panel"
         >
             <div className="px-1 py-1.5 space-y-1" onMouseLeave={() => onHover?.(null, null)}>
-                {robot?.joints && Object.entries(robot.joints)
-                    .filter(([_, joint]: [string, any]) => isSingleDofJoint(joint))
-                    .map(([name, joint]: [string, any]) => (
-                        <JointControlItem
-                            key={name}
-                            name={name}
-                            joint={joint}
-                            value={resolveViewerJointAngleValue(jointAngles, name, joint, 0)}
-                            angleUnit={angleUnit}
-                            isActive={activeJoint === name}
-                            setActiveJoint={setActiveJoint}
-                            handleJointAngleChange={handleJointAngleChange}
-                            handleJointChangeCommit={handleJointChangeCommit}
-                            onSelect={onSelect}
-                            onHover={onHover}
-                            isAdvanced={isAdvanced}
-                            onUpdate={onUpdate}
-                        />
-                    ))}
+                {jointEntries.map(([name, joint]: [string, any]) => (
+                    <JointPanelItemBinding
+                        key={name}
+                        name={name}
+                        joint={joint}
+                        angleUnit={angleUnit}
+                        jointPanelStore={jointPanelStore}
+                        setActiveJoint={setActiveJoint}
+                        handleJointAngleChange={handleJointAngleChange}
+                        handleJointChangeCommit={handleJointChangeCommit}
+                        onSelect={onSelect}
+                        onHover={onHover}
+                        isAdvanced={isAdvanced}
+                        onUpdate={onUpdate}
+                    />
+                ))}
             </div>
         </OptionsPanel>
     );

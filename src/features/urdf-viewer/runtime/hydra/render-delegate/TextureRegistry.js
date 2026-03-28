@@ -134,8 +134,6 @@ class TextureRegistry {
         };
     }
     getTexture(resourcePath) {
-        if (debugTextures)
-            console.log("get texture", resourcePath);
         if (this.textures[resourcePath]) {
             return this.textures[resourcePath];
         }
@@ -159,12 +157,12 @@ class TextureRegistry {
             filetype = 'image/jpeg';
         }
         else if (lowercaseFilename.indexOf('.exr') >= lowercaseFilename.length - 4) {
-            console.warn("EXR textures are not fully supported yet", resourcePath);
+            console.error("EXR textures are not fully supported yet", resourcePath);
             // using EXRLoader explicitly
             filetype = 'image/x-exr';
         }
         else if (lowercaseFilename.indexOf('.tga') >= lowercaseFilename.length - 4) {
-            console.warn("TGA textures are not fully supported yet", resourcePath);
+            console.error("TGA textures are not fully supported yet", resourcePath);
             // using TGALoader explicitly
             filetype = 'image/tga';
         }
@@ -182,8 +180,6 @@ class TextureRegistry {
             const loadFromFile = (_loadedFile) => {
                 let url = undefined;
                 let createdBlobObjectUrl = false;
-                if (debugTextures)
-                    console.log("window.driver.getFile", resourcePath, " => ", _loadedFile);
                 if (_loadedFile) {
                     let blob = new Blob([_loadedFile.slice(0)], { type: filetype });
                     url = URL.createObjectURL(blob);
@@ -195,8 +191,6 @@ class TextureRegistry {
                     else
                         url = resourcePath;
                 }
-                if (debugTextures)
-                    console.log("Loading texture from", url, "with loader", loader, "_loadedFile", _loadedFile, "baseUrl", baseUrl, "resourcePath", resourcePath);
                 const loadStartedAt = nowMs();
                 const stats = this._textureLoadStats;
                 stats.started = Number(stats.started || 0) + 1;
@@ -244,13 +238,9 @@ class TextureRegistry {
                         }
                     }
                     if (this.enableTextureLoadMonitoring) {
-                        const verb = status === 'ok' ? 'Texture Loaded' : 'Texture Load Failed';
                         const pendingSuffix = `pending=${Number(stats.pending || 0)} managerPending=${managerPending}`;
-                        if (status === 'ok') {
-                            console.info(`${verb}: ${resourcePath} took ${durationMs.toFixed(3)} ms (${pendingSuffix})`);
-                        }
-                        else {
-                            console.warn(`${verb}: ${resourcePath} took ${durationMs.toFixed(3)} ms (${pendingSuffix})`, error);
+                        if (status !== 'ok') {
+                            console.error(`Texture Load Failed: ${resourcePath} took ${durationMs.toFixed(3)} ms (${pendingSuffix})`, error);
                         }
                     }
                 };
@@ -284,7 +274,6 @@ class TextureRegistry {
             if (!loadedFile) {
                 // if the file is not part of the filesystem, we can still try to fetch it from the network
                 if (baseUrl) {
-                    console.log("File not found in filesystem, trying to fetch", resourcePath);
                 }
                 else {
                     textureReject(new Error('Unknown file: ' + resourcePath));

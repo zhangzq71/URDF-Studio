@@ -11,6 +11,8 @@ import { translations } from '@/shared/i18n';
 import { useCollisionTransformStore, useSelectionStore } from '@/store';
 import type { Language } from '@/store';
 import {
+  getVisualGeometryByObjectIndex,
+  updateVisualGeometryByObjectIndex,
   getCollisionGeometryByObjectIndex,
   removeCollisionGeometryByObjectIndex,
   updateCollisionGeometryByObjectIndex,
@@ -35,6 +37,10 @@ import {
   computeAutoAlign,
   convertGeometryType,
 } from '../utils/geometryConversion';
+import {
+  getColorPickerHexValue,
+  mergeColorPickerHexValue,
+} from '../utils/colorInput';
 import type { MeshAnalysis, MeshAnalysisOptions, MeshClearanceObstacle } from '../utils/geometryConversion';
 import { analyzeMeshBatchWithWorker } from '../utils/meshAnalysisWorkerBridge';
 import {
@@ -153,12 +159,21 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       && robot.selection.subType === 'collision'
         ? (robot.selection.objectIndex ?? 0)
         : 0;
+    const selectedVisualObjectIndex = category === 'visual'
+      && robot.selection.type === 'link'
+      && robot.selection.id === data.id
+      && robot.selection.subType === 'visual'
+        ? (robot.selection.objectIndex ?? 0)
+        : 0;
     const selectedCollisionGeometry = category === 'collision'
       ? getCollisionGeometryByObjectIndex(data, selectedCollisionObjectIndex)
       : null;
+    const selectedVisualGeometry = category === 'visual'
+      ? getVisualGeometryByObjectIndex(data, selectedVisualObjectIndex)
+      : null;
     const geomData = category === 'collision'
       ? (selectedCollisionGeometry?.geometry || data.collision)
-      : data.visual;
+      : (selectedVisualGeometry?.geometry || data.visual);
     const colladaRootNormalizationHints = useMemo(
       () => buildColladaRootNormalizationHints(robot.links),
       [robot.links],
@@ -186,7 +201,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     }>>>>({});
     const snapshotKey = category === 'collision'
       ? `${data.id}:${category}:${selectedCollisionGeometry?.bodyIndex ?? 'primary'}`
-      : `${data.id}:${category}`;
+      : `${data.id}:${category}:${selectedVisualGeometry?.bodyIndex ?? 'primary'}`;
 
     const createSnapshot = (source: typeof geomData) => ({
       dimensions: source?.dimensions
@@ -215,6 +230,33 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     });
 
     const normalizeColor = (value?: string) => value?.trim().toLowerCase();
+    const authoredMaterialColors = useMemo(() => {
+      const uniqueColors: string[] = [];
+      const seenColors = new Set<string>();
+
+      for (const material of geomData.authoredMaterials ?? []) {
+        const rawColor = material.color?.trim();
+        const normalizedColor = normalizeColor(rawColor);
+
+        if (!rawColor || !normalizedColor || seenColors.has(normalizedColor)) {
+          continue;
+        }
+
+        seenColors.add(normalizedColor);
+        uniqueColors.push(rawColor);
+      }
+
+      return uniqueColors;
+    }, [geomData.authoredMaterials]);
+    const hasReadonlyAuthoredMaterialDisplay = category === 'visual'
+      && geomData.type === GeometryType.MESH
+      && !geomData.color
+      && authoredMaterialColors.length > 0;
+    const authoredMaterialDisplayLabel = hasReadonlyAuthoredMaterialDisplay
+      ? authoredMaterialColors.length === 1
+        ? authoredMaterialColors[0]
+        : `${t.multipleMaterials} (${geomData.authoredMaterials?.length ?? authoredMaterialColors.length})`
+      : null;
     const describeMeshPath = (filePath: string) => {
       const normalizedPath = filePath.replace(/\\/g, '/');
       const pathSegments = normalizedPath.split('/');
@@ -286,6 +328,11 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                     ...newData,
                 },
             });
+            return;
+        }
+
+        if (selectedVisualGeometry) {
+            onUpdate(updateVisualGeometryByObjectIndex(data, selectedVisualObjectIndex, newData));
             return;
         }
 
@@ -896,25 +943,50 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
             {category === 'visual' && geomData.type !== GeometryType.NONE && (
                 <InlineInputGroup label={t.color} labelWidthClassName="w-11">
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="text"
-                            value={geomData.color || '#ffffff'}
-                            onChange={(e) => update({ color: e.target.value })}
-                            className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1 font-mono uppercase tracking-[0.04em]`}
-                            spellCheck={false}
-                        />
-                        <span className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-auto whitespace-nowrap`}>
-                            HEX
-                        </span>
-                        <input
-                            type="color"
-                            value={geomData.color || '#ffffff'}
-                            onChange={(e) => update({ color: e.target.value })}
-                            aria-label={t.color}
-                            className="h-7 w-8 shrink-0 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_28%,transparent)]"
-                        />
-                    </div>
+                    {hasReadonlyAuthoredMaterialDisplay ? (
+                        <div className="space-y-1.5">
+                            <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                {authoredMaterialDisplayLabel}
+                            </ReadonlyValueField>
+                            <div className="flex flex-wrap gap-1">
+                                {authoredMaterialColors.map((color) => (
+                                    <div
+                                        key={normalizeColor(color) ?? color}
+                                        className="inline-flex items-center gap-1 rounded-md border border-border-black/70 bg-element-bg px-1.5 py-0.5 text-[9px] font-medium text-text-secondary"
+                                    >
+                                        <span
+                                            aria-hidden="true"
+                                            className="h-2.5 w-2.5 shrink-0 rounded-full border border-border-black/70"
+                                            style={{ backgroundColor: color }}
+                                        />
+                                        <span className="font-mono uppercase tracking-[0.04em] text-text-primary">
+                                            {color}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={geomData.color || '#ffffff'}
+                                onChange={(e) => update({ color: e.target.value })}
+                                className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1 font-mono uppercase tracking-[0.04em]`}
+                                spellCheck={false}
+                            />
+                            <span className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-auto whitespace-nowrap`}>
+                                HEX
+                            </span>
+                            <input
+                                type="color"
+                                value={getColorPickerHexValue(geomData.color)}
+                                onChange={(e) => update({ color: mergeColorPickerHexValue(e.target.value, geomData.color) })}
+                                aria-label={t.color}
+                                className="h-7 w-8 shrink-0 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_28%,transparent)]"
+                            />
+                        </div>
+                    )}
                 </InlineInputGroup>
             )}
 

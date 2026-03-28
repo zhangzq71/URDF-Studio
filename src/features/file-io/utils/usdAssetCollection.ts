@@ -76,7 +76,7 @@ export const collectUsdExportAssetFiles = async ({
     const label = normalizeUsdProgressLabel(exportPath, 'asset');
     const resolvedUrl = resolveUsdAssetUrl(sourcePath, registry);
     if (!resolvedUrl) {
-      console.warn(`[USD export] Texture asset not found for: ${sourcePath}`);
+      console.error(`[USD export] Texture asset not found for: ${sourcePath}`);
       advanceUsdProgress(progressTracker, label);
       await yieldPeriodically(index + 1, recordYieldInterval);
       continue;

@@ -20,7 +20,7 @@ import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
 import { useShallow } from 'zustand/react/shallow';
 import { TreeNode } from './TreeNode';
-import { EMPTY_TREE_SELECTION, buildParentLinkByChild } from '../utils/treeSelectionScope';
+import { EMPTY_TREE_SELECTION, buildChildJointsByParent } from '../utils/treeSelectionScope';
 
 export interface AssemblyTreeViewProps {
   assemblyState: AssemblyState;
@@ -44,6 +44,7 @@ export interface AssemblyTreeViewProps {
 
 export const AssemblyTreeView = memo(({
   assemblyState,
+  robot,
   showGeometryDetailsByDefault = false,
   onSelect,
   onSelectGeometry,
@@ -81,7 +82,11 @@ export const AssemblyTreeView = memo(({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const components = useMemo(() => Object.values(assemblyState.components), [assemblyState.components]);
   const bridges = useMemo(() => Object.values(assemblyState.bridges), [assemblyState.bridges]);
-  const robotSelection = robot?.selection ?? EMPTY_TREE_SELECTION;
+  const effectiveSelection = (
+    robot && 'selection' in robot
+      ? robot.selection
+      : undefined
+  ) ?? selection ?? EMPTY_TREE_SELECTION;
   const componentRootLinkIds = useMemo<Record<string, string[]>>(() => {
     const rootLinkIdsByComponent: Record<string, string[]> = {};
 
@@ -94,14 +99,14 @@ export const AssemblyTreeView = memo(({
 
     return rootLinkIdsByComponent;
   }, [components]);
-  const componentParentLinkByChild = useMemo<Record<string, Record<string, string>>>(() => {
-    const parentLinkByChildByComponent: Record<string, Record<string, string>> = {};
+  const componentChildJointsByParent = useMemo<Record<string, Record<string, RobotState['joints'][string][]>>>(() => {
+    const childJointsByParentByComponent: Record<string, Record<string, RobotState['joints'][string][]>> = {};
 
     components.forEach((component) => {
-      parentLinkByChildByComponent[component.id] = buildParentLinkByChild(component.robot.joints);
+      childJointsByParentByComponent[component.id] = buildChildJointsByParent(component.robot.joints);
     });
 
-    return parentLinkByChildByComponent;
+    return childJointsByParentByComponent;
   }, [components]);
 
   const toggleComponent = (id: string) => {
@@ -225,7 +230,7 @@ export const AssemblyTreeView = memo(({
               const isEditingComponent = editingComponent?.id === component.id;
               const componentRobotState: RobotState = {
                 ...component.robot,
-                selection: robotSelection,
+                selection: effectiveSelection,
               };
 
               return (
@@ -305,9 +310,9 @@ export const AssemblyTreeView = memo(({
                         <TreeNode
                           key={treeRootLinkId}
                           linkId={treeRootLinkId}
-                          robot={component.robot}
+                          robot={componentRobotState}
                           showGeometryDetailsByDefault={showGeometryDetailsByDefault}
-                          parentLinkByChild={componentParentLinkByChild[component.id]}
+                          childJointsByParent={componentChildJointsByParent[component.id]}
                           onSelect={onSelect}
                           onSelectGeometry={onSelectGeometry}
                           onFocus={onFocus}

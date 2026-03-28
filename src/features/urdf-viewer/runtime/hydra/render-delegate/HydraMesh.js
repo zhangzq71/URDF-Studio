@@ -2196,18 +2196,79 @@ class HydraMesh {
         const fallbackMaterial = previousMaterial || this._materials.find(Boolean) || getDefaultMaterial() || createUnifiedHydraPhysicalMaterial({
             side: FrontSide,
         });
+        const hasExplicitBaseMaterial = Boolean(previousMaterial
+            && previousMaterial !== getDefaultMaterial()
+            && !isLikelyDefaultGrayMaterial(previousMaterial));
         this._geometry.clearGroups();
+        const totalDrawableCount = (() => {
+            const indexedCount = Number(this._geometry.getIndex()?.count || 0);
+            if (Number.isFinite(indexedCount) && indexedCount > 0) {
+                return indexedCount;
+            }
+            const positionCount = Number(this._geometry.getAttribute('position')?.count || 0);
+            if (Number.isFinite(positionCount) && positionCount > 0) {
+                return positionCount;
+            }
+            return 0;
+        })();
         const nextMaterials = [];
         const pendingSections = [];
         let hasUnresolvedSectionMaterials = false;
+        let lastResolvedSectionMaterial = null;
+        const addMaterialGroup = (start, length, material, materialId = '') => {
+            if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0 || !material) {
+                return;
+            }
+            let materialIndex = nextMaterials.indexOf(material);
+            if (materialIndex < 0) {
+                materialIndex = nextMaterials.length;
+                nextMaterials.push(material);
+            }
+            this._geometry.addGroup(start, length, materialIndex);
+            if (materialId) {
+                hasUnresolvedSectionMaterials = true;
+                pendingSections.push({
+                    start,
+                    length,
+                    materialId,
+                });
+            }
+        };
+        const resolveGapFallbackMaterial = (preferredMaterial = null) => {
+            if (hasExplicitBaseMaterial) {
+                return fallbackMaterial;
+            }
+            return preferredMaterial || lastResolvedSectionMaterial || fallbackMaterial;
+        };
         const subsetsLoopStart = this._nowMs();
-        for (let i = 0; i < remappedSections.length; i++) {
-            const section = remappedSections[i];
+        const drawableSections = remappedSections
+            .map((section) => {
+            if (!section) {
+                return null;
+            }
+            const start = Math.max(0, Math.floor(Number(section.start) || 0));
+            const length = Math.max(0, Math.floor(Number(section.length) || 0));
+            if (length <= 0) {
+                return null;
+            }
+            const end = totalDrawableCount > 0
+                ? Math.min(totalDrawableCount, start + length)
+                : (start + length);
+            if (end <= start) {
+                return null;
+            }
+            return {
+                start,
+                end,
+                materialId: normalizeHydraPath(section.materialId),
+            };
+        })
+            .filter(Boolean)
+            .sort((left, right) => left.start - right.start);
+        let coveredUntil = 0;
+        for (let i = 0; i < drawableSections.length; i++) {
+            const section = drawableSections[i];
             if (!section)
-                continue;
-            const start = Number(section.start);
-            const length = Number(section.length);
-            if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0)
                 continue;
             const sectionMaterialId = normalizeHydraPath(section.materialId);
             const resolvedSectionMaterialId = this._interface.resolveMaterialIdForMesh(sectionMaterialId, this._id) || sectionMaterialId;
@@ -2215,23 +2276,30 @@ class HydraMesh {
                 || this._interface.materials[sectionMaterialId]?._material
                 || this._interface.getOrCreateMaterialById(resolvedSectionMaterialId, this._id)?._material
                 || (resolvedSectionMaterialId !== sectionMaterialId ? this._interface.getOrCreateMaterialById(sectionMaterialId, this._id)?._material : null);
+            if (section.start > coveredUntil) {
+                addMaterialGroup(coveredUntil, section.start - coveredUntil, resolveGapFallbackMaterial(sectionMaterial));
+            }
+            const start = Math.max(section.start, coveredUntil);
+            const length = Math.max(0, section.end - start);
+            if (length <= 0) {
+                coveredUntil = Math.max(coveredUntil, section.end);
+                continue;
+            }
+            let unresolvedMaterialId = '';
             if (!sectionMaterial) {
-                sectionMaterial = fallbackMaterial;
+                sectionMaterial = resolveGapFallbackMaterial();
                 if (sectionMaterialId) {
-                    hasUnresolvedSectionMaterials = true;
-                    pendingSections.push({
-                        start,
-                        length,
-                        materialId: sectionMaterialId,
-                    });
+                    unresolvedMaterialId = sectionMaterialId;
                 }
             }
-            let materialIndex = nextMaterials.indexOf(sectionMaterial);
-            if (materialIndex < 0) {
-                materialIndex = nextMaterials.length;
-                nextMaterials.push(sectionMaterial);
+            addMaterialGroup(start, length, sectionMaterial, unresolvedMaterialId);
+            if (sectionMaterial && !unresolvedMaterialId) {
+                lastResolvedSectionMaterial = sectionMaterial;
             }
-            this._geometry.addGroup(start, length, materialIndex);
+            coveredUntil = Math.max(coveredUntil, section.end);
+        }
+        if (totalDrawableCount > 0 && coveredUntil < totalDrawableCount) {
+            addMaterialGroup(coveredUntil, totalDrawableCount - coveredUntil, resolveGapFallbackMaterial());
         }
         const subsetsLoopEnd = this._nowMs();
         if (profile) {

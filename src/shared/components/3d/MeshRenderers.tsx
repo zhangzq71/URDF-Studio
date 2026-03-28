@@ -3,7 +3,7 @@
  * Used by both Visualizer.tsx and URDFViewer.tsx
  */
 
-import React, { lazy, Suspense } from 'react';
+import React, { lazy } from 'react';
 import * as THREE from 'three';
 export { useLoadingManager } from './meshLoadingManager';
 
@@ -16,6 +16,7 @@ interface ScaleProps {
 const LazySTLRenderer = lazy(() => import('./renderers/STLRendererImpl'));
 const LazyOBJRenderer = lazy(() => import('./renderers/OBJRendererImpl'));
 const LazyDAERenderer = lazy(() => import('./renderers/DAERendererImpl'));
+const LazyGLTFRenderer = lazy(() => import('./renderers/GLTFRendererImpl'));
 
 // STL Renderer
 export const STLRenderer = React.memo(({
@@ -29,11 +30,7 @@ export const STLRenderer = React.memo(({
   scale?: ScaleProps;
   onResolved?: () => void;
 }) => {
-  return (
-    <Suspense fallback={null}>
-      <LazySTLRenderer url={url} material={material} scale={scale} onResolved={onResolved} />
-    </Suspense>
-  );
+  return <LazySTLRenderer url={url} material={material} scale={scale} onResolved={onResolved} />;
 });
 
 // OBJ Renderer
@@ -55,17 +52,15 @@ export const OBJRenderer = React.memo(({
   onResolved?: () => void;
 }) => {
   return (
-    <Suspense fallback={null}>
-      <LazyOBJRenderer
-        url={url}
-        material={material}
-        color={color}
-        assets={assets}
-        assetBaseDir={assetBaseDir}
-        scale={scale}
-        onResolved={onResolved}
-      />
-    </Suspense>
+    <LazyOBJRenderer
+      url={url}
+      material={material}
+      color={color}
+      assets={assets}
+      assetBaseDir={assetBaseDir}
+      scale={scale}
+      onResolved={onResolved}
+    />
   );
 });
 
@@ -76,6 +71,7 @@ export const DAERenderer = React.memo(({
   assets,
   assetBaseDir,
   normalizeRoot,
+  preserveOriginalMaterial,
   scale,
   onResolved,
 }: {
@@ -84,20 +80,51 @@ export const DAERenderer = React.memo(({
   assets: Record<string, string>;
   assetBaseDir?: string;
   normalizeRoot?: boolean;
+  preserveOriginalMaterial?: boolean;
   scale?: ScaleProps;
   onResolved?: () => void;
 }) => {
   return (
-    <Suspense fallback={null}>
-      <LazyDAERenderer
-        url={url}
-        material={material}
-        assets={assets}
-        assetBaseDir={assetBaseDir}
-        normalizeRoot={normalizeRoot}
-        scale={scale}
-        onResolved={onResolved}
-      />
-    </Suspense>
+    <LazyDAERenderer
+      url={url}
+      material={material}
+      assets={assets}
+      assetBaseDir={assetBaseDir}
+      normalizeRoot={normalizeRoot}
+      preserveOriginalMaterial={preserveOriginalMaterial}
+      scale={scale}
+      onResolved={onResolved}
+    />
+  );
+});
+
+// GLTF / GLB Renderer
+export const GLTFRenderer = React.memo(({
+  url,
+  material,
+  assets,
+  assetBaseDir,
+  preserveOriginalMaterial,
+  scale,
+  onResolved,
+}: {
+  url: string;
+  material: THREE.Material;
+  assets: Record<string, string>;
+  assetBaseDir?: string;
+  preserveOriginalMaterial?: boolean;
+  scale?: ScaleProps;
+  onResolved?: () => void;
+}) => {
+  return (
+    <LazyGLTFRenderer
+      url={url}
+      material={material}
+      assets={assets}
+      assetBaseDir={assetBaseDir}
+      preserveOriginalMaterial={preserveOriginalMaterial}
+      scale={scale}
+      onResolved={onResolved}
+    />
   );
 });

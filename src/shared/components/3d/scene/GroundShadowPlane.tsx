@@ -5,6 +5,9 @@ import { resolveEffectiveTheme } from './themeUtils';
 interface GroundShadowPlaneProps {
   theme: Theme;
   groundOffset?: number;
+  centerX?: number;
+  centerY?: number;
+  size?: number;
 }
 
 const GROUND_SHADOW_STYLE = {
@@ -20,20 +23,27 @@ const GROUND_SHADOW_STYLE = {
 
 const ignoreRaycast = (_raycaster: THREE.Raycaster, _intersects: THREE.Intersection[]) => undefined;
 
-export function GroundShadowPlane({ theme, groundOffset = 0 }: GroundShadowPlaneProps) {
+export function GroundShadowPlane({
+  theme,
+  groundOffset = 0,
+  centerX = 0,
+  centerY = 0,
+  size = 20,
+}: GroundShadowPlaneProps) {
   const effectiveTheme = resolveEffectiveTheme(theme);
   const shadowStyle = GROUND_SHADOW_STYLE[effectiveTheme];
 
   return (
     <mesh
       name="GroundShadowPlane"
-      position={[0, 0, groundOffset - 0.0015]}
+      userData={{ isHelper: true, excludeFromSceneBounds: true }}
+      position={[centerX, centerY, groundOffset - 0.0015]}
       renderOrder={-110}
       frustumCulled={false}
       receiveShadow
       raycast={ignoreRaycast}
     >
-      <planeGeometry args={[48, 48]} />
+      <planeGeometry args={[size, size]} />
       <shadowMaterial
         color={shadowStyle.color}
         transparent

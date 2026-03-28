@@ -21,6 +21,10 @@ export { isUSDA, isUSDCBinary } from './usd/usdFormatUtils';
 export { isXacro, processXacro, parseXacro, getXacroArgs } from './xacro/xacroParser';
 export type { XacroArgs, XacroFileMap } from './xacro/xacroParser';
 
+// SDF Parser (Gazebo SDFormat)
+export { isSDF, parseSDF } from './sdf/sdfParser';
+export { generateSDF, generateSdfModelConfig } from './sdf/sdfGenerator';
+
 // File Preview - Convert various robot file formats to URDF for preview
 export { computePreviewUrdf } from './filePreview';
 export { createUsdPlaceholderRobotData, resolveRobotFileData } from './importRobotFile';

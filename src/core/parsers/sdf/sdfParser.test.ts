@@ -1,0 +1,477 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { JSDOM } from 'jsdom';
+
+import { GeometryType, JointType } from '@/types';
+import { computeLinkWorldMatrices } from '@/core/robot';
+import { parseSDF } from './sdfParser.ts';
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>');
+globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
+
+test('parseSDF converts gazebo jointed models into RobotState data', () => {
+  const source = fs.readFileSync('test/gazebo_models/demo_joint_damping/model.sdf', 'utf8');
+  const robot = parseSDF(source);
+
+  assert.ok(robot);
+  assert.equal(robot?.name, 'demo_joint_damping');
+  assert.ok(robot?.links.link_base);
+  assert.ok(robot?.links.link_over_damping);
+  assert.ok(robot?.joints.joint_over_damping);
+  assert.equal(robot?.joints.joint_over_damping.type, JointType.REVOLUTE);
+  assert.deepEqual(robot?.joints.joint_over_damping.axis, { x: 1, y: 0, z: 0 });
+  assert.equal(robot?.joints.joint_over_damping.dynamics.damping, 5);
+  assert.equal(robot?.links.link_over_damping.visual.type, GeometryType.MESH);
+  assert.equal(
+    robot?.links.link_over_damping.visual.meshPath,
+    'model://demo_joint_damping/meshes/arm.stl',
+  );
+  assert.deepEqual(
+    robot?.joints.joint_over_damping.origin.xyz,
+    { x: 0.12, y: 0, z: 0.15 },
+  );
+});
+
+test('parseSDF preserves additional visuals and collisions on the same link', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="multi_visual_fixture">
+    <link name="base">
+      <visual name="visual_box">
+        <geometry>
+          <box>
+            <size>1 2 3</size>
+          </box>
+        </geometry>
+      </visual>
+      <visual name="visual_mesh">
+        <pose>0.5 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://fixture/meshes/part.dae</uri>
+            <scale>0.5 0.5 0.5</scale>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision_box">
+        <geometry>
+          <box>
+            <size>0.2 0.3 0.4</size>
+          </box>
+        </geometry>
+      </collision>
+      <collision name="collision_sphere">
+        <pose>0 1 0 0 0 0</pose>
+        <geometry>
+          <sphere>
+            <radius>0.25</radius>
+          </sphere>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>`);
+
+  assert.ok(robot);
+  assert.ok(robot?.links.base);
+  assert.equal(robot?.links.base.visual.type, GeometryType.BOX);
+  assert.equal(robot?.links.base.collision.type, GeometryType.BOX);
+  assert.equal(robot?.links.base.visualBodies?.length, 1);
+  assert.equal(robot?.links.base.visualBodies?.[0]?.type, GeometryType.MESH);
+  assert.equal(robot?.links.base.visualBodies?.[0]?.meshPath, 'model://fixture/meshes/part.dae');
+  assert.deepEqual(robot?.links.base.visualBodies?.[0]?.dimensions, { x: 0.5, y: 0.5, z: 0.5 });
+  assert.deepEqual(robot?.links.base.visualBodies?.[0]?.origin.xyz, { x: 0.5, y: 0, z: 0 });
+  assert.equal(robot?.links.base.collisionBodies?.length, 1);
+  assert.equal(robot?.links.base.collisionBodies?.[0]?.type, GeometryType.SPHERE);
+  assert.deepEqual(robot?.links.base.collisionBodies?.[0]?.origin.xyz, { x: 0, y: 1, z: 0 });
+  assert.ok(!robot?.links.base__visual_1);
+  assert.ok(!robot?.joints.base__visual_1_fixed);
+});
+
+test('parseSDF keeps mesh visuals without explicit material colors uncolored so Collada materials can survive', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="dae_color_fixture">
+    <link name="body">
+      <visual name="body_visual">
+        <geometry>
+          <mesh>
+            <uri>model://fixture/meshes/body.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`);
+
+  assert.ok(robot);
+  assert.equal(robot?.links.body.visual.type, GeometryType.MESH);
+  assert.equal(robot?.links.body.visual.color, undefined);
+});
+
+test('parseSDF resolves gazebo material scripts into texture-backed material metadata', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="demo">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 2 3</size>
+          </box>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://demo/materials/scripts</uri>
+            <uri>model://demo/materials/textures</uri>
+            <name>Demo/Diffuse</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>`, {
+    sourcePath: 'demo/model.sdf',
+    allFileContents: {
+      'demo/materials/scripts/demo.material': `material Demo/Diffuse
+{
+  technique
+  {
+    pass
+    {
+      diffuse 1 0.5 0 1
+      texture_unit
+      {
+        texture demo.png
+      }
+    }
+  }
+}`,
+    },
+  });
+
+  assert.ok(robot);
+  assert.equal(robot?.links.base_link.visual.color, '#ff8000');
+  assert.equal(robot?.links.base_link.visual.materialSource, 'gazebo');
+  assert.equal(robot?.links.base_link.visual.authoredMaterials?.[0]?.name, 'Demo/Diffuse');
+  assert.equal(robot?.links.base_link.visual.authoredMaterials?.[0]?.texture, 'demo/materials/textures/demo.png');
+  assert.equal(robot?.materials?.base_link?.texture, 'demo/materials/textures/demo.png');
+});
+
+test('parseSDF preserves gazebo script materials on secondary visual bodies', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="demo">
+    <link name="base_link">
+      <visual name="primary">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+      <visual name="sign">
+        <geometry>
+          <box>
+            <size>2 1 0.1</size>
+          </box>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://demo/materials/scripts</uri>
+            <uri>model://demo/materials/textures</uri>
+            <name>Demo/Poster</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>`, {
+    sourcePath: 'demo/model.sdf',
+    allFileContents: {
+      'demo/materials/scripts/demo.material': `material Demo/Poster
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture poster.png
+      }
+    }
+  }
+}`,
+    },
+  });
+
+  assert.ok(robot);
+  assert.equal(robot?.links.base_link.visualBodies?.[0]?.materialSource, 'gazebo');
+  assert.equal(robot?.links.base_link.visualBodies?.[0]?.authoredMaterials?.[0]?.texture, 'demo/materials/textures/poster.png');
+});
+
+test('parseSDF expands included models with namespaced links and include poses', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="parent">
+    <include>
+      <name>child_box</name>
+      <pose>1 2 3 0 0 0</pose>
+      <uri>model://child_box</uri>
+    </include>
+  </model>
+</sdf>`, {
+    sourcePath: 'parent/model.sdf',
+    allFileContents: {
+      'child_box/model.sdf': `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="child_box">
+    <link name="box">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+    },
+  });
+
+  assert.ok(robot);
+  assert.ok(robot?.links['child_box::box']);
+  assert.ok(robot?.links['child_box::box__root']);
+  assert.equal(robot?.joints['child_box::box__root_fixed']?.childLinkId, 'child_box::box');
+  assert.deepEqual(
+    robot?.joints['child_box::box__root_fixed']?.origin.xyz,
+    { x: 1, y: 2, z: 3 },
+  );
+});
+
+test('parseSDF lets parent joints target included model links without injecting duplicate root anchors', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="assembly">
+    <include>
+      <name>arm</name>
+      <uri>model://arm</uri>
+    </include>
+    <include>
+      <name>gripper</name>
+      <pose>2 0 0 0 0 0</pose>
+      <uri>model://gripper</uri>
+    </include>
+    <joint name="mount" type="fixed">
+      <parent>arm::tip</parent>
+      <child>gripper::base</child>
+    </joint>
+  </model>
+</sdf>`, {
+    sourcePath: 'assembly/model.sdf',
+    allFileContents: {
+      'arm/model.sdf': `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="arm">
+    <link name="base">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <link name="tip">
+      <pose>1 0 0 0 0 0</pose>
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>0.5 0.5 0.5</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="arm_joint" type="fixed">
+      <parent>base</parent>
+      <child>tip</child>
+    </joint>
+  </model>
+</sdf>`,
+      'gripper/model.sdf': `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="gripper">
+    <link name="base">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>0.25 0.25 0.25</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+    },
+  });
+
+  assert.ok(robot);
+  assert.equal(robot?.joints.mount?.parentLinkId, 'arm::tip');
+  assert.equal(robot?.joints.mount?.childLinkId, 'gripper::base');
+  assert.deepEqual(robot?.joints.mount?.origin.xyz, { x: 1, y: 0, z: 0 });
+  assert.equal(robot?.links['gripper::base__root'], undefined);
+  assert.equal(robot?.joints['gripper::base__root_fixed'], undefined);
+});
+
+test('parseSDF resolves URDF-style link poses relative to joint frames', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="relative_joint_fixture">
+    <link name="base">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <link name="tool">
+      <pose relative_to="tool_joint">0 0 0 0 0 0</pose>
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>0.1 0.1 0.1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="tool_joint" type="fixed">
+      <pose relative_to="base">0.1 0.2 0.3 0 1.5708 0</pose>
+      <parent>base</parent>
+      <child>tool</child>
+    </joint>
+  </model>
+</sdf>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot?.joints.tool_joint.origin.xyz, { x: 0.1, y: 0.2, z: 0.3 });
+  assert.ok(Math.abs((robot?.joints.tool_joint.origin.rpy.p ?? 0) - 1.5708) < 1e-5);
+});
+
+test('parseSDF preserves non-zero child link offsets relative to incoming joint frames via a synthetic stage link', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="joint_stage_fixture">
+    <link name="base">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <link name="finger">
+      <pose relative_to="finger_joint">0 0 0.0005 0 0 0</pose>
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>0.1 0.1 0.1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="finger_joint" type="fixed">
+      <pose relative_to="base">0.1 0.2 0.3 0 0 0</pose>
+      <parent>base</parent>
+      <child>finger</child>
+    </joint>
+  </model>
+</sdf>`);
+
+  assert.ok(robot);
+  assert.equal(robot?.joints.finger_joint.childLinkId, 'finger__joint_stage_0');
+  assert.ok(robot?.links['finger__joint_stage_0']);
+  assert.deepEqual(robot?.joints['finger__joint_stage_0_fixed']?.origin.xyz, { x: 0, y: 0, z: 0.0005 });
+
+  const worldMatrices = computeLinkWorldMatrices(robot!);
+  const fingerPose = worldMatrices.finger;
+  assert.ok(fingerPose);
+  const position = { x: fingerPose.elements[12], y: fingerPose.elements[13], z: fingerPose.elements[14] };
+  assert.deepEqual(position, { x: 0.1, y: 0.2, z: 0.3005 });
+});
+
+test('parseSDF honors joint poses specified in the child link frame by default', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="joint_child_frame_fixture">
+    <link name="base">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <link name="child">
+      <pose relative_to="base">1 0 0 0 0 0</pose>
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>0.1 0.1 0.1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="joint" type="fixed">
+      <pose>0.2 0 0 0 0 0</pose>
+      <parent>base</parent>
+      <child>child</child>
+    </joint>
+  </model>
+</sdf>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot?.joints.joint.origin.xyz, { x: 1.2, y: 0, z: 0 });
+});
+
+test('parseSDF resolves explicit model frames referenced by link poses', () => {
+  const robot = parseSDF(`<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="frame_fixture">
+    <link name="base">
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>1 1 1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <frame name="mount" attached_to="base">
+      <pose>0 0 0.5 0 0 0</pose>
+    </frame>
+    <link name="sensor">
+      <pose relative_to="mount">0.1 0 0 0 0 0</pose>
+      <visual name="body">
+        <geometry>
+          <box>
+            <size>0.1 0.1 0.1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="sensor_joint" type="fixed">
+      <parent>base</parent>
+      <child>sensor</child>
+    </joint>
+  </model>
+</sdf>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot?.joints.sensor_joint.origin.xyz, { x: 0.1, y: 0, z: 0.5 });
+});

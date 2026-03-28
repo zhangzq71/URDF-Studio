@@ -18,6 +18,7 @@ import {
   type UsdSceneMeshDescriptor,
   type UsdSceneSnapshot,
 } from '../../../types/index.ts';
+import { getVisualGeometryEntries } from '@/core/robot';
 import {
   adaptUsdViewerSnapshotToRobotData,
   resolveUsdMeshApproximationGeometry,
@@ -443,6 +444,18 @@ function colorArrayToVertexColor(
   ];
 }
 
+function colorHexToVertexColor(
+  value: string | null | undefined,
+): [number, number, number] | null {
+  const normalized = String(value || '').trim();
+  if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(normalized)) {
+    return null;
+  }
+
+  const color = new Color(normalized);
+  return [color.r, color.g, color.b];
+}
+
 function shouldAdoptSnapshotColor(color: string | null | undefined): boolean {
   const normalized = String(color || '').trim().toLowerCase();
   if (!normalized) {
@@ -827,7 +840,7 @@ function isSyntheticWorldLink(link: UrdfLink | undefined): boolean {
     return false;
   }
 
-  return link.visual.type === GeometryType.NONE
+  return getVisualGeometryEntries(link).length === 0
     && link.collision.type === GeometryType.NONE
     && (link.inertial?.mass || 0) <= 1e-9;
 }
@@ -1220,6 +1233,116 @@ function applySnapshotMaterialRecordToLink(
   return true;
 }
 
+function applyVisualMaterialFallbackToLink(
+  robot: RobotState,
+  linkId: string,
+  material: {
+    color?: string;
+    texture?: string;
+  } | null | undefined,
+): boolean {
+  const color = material?.color?.trim() || undefined;
+  const texture = material?.texture?.trim() || undefined;
+  if (!color && !texture) {
+    return false;
+  }
+
+  const link = robot.links[linkId];
+  if (!link) {
+    return false;
+  }
+
+  if (color && shouldAdoptSnapshotColor(link.visual.color)) {
+    link.visual = {
+      ...link.visual,
+      color,
+      materialSource: 'named',
+    };
+  }
+
+  mergeLinkMaterial(robot, linkId, {
+    ...(color ? { color } : {}),
+    ...(texture ? { texture } : {}),
+  });
+
+  return true;
+}
+
+function resolveGeometryMaterialFallback(
+  geometry: UrdfVisual | null | undefined,
+  preferredIndex: number,
+): {
+  color?: string;
+  texture?: string;
+} | null {
+  if (!geometry) {
+    return null;
+  }
+
+  const authoredMaterials = Array.isArray(geometry.authoredMaterials)
+    ? geometry.authoredMaterials
+    : [];
+  const authoredCandidate = authoredMaterials[preferredIndex]
+    || (authoredMaterials.length === 1 ? authoredMaterials[0] : null)
+    || authoredMaterials.find((material) => Boolean(material?.color || material?.texture))
+    || null;
+  const authoredColor = authoredCandidate?.color?.trim() || undefined;
+  const authoredTexture = authoredCandidate?.texture?.trim() || undefined;
+  const directColor = geometry.color?.trim() || undefined;
+  const usableDirectColor = directColor && !shouldAdoptSnapshotColor(directColor)
+    ? directColor
+    : undefined;
+
+  if (authoredColor || authoredTexture) {
+    return {
+      ...(authoredColor ? { color: authoredColor } : {}),
+      ...(authoredTexture ? { texture: authoredTexture } : {}),
+    };
+  }
+
+  if (usableDirectColor) {
+    return { color: usableDirectColor };
+  }
+
+  return null;
+}
+
+function resolveVisualMaterialFallbackForDescriptor(
+  sourceLink: UrdfLink | undefined,
+  descriptor: ExportDescriptor,
+  visualDescriptorIndex: number,
+): {
+  color?: string;
+  texture?: string;
+} | null {
+  if (!sourceLink) {
+    return null;
+  }
+
+  const authoredMaterialIndex = Number.isFinite(descriptor.subsetIndex)
+    ? Math.max(0, Number(descriptor.subsetIndex))
+    : visualDescriptorIndex;
+
+  if (descriptor.subsetSection) {
+    const primarySubsetMaterial = resolveGeometryMaterialFallback(sourceLink.visual, authoredMaterialIndex);
+    if (primarySubsetMaterial) {
+      return primarySubsetMaterial;
+    }
+  }
+
+  if (!descriptor.subsetSection && visualDescriptorIndex > 0) {
+    const bodyMaterial = resolveGeometryMaterialFallback(
+      sourceLink.visualBodies?.[visualDescriptorIndex - 1],
+      authoredMaterialIndex,
+    );
+    if (bodyMaterial) {
+      return bodyMaterial;
+    }
+  }
+
+  return resolveGeometryMaterialFallback(sourceLink.visual, authoredMaterialIndex);
+}
+
 function getDescriptorMaterialRecord(
   descriptor: Pick<ExportDescriptor, 'descriptor' | 'materialIdOverride'> | SnapshotMeshDescriptor,
   materialLookup: Map<string, SnapshotMaterialRecord>,
@@ -1472,7 +1595,10 @@ function assignVisualDescriptorToLink(
   descriptorByPath: Map<string, ExportDescriptor>,
   materialLookup: Map<string, SnapshotMaterialRecord>,
   preferredMaterialRecord?: SnapshotMaterialRecord | null,
-  allowPreferredMaterialFallback: boolean = false,
+  explicitMaterialFallback?: {
+    color?: string;
+    texture?: string;
+  } | null,
 ): void {
   const link = robot.links[linkId];
   if (!link) {
@@ -1480,10 +1606,11 @@ function assignVisualDescriptorToLink(
   }
 
   const descriptorMaterialRecord = getDescriptorMaterialRecord(entry, materialLookup);
-  const preferredFallbackColor = allowPreferredMaterialFallback
-    ? colorArrayToVertexColor(preferredMaterialRecord?.color)
-    : null;
-  entry.displayColor = colorArrayToVertexColor(descriptorMaterialRecord?.color) || preferredFallbackColor;
+  const explicitFallbackColor = colorHexToVertexColor(explicitMaterialFallback?.color);
+  const preferredFallbackColor = colorArrayToVertexColor(preferredMaterialRecord?.color);
+  entry.displayColor = colorArrayToVertexColor(descriptorMaterialRecord?.color)
+    || explicitFallbackColor
+    || preferredFallbackColor;
 
   const primitiveGeometry = resolvePrimitiveGeometryFromDescriptor(entry.descriptor, link.visual);
   if (primitiveGeometry) {
@@ -1495,7 +1622,7 @@ function assignVisualDescriptorToLink(
       origin: link.visual?.origin || { ...DEFAULT_LINK.visual.origin },
     };
     const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry, materialLookup);
-    if (!appliedMaterial && allowPreferredMaterialFallback) {
+    if (!appliedMaterial && !applyVisualMaterialFallbackToLink(robot, linkId, explicitMaterialFallback)) {
       applySnapshotMaterialRecordToLink(robot, linkId, preferredMaterialRecord);
     }
     return;
@@ -1513,7 +1640,7 @@ function assignVisualDescriptorToLink(
   entry.bakeTransformIntoMesh = !hasNonIdentityOrigin(link.visual.origin);
   descriptorByPath.set(entry.exportPath, entry);
   const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry, materialLookup);
-  if (!appliedMaterial && allowPreferredMaterialFallback) {
+  if (!appliedMaterial && !applyVisualMaterialFallbackToLink(robot, linkId, explicitMaterialFallback)) {
     applySnapshotMaterialRecordToLink(robot, linkId, preferredMaterialRecord);
   }
 }
@@ -1605,9 +1732,11 @@ function assignLinkDescriptors(
   const visualLinkIds = collectVisualAttachmentLinkIds(robot, linkId, fixedChildrenByParent);
   const usedVisualLinkIds = new Set<string>();
   const preferredMaterialRecord = preferredMaterialLookup.get(normalizeUsdPath(linkPath)) || null;
+  const sourceLink = robot.links[linkId];
 
   visualDescriptors.forEach((entry, index) => {
     let targetLinkId: string | undefined;
+    const explicitMaterialFallback = resolveVisualMaterialFallbackForDescriptor(sourceLink, entry, index);
 
     if (index === 0) {
       targetLinkId = linkId;
@@ -1661,7 +1790,7 @@ function assignLinkDescriptors(
       descriptorByPath,
       materialLookup,
       preferredMaterialRecord,
-      index === 0 && targetLinkId === linkId,
+      explicitMaterialFallback,
     );
   });
 
@@ -1674,9 +1803,11 @@ function collectReferencedMeshPaths(robot: RobotState): Set<string> {
   const referenced = new Set<string>();
 
   Object.values(robot.links).forEach((link) => {
-    if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      referenced.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === GeometryType.MESH && entry.geometry.meshPath) {
+        referenced.add(entry.geometry.meshPath);
+      }
+    });
     if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referenced.add(link.collision.meshPath);
     }

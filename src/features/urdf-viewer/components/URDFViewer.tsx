@@ -15,6 +15,7 @@ export const URDFViewer = memo(function URDFViewer({
   sourceFile,
   availableFiles = [],
   onRobotDataResolved,
+  onDocumentLoadEvent,
   onJointChange,
   syncJointChangesToApp = false,
   jointAngleState,
@@ -115,6 +116,7 @@ export const URDFViewer = memo(function URDFViewer({
           urdfContent={urdfContent}
           assets={assets}
           onRobotDataResolved={onRobotDataResolved}
+          onDocumentLoadEvent={onDocumentLoadEvent}
           sourceFilePath={sourceFilePath}
           groundPlaneOffset={groundPlaneOffset}
           mode={mode}

@@ -39,6 +39,11 @@ export interface UrdfLink {
   id: string;
   name: string;
   visual: UrdfVisual;
+  /**
+   * Additional visual geometries on the same link.
+   * The primary visual is kept in `visual` for backward compatibility.
+   */
+  visualBodies?: UrdfVisual[];
   collision: UrdfVisual;
   /**
    * Additional collision geometries on the same link.
@@ -158,6 +163,6 @@ export interface AssemblyState {
 export interface RobotFile {
   name: string;
   content: string;
-  format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'mesh';
+  format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh';
   blobUrl?: string;
 }

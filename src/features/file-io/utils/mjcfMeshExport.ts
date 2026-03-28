@@ -9,6 +9,7 @@ import {
 } from '@/core/loaders';
 import { collectExplicitlyScaledMeshPaths } from '@/core/loaders/meshScaleHints';
 import { normalizeMeshPathForExport } from '@/core/parsers/meshPathUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 import { GeometryType, type RobotState } from '@/types';
 import { disposeObject3D } from '@/shared/utils/three/dispose';
 
@@ -857,9 +858,11 @@ function collectReferencedMeshPaths(robot: RobotState): Set<string> {
   const meshPaths = new Set<string>();
 
   Object.values(robot.links).forEach((link) => {
-    if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      meshPaths.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === GeometryType.MESH && entry.geometry.meshPath) {
+        meshPaths.add(entry.geometry.meshPath);
+      }
+    });
 
     if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       meshPaths.add(link.collision.meshPath);
@@ -913,11 +916,15 @@ function collectReferencedMeshUsage(robot: RobotState): Map<string, ReferencedMe
   };
 
   Object.values(robot.links).forEach((link) => {
-    if (link.visual.type === GeometryType.MESH) {
-      markUsage(link.visual.meshPath, 'visual');
-      const normalizedPath = normalizeMeshPathForExport(link.visual.meshPath);
-      if ((link.visual.authoredMaterials?.length || 0) > 1) {
-        const candidatePaths = new Set<string>([link.visual.meshPath || '']);
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type !== GeometryType.MESH) {
+        return;
+      }
+
+      markUsage(entry.geometry.meshPath, 'visual');
+      const normalizedPath = normalizeMeshPathForExport(entry.geometry.meshPath);
+      if ((entry.geometry.authoredMaterials?.length || 0) > 1) {
+        const candidatePaths = new Set<string>([entry.geometry.meshPath || '']);
         if (normalizedPath) {
           candidatePaths.add(normalizedPath);
         }
@@ -936,7 +943,7 @@ function collectReferencedMeshUsage(robot: RobotState): Map<string, ReferencedMe
           usageByPath.set(candidatePath, usage);
         });
       }
-    }
+    });
 
     if (link.collision.type === GeometryType.MESH) {
       markUsage(link.collision.meshPath, 'non-visual');
@@ -1124,7 +1131,7 @@ export async function prepareMjcfMeshExportAssets(
         });
 
         if (containsPlaceholderMesh(meshObject)) {
-          console.warn(`[MJCF export] Skipping mesh override for "${meshPath}" because the source asset resolved to a placeholder.`);
+          console.error(`[MJCF export] Skipping mesh override for "${meshPath}" because the source asset resolved to a placeholder.`);
           disposeObject3D(meshObject, true);
           continue;
         }
@@ -1181,7 +1188,7 @@ export async function prepareMjcfMeshExportAssets(
 
         disposeObject3D(meshObject, true);
       } catch (error) {
-        console.warn(`[MJCF export] Failed to convert mesh "${meshPath}" to OBJ. Keeping original path.`, error);
+        console.error(`[MJCF export] Failed to convert mesh "${meshPath}" to OBJ. Keeping original path.`, error);
       }
     }
   } finally {

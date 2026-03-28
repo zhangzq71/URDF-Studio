@@ -217,6 +217,34 @@ test('finite-limit sliders keep imported out-of-range poses visible instead of c
   dom.window.close();
 });
 
+test('pseudo-infinite authored bounds fall back to the unbounded slider window', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root, {
+    name: 'MHS_TopBlades_v16',
+    joint: {
+      id: 'MHS_TopBlades_v16',
+      jointType: 'revolute',
+      limit: { lower: -1.79769e308, upper: 1.79769e308, effort: 1, velocity: 1 },
+    },
+    value: 0,
+  });
+
+  const rangeInput = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+  assert.ok(rangeInput, 'slider input should render');
+  assert.equal(parseFloat(rangeInput.min), -Math.PI);
+  assert.equal(parseFloat(rangeInput.max), Math.PI);
+
+  const limitDisplays = Array.from(container.querySelectorAll('div')).map((node) => node.textContent);
+  assert.ok(limitDisplays.includes('−∞'), 'lower pseudo-infinite limit should render as negative infinity');
+  assert.ok(limitDisplays.includes('∞'), 'upper pseudo-infinite limit should render as infinity');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
 test('joint slider keeps a visible track shell around the native range input', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -305,6 +333,62 @@ test('starting a slider drag activates and selects the current joint', async () 
 
   await act(async () => {
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('dragging from the visible slider shell previews and commits without targeting the hidden range input', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const previewAngles: number[] = [];
+  const committedAngles: number[] = [];
+  const activeJointNames: Array<string | null> = [];
+
+  await renderJointControlItem(root, {
+    handleJointAngleChange: (_name, angle) => {
+      previewAngles.push(angle);
+    },
+    handleJointChangeCommit: (_name, angle) => {
+      committedAngles.push(angle);
+    },
+    setActiveJoint: (jointName) => {
+      activeJointNames.push(jointName);
+    },
+  });
+
+  const sliderShell = container.querySelector('[data-testid="joint-slider-shell"]') as HTMLDivElement | null;
+  assert.ok(sliderShell, 'slider shell should render');
+
+  Object.defineProperty(sliderShell, 'getBoundingClientRect', {
+    value: () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 120,
+      bottom: 16,
+      width: 120,
+      height: 16,
+      toJSON: () => ({}),
+    }),
+    configurable: true,
+  });
+
+  await act(async () => {
+    sliderShell.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 84, clientY: 8 }));
+  });
+
+  assert.deepEqual(activeJointNames, ['R_thigh_joint']);
+  assert.equal(previewAngles.length, 1);
+  assert.equal(committedAngles.length, 0);
+
+  await act(async () => {
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+
+  assert.equal(committedAngles.length, 1);
+
+  await act(async () => {
     root.unmount();
   });
   dom.window.close();

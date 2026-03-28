@@ -22,6 +22,27 @@ test('keeps joint rotation interaction in hardware mode', () => {
   });
 });
 
+test('disables continuous hover in pure view mode so pointer browsing stays read-only', () => {
+  assert.deepEqual(resolveUsdStageInteractionPolicy('detail', 'view'), {
+    enableContinuousHover: false,
+    enableJointRotation: false,
+    enableMeshSelection: false,
+  });
+});
+
+test('disables USD joint rotation in pure view mode so clicking stays read-only', () => {
+  assert.deepEqual(resolveUsdStageJointRotationRuntime({
+    mode: 'detail',
+    highlightMode: 'link',
+    showVisual: true,
+    showCollision: false,
+    toolMode: 'view',
+  }), {
+    enabled: false,
+    pickSubType: null,
+  });
+});
+
 test('enables USD joint rotation in detail when visual meshes are the active interaction target', () => {
   assert.deepEqual(resolveUsdStageJointRotationRuntime({
     mode: 'detail',

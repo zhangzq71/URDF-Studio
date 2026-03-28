@@ -17,6 +17,7 @@ export type {
   ExportDialogConfig,
   ExportFormat,
   MjcfExportConfig,
+  SdfExportConfig,
   UrdfExportConfig,
   XacroExportConfig,
   UsdExportConfig,

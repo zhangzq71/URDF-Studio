@@ -163,6 +163,30 @@ measureHoverHighlightMaterial.userData.isHighlightMaterial = true;
 // Empty raycast function to disable raycast on collision meshes
 export const emptyRaycast = () => { };
 
+// Dense STL-driven robots can become interaction-bound by shadow map rendering.
+// Keep shadows for smaller meshes, but skip the extra shadow pass on very heavy
+// geometry where the fidelity gain is outweighed by frame-time cost.
+const MAX_SHADOW_TRIANGLES_PER_MESH = 15000;
+
+const getTriangleCount = (mesh: THREE.Mesh): number => {
+    const geometry = mesh.geometry;
+    if (!geometry) {
+        return 0;
+    }
+
+    const index = geometry.getIndex();
+    if (index) {
+        return index.count / 3;
+    }
+
+    const position = geometry.getAttribute('position');
+    if (!position) {
+        return 0;
+    }
+
+    return position.count / 3;
+};
+
 // ============================================================
 // MATERIAL ENHANCEMENT
 // Converts all materials to unified MeshStandardMaterial for PBR
@@ -216,9 +240,11 @@ export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Tex
                 }
             }
 
-            // Enable shadows for better depth perception
-            child.castShadow = true;
-            child.receiveShadow = true;
+            const triangleCount = getTriangleCount(child as THREE.Mesh);
+            const enableMeshShadows = triangleCount <= MAX_SHADOW_TRIANGLES_PER_MESH;
+
+            child.castShadow = enableMeshShadows;
+            child.receiveShadow = enableMeshShadows;
         }
     });
 

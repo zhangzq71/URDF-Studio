@@ -1,26 +1,21 @@
-import { useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { RefObject } from 'react';
 import type { HeaderResponsiveLayout } from './types';
 
 export function useHeaderResponsiveLayout(headerRef: RefObject<HTMLElement | null>): HeaderResponsiveLayout {
   const [headerWidth, setHeaderWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 0));
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     const node = headerRef.current;
 
     if (!node || typeof ResizeObserver === 'undefined') {
       return;
     }
 
-    const updateWidth = () => {
-      const nextWidth = Math.round(node.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextWidth = Math.round(entry?.contentRect.width ?? node.clientWidth);
       setHeaderWidth((prevWidth) => (prevWidth === nextWidth ? prevWidth : nextWidth));
-    };
-
-    updateWidth();
-
-    const observer = new ResizeObserver(() => {
-      updateWidth();
     });
 
     observer.observe(node);

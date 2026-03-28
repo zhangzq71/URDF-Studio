@@ -16,12 +16,16 @@ import type {
 } from '@/types';
 import { DEFAULT_JOINT, JointType } from '@/types';
 import { resolveRobotFileData } from '@/core/parsers';
+import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import { failFastInDev } from '@/core/utils/runtimeDiagnostics';
 
 interface AssemblyContext {
   availableFiles?: RobotFile[];
   assets?: Record<string, string>;
+  allFileContents?: Record<string, string>;
+  preResolvedImportResult?: RobotImportResult | null;
   preResolvedRobotData?: RobotData | null;
 }
 
@@ -151,6 +155,18 @@ function replaceAssemblySourcePathPrefix(path: string, fromPath: string, toPath:
   return normalizedPath;
 }
 
+function buildAssemblyComponentImportError(file: RobotFile, importResult: Exclude<RobotImportResult, { status: 'ready' }>): Error {
+  const detail = importResult.status === 'needs_hydration'
+    ? 'USD scene data is not hydrated yet.'
+    : importResult.reason === 'unsupported_format'
+      ? `Unsupported format "${file.format}".`
+      : importResult.reason === 'source_only_fragment'
+        ? 'The selected source file is only a fragment and cannot be assembled as a standalone component.'
+        : 'Source parsing failed.';
+
+  return new Error(`Failed to add assembly component from "${file.name}". ${detail}`);
+}
+
 interface AssemblyActions {
   setAssembly: (state: AssemblyState | null) => void;
   initAssembly: (name?: string) => void;
@@ -260,13 +276,25 @@ export const useAssemblyStore = create<
       },
 
       addComponent: (file, context = {}) => {
-        const importResult = resolveRobotFileData(file, {
-          availableFiles: context.availableFiles,
-          assets: context.assets,
-          usdRobotData: context.preResolvedRobotData ?? null,
-        });
+        const importResult = (
+          context.preResolvedImportResult?.status === 'ready'
+          && context.preResolvedImportResult.format === file.format
+          ? context.preResolvedImportResult
+          : resolveRobotFileData(file, {
+            availableFiles: context.availableFiles,
+            assets: context.assets,
+            allFileContents: context.allFileContents,
+            usdRobotData: context.preResolvedRobotData ?? null,
+          })
+        );
 
-        if (importResult.status !== 'ready') return null;
+        if (importResult.status !== 'ready') {
+          failFastInDev(
+            'AssemblyStore:addComponent',
+            buildAssemblyComponentImportError(file, importResult),
+          );
+          return null;
+        }
 
         const robotData = importResult.robotData;
 

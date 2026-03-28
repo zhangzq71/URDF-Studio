@@ -1,12 +1,16 @@
 import { GeometryType, type RobotFile } from '@/types';
-import { parseMJCF, resolveRobotFileData } from '@/core/parsers';
-import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { type RobotImportResult, resolveRobotFileData } from '@/core/parsers';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 
 const PACKAGE_REFERENCE_PATTERN = /package:\/\/([^/\s"'<>]+)/g;
 
 function normalizeImportPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function normalizePackageRootIdentity(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
 function collectReferencedPackageNames(content: string): string[] {
@@ -24,13 +28,26 @@ function collectReferencedPackageNames(content: string): string[] {
 
 function hasImportedPackageRoot(packageName: string, filePool: RobotFile[]): boolean {
   const normalizedPackageName = packageName.trim().toLowerCase();
+  const normalizedPackageIdentity = normalizePackageRootIdentity(packageName);
   if (!normalizedPackageName) return false;
 
   return filePool.some((file) => {
     const normalizedPath = normalizeImportPath(file.name).toLowerCase();
-    return normalizedPath === normalizedPackageName
+    if (
+      normalizedPath === normalizedPackageName
       || normalizedPath.startsWith(`${normalizedPackageName}/`)
-      || normalizedPath.includes(`/${normalizedPackageName}/`);
+      || normalizedPath.includes(`/${normalizedPackageName}/`)
+    ) {
+      return true;
+    }
+
+    if (!normalizedPackageIdentity) {
+      return false;
+    }
+
+    return normalizedPath
+      .split('/')
+      .some((segment) => normalizePackageRootIdentity(segment) === normalizedPackageIdentity);
   });
 }
 
@@ -68,6 +85,33 @@ type ResolvedRobotRichness = {
   collisionGeometryCount: number;
   meshGeometryCount: number;
 };
+
+type RobotImportResolver = (file: RobotFile) => RobotImportResult;
+
+function memoizeRobotImportResolver(
+  resolveRobotImport: RobotImportResolver,
+): RobotImportResolver {
+  const cache = new WeakMap<RobotFile, RobotImportResult>();
+
+  return (file: RobotFile): RobotImportResult => {
+    const cachedResult = cache.get(file);
+    if (cachedResult) {
+      return cachedResult;
+    }
+
+    const resolvedResult = resolveRobotImport(file);
+    cache.set(file, resolvedResult);
+    return resolvedResult;
+  };
+}
+
+export function createMemoizedRobotImportResolver(
+  filePool: RobotFile[],
+): RobotImportResolver {
+  return memoizeRobotImportResolver((file) => (
+    resolveRobotFileData(file, { availableFiles: filePool })
+  ));
+}
 
 function collectMjcfCandidateStructure(content: string): MjcfCandidateStructure {
   const doc = parseMjcfDocument(content);
@@ -114,8 +158,11 @@ function compareMjcfCandidateStructure(left: MjcfCandidateStructure, right: Mjcf
   return 0;
 }
 
-function summarizeResolvedRobotRichness(file: RobotFile, filePool: RobotFile[]): ResolvedRobotRichness | null {
-  const resolved = resolveRobotFileData(file, { availableFiles: filePool });
+function summarizeResolvedRobotRichness(
+  file: RobotFile,
+  resolveRobotImport: RobotImportResolver,
+): ResolvedRobotRichness | null {
+  const resolved = resolveRobotImport(file);
   if (resolved.status !== 'ready') {
     return null;
   }
@@ -128,13 +175,13 @@ function summarizeResolvedRobotRichness(file: RobotFile, filePool: RobotFile[]):
   Object.values(resolved.robotData.links).forEach((link) => {
     let linkHasRenderableGeometry = false;
 
-    if (link.visual.type !== GeometryType.NONE) {
+    getVisualGeometryEntries(link).forEach((entry) => {
       visualGeometryCount += 1;
       linkHasRenderableGeometry = true;
-      if (link.visual.type === GeometryType.MESH) {
+      if (entry.geometry.type === GeometryType.MESH) {
         meshGeometryCount += 1;
       }
-    }
+    });
 
     if (link.collision.type !== GeometryType.NONE) {
       collisionGeometryCount += 1;
@@ -169,6 +216,140 @@ function summarizeResolvedRobotRichness(file: RobotFile, filePool: RobotFile[]):
   };
 }
 
+function compareResolvedRobotRichness(
+  left: ResolvedRobotRichness | null,
+  right: ResolvedRobotRichness | null,
+): number {
+  const leftRenderableLinkCount = left?.renderableLinkCount ?? -1;
+  const rightRenderableLinkCount = right?.renderableLinkCount ?? -1;
+  if (leftRenderableLinkCount !== rightRenderableLinkCount) {
+    return rightRenderableLinkCount - leftRenderableLinkCount;
+  }
+
+  const leftVisualGeometryCount = left?.visualGeometryCount ?? -1;
+  const rightVisualGeometryCount = right?.visualGeometryCount ?? -1;
+  if (leftVisualGeometryCount !== rightVisualGeometryCount) {
+    return rightVisualGeometryCount - leftVisualGeometryCount;
+  }
+
+  const leftMeshGeometryCount = left?.meshGeometryCount ?? -1;
+  const rightMeshGeometryCount = right?.meshGeometryCount ?? -1;
+  if (leftMeshGeometryCount !== rightMeshGeometryCount) {
+    return rightMeshGeometryCount - leftMeshGeometryCount;
+  }
+
+  const leftCollisionGeometryCount = left?.collisionGeometryCount ?? -1;
+  const rightCollisionGeometryCount = right?.collisionGeometryCount ?? -1;
+  return rightCollisionGeometryCount - leftCollisionGeometryCount;
+}
+
+function compareImportFileNamePreference(leftName: string, rightName: string): number {
+  const leftBase = leftName.split('/').pop() ?? leftName;
+  const rightBase = rightName.split('/').pop() ?? rightName;
+
+  if (leftBase.length !== rightBase.length) {
+    return leftBase.length - rightBase.length;
+  }
+
+  return leftName.localeCompare(rightName);
+}
+
+function tokenizeImportIdentity(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function getImportFileStem(fileName: string): string {
+  const baseName = fileName.split('/').pop() ?? fileName;
+  const lastDotIndex = baseName.lastIndexOf('.');
+  return (lastDotIndex >= 0 ? baseName.slice(0, lastDotIndex) : baseName).toLowerCase();
+}
+
+function scoreUrdfIdentityAffinity(file: RobotFile, filePool: RobotFile[]): number {
+  const packageTokens = new Set(
+    filePool
+      .filter((entry) => entry.format === 'urdf' || entry.format === 'xacro')
+      .flatMap((entry) => collectReferencedPackageNames(entry.content))
+      .flatMap((packageName) => tokenizeImportIdentity(packageName)),
+  );
+
+  if (packageTokens.size === 0) {
+    return 0;
+  }
+
+  const fileTokens = new Set(tokenizeImportIdentity(getImportFileStem(file.name)));
+  let score = 0;
+  fileTokens.forEach((token) => {
+    if (packageTokens.has(token)) {
+      score += 1;
+    }
+  });
+
+  return score;
+}
+
+function isDerivedVariantUrdfForMjcf(urdfFile: RobotFile, mjcfFile: RobotFile): boolean {
+  const urdfStem = getImportFileStem(urdfFile.name);
+  const mjcfStem = getImportFileStem(mjcfFile.name);
+
+  if (!urdfStem || !mjcfStem || urdfStem === mjcfStem) {
+    return false;
+  }
+
+  return urdfStem.startsWith(`${mjcfStem}_`) || urdfStem.startsWith(`${mjcfStem}-`);
+}
+
+function pickPreferredUrdfImportFile(
+  files: RobotFile[],
+  filePool: RobotFile[] = files,
+  resolveRobotImport: RobotImportResolver = createMemoizedRobotImportResolver(filePool),
+): RobotFile | null {
+  const cachedResolveRobotImport = memoizeRobotImportResolver(resolveRobotImport);
+  const urdfFiles = files.filter((file) => file.format === 'urdf');
+  if (urdfFiles.length === 0) {
+    return null;
+  }
+
+  const rankedCandidates = urdfFiles.map((file) => ({
+    file,
+    selfContained: isUrdfSelfContainedInImportBundle(file, filePool),
+    richness: summarizeResolvedRobotRichness(file, cachedResolveRobotImport),
+    identityAffinity: scoreUrdfIdentityAffinity(file, filePool),
+  }));
+
+  rankedCandidates.sort((left, right) => {
+    if (left.selfContained !== right.selfContained) {
+      return Number(right.selfContained) - Number(left.selfContained);
+    }
+
+    const richnessComparison = compareResolvedRobotRichness(left.richness, right.richness);
+    if (richnessComparison !== 0) {
+      return richnessComparison;
+    }
+
+    if (left.identityAffinity !== right.identityAffinity) {
+      return right.identityAffinity - left.identityAffinity;
+    }
+
+    return compareImportFileNamePreference(left.file.name, right.file.name);
+  });
+
+  for (const candidate of rankedCandidates) {
+    try {
+      if (cachedResolveRobotImport(candidate.file).status === 'ready') {
+        return candidate.file;
+      }
+    } catch {
+      // Ignore invalid candidates and keep searching in rank order.
+    }
+  }
+
+  return rankedCandidates[0]?.file ?? urdfFiles[0] ?? null;
+}
+
 function isMateriallyRicherRobotCandidate(
   candidate: ResolvedRobotRichness | null,
   baseline: ResolvedRobotRichness | null,
@@ -197,27 +378,18 @@ function isMateriallyRicherRobotCandidate(
 export function pickPreferredMjcfImportFile(
   files: RobotFile[],
   filePool: RobotFile[] = files,
+  resolveRobotImport: RobotImportResolver = createMemoizedRobotImportResolver(filePool),
 ): RobotFile | null {
+  const cachedResolveRobotImport = memoizeRobotImportResolver(resolveRobotImport);
   const mjcfFiles = files.filter((file) => file.format === 'mjcf');
   if (mjcfFiles.length === 0) return null;
 
-  const parseableCandidates = mjcfFiles.flatMap((candidate) => {
-    try {
-      const resolved = resolveMJCFSource(candidate, filePool);
-      if (parseMJCF(resolved.content) === null) {
-        return [];
-      }
+  const rankedCandidates = mjcfFiles.map((candidate) => ({
+    file: candidate,
+    structure: collectMjcfCandidateStructure(candidate.content),
+  }));
 
-      return [{
-        file: candidate,
-        structure: collectMjcfCandidateStructure(candidate.content),
-      }];
-    } catch {
-      return [];
-    }
-  });
-
-  parseableCandidates.sort((left, right) => {
+  rankedCandidates.sort((left, right) => {
     const structureComparison = compareMjcfCandidateStructure(left.structure, right.structure);
     if (structureComparison !== 0) {
       return structureComparison;
@@ -232,8 +404,14 @@ export function pickPreferredMjcfImportFile(
     return leftBase.localeCompare(rightBase);
   });
 
-  if (parseableCandidates.length > 0) {
-    return parseableCandidates[0]!.file;
+  for (const candidate of rankedCandidates) {
+    try {
+      if (cachedResolveRobotImport(candidate.file).status === 'ready') {
+        return candidate.file;
+      }
+    } catch {
+      // Ignore invalid candidates and keep searching in rank order.
+    }
   }
 
   return mjcfFiles[0] ?? null;
@@ -242,19 +420,21 @@ export function pickPreferredMjcfImportFile(
 export function pickPreferredImportFile(
   files: RobotFile[],
   filePool: RobotFile[] = files,
+  resolveRobotImport: RobotImportResolver = createMemoizedRobotImportResolver(filePool),
 ): RobotFile | null {
+  const cachedResolveRobotImport = memoizeRobotImportResolver(resolveRobotImport);
   const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
-  const preferredUrdf = robotDefinitionFiles.find((file) => file.format === 'urdf') ?? null;
-  const preferredMjcf = pickPreferredMjcfImportFile(robotDefinitionFiles, filePool);
+  const preferredUrdf = pickPreferredUrdfImportFile(robotDefinitionFiles, filePool, cachedResolveRobotImport);
+  const preferredMjcf = pickPreferredMjcfImportFile(robotDefinitionFiles, filePool, cachedResolveRobotImport);
   const preferredUrdfIsSelfContained = preferredUrdf
     ? isUrdfSelfContainedInImportBundle(preferredUrdf, filePool)
     : false;
 
   const preferredUrdfRichness = preferredUrdf && preferredMjcf && preferredUrdfIsSelfContained
-    ? summarizeResolvedRobotRichness(preferredUrdf, filePool)
+    ? summarizeResolvedRobotRichness(preferredUrdf, cachedResolveRobotImport)
     : null;
   const preferredMjcfRichness = preferredUrdf && preferredMjcf && preferredUrdfIsSelfContained
-    ? summarizeResolvedRobotRichness(preferredMjcf, filePool)
+    ? summarizeResolvedRobotRichness(preferredMjcf, cachedResolveRobotImport)
     : null;
 
   const shouldPreferMjcfOverUrdf = preferredUrdf !== null
@@ -262,6 +442,12 @@ export function pickPreferredImportFile(
     && (
       !preferredUrdfIsSelfContained
       || isMateriallyRicherRobotCandidate(preferredMjcfRichness, preferredUrdfRichness)
+      || (
+        preferredUrdfRichness !== null
+        && preferredMjcfRichness !== null
+        && isDerivedVariantUrdfForMjcf(preferredUrdf, preferredMjcf)
+        && compareResolvedRobotRichness(preferredMjcfRichness, preferredUrdfRichness) <= 0
+      )
     );
 
   if (shouldPreferMjcfOverUrdf && preferredMjcf) {

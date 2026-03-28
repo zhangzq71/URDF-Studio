@@ -68,7 +68,7 @@ test('addRobotAssetsToZip packages texture assets alongside meshes for roundtrip
   };
 
   const zip = new JSZip();
-  await addRobotAssetsToZip({
+  const result = await addRobotAssetsToZip({
     robot,
     zip,
     assets: {
@@ -76,6 +76,7 @@ test('addRobotAssetsToZip packages texture assets alongside meshes for roundtrip
       'package://demo/textures/body/coat.png': createDataUrl('png-texture', 'image/png'),
     },
   });
+  assert.equal(result.failedAssets.length, 0);
 
   const roundtripZip = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
   const meshEntry = roundtripZip.file('meshes/base.stl');
@@ -110,7 +111,7 @@ test('addRobotAssetsToZip skips source meshes that were replaced for MJCF export
   };
 
   const zip = new JSZip();
-  await addRobotAssetsToZip({
+  const result = await addRobotAssetsToZip({
     robot,
     zip,
     assets: {
@@ -118,7 +119,42 @@ test('addRobotAssetsToZip skips source meshes that were replaced for MJCF export
     },
     skipMeshPaths: new Set(['package://go2_description/dae/hip.dae', 'dae/hip.dae']),
   });
+  assert.equal(result.failedAssets.length, 0);
 
   const roundtripZip = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
   assert.equal(roundtripZip.file('meshes/dae/hip.dae'), null);
+});
+
+test('addRobotAssetsToZip reports missing assets instead of silently succeeding', async () => {
+  const robot: RobotState = {
+    name: 'asset_missing',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          meshPath: 'package://missing/meshes/base.stl',
+          dimensions: { x: 1, y: 1, z: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const zip = new JSZip();
+  const result = await addRobotAssetsToZip({
+    robot,
+    zip,
+    assets: {},
+  });
+
+  assert.equal(result.failedAssets.length, 1);
+  assert.equal(result.failedAssets[0]?.code, 'mesh_asset_missing');
+  assert.match(result.failedAssets[0]?.message ?? '', /not found/i);
 });

@@ -97,3 +97,36 @@ test('cloneColladaScenePreservingRootTransform applies shared coplanar shell fix
   assert.equal(isCoplanarOffsetMaterial(materials[0]), true);
   assert.equal(isCoplanarOffsetMaterial(materials[1]), false);
 });
+
+test('cloneColladaScenePreservingRootTransform skips override mesh collection when preserving authored materials', () => {
+  const meshPath = 'test/gazebo_models/cessna/meshes/body.dae';
+  const colladaText = fs.readFileSync(meshPath, 'utf8');
+  const loader = new ColladaLoader();
+  const dae = loader.parse(colladaText, THREE.LoaderUtils.extractUrlBase(meshPath));
+
+  const defaultClone = cloneColladaScenePreservingRootTransform(dae.scene);
+  const preservedClone = cloneColladaScenePreservingRootTransform(dae.scene, false, true);
+
+  assert.ok(defaultClone.overrideMeshes.length > 0);
+  assert.equal(preservedClone.overrideMeshes.length, 0);
+});
+
+test('cloneColladaScenePreservingRootTransform removes embedded Collada lights from preview clones', () => {
+  const root = new THREE.Group();
+  root.add(new THREE.PointLight(0xffffff, 1));
+  root.add(new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0x999999 }),
+  ));
+
+  const { clone } = cloneColladaScenePreservingRootTransform(root);
+
+  const lights: THREE.Light[] = [];
+  clone.traverse((child) => {
+    if ((child as THREE.Light).isLight) {
+      lights.push(child as THREE.Light);
+    }
+  });
+
+  assert.equal(lights.length, 0);
+});

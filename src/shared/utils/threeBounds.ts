@@ -6,7 +6,13 @@ interface LowestMeshZOptions {
   includeCollision?: boolean;
 }
 
+interface VisibleMeshBoundsOptions {
+  includeInvisible?: boolean;
+  includeGroundPlaneHelpers?: boolean;
+}
+
 type MeshRole = 'visual' | 'collision' | 'unknown';
+const GROUND_PLANE_BOUND_OBJECT_NAMES = new Set(['ReferenceGrid', 'GroundShadowPlane']);
 
 function getMeshRole(mesh: THREE.Mesh): MeshRole {
   let current: THREE.Object3D | null = mesh;
@@ -106,4 +112,73 @@ export function alignObjectLowestPointToZ(
   root.position.z += targetZ - minZ;
   root.updateMatrixWorld(true);
   return targetZ;
+}
+
+/**
+ * Compute the visible mesh bounds for a scene subtree while skipping helper,
+ * gizmo, and infrastructure meshes that should not influence camera clipping.
+ */
+export function computeVisibleMeshBounds(
+  root: THREE.Object3D,
+  options?: VisibleMeshBoundsOptions,
+): THREE.Box3 | null {
+  const includeInvisible = options?.includeInvisible ?? false;
+  const includeGroundPlaneHelpers = options?.includeGroundPlaneHelpers ?? false;
+  const bounds = new THREE.Box3();
+  const worldBox = new THREE.Box3();
+  let hasBounds = false;
+
+  root.updateMatrixWorld(true, true);
+
+  const visitNode = (obj: THREE.Object3D) => {
+    const isGroundPlaneHelper = includeGroundPlaneHelpers
+      && GROUND_PLANE_BOUND_OBJECT_NAMES.has(obj.name);
+
+    if (
+      (obj.userData?.isHelper && !isGroundPlaneHelper) ||
+      obj.userData?.isGizmo ||
+      (obj.userData?.excludeFromSceneBounds && !isGroundPlaneHelper) ||
+      obj.name?.startsWith('__')
+    ) {
+      return;
+    }
+
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry) {
+      return;
+    }
+
+    if (!mesh.geometry.boundingBox) {
+      mesh.geometry.computeBoundingBox();
+    }
+
+    const localBox = mesh.geometry.boundingBox;
+    if (!localBox) {
+      return;
+    }
+
+    worldBox.copy(localBox).applyMatrix4(mesh.matrixWorld);
+    if (
+      !Number.isFinite(worldBox.min.x) || !Number.isFinite(worldBox.min.y) || !Number.isFinite(worldBox.min.z) ||
+      !Number.isFinite(worldBox.max.x) || !Number.isFinite(worldBox.max.y) || !Number.isFinite(worldBox.max.z)
+    ) {
+      return;
+    }
+
+    if (!hasBounds) {
+      bounds.copy(worldBox);
+      hasBounds = true;
+      return;
+    }
+
+    bounds.union(worldBox);
+  };
+
+  if (includeInvisible) {
+    root.traverse(visitNode);
+  } else {
+    root.traverseVisible(visitNode);
+  }
+
+  return hasBounds ? bounds : null;
 }

@@ -1,9 +1,9 @@
 import { findAssetByPath } from '@/core/loaders/meshLoader';
-import { getCollisionGeometryEntries } from '@/core/robot';
+import { getCollisionGeometryEntries, getVisualGeometryEntries } from '@/core/robot';
 import { GeometryType, type RobotState, type UrdfLink, type UrdfVisual } from '@/types';
 import { resolveGeometryVisibilityState } from '../components/nodes/geometryVisibility';
 
-const SUPPORTED_MESH_EXTENSIONS = new Set(['stl', 'obj', 'dae']);
+const SUPPORTED_MESH_EXTENSIONS = new Set(['stl', 'obj', 'dae', 'gltf', 'glb']);
 
 type VisualizerMode = 'skeleton' | 'detail' | 'hardware';
 
@@ -94,23 +94,27 @@ export function collectVisualizerMeshLoadKeys({
   const keys: string[] = [];
 
   Object.values(robot.links).forEach((link) => {
-    if (shouldTrackMeshGeometry({
-      link,
-      geometry: link.visual,
-      isCollision: false,
-      mode,
-      showGeometry,
-      showCollision,
-      assets,
-    })) {
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (!shouldTrackMeshGeometry({
+        link,
+        geometry: entry.geometry,
+        isCollision: false,
+        mode,
+        showGeometry,
+        showCollision,
+        assets,
+      })) {
+        return;
+      }
+
       keys.push(buildVisualizerMeshLoadKey({
         linkId: link.id,
         geometryRole: 'visual',
-        geometryId: 'primary',
-        objectIndex: 0,
-        meshPath: link.visual.meshPath!,
+        geometryId: entry.bodyIndex === null ? 'primary' : `extra-${entry.bodyIndex + 1}`,
+        objectIndex: entry.objectIndex,
+        meshPath: entry.geometry.meshPath!,
       }));
-    }
+    });
 
     getCollisionGeometryEntries(link).forEach((entry) => {
       if (!shouldTrackMeshGeometry({

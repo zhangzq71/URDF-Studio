@@ -26,8 +26,7 @@ export function scheduleStabilizedAutoFrame<TState>({
 }: ScheduleStabilizedAutoFrameOptions<TState>): () => void {
   const handles = new Set<unknown>();
   let disposed = false;
-  let lastStabilityKey: string | null = null;
-  let stablePassCount = 0;
+  let lastSample: StabilizedAutoFrameSample<TState> | null = null;
   let settled = false;
 
   const settle = (reason: 'stable' | 'exhausted') => {
@@ -51,18 +50,25 @@ export function scheduleStabilizedAutoFrame<TState>({
       }
 
       const nextSample = sample();
-      const didApply = applyFrame(nextSample);
-      const stabilityKeyChanged = nextSample.stabilityKey !== lastStabilityKey;
+      const isStable =
+        lastSample !== null
+        && nextSample.stabilityKey !== null
+        && nextSample.stabilityKey === lastSample.stabilityKey;
 
-      lastStabilityKey = nextSample.stabilityKey;
-      stablePassCount = didApply && !stabilityKeyChanged ? stablePassCount + 1 : 0;
-
-      if (stablePassCount >= 1) {
-        settle('stable');
-        return;
+      // Wait until bounds stop moving before reframing. Applying every sample
+      // makes the import auto-frame visibly hop while late mesh/ground
+      // alignment updates are still settling.
+      if (isStable) {
+        if (applyFrame(nextSample)) {
+          settle('stable');
+          return;
+        }
       }
 
+      lastSample = nextSample;
+
       if (index >= delays.length - 1) {
+        applyFrame(nextSample);
         settle('exhausted');
         return;
       }

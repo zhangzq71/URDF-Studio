@@ -457,7 +457,7 @@ export function useHighlightManager({
                 }
             }
         } catch (err) {
-            console.warn("Error in highlightGeometry:", err);
+            console.error("Error in highlightGeometry:", err);
         }
     }, [robot, showCollision, showVisual, highlightMode, revertAllHighlights, linkMeshMapRef, getCollisionGeometryByIndex, getMeshVisibility, captureHighlightedMeshSnapshot]);
 

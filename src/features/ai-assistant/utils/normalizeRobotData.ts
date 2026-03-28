@@ -111,7 +111,7 @@ export function normalizeAIRobotResponse(raw: unknown): NormalizedRobotData | nu
   const linksToProcess = toObjectArray(data.links)
   linksToProcess.forEach(link => {
     if (!link.id) {
-      console.warn('[AI Service] Skipping invalid link:', link)
+      console.error('[AI Service] Skipping invalid link:', link)
       return
     }
 
@@ -144,7 +144,7 @@ export function normalizeAIRobotResponse(raw: unknown): NormalizedRobotData | nu
   const jointsToProcess = toObjectArray(data.joints)
   jointsToProcess.forEach(joint => {
     if (!joint.id) {
-      console.warn('[AI Service] Skipping invalid joint:', joint)
+      console.error('[AI Service] Skipping invalid joint:', joint)
       return
     }
 

@@ -91,6 +91,6 @@ export function computeCameraFrame(
 
   return {
     focusTarget: sphere.center.clone(),
-    cameraPosition: sphere.center.clone().add(direction.multiplyScalar(distance * 1.15)),
+    cameraPosition: sphere.center.clone().add(direction.multiplyScalar(distance * 1.34)),
   };
 }

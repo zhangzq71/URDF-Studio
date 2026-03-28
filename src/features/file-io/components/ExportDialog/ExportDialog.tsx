@@ -7,7 +7,7 @@ import { translations, type TranslationKeys } from '@/shared/i18n';
 import type { ExportProgressState } from '../../types';
 import type { MjcfActuatorType } from '@/core/parsers/mjcf/mjcfGenerator';
 
-export type ExportFormat = 'mjcf' | 'urdf' | 'xacro' | 'usd';
+export type ExportFormat = 'mjcf' | 'urdf' | 'xacro' | 'sdf' | 'usd';
 
 export interface MjcfExportConfig {
   meshdir: string;
@@ -42,6 +42,12 @@ export interface XacroExportConfig {
   stlQuality: number;
 }
 
+export interface SdfExportConfig {
+  includeMeshes: boolean;
+  compressSTL: boolean;
+  stlQuality: number;
+}
+
 export interface UsdExportConfig {
   compressMeshes: boolean;
   meshQuality: number;
@@ -53,12 +59,14 @@ export interface ExportDialogConfig {
   mjcf: MjcfExportConfig;
   urdf: UrdfExportConfig;
   xacro: XacroExportConfig;
+  sdf: SdfExportConfig;
   usd: UsdExportConfig;
 }
 
 const MJCF_SUPPORTS = ['MuJoCo', 'Motphys', 'Genesis'];
 const URDF_SUPPORTS = ['Isaac Sim', 'Isaac Gym', 'Genesis', 'PyBullet', 'ManiSkill', 'Motphys'];
 const XACRO_SUPPORTS = ['Gazebo', 'ROS1', 'ROS2'];
+const SDF_SUPPORTS = ['Gazebo', 'Ignition Gazebo', 'sdformat'];
 const USD_SUPPORTS = ['OpenUSD', 'Isaac Sim', 'Omniverse'];
 
 const DEFAULT_CONFIG: ExportDialogConfig = {
@@ -87,6 +95,11 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
     rosVersion: 'ros2',
     rosHardwareInterface: 'effort',
     useRelativePaths: true,
+    includeMeshes: true,
+    compressSTL: false,
+    stlQuality: 50,
+  },
+  sdf: {
     includeMeshes: true,
     compressSTL: false,
     stlQuality: 50,
@@ -423,6 +436,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     mjcf: getStlPreset(DEFAULT_CONFIG.mjcf.compressSTL, DEFAULT_CONFIG.mjcf.stlQuality),
     urdf: getStlPreset(DEFAULT_CONFIG.urdf.compressSTL, DEFAULT_CONFIG.urdf.stlQuality),
     xacro: getStlPreset(DEFAULT_CONFIG.xacro.compressSTL, DEFAULT_CONFIG.xacro.stlQuality),
+    sdf: getStlPreset(DEFAULT_CONFIG.sdf.compressSTL, DEFAULT_CONFIG.sdf.stlQuality),
     usd: getStlPreset(DEFAULT_CONFIG.usd.compressMeshes, DEFAULT_CONFIG.usd.meshQuality),
   }));
 
@@ -451,6 +465,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setConfig((prev) => ({ ...prev, xacro: { ...prev.xacro, [key]: value } }));
   }, []);
 
+  const updateSdf = useCallback(<K extends keyof SdfExportConfig>(key: K, value: SdfExportConfig[K]) => {
+    setConfig((prev) => ({ ...prev, sdf: { ...prev.sdf, [key]: value } }));
+  }, []);
+
   const updateUsd = useCallback(<K extends keyof UsdExportConfig>(key: K, value: UsdExportConfig[K]) => {
     setConfig((prev) => ({ ...prev, usd: { ...prev.usd, [key]: value } }));
   }, []);
@@ -473,7 +491,15 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     ? 3
     : config.format === 'mjcf'
       ? (config.mjcf.includeMeshes ? 5 : 4)
-      : ((config.format === 'urdf' ? config.urdf.includeMeshes : config.xacro.includeMeshes) ? 4 : 3);
+      : (
+        (
+          config.format === 'urdf'
+            ? config.urdf.includeMeshes
+            : config.format === 'xacro'
+              ? config.xacro.includeMeshes
+              : config.sdf.includeMeshes
+        ) ? 4 : 3
+      );
   const progressState = localExportProgress ?? {
     stepLabel: t.exportProgressPreparing,
     detail: t.exportProgressPreparingDetail,
@@ -493,6 +519,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     ? '.xml'
     : config.format === 'xacro'
       ? '.urdf.xacro'
+      : config.format === 'sdf'
+        ? '.sdf'
       : config.format === 'usd'
         ? '.usd'
         : '.urdf';
@@ -533,10 +561,16 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           {/* Format Selector */}
           <SectionLabel>{t.exportFormat}</SectionLabel>
           <div className="flex gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black">
-            {(['mjcf', 'urdf', 'xacro', 'usd'] as ExportFormat[]).map((fmt) => {
+            {(['mjcf', 'urdf', 'xacro', 'sdf', 'usd'] as ExportFormat[]).map((fmt) => {
               const isDisabled = fmt === 'usd' && !canExportUsd;
               const isActive = config.format === fmt;
-              const label: Record<ExportFormat, string> = { mjcf: t.exportFormatMJCF, urdf: t.exportFormatURDF, xacro: 'Xacro', usd: t.exportFormatUSD };
+              const label: Record<ExportFormat, string> = {
+                mjcf: t.exportFormatMJCF,
+                urdf: t.exportFormatURDF,
+                xacro: t.exportFormatXacro,
+                sdf: t.exportFormatSDF,
+                usd: t.exportFormatUSD,
+              };
               return (
                 <button
                   key={fmt}
@@ -553,6 +587,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   {fmt === 'mjcf' && <FileCode className="w-3.5 h-3.5" />}
                   {fmt === 'urdf' && <Layers className="w-3.5 h-3.5" />}
                   {fmt === 'xacro' && <Braces className="w-3.5 h-3.5" />}
+                  {fmt === 'sdf' && <Layers className="w-3.5 h-3.5" />}
                   {fmt === 'usd' && <Package className="w-3.5 h-3.5" />}
                   <span>{label[fmt]}</span>
                   {isDisabled && (
@@ -573,7 +608,9 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 ? URDF_SUPPORTS
                 : config.format === 'xacro'
                   ? XACRO_SUPPORTS
-                  : USD_SUPPORTS).map((name) => (
+                  : config.format === 'sdf'
+                    ? SDF_SUPPORTS
+                    : USD_SUPPORTS).map((name) => (
               <span key={name} className="px-2 py-0.5 bg-element-bg border border-border-black rounded-full text-[10px] text-text-tertiary">
                 {name}
               </span>
@@ -582,6 +619,12 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
           {/* Divider */}
           <div className="h-px bg-border-black my-3" />
+
+          {config.format === 'xacro' && (
+            <div className="rounded-xl border border-border-black bg-element-bg px-3 py-2 text-[11px] leading-5 text-text-secondary">
+              {t.exportXacroStaticHint}
+            </div>
+          )}
 
           {/* MJCF Options */}
           {config.format === 'mjcf' && (
@@ -698,26 +741,29 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             <>
               <SectionLabel>{t.exportOptionsSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.rosVersion}>
-                  <div className="flex gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black">
+                <Row
+                  label={t.rosVersion}
+                  desc={config.xacro.rosVersion === 'ros1' ? t.rosProfileDescRos1 : t.rosProfileDescRos2}
+                >
+                  <div className="flex flex-wrap gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black max-w-[260px] justify-end">
                     {(['ros1', 'ros2'] as RosVersion[]).map((v) => (
                       <button
                         key={v}
                         onClick={() => updateXacro('rosVersion', v)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
                           config.xacro.rosVersion === v
                             ? 'bg-white dark:bg-segmented-active text-text-primary shadow-sm'
                             : 'text-text-secondary hover:text-text-primary'
                         }`}
                       >
-                        {v.toUpperCase()}
+                        {v === 'ros1' ? t.rosProfileRos1 : t.rosProfileRos2}
                       </button>
                     ))}
                   </div>
                 </Row>
                 <Row
                   label={t.hardwareInterface}
-                  desc={config.xacro.rosVersion === 'ros1' ? 'hardware_interface/...' : 'command_interface name'}
+                  desc={config.xacro.rosVersion === 'ros1' ? t.hardwareInterfaceDescRos1 : t.hardwareInterfaceDescRos2}
                 >
                   <SelectField
                     value={config.xacro.rosHardwareInterface}
@@ -750,6 +796,31 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                     onCompressChange={(v) => updateXacro('compressSTL', v)}
                     onQualityChange={(v) => updateXacro('stlQuality', v)}
                     onModeChange={(mode) => updateQualityMode('xacro', mode)}
+                  />
+                )}
+              </div>
+            </>
+          )}
+
+          {config.format === 'sdf' && (
+            <>
+              <SectionLabel>{t.exportOutputSection}</SectionLabel>
+              <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                  <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
+                </Row>
+                <Row label={t.exportIncludeMeshes}>
+                  <Toggle value={config.sdf.includeMeshes} onChange={(v) => updateSdf('includeMeshes', v)} />
+                </Row>
+                {config.sdf.includeMeshes && (
+                  <STLQualitySelector
+                    compressSTL={config.sdf.compressSTL}
+                    stlQuality={config.sdf.stlQuality}
+                    mode={qualityModes.sdf}
+                    t={t}
+                    onCompressChange={(v) => updateSdf('compressSTL', v)}
+                    onQualityChange={(v) => updateSdf('stlQuality', v)}
+                    onModeChange={(mode) => updateQualityMode('sdf', mode)}
                   />
                 )}
               </div>
@@ -795,6 +866,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   ? <FileCode className="w-4 h-4" />
                   : config.format === 'xacro'
                     ? <Braces className="w-4 h-4" />
+                    : config.format === 'sdf'
+                      ? <Layers className="w-4 h-4" />
                     : config.format === 'usd'
                       ? <Package className="w-4 h-4" />
                       : <Layers className="w-4 h-4" />}

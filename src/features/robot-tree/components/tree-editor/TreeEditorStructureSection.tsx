@@ -74,7 +74,7 @@ export function TreeEditorStructureSection({
   return (
     <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}>
       <div
-        className="flex items-center justify-between px-3 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
+        className="flex items-center justify-between px-2.5 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
         onClick={onToggleOpen}
       >
         <div className="flex min-w-0 items-center gap-2">

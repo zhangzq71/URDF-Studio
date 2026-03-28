@@ -5,6 +5,7 @@
 
 import type { RobotState, UrdfLink, UrdfJoint } from '@/types';
 import { JointType, GeometryType } from '@/types';
+import { getVisualGeometryEntries } from './visualBodies';
 
 const AXIS_REQUIRED_TYPES = new Set<JointType>([
     JointType.REVOLUTE,
@@ -36,6 +37,26 @@ export interface ValidationResult {
 export const validateLink = (link: UrdfLink): ValidationResult => {
     const errors: ValidationError[] = [];
     const inertial = link.inertial;
+    const validateVisualGeometry = (geometry: UrdfLink['visual'], path: string) => {
+        const dims = geometry.dimensions;
+        if (geometry.type === GeometryType.BOX) {
+            if (dims.x <= 0 || dims.y <= 0 || dims.z <= 0) {
+                errors.push({ type: 'error', message: 'Box dimensions must be positive', path });
+            }
+        } else if (geometry.type === GeometryType.CYLINDER) {
+            if (dims.x <= 0 || dims.y <= 0) {
+                errors.push({ type: 'error', message: 'Cylinder radius and length must be positive', path });
+            }
+        } else if (geometry.type === GeometryType.CAPSULE) {
+            if (dims.x <= 0 || dims.y <= 0) {
+                errors.push({ type: 'error', message: 'Capsule radius and length must be positive', path });
+            }
+        } else if (geometry.type === GeometryType.SPHERE) {
+            if (dims.x <= 0) {
+                errors.push({ type: 'error', message: 'Sphere radius must be positive', path });
+            }
+        }
+    };
 
     if (!link.id) {
         errors.push({ type: 'error', message: 'Link must have an ID', path: 'id' });
@@ -53,27 +74,14 @@ export const validateLink = (link: UrdfLink): ValidationResult => {
         errors.push({ type: 'warning', message: 'Link has zero mass', path: 'inertial.mass' });
     }
 
-    // Validate visual geometry
-    if (link.visual.type !== GeometryType.NONE) {
-        const dims = link.visual.dimensions;
-        if (link.visual.type === GeometryType.BOX) {
-            if (dims.x <= 0 || dims.y <= 0 || dims.z <= 0) {
-                errors.push({ type: 'error', message: 'Box dimensions must be positive', path: 'visual.dimensions' });
-            }
-        } else if (link.visual.type === GeometryType.CYLINDER) {
-            if (dims.x <= 0 || dims.y <= 0) {
-                errors.push({ type: 'error', message: 'Cylinder radius and length must be positive', path: 'visual.dimensions' });
-            }
-        } else if (link.visual.type === GeometryType.CAPSULE) {
-            if (dims.x <= 0 || dims.y <= 0) {
-                errors.push({ type: 'error', message: 'Capsule radius and length must be positive', path: 'visual.dimensions' });
-            }
-        } else if (link.visual.type === GeometryType.SPHERE) {
-            if (dims.x <= 0) {
-                errors.push({ type: 'error', message: 'Sphere radius must be positive', path: 'visual.dimensions' });
-            }
-        }
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+        validateVisualGeometry(
+            entry.geometry,
+            entry.bodyIndex === null
+                ? 'visual.dimensions'
+                : `visualBodies.${entry.bodyIndex}.dimensions`,
+        );
+    });
 
     return {
         valid: errors.filter(e => e.type === 'error').length === 0,
