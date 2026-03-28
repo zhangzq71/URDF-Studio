@@ -15,8 +15,6 @@ class HydraSkeleton {
         this._topology = []; // parent indices
     }
     updateNode(networkId, path, parameters) {
-        if (debugPrims)
-            console.log("HydraSkeleton updateNode", networkId, path, parameters);
         // Hydra/USD parameters often come with specific names
         // We check for common ones used in UsdSkel
         if (parameters.joints)
@@ -31,8 +29,6 @@ class HydraSkeleton {
         }
     }
     updateFinished() {
-        if (debugPrims)
-            console.log("HydraSkeleton updateFinished", this._id);
         if (!this._jointNames || this._jointNames.length === 0)
             return;
         this._bones = [];

@@ -15,6 +15,7 @@ import type {
 import type { MeasureSelectionLike } from './utils/measureTargetResolvers';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
+export type RobotLoadingPhase = 'preparing-scene' | 'streaming-meshes' | 'finalizing-scene' | 'ready';
 export type UsdLoadingPhase =
     | 'checking-path'
     | 'preloading-dependencies'
@@ -31,6 +32,17 @@ export interface UsdLoadingProgress {
     progressPercent?: number | null;
     loadedCount?: number | null;
     totalCount?: number | null;
+}
+
+export type ViewerLoadingPhase = RobotLoadingPhase | UsdLoadingPhase;
+export interface ViewerDocumentLoadEvent {
+    status: 'loading' | 'ready' | 'error';
+    phase?: ViewerLoadingPhase | null;
+    message?: string | null;
+    progressPercent?: number | null;
+    loadedCount?: number | null;
+    totalCount?: number | null;
+    error?: string | null;
 }
 
 export type UsdLoadingPhaseLabels = Record<Exclude<UsdLoadingPhase, 'ready'>, string>;
@@ -60,6 +72,7 @@ export interface URDFViewerProps {
     availableFiles?: RobotFile[];
     sourceFilePath?: string;
     onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+    onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
     onJointChange?: (jointName: string, angle: number) => void;
     syncJointChangesToApp?: boolean;
     jointAngleState?: Record<string, number>;
@@ -101,6 +114,7 @@ export interface RobotModelProps {
     sourceFormat?: 'auto' | 'urdf' | 'mjcf';
     sourceFilePath?: string;
     onRobotLoaded?: (robot: any) => void;
+    onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
     showCollision?: boolean;
     showVisual?: boolean;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;

@@ -21,6 +21,8 @@ type UsdFsHelperInstance = {
   canOperateOnUsdFilesystem: () => boolean;
   clearStageFiles: (usdRoot: { clear?: () => void } | null) => void;
   hasVirtualFilePath: (filePath: string) => boolean;
+  trackVirtualFilePath?: (filePath: string) => void;
+  untrackVirtualFilePath?: (filePath: string) => void;
 };
 
 type LoadVirtualFileFn = (args: {
@@ -99,10 +101,10 @@ function resolveGetUsdModuleFn(): ((config: Record<string, any>) => Promise<UsdM
   return null;
 }
 
-function getPreferredUsdThreadCount(): number {
-  const hardwareConcurrency = Number(globalThis.navigator?.hardwareConcurrency || 4);
-  const cappedConcurrency = Math.max(1, Math.min(hardwareConcurrency, 8));
-  return Math.max(1, Math.min(cappedConcurrency, 4));
+export function resolvePreferredUsdThreadCount(preferredConcurrency?: number): number {
+  const fallbackConcurrency = Number(globalThis.navigator?.hardwareConcurrency || 4);
+  const resolvedConcurrency = preferredConcurrency ?? fallbackConcurrency;
+  return Math.max(1, Math.min(10, Math.floor(resolvedConcurrency) || 1));
 }
 
 function assertUsdRuntimeEnvironment(): void {
@@ -185,7 +187,7 @@ export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
         }>,
       ]);
 
-      const threadCount = getPreferredUsdThreadCount();
+      const threadCount = resolvePreferredUsdThreadCount();
       const USD = await getUsdModuleFn({
         mainScriptUrlOrBlob: withCacheKey('/usd/bindings/emHdBindings.js'),
         locateFile: (file: string) => withCacheKey(`/usd/bindings/${String(file || '')}`),
@@ -221,6 +223,12 @@ export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
   return usdRuntimePromise;
 }
 
+export function prewarmUsdWasmRuntimeInBackground(): void {
+  void ensureUsdWasmRuntime().catch(() => {
+    // Keep eager runtime prewarm best-effort; the foreground load path still surfaces real errors.
+  });
+}
+
 export function disposeUsdDriver(runtime: Pick<UsdWasmRuntime, 'USD'>, driver: any): void {
   if (!driver) return;
 
@@ -237,7 +245,7 @@ export function disposeUsdDriver(runtime: Pick<UsdWasmRuntime, 'USD'>, driver: a
       driver.delete();
     }
   } catch (error) {
-    console.warn('Failed to dispose USD driver.', error);
+    console.error('Failed to dispose USD driver.', error);
   }
 
   try {

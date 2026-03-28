@@ -1,7 +1,13 @@
 import * as THREE from 'three';
-import { findAssetByPath, createPlaceholderMesh } from '@/core/loaders';
+import {
+    findAssetByPath,
+    createPlaceholderMesh,
+} from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import type { MJCFMesh } from './mjcfUtils';
+import { loadMJCFMeshObject, type MJCFMeshCache } from './mjcfMeshAssetLoader';
+
+export type { MJCFMeshCache } from './mjcfMeshAssetLoader';
 
 export interface MJCFGeometryDef {
     name?: string;
@@ -10,8 +16,6 @@ export interface MJCFGeometryDef {
     mesh?: string;
     fromto?: number[];
 }
-
-export type MJCFMeshCache = Map<string, THREE.Object3D | THREE.BufferGeometry>;
 
 /**
  * Creates default matte material for MJCF geometry.
@@ -158,7 +162,7 @@ export function resolveMJCFAssetUrl(
         }
 
         if (filenameMatches.length > 1) {
-            console.warn(
+            console.error(
                 `[MJCFLoader] Ambiguous mesh filename "${filename}" (${filenameMatches.length} matches), refusing unscoped fallback.`,
             );
             return null;
@@ -225,77 +229,6 @@ function createFromToGeometry(geom: MJCFGeometryDef, type: 'cylinder' | 'capsule
     return group;
 }
 
-async function loadMeshForMJCF(
-    filePath: string,
-    assets: Record<string, string>,
-    meshCache: MJCFMeshCache,
-    sourceFileDir: string,
-): Promise<THREE.Object3D | null> {
-    const assetUrl = resolveMJCFAssetUrl(filePath, assets, sourceFileDir);
-
-    if (!assetUrl) {
-        console.warn(`[MJCFLoader] Mesh file definitely not found: ${filePath}`);
-        // Log available assets to help debugging (limited output)
-        const keys = Object.keys(assets);
-        if (keys.length > 0) {
-            console.debug(`[MJCFLoader] Available assets (${keys.length}):`, keys.slice(0, 10));
-        } else {
-            console.warn('[MJCFLoader] No assets available!');
-        }
-        return null;
-    }
-
-    const ext = filePath.split('.').pop()?.toLowerCase() || '';
-
-    try {
-        if (ext === 'stl') {
-            const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
-            const loader = new STLLoader();
-            const geometry = await new Promise<THREE.BufferGeometry>((resolve, reject) => {
-                loader.load(assetUrl, resolve, undefined, reject);
-            });
-            meshCache.set(filePath, geometry);
-            return new THREE.Mesh(geometry, createDefaultMaterial());
-
-        } else if (ext === 'dae') {
-            const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js');
-            const loader = new ColladaLoader();
-            const result = await new Promise<any>((resolve, reject) => {
-                loader.load(assetUrl, resolve, undefined, reject);
-            });
-            const scene = result.scene;
-            meshCache.set(filePath, scene);
-            return scene.clone(true);
-
-        } else if (ext === 'obj') {
-            const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
-            const loader = new OBJLoader();
-            const obj = await new Promise<THREE.Group>((resolve, reject) => {
-                loader.load(assetUrl, resolve, undefined, reject);
-            });
-            meshCache.set(filePath, obj);
-            return obj.clone(true);
-
-        } else if (ext === 'gltf' || ext === 'glb') {
-            const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-            const loader = new GLTFLoader();
-            const gltf = await new Promise<any>((resolve, reject) => {
-                loader.load(assetUrl, resolve, undefined, reject);
-            });
-            const scene = gltf.scene;
-            meshCache.set(filePath, scene);
-            return scene.clone(true);
-        }
-
-        console.warn(`[MJCFLoader] Unsupported mesh format: ${ext}`);
-        return null;
-
-    } catch (error) {
-        console.error(`[MJCFLoader] Failed to load mesh: ${filePath}`, error);
-        return null;
-    }
-}
-
 export async function createGeometryMesh(
     geom: MJCFGeometryDef,
     meshMap: Map<string, MJCFMesh>,
@@ -307,13 +240,7 @@ export async function createGeometryMesh(
     const type = geom.mesh ? 'mesh' : geom.type;
 
     if (type === 'plane') {
-        console.debug(`[MJCFLoader] Skipping non-importable plane geom "${geom.name || 'unnamed'}"`);
         return null;
-    }
-
-    // Debug logging for collision geometry creation
-    if (geom.name || (!geom.mesh && geom.size)) {
-        console.debug(`[MJCFLoader] Creating geom: type="${type}", size=[${geom.size?.join(', ') || 'none'}], name="${geom.name || 'unnamed'}"`);
     }
 
     switch (type) {
@@ -392,25 +319,21 @@ export async function createGeometryMesh(
 
             const meshDef = meshMap.get(geom.mesh);
             if (!meshDef) {
-                console.warn(`[MJCFLoader] Mesh not defined in assets: ${geom.mesh}`);
+                console.error(`[MJCFLoader] Mesh not defined in assets: ${geom.mesh}`);
                 return createPlaceholderMesh(geom.mesh);
             }
 
-            // Check cache
-            if (meshCache.has(meshDef.file)) {
-                const cached = meshCache.get(meshDef.file)!;
-                if ((cached as any).isGroup || (cached as any).isObject3D) {
-                    const cloned = (cached as THREE.Object3D).clone(true);
-                    return applyMeshAssetTransform(cloned, meshDef);
-                } else {
-                    // BufferGeometry
-                    const mesh = new THREE.Mesh(cached as THREE.BufferGeometry, createDefaultMaterial());
-                    return applyMeshAssetTransform(mesh, meshDef);
+            const assetUrl = resolveMJCFAssetUrl(meshDef.file, assets, sourceFileDir);
+            if (!assetUrl) {
+                console.error(`[MJCFLoader] Mesh file definitely not found: ${meshDef.file}`);
+                const keys = Object.keys(assets);
+                if (keys.length === 0) {
+                    console.error('[MJCFLoader] No assets available!');
                 }
+                return createPlaceholderMesh(meshDef.file);
             }
 
-            // Load mesh
-            const loadedMesh = await loadMeshForMJCF(meshDef.file, assets, meshCache, sourceFileDir);
+            const loadedMesh = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache);
             if (!loadedMesh) {
                 return createPlaceholderMesh(meshDef.file);
             }
@@ -420,7 +343,7 @@ export async function createGeometryMesh(
 
         default:
             // Unknown type - log warning and create default sphere
-            console.warn(`[MJCFLoader] Unknown geom type "${type}", defaulting to sphere`);
+            console.error(`[MJCFLoader] Unknown geom type "${type}", defaulting to sphere`);
             const defaultRadius = geom.size?.[0] || 0.05;
             const defaultGeometry = new THREE.SphereGeometry(defaultRadius, 32, 32);
             return new THREE.Mesh(defaultGeometry, createDefaultMaterial());

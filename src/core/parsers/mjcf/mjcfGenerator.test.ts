@@ -117,6 +117,48 @@ test('generated MJCF marks collision meshes as collision-only geoms', () => {
     assert.deepEqual(classifyMJCFGeom(collisionGeom), { isVisual: false, isCollision: true });
 });
 
+test('generated MJCF omits preview scene helpers by default', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'plain-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.BOX,
+                    dimensions: { x: 1, y: 1, z: 1 },
+                    color: '#808080',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {},
+    };
+
+    const generated = generateMujocoXML(robot);
+
+    assert.doesNotMatch(generated, /<light pos="0 0 10" dir="0 0 -1" diffuse="1 1 1"\/>/);
+    assert.doesNotMatch(generated, /<geom type="plane" size="5 5 0\.1" rgba="\.9 \.9 \.9 1"\/>/);
+});
+
 test('generated MJCF keeps visual meshes in the visual-only group', () => {
     installDomParser();
 
@@ -220,6 +262,62 @@ test('generated MJCF carries USD snapshot material PBR fields into material asse
     assert.match(generated, /shininess="0\.75"/);
     assert.match(generated, /reflectance="0\.6"/);
     assert.match(generated, /emission="0\.2"/);
+});
+
+test('generated MJCF skips emission when USD snapshot material disables emissive output', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'disabled-emissive-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.BOX,
+                    dimensions: { x: 1, y: 1, z: 1 },
+                    color: '#bfc4d2',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#000000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {
+            base_link: {
+                color: '#bfc4d2',
+                usdMaterial: {
+                    roughness: 0.4,
+                    emissive: [1, 1, 1],
+                    emissiveEnabled: false,
+                    emissiveIntensity: 10000,
+                },
+            },
+        },
+    };
+
+    const generated = generateMujocoXML(robot, {
+        includeSceneHelpers: false,
+        meshdir: 'meshes/',
+    });
+
+    assert.match(generated, /<material name="base_link_mat"/);
+    assert.match(generated, /shininess="0\.6"/);
+    assert.doesNotMatch(generated, /emission="/);
 });
 
 test('generated MJCF keeps the root body at the world origin', () => {

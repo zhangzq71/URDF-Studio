@@ -6,12 +6,14 @@ import React, { useRef, useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
 import { AppLayoutOverlays } from './components/AppLayoutOverlays';
+import { DocumentLoadingOverlay } from './components/DocumentLoadingOverlay';
 import { FileDropOverlay } from './components/FileDropOverlay';
 import { UnifiedViewer } from './components/UnifiedViewer';
 import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
 } from './utils/overlayLoaders';
+import { preloadSourceCodeEditorRuntime } from './utils/sourceCodeEditorLoader';
 import type { HeaderAction } from './components/header/types';
 import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
@@ -19,6 +21,7 @@ import {
   getCurrentUsdViewerSceneSnapshot,
   prepareUsdExportCacheFromSnapshot,
   type ToolMode,
+  type ViewerDocumentLoadEvent,
   type ViewerRobotDataResolution,
 } from '@/features/urdf-viewer';
 import {
@@ -29,14 +32,17 @@ import {
   useWorkspaceMutations,
   useWorkspaceSourceSync,
 } from './hooks';
+import {
+  parseEditableRobotSourceWithWorker,
+  resolveRobotFileDataWithWorker,
+} from './hooks/robotImportWorkerBridge';
 import { shouldUseEmptyRobotForUsdHydration } from './hooks/workspaceSourceSyncUtils';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
-import { parseMJCF, parseURDF } from '@/core/parsers';
+import { generateURDF } from '@/core/parsers';
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type { RobotData, RobotFile, UsdSceneSnapshot } from '@/types';
 import { translations } from '@/shared/i18n';
 import { createRobotSemanticSnapshot } from '@/shared/utils/robot/semanticSnapshot';
-import { processMJCFIncludes } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { registerPendingUsdCacheFlusher } from './utils/pendingUsdCache';
 import { shouldApplyUsdStageHydration } from './utils/usdStageHydration';
 import { buildUsdHydrationPersistencePlan } from './utils/usdHydrationPersistence';
@@ -217,6 +223,7 @@ export function AppLayout({
 
   const snapshotActionRef = useRef<(() => void) | null>(null);
   const transformPendingRef = useRef(false);
+  const editableSourceParseRequestRef = useRef(0);
   const pendingUsdAssemblyFileRef = useRef<RobotFile | null>(null);
   const pendingUsdHydrationFileRef = useRef<string | null>(null);
   const usdPersistenceBaselineRef = useRef<UsdPersistenceBaseline>(EMPTY_USD_PERSISTENCE_BASELINE);
@@ -397,16 +404,7 @@ export function AppLayout({
             : { skipHistory: true, label: 'Hydrate USD stage' }
           : undefined,
       );
-      setDocumentLoadState({
-        status: 'ready',
-        fileName: resolvedSelectedFile.name,
-        format: resolvedSelectedFile.format,
-        error: null,
-      });
       setSelection({ type: null, id: null });
-      if (resolvedSelectedFile.format === 'usd') {
-        pendingUsdHydrationFileRef.current = null;
-      }
     }
 
     const pendingUsdAssemblyFile = pendingUsdAssemblyFileRef.current;
@@ -418,14 +416,17 @@ export function AppLayout({
       const component = addComponent(pendingUsdAssemblyFile, {
         availableFiles: liveAssetsState.availableFiles,
         assets: liveAssetsState.assets,
+        allFileContents: liveAssetsState.allFileContents,
         preResolvedRobotData: result.robotData,
       });
       if (component) {
         showToast(t.addedComponent.replace('{name}', component.name), 'success');
+      } else {
+        showToast(`Failed to add assembly component: ${pendingUsdAssemblyFile.name}`, 'info');
       }
       pendingUsdAssemblyFileRef.current = null;
     }
-  }, [addComponent, selectedFile, setDocumentLoadState, setRobot, setSelection, showToast, t]);
+  }, [addComponent, selectedFile, setRobot, setSelection, showToast, t]);
 
   const {
     emptyRobot,
@@ -437,6 +438,7 @@ export function AppLayout({
     viewerSourceFilePath,
     sourceCodeContent,
     sourceCodeDocumentFlavor,
+    sourceCodeFileName,
     filePreview,
     previewRobot,
     previewFileName,
@@ -466,6 +468,65 @@ export function AppLayout({
     getUsdPreparedExportCache,
     setOriginalUrdfContent,
   });
+
+  const previewFile = previewFileName
+    ? availableFiles.find((file) => file.name === previewFileName) ?? null
+    : null;
+
+  const handleViewerDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
+    const liveAssetsState = useAssetsStore.getState();
+    const activeDocumentFile = previewFile ?? liveAssetsState.selectedFile;
+
+    if (!activeDocumentFile) {
+      return;
+    }
+
+    const keepHydrating = !previewFile
+      && activeDocumentFile.format === 'usd'
+      && liveAssetsState.documentLoadState.status === 'hydrating'
+      && liveAssetsState.documentLoadState.fileName === activeDocumentFile.name;
+
+    const nextStatus = event.status === 'ready'
+      ? 'ready'
+      : event.status === 'error'
+        ? 'error'
+        : keepHydrating
+          ? 'hydrating'
+          : 'loading';
+
+    const nextDocumentLoadState = {
+      status: nextStatus,
+      fileName: activeDocumentFile.name,
+      format: activeDocumentFile.format,
+      error: event.status === 'error'
+        ? event.error ?? t.failedToParseFormat.replace('{format}', activeDocumentFile.format.toUpperCase())
+        : null,
+      phase: event.phase ?? null,
+      message: event.message ?? null,
+      progressPercent: event.progressPercent ?? null,
+      loadedCount: event.loadedCount ?? null,
+      totalCount: event.totalCount ?? null,
+    };
+
+    const currentDocumentLoadState = liveAssetsState.documentLoadState;
+    if (
+      currentDocumentLoadState.status !== nextDocumentLoadState.status
+      || currentDocumentLoadState.fileName !== nextDocumentLoadState.fileName
+      || currentDocumentLoadState.format !== nextDocumentLoadState.format
+      || currentDocumentLoadState.error !== nextDocumentLoadState.error
+      || currentDocumentLoadState.phase !== nextDocumentLoadState.phase
+      || currentDocumentLoadState.message !== nextDocumentLoadState.message
+      || currentDocumentLoadState.progressPercent !== nextDocumentLoadState.progressPercent
+      || currentDocumentLoadState.loadedCount !== nextDocumentLoadState.loadedCount
+      || currentDocumentLoadState.totalCount !== nextDocumentLoadState.totalCount
+    ) {
+      setDocumentLoadState(nextDocumentLoadState);
+    }
+
+    if (!previewFile && (event.status === 'ready' || event.status === 'error') && activeDocumentFile.format === 'usd') {
+      pendingUsdHydrationFileRef.current = null;
+    }
+  }, [previewFile, setDocumentLoadState, t.failedToParseFormat]);
 
   const previewContextRobot = previewRobot ?? robot;
   const isPreviewingWorkspaceSource = Boolean(previewRobot);
@@ -562,12 +623,15 @@ export function AppLayout({
     const component = addComponent(file, {
       availableFiles,
       assets,
+      allFileContents,
       preResolvedRobotData,
     });
     if (component) {
       showToast(t.addedComponent.replace('{name}', component.name), 'success');
+    } else {
+      showToast(`Failed to add assembly component: ${file.name}`, 'info');
     }
-  }, [addComponent, assets, availableFiles, getUsdPreparedExportCache, onLoadRobot, showToast, t]);
+  }, [addComponent, allFileContents, assets, availableFiles, getUsdPreparedExportCache, onLoadRobot, showToast, t]);
 
   const handleCreateBridge = useCallback(() => {
     setShouldRenderBridgeModal(true);
@@ -609,22 +673,74 @@ export function AppLayout({
     t,
   });
 
+  const syncSelectedEditableFileContent = useCallback((file: RobotFile, content: string) => {
+    if (selectedFile?.name === file.name && selectedFile.content !== content) {
+      setSelectedFile({
+        ...selectedFile,
+        content,
+      });
+    }
+
+    if (availableFiles.some((entry) => entry.name === file.name && entry.content !== content)) {
+      setAvailableFiles(
+        availableFiles.map((entry) => (
+          entry.name === file.name
+            ? { ...entry, content }
+            : entry
+        )),
+      );
+    }
+
+    if (allFileContents[file.name] !== content) {
+      setAllFileContents({
+        ...allFileContents,
+        [file.name]: content,
+      });
+    }
+  }, [
+    allFileContents,
+    availableFiles,
+    selectedFile,
+    setAllFileContents,
+    setAvailableFiles,
+    setSelectedFile,
+  ]);
+
   const handleCodeChange = useCallback((newCode: string) => {
-    if (selectedFile?.format === 'usd') {
+    if (!selectedFile || selectedFile.format === 'usd') {
       return;
     }
 
-    const mjcfBasePath = selectedFile?.name
-      ? selectedFile.name.split('/').slice(0, -1).join('/')
-      : '';
-    const parsedState = selectedFile?.format === 'mjcf'
-      ? parseMJCF(processMJCFIncludes(newCode, availableFiles, mjcfBasePath))
-      : parseURDF(newCode);
-    const newState = parsedState
-      ? rewriteRobotMeshPathsForSource(parsedState, selectedFile?.name)
-      : null;
+    const sourceFile = selectedFile;
+    const requestId = ++editableSourceParseRequestRef.current;
 
-    if (newState) {
+    void parseEditableRobotSourceWithWorker({
+      file: sourceFile,
+      content: newCode,
+      availableFiles,
+      allFileContents,
+    }).then((parsedState) => {
+      if (requestId !== editableSourceParseRequestRef.current) {
+        return;
+      }
+
+      if (useAssetsStore.getState().selectedFile?.name !== sourceFile.name) {
+        return;
+      }
+
+      const newState = parsedState
+        ? rewriteRobotMeshPathsForSource(parsedState, sourceFile.name)
+        : null;
+
+      if (!newState) {
+        return;
+      }
+
+      if (sourceFile.format === 'xacro') {
+        syncSelectedEditableFileContent(sourceFile, newCode);
+        setOriginalUrdfContent(generateURDF(newState, { preserveMeshPaths: true }));
+      }
+
       const newData = {
         name: newState.name,
         links: newState.links,
@@ -633,8 +749,21 @@ export function AppLayout({
         materials: newState.materials,
       };
       setRobot(newData);
-    }
-  }, [availableFiles, selectedFile?.format, selectedFile?.name, setRobot]);
+    }).catch((error) => {
+      if (requestId !== editableSourceParseRequestRef.current) {
+        return;
+      }
+
+      console.error('[AppLayout] Failed to parse editable source in worker:', error);
+    });
+  }, [
+    allFileContents,
+    availableFiles,
+    selectedFile,
+    setOriginalUrdfContent,
+    setRobot,
+    syncSelectedEditableFileContent,
+  ]);
 
   const handleSnapshot = useCallback(() => {
     if (snapshotActionRef.current) {
@@ -668,13 +797,89 @@ export function AppLayout({
       showToast(t.usdLoadInProgress, 'info');
       return;
     }
+
     prefetchSourceCodeEditor();
+    void preloadSourceCodeEditorRuntime();
     setIsCodeViewerOpen(true);
   }, [isSelectedUsdHydrating, prefetchSourceCodeEditor, setIsCodeViewerOpen, showToast, t.usdLoadInProgress]);
 
   const handlePrefetchCodeViewer = useCallback(() => {
     prefetchSourceCodeEditor();
   }, [prefetchSourceCodeEditor]);
+
+  const handlePreviewFileWithFeedback = useCallback((file: RobotFile) => {
+    setDocumentLoadState({
+      status: 'loading',
+      fileName: file.name,
+      format: file.format,
+      error: null,
+      phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
+      message: null,
+      progressPercent: null,
+      loadedCount: null,
+      totalCount: null,
+    });
+    handlePreviewFile(file);
+
+    void resolveRobotFileDataWithWorker(file, {
+      availableFiles,
+      assets,
+      allFileContents,
+      usdRobotData: getUsdPreparedExportCache(file.name)?.robotData ?? null,
+    }).then((previewResult) => {
+      if (previewResult.status === 'ready') {
+        return;
+      }
+
+      if (previewResult.status === 'needs_hydration') {
+        setDocumentLoadState({
+          status: 'ready',
+          fileName: file.name,
+          format: file.format,
+          error: null,
+          phase: null,
+          message: t.usdPreviewRequiresOpen,
+          progressPercent: null,
+          loadedCount: null,
+          totalCount: null,
+        });
+        showToast(t.usdPreviewRequiresOpen, 'info');
+        return;
+      }
+
+      if (previewResult.reason === 'source_only_fragment') {
+        setDocumentLoadState({
+          status: 'ready',
+          fileName: file.name,
+          format: file.format,
+          error: null,
+          phase: null,
+          message: t.xacroSourceOnlyPreviewHint,
+          progressPercent: null,
+          loadedCount: null,
+          totalCount: null,
+        });
+        showToast(t.xacroSourceOnlyPreviewHint, 'info');
+        return;
+      }
+
+      setDocumentLoadState({
+        status: 'error',
+        fileName: file.name,
+        format: file.format,
+        error: t.failedToParseFormat.replace('{format}', file.format.toUpperCase()),
+      });
+      showToast(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()), 'info');
+    }).catch(() => {
+      setDocumentLoadState({
+        status: 'error',
+        fileName: file.name,
+        format: file.format,
+        error: t.failedToParseFormat.replace('{format}', file.format.toUpperCase()),
+      });
+      showToast(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()), 'info');
+    });
+  }, [allFileContents, assets, availableFiles, getUsdPreparedExportCache, handlePreviewFile, setDocumentLoadState, showToast, t]);
 
   return (
     <div
@@ -693,7 +898,7 @@ export function AppLayout({
       {/* Hidden file inputs */}
       <input
         type="file"
-        accept=".zip,.urdf,.xml,.usda,.usdc,.usdz,.usd,.xacro,.usp"
+        accept=".zip,.urdf,.sdf,.xml,.usda,.usdc,.usdz,.usd,.xacro,.usp"
         ref={importInputRef}
         className="hidden"
       />
@@ -757,7 +962,7 @@ export function AppLayout({
           onRemoveComponent={removeComponent}
           onRemoveBridge={removeBridge}
           onRenameComponent={handleRenameComponent}
-          onPreviewFile={handlePreviewFile}
+          onPreviewFile={handlePreviewFileWithFeedback}
           previewFileName={previewFileName}
           isReadOnly={isPreviewingWorkspaceSource}
         />
@@ -790,6 +995,7 @@ export function AppLayout({
             sourceFilePath={viewerSourceFilePath}
             sourceFile={selectedFile}
             onRobotDataResolved={handleRobotDataResolved}
+            onDocumentLoadEvent={handleViewerDocumentLoadEvent}
             jointAngleState={jointAngleState}
             jointMotionState={jointMotionState}
             onJointChange={handleJointChange}
@@ -804,6 +1010,9 @@ export function AppLayout({
             onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
             viewerReloadKey={viewerReloadKey}
           />
+          {(previewFileName ?? selectedFile?.name) && documentLoadState.fileName === (previewFileName ?? selectedFile?.name) ? (
+            <DocumentLoadingOverlay state={documentLoadState} lang={lang} />
+          ) : null}
         </div>
 
         <PropertyEditor
@@ -827,10 +1036,11 @@ export function AppLayout({
         isCodeViewerOpen={isCodeViewerOpen}
         sourceCodeContent={sourceCodeContent}
         sourceCodeDocumentFlavor={sourceCodeDocumentFlavor}
+        forceSourceCodeReadOnly={Boolean(previewFileName)}
         onCodeChange={handleCodeChange}
         onCloseCodeViewer={() => setIsCodeViewerOpen(false)}
         theme={theme}
-        selectedFileName={selectedFile?.name}
+        selectedFileName={sourceCodeFileName}
         robotName={robot.name}
         lang={lang}
         loadingEditorLabel={t.loadingEditor}

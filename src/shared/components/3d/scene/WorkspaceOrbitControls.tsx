@@ -1,7 +1,8 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { computeVisibleMeshBounds } from '@/shared/utils/threeBounds';
 import {
   DEFAULT_WORKSPACE_ORBIT_CLIPPING,
   syncWorkspacePerspectiveClipPlanes,
@@ -45,17 +46,34 @@ export function WorkspaceOrbitControls({
   maxDistance,
 }: WorkspaceOrbitControlsProps) {
   const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const sceneBoundsRef = useRef<THREE.Box3 | null>(null);
+
+  const refreshSceneBounds = useCallback(() => {
+    sceneBoundsRef.current = computeVisibleMeshBounds(scene, { includeGroundPlaneHelpers: true });
+  }, [scene]);
+
+  useEffect(() => {
+    refreshSceneBounds();
+  }, [refreshSceneBounds]);
 
   useFrame(() => {
     if (!controlsRef.current) {
       return;
     }
 
+    if (!sceneBoundsRef.current) {
+      refreshSceneBounds();
+    }
+
     // `zoomToCursor` can place the camera very close to one surface while the
     // orbit target remains deeper in the model. Keep the near plane
     // conservative so dense robot geometry does not clip away while zooming.
-    syncWorkspacePerspectiveClipPlanes(camera, controlsRef.current, { minDistance });
+    syncWorkspacePerspectiveClipPlanes(camera, controlsRef.current, {
+      minDistance,
+      sceneBounds: sceneBoundsRef.current,
+    });
   });
 
   return (
@@ -71,7 +89,10 @@ export function WorkspaceOrbitControls({
       zoomToCursor={zoomToCursor}
       minDistance={minDistance}
       maxDistance={maxDistance}
-      onStart={onStart}
+      onStart={() => {
+        refreshSceneBounds();
+        onStart?.();
+      }}
       onEnd={onEnd}
     />
   );

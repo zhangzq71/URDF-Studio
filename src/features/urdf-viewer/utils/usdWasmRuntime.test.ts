@@ -1,7 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ensureUsdWasmRuntime } from './usdWasmRuntime';
+import { ensureUsdWasmRuntime, resolvePreferredUsdThreadCount } from './usdWasmRuntime';
+
+test('resolvePreferredUsdThreadCount uses hardware concurrency up to 10 threads', () => {
+  const previousNavigator = globalThis.navigator;
+
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { hardwareConcurrency: 32 },
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    assert.equal(resolvePreferredUsdThreadCount(), 10);
+    assert.equal(resolvePreferredUsdThreadCount(6), 6);
+    assert.equal(resolvePreferredUsdThreadCount(1), 1);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete (globalThis as { navigator?: Navigator }).navigator;
+    } else {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: previousNavigator,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+});
 
 test('ensureUsdWasmRuntime rejects early when the page is not cross-origin isolated', async () => {
   const previousWindow = globalThis.window;

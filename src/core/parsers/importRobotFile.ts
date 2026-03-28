@@ -2,23 +2,27 @@ import { DEFAULT_LINK, GeometryType, type RobotData, type RobotFile, type RobotS
 import { parseURDF } from './urdf/parser';
 import { parseMJCF } from './mjcf/mjcfParser';
 import { resolveMJCFSource } from './mjcf/mjcfSourceResolver';
-import { parseXacro } from './xacro/xacroParser';
+import { parseSDF } from './sdf/sdfParser';
+import { processXacro } from './xacro/xacroParser';
 import { rewriteRobotMeshPathsForSource } from './meshPathUtils';
 import { syncRobotVisualColorsFromMaterials } from '@/core/robot/materials';
 
 export interface ResolveRobotFileDataOptions {
   availableFiles?: RobotFile[];
   assets?: Record<string, string>;
+  allFileContents?: Record<string, string>;
   usdRobotData?: RobotData | null;
 }
 
-export type RobotImportErrorReason = 'parse_failed' | 'unsupported_format';
+export type RobotImportErrorReason = 'parse_failed' | 'unsupported_format' | 'source_only_fragment';
 
 export type RobotImportResult =
   | {
     status: 'ready';
     format: RobotFile['format'];
     robotData: RobotData;
+    resolvedUrdfContent: string | null;
+    resolvedUrdfSourceFilePath: string | null;
   }
   | {
     status: 'needs_hydration';
@@ -109,13 +113,27 @@ function createMeshRobotData(file: RobotFile): RobotData {
   };
 }
 
-function createReadyImportResult(file: RobotFile, robotData: RobotData): RobotImportResult {
+function createReadyImportResult(
+  file: RobotFile,
+  robotData: RobotData,
+  options: {
+    sourceFilePath?: string;
+    resolvedUrdfContent?: string | null;
+  } = {},
+): RobotImportResult {
+  const {
+    sourceFilePath = file.name,
+    resolvedUrdfContent = null,
+  } = options;
+
   return {
     status: 'ready',
     format: file.format,
     robotData: syncRobotVisualColorsFromMaterials(
-      rewriteRobotMeshPathsForSource(robotData, file.name),
+      rewriteRobotMeshPathsForSource(robotData, sourceFilePath),
     ),
+    resolvedUrdfContent,
+    resolvedUrdfSourceFilePath: resolvedUrdfContent ? sourceFilePath : null,
   };
 }
 
@@ -127,6 +145,71 @@ function createErrorImportResult(file: RobotFile, reason: RobotImportErrorReason
   };
 }
 
+function normalizeFilePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
+}
+
+function getFileName(filePath: string): string {
+  const normalized = normalizeFilePath(filePath);
+  const segments = normalized.split('/');
+  return segments[segments.length - 1] || normalized;
+}
+
+export function isStandaloneXacroEntry(file: RobotFile): boolean {
+  const lowerName = getFileName(file.name).toLowerCase();
+  return lowerName === 'robot.xacro' || lowerName.endsWith('.urdf.xacro');
+}
+
+export function findStandaloneXacroTruthFile(
+  file: RobotFile,
+  availableFiles: RobotFile[],
+): RobotFile | null {
+  if (!isStandaloneXacroEntry(file)) {
+    return null;
+  }
+
+  const normalizedFileName = normalizeFilePath(file.name);
+  const pathParts = normalizedFileName.split('/');
+  if (pathParts.length < 3) {
+    return null;
+  }
+
+  const packageDir = pathParts.slice(0, -2).join('/');
+  const packageName = pathParts[pathParts.length - 3] || '';
+  const urdfDir = `${packageDir}/urdf/`;
+
+  const candidateTruthFiles = availableFiles.filter((candidate) => {
+    if (candidate.format !== 'urdf') {
+      return false;
+    }
+
+    return normalizeFilePath(candidate.name).startsWith(urdfDir);
+  });
+
+  if (candidateTruthFiles.length === 0) {
+    return null;
+  }
+
+  const preferredFileNames = [
+    `${packageName}.urdf`,
+    `${packageName.replace(/_description$/i, '')}.urdf`,
+    `${getFileName(normalizedFileName).replace(/\.xacro$/i, '')}.urdf`,
+  ];
+
+  for (const preferredFileName of preferredFileNames) {
+    const match = candidateTruthFiles.find((candidate) => getFileName(candidate.name) === preferredFileName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return candidateTruthFiles.length === 1 ? candidateTruthFiles[0] : null;
+}
+
+export function isSourceOnlyXacroDocument(urdfContent: string): boolean {
+  return /<robot\b/i.test(urdfContent) && !/<link\b/i.test(urdfContent);
+}
+
 export function resolveRobotFileData(
   file: RobotFile,
   options: ResolveRobotFileDataOptions = {},
@@ -134,6 +217,7 @@ export function resolveRobotFileData(
   const {
     availableFiles = [],
     assets = {},
+    allFileContents = {},
     usdRobotData = null,
   } = options;
 
@@ -152,6 +236,15 @@ export function resolveRobotFileData(
           ? createReadyImportResult(file, toRobotData(parsed))
           : createErrorImportResult(file, 'parse_failed');
       }
+      case 'sdf': {
+        const parsed = parseSDF(file.content, {
+          allFileContents,
+          sourcePath: file.name,
+        });
+        return parsed
+          ? createReadyImportResult(file, toRobotData(parsed))
+          : createErrorImportResult(file, 'parse_failed');
+      }
       case 'usd':
         return usdRobotData
           ? createReadyImportResult(file, usdRobotData)
@@ -160,9 +253,25 @@ export function resolveRobotFileData(
             format: 'usd',
           };
       case 'xacro': {
+        const truthFile = findStandaloneXacroTruthFile(file, availableFiles);
+        if (truthFile) {
+          const truthRobot = parseURDF(truthFile.content);
+          if (truthRobot) {
+            return createReadyImportResult(file, toRobotData(truthRobot), {
+              sourceFilePath: truthFile.name,
+              resolvedUrdfContent: truthFile.content,
+            });
+          }
+        }
+
         const fileMap: Record<string, string> = {};
         availableFiles.forEach((candidate) => {
           fileMap[candidate.name] = candidate.content;
+        });
+        Object.entries(allFileContents).forEach(([path, content]) => {
+          if (typeof content === 'string') {
+            fileMap[path] = content;
+          }
         });
         Object.entries(assets).forEach(([path, content]) => {
           if (typeof content === 'string') {
@@ -171,10 +280,18 @@ export function resolveRobotFileData(
         });
         const pathParts = file.name.split('/');
         pathParts.pop();
-        const parsed = parseXacro(file.content, {}, fileMap, pathParts.join('/'));
-        return parsed
-          ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed');
+        const urdfContent = processXacro(file.content, {}, fileMap, pathParts.join('/'));
+        const parsed = parseURDF(urdfContent);
+        if (parsed) {
+          return createReadyImportResult(file, toRobotData(parsed), {
+            resolvedUrdfContent: urdfContent,
+          });
+        }
+
+        return createErrorImportResult(
+          file,
+          isSourceOnlyXacroDocument(urdfContent) ? 'source_only_fragment' : 'parse_failed',
+        );
       }
       case 'mesh':
         return createReadyImportResult(file, createMeshRobotData(file));

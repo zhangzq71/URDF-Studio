@@ -4,6 +4,7 @@
  */
 import { useEffect } from 'react';
 import { useUIStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 import { translations } from '@/shared/i18n';
 
 interface ProvidersProps {
@@ -16,8 +17,12 @@ interface ProvidersProps {
  * - Language-based document title
  */
 export function Providers({ children }: ProvidersProps) {
-  const theme = useUIStore((state) => state.theme);
-  const lang = useUIStore((state) => state.lang);
+  const { theme, lang } = useUIStore(
+    useShallow((state) => ({
+      theme: state.theme,
+      lang: state.lang,
+    })),
+  );
   const t = translations[lang];
 
   // Apply theme class to document

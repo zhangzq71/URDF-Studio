@@ -121,3 +121,70 @@ test('HydraMesh restacks repeated Unitree-style visual shells idempotently', () 
     assert.equal(isCoplanarOffsetMaterial(resolvedInnerMaterial), false);
     assert.equal(isCoplanarOffsetMaterial(resolvedOuterMaterial), true);
 });
+
+test('HydraMesh preserves uncovered geometry ranges when geom subsets leave gaps', () => {
+    const hydraInterface = createHydraInterfaceStub();
+    hydraInterface.materials['/Looks/Base'] = {
+        _material: new MeshPhysicalMaterial({ name: 'base_shell', color: 0xf0f0f0 }),
+    };
+    hydraInterface.materials['/Looks/Subset'] = {
+        _material: new MeshPhysicalMaterial({ name: 'subset_shell', color: 0x222222 }),
+    };
+
+    const hydraMesh = new HydraMesh('Mesh', '/b2_description/FL_thigh/visuals.proto_mesh_id0', hydraInterface);
+    hydraMesh.replaceGeometry(new BoxGeometry(1, 1, 1));
+    hydraMesh.setMaterial('/Looks/Base');
+    hydraMesh.setGeomSubsetMaterial([
+        { start: 0, length: 6, materialId: '/Looks/Subset' },
+        { start: 12, length: 6, materialId: '/Looks/Subset' },
+    ]);
+
+    const assignedMaterials = Array.isArray(hydraMesh._mesh.material)
+        ? hydraMesh._mesh.material
+        : [hydraMesh._mesh.material];
+    const groupSummary = hydraMesh._geometry.groups.map((group) => ({
+        start: group.start,
+        count: group.count,
+        material: assignedMaterials[group.materialIndex]?.name ?? null,
+    }));
+
+    assert.deepEqual(groupSummary, [
+        { start: 0, count: 6, material: 'subset_shell' },
+        { start: 6, count: 6, material: 'base_shell' },
+        { start: 12, count: 6, material: 'subset_shell' },
+        { start: 18, count: 18, material: 'base_shell' },
+    ]);
+});
+
+test('HydraMesh reuses adjacent resolved subset materials for uncovered visual gaps when no mesh-level base material exists', () => {
+    const hydraInterface = createHydraInterfaceStub();
+    hydraInterface.materials['/Looks/Primary'] = {
+        _material: new MeshPhysicalMaterial({ name: 'primary_shell', color: 0xf0f0f0 }),
+    };
+    hydraInterface.materials['/Looks/Accent'] = {
+        _material: new MeshPhysicalMaterial({ name: 'accent_shell', color: 0x222222 }),
+    };
+
+    const hydraMesh = new HydraMesh('Mesh', '/b2_description/FL_thigh/visuals.proto_mesh_id0', hydraInterface);
+    hydraMesh.replaceGeometry(new BoxGeometry(1, 1, 1));
+    hydraMesh.setGeomSubsetMaterial([
+        { start: 0, length: 6, materialId: '/Looks/Primary' },
+        { start: 12, length: 6, materialId: '/Looks/Accent' },
+    ]);
+
+    const assignedMaterials = Array.isArray(hydraMesh._mesh.material)
+        ? hydraMesh._mesh.material
+        : [hydraMesh._mesh.material];
+    const groupSummary = hydraMesh._geometry.groups.map((group) => ({
+        start: group.start,
+        count: group.count,
+        material: assignedMaterials[group.materialIndex]?.name ?? null,
+    }));
+
+    assert.deepEqual(groupSummary, [
+        { start: 0, count: 6, material: 'primary_shell' },
+        { start: 6, count: 6, material: 'primary_shell' },
+        { start: 12, count: 6, material: 'accent_shell' },
+        { start: 18, count: 18, material: 'accent_shell' },
+    ]);
+});

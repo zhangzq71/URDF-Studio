@@ -36,15 +36,15 @@ export function SceneLighting({
   const shouldUseShadows = enableShadows && (cameraFollowPrimary || effectiveTheme !== 'light');
   const resolvedShadowMapSize = shadowMapSize ?? (cameraFollowPrimary ? 1024 : 768);
   const staticDirectionalScale = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.52 : 0.54)
+    ? (effectiveTheme === 'light' ? 0.76 : 0.8)
     : 1;
-  const rimDirectionalScale = cameraFollowPrimary ? 0.22 : staticDirectionalScale;
+  const rimDirectionalScale = cameraFollowPrimary ? 0.38 : staticDirectionalScale;
   const ambientIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.3 : 0.28)
-    : (effectiveTheme === 'light' ? 0.68 : LIGHTING_CONFIG.ambientIntensity);
+    ? (effectiveTheme === 'light' ? 0.4 : 0.36)
+    : (effectiveTheme === 'light' ? 0.74 : LIGHTING_CONFIG.ambientIntensity);
   const hemisphereIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.32 : 0.3)
-    : (effectiveTheme === 'light' ? 0.46 : LIGHTING_CONFIG.hemisphereIntensity);
+    ? (effectiveTheme === 'light' ? 0.46 : 0.42)
+    : (effectiveTheme === 'light' ? 0.56 : LIGHTING_CONFIG.hemisphereIntensity);
   const cameraKeyIntensity = cameraFollowPrimary
     ? (
       effectiveTheme === 'light'
@@ -83,8 +83,8 @@ export function SceneLighting({
     scene.receiveShadow = true;
     gl.toneMapping = cameraFollowPrimary ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = cameraFollowPrimary
-      ? (effectiveTheme === 'light' ? 1.08 : 1.06)
-      : (effectiveTheme === 'light' ? 1.12 : 1.16);
+      ? (effectiveTheme === 'light' ? 1.02 : 1.04)
+      : (effectiveTheme === 'light' ? 1.08 : 1.1);
     gl.outputColorSpace = THREE.SRGBColorSpace;
   }, [cameraFollowPrimary, effectiveTheme, gl, scene, shouldUseShadows]);
 
@@ -134,8 +134,9 @@ export function SceneLighting({
 
     softFrontLight.position.copy(camera.position).addScaledVector(
       cameraUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion),
-      0.9,
+      1.0,
     );
+    softFrontLight.position.addScaledVector(cameraDirectionRef.current, 0.35);
     softFrontLight.target.position.copy(cameraTargetRef.current);
     softFrontLight.target.updateMatrixWorld();
 
@@ -143,14 +144,16 @@ export function SceneLighting({
     cameraUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
 
     fillRightLight.position.copy(camera.position)
-      .addScaledVector(cameraRightRef.current, 3.0)
-      .addScaledVector(cameraUpRef.current, 1.6);
+      .addScaledVector(cameraRightRef.current, 2.8)
+      .addScaledVector(cameraUpRef.current, 1.7)
+      .addScaledVector(cameraDirectionRef.current, 0.6);
     fillRightLight.target.position.copy(cameraTargetRef.current);
     fillRightLight.target.updateMatrixWorld();
 
     fillLeftLight.position.copy(camera.position)
-      .addScaledVector(cameraRightRef.current, -3.0)
-      .addScaledVector(cameraUpRef.current, 1.6);
+      .addScaledVector(cameraRightRef.current, -2.8)
+      .addScaledVector(cameraUpRef.current, 1.7)
+      .addScaledVector(cameraDirectionRef.current, 0.6);
     fillLeftLight.target.position.copy(cameraTargetRef.current);
     fillLeftLight.target.updateMatrixWorld();
   });

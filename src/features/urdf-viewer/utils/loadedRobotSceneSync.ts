@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 
 import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial, enhanceMaterials } from './materials';
-import { markCollisionObject } from './robotLoaderPatchUtils';
 import { applyURDFMaterials, type URDFMaterialInfo } from './urdfMaterials';
 
 export interface SyncLoadedRobotSceneOptions {
@@ -15,38 +14,6 @@ export interface SyncLoadedRobotSceneOptions {
 export interface SyncLoadedRobotSceneResult {
   changed: boolean;
   linkMeshMap: Map<string, THREE.Mesh[]>;
-}
-
-function resolveParentLink(robot: THREE.Object3D, object: THREE.Object3D): THREE.Object3D | null {
-  let current: any = object;
-
-  while (current) {
-    if (current.isURDFLink || (robot as any).links?.[current.name]) {
-      return current as THREE.Object3D;
-    }
-
-    current = current.parent;
-  }
-
-  return null;
-}
-
-function isVisualMeshUnderLink(mesh: THREE.Object3D): boolean {
-  let current = mesh.parent as THREE.Object3D | null;
-
-  while (current) {
-    if ((current as any).isURDFCollider) {
-      return false;
-    }
-
-    if ((current as any).isURDFLink) {
-      return true;
-    }
-
-    current = current.parent;
-  }
-
-  return false;
 }
 
 function meshNeedsMaterialUpgrade(mesh: THREE.Mesh): boolean {
@@ -78,85 +45,114 @@ export function syncLoadedRobotScene({
 }: SyncLoadedRobotSceneOptions): SyncLoadedRobotSceneResult {
   const linkMeshMap = new Map<string, THREE.Mesh[]>();
   let changed = false;
+  const robotLinks = (robot as any).links as Record<string, THREE.Object3D> | undefined;
 
-  robot.traverse((child: any) => {
-    const parentLink = resolveParentLink(robot, child);
+  const isLinkNode = (object: THREE.Object3D): boolean => (
+    Boolean((object as any).isURDFLink || robotLinks?.[object.name])
+  );
 
-    if (child.isURDFCollider) {
-      if (child.visible !== showCollision) {
+  const processCollisionMesh = (mesh: THREE.Mesh, parentLink: THREE.Object3D | null) => {
+    if (mesh.userData?.isCollisionMesh !== true || mesh.userData?.isVisualMesh !== false) {
+      changed = true;
+    }
+
+    mesh.userData.isCollisionMesh = true;
+    mesh.userData.isCollision = true;
+    mesh.userData.isVisual = false;
+    mesh.userData.isVisualMesh = false;
+
+    if (mesh.material !== collisionBaseMaterial) {
+      changed = true;
+      mesh.material = collisionBaseMaterial;
+    }
+
+    if (mesh.renderOrder !== COLLISION_OVERLAY_RENDER_ORDER) {
+      changed = true;
+      mesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
+    }
+
+    if (parentLink) {
+      if (mesh.userData?.parentLinkName !== parentLink.name) {
         changed = true;
       }
-      child.visible = showCollision;
-
-      if (parentLink && child.userData?.parentLinkName !== parentLink.name) {
-        changed = true;
-      }
-
-      if (parentLink) {
-        markCollisionObject(child, parentLink.name);
-      } else {
-        child.traverse((collisionMesh: any) => {
-          if (!collisionMesh.isMesh) return;
-          collisionMesh.userData.isCollisionMesh = true;
-          collisionMesh.userData.isCollision = true;
-          collisionMesh.userData.isVisual = false;
-          collisionMesh.userData.isVisualMesh = false;
-          collisionMesh.material = collisionBaseMaterial;
-          collisionMesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
-        });
-      }
-
-      child.traverse((collisionMesh: any) => {
-        if (!collisionMesh.isMesh) return;
-
-        collisionMesh.userData.isCollisionMesh = true;
-        collisionMesh.userData.isCollision = true;
-        collisionMesh.userData.isVisual = false;
-        collisionMesh.userData.isVisualMesh = false;
-
-        if (parentLink) {
-          collisionMesh.userData.parentLinkName = parentLink.name;
-          pushMesh(linkMeshMap, `${parentLink.name}:collision`, collisionMesh as THREE.Mesh);
-        }
-      });
-      return;
+      mesh.userData.parentLinkName = parentLink.name;
+      pushMesh(linkMeshMap, `${parentLink.name}:collision`, mesh);
     }
+  };
 
-    if (!child.isMesh || child.userData?.isCollisionMesh) {
-      return;
-    }
-
-    if (!parentLink || !isVisualMeshUnderLink(child)) {
-      return;
-    }
-
-    const shouldUpgradeVisualMaterial = meshNeedsMaterialUpgrade(child as THREE.Mesh);
+  const processVisualMesh = (mesh: THREE.Mesh, parentLink: THREE.Object3D) => {
+    const shouldUpgradeVisualMaterial = meshNeedsMaterialUpgrade(mesh);
 
     if (sourceFormat === 'urdf' && urdfMaterials && shouldUpgradeVisualMaterial) {
-      applyURDFMaterials(child, urdfMaterials);
+      applyURDFMaterials(mesh, urdfMaterials);
     }
 
     if (shouldUpgradeVisualMaterial) {
-      enhanceMaterials(child);
+      enhanceMaterials(mesh);
       changed = true;
     }
 
     if (
-      child.userData?.parentLinkName !== parentLink.name
-      || child.userData?.isVisualMesh !== true
-      || child.userData?.isCollisionMesh === true
-      || child.visible !== showVisual
+      mesh.userData?.parentLinkName !== parentLink.name
+      || mesh.userData?.isVisualMesh !== true
+      || mesh.userData?.isCollisionMesh === true
+      || mesh.visible !== showVisual
     ) {
       changed = true;
     }
 
-    child.userData.parentLinkName = parentLink.name;
-    child.userData.isVisualMesh = true;
-    child.userData.isCollisionMesh = false;
-    child.visible = showVisual;
+    mesh.userData.parentLinkName = parentLink.name;
+    mesh.userData.isVisualMesh = true;
+    mesh.userData.isCollisionMesh = false;
+    mesh.visible = showVisual;
 
-    pushMesh(linkMeshMap, `${parentLink.name}:visual`, child as THREE.Mesh);
-  });
+    pushMesh(linkMeshMap, `${parentLink.name}:visual`, mesh);
+  };
+
+  const walkNode = (
+    node: THREE.Object3D,
+    parentLink: THREE.Object3D | null,
+    insideCollider: boolean,
+  ) => {
+    const nextParentLink = isLinkNode(node) ? node : parentLink;
+    const nodeIsCollider = Boolean((node as any).isURDFCollider);
+    const nextInsideCollider = insideCollider || nodeIsCollider;
+
+    if (nodeIsCollider) {
+      if (node.visible !== showCollision) {
+        changed = true;
+      }
+      node.visible = showCollision;
+
+      if (nextParentLink) {
+        if (node.userData?.parentLinkName !== nextParentLink.name) {
+          changed = true;
+        }
+        node.userData.parentLinkName = nextParentLink.name;
+      }
+
+      if (!showCollision) {
+        return;
+      }
+    }
+
+    if ((node as THREE.Mesh).isMesh) {
+      const mesh = node as THREE.Mesh;
+      if (nextInsideCollider) {
+        processCollisionMesh(mesh, nextParentLink);
+      } else if (nextParentLink) {
+        processVisualMesh(mesh, nextParentLink);
+      }
+    }
+
+    for (let index = 0; index < node.children.length; index += 1) {
+      walkNode(node.children[index], nextParentLink, nextInsideCollider);
+    }
+  };
+
+  for (let index = 0; index < robot.children.length; index += 1) {
+    walkNode(robot.children[index], null, false);
+  }
 
   return { changed, linkMeshMap };
 }

@@ -31,6 +31,7 @@ import {
   stripTransientJointMotionFromJoint,
   stripTransientJointMotionFromRobotData,
 } from '@/shared/utils/robot/semanticSnapshot';
+import { getVisualGeometryEntries } from '@/core/robot';
 
 const AXIS_EXPORT_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -123,6 +124,25 @@ type ProjectAssetEntry = {
   archivePath: string;
 };
 
+export type ProjectExportWarningCode =
+  | 'project_mesh_asset_missing'
+  | 'project_mesh_package_failed'
+  | 'project_asset_pack_failed'
+  | 'project_component_mesh_asset_missing'
+  | 'project_component_mesh_package_failed';
+
+export interface ProjectExportWarning {
+  code: ProjectExportWarningCode;
+  message: string;
+  context?: Record<string, string>;
+}
+
+export interface ExportProjectResult {
+  blob: Blob;
+  partial: boolean;
+  warnings: ProjectExportWarning[];
+}
+
 export interface ProjectManifest {
   version: string;
   name: string;
@@ -135,7 +155,7 @@ export interface ProjectManifest {
   };
   assets: {
     availableFiles: { name: string; format: string }[];
-    originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
+    originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | null;
     assetEntries?: ProjectAssetEntry[];
     allFileContentsFile?: string;
     motorLibraryFile?: string;
@@ -221,9 +241,11 @@ const getReferencedMeshes = (robot: RobotData): Set<string> => {
   const referencedFiles = new Set<string>();
 
   Object.values(robot.links).forEach((link: UrdfLink) => {
-    if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      referencedFiles.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === GeometryType.MESH && entry.geometry.meshPath) {
+        referencedFiles.add(entry.geometry.meshPath);
+      }
+    });
     if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referencedFiles.add(link.collision.meshPath);
     }
@@ -242,8 +264,9 @@ const writeReferencedMeshesToFolder = async (
   robot: RobotData,
   assets: Record<string, string>,
   skipMeshPaths?: ReadonlySet<string>,
-): Promise<void> => {
+): Promise<ProjectExportWarning[]> => {
   const writtenPaths = new Set<string>();
+  const warnings: ProjectExportWarning[] = [];
 
   await Promise.all(
     Array.from(getReferencedMeshes(robot)).map(async (meshPath) => {
@@ -254,17 +277,49 @@ const writeReferencedMeshesToFolder = async (
       writtenPaths.add(exportPath);
 
       const blobUrl = resolveMeshAssetUrl(meshPath, assets);
-      if (!blobUrl) return;
+      if (!blobUrl) {
+        warnings.push({
+          code: 'project_mesh_asset_missing',
+          message: `Missing mesh asset for project export: ${meshPath}`,
+          context: {
+            meshPath,
+            exportPath,
+          },
+        });
+        return;
+      }
 
       try {
         const response = await fetch(blobUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
         const blob = await response.blob();
         folder.file(exportPath, new Uint8Array(await blob.arrayBuffer()));
       } catch (error) {
-        console.warn(`[ProjectExport] Failed to package mesh "${meshPath}"`, error);
+        console.error(`[ProjectExport] Failed to package mesh "${meshPath}"`, error);
+        warnings.push({
+          code: 'project_mesh_package_failed',
+          message: `Failed to package mesh "${meshPath}": ${error instanceof Error ? error.message : String(error)}`,
+          context: {
+            meshPath,
+            exportPath,
+          },
+        });
       }
     }),
   );
+
+  return warnings;
+};
+
+const assertNoProjectExportWarnings = (warnings: ProjectExportWarning[]): void => {
+  const [firstWarning] = warnings;
+  if (!firstWarning) {
+    return;
+  }
+
+  throw new Error(firstWarning.message);
 };
 
 const stripTransientAssemblyState = (state: AssemblyState | null): AssemblyState | null => {
@@ -282,17 +337,22 @@ const stripTransientAssemblyState = (state: AssemblyState | null): AssemblyState
 const writeTextLibraryFiles = (
   zip: JSZip,
   availableFiles: RobotFile[],
+  allFileContents: Record<string, string>,
 ): void => {
   availableFiles.forEach((file) => {
-    if (file.content.length === 0) return;
-    zip.file(buildLibraryArchivePath(file.name), file.content);
+    if (file.format === 'mesh') return;
+    const content = file.content || allFileContents[file.name] || '';
+    if (content.length === 0) {
+      throw new Error(`Missing library source content for project export: ${file.name}`);
+    }
+    zip.file(buildLibraryArchivePath(file.name), content);
   });
 };
 
 const writePackedAssets = async (
   zip: JSZip,
   assetMap: Record<string, string>,
-): Promise<ProjectAssetEntry[]> => {
+): Promise<{ assetEntries: ProjectAssetEntry[]; warnings: ProjectExportWarning[] }> => {
   const urlToKeys = new Map<string, string[]>();
   Object.entries(assetMap).forEach(([key, url]) => {
     if (!url) return;
@@ -303,6 +363,7 @@ const writePackedAssets = async (
 
   const usedLogicalPaths = new Set<string>();
   const assetEntries: ProjectAssetEntry[] = [];
+  const warnings: ProjectExportWarning[] = [];
 
   await Promise.all(
     Array.from(urlToKeys.entries()).map(async ([url, keys], index) => {
@@ -312,18 +373,31 @@ const writePackedAssets = async (
         const logicalPath = ensureUniqueLogicalPath(canonicalPath, usedLogicalPaths, fallbackName);
         const archivePath = buildAssetArchivePath(logicalPath);
         const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
         const blob = await response.blob();
         zip.file(archivePath, new Uint8Array(await blob.arrayBuffer()));
         assetEntries.push({ logicalPath, archivePath });
       } catch (error) {
-        console.warn('[ProjectExport] Failed to pack asset', keys[0] ?? url, error);
+        console.error('[ProjectExport] Failed to pack asset', keys[0] ?? url, error);
+        warnings.push({
+          code: 'project_asset_pack_failed',
+          message: `Failed to pack asset "${keys[0] ?? url}": ${error instanceof Error ? error.message : String(error)}`,
+          context: {
+            key: keys[0] ?? url,
+          },
+        });
       }
     }),
   );
 
   assetEntries.sort((left, right) => left.logicalPath.localeCompare(right.logicalPath));
   zip.file(PROJECT_ASSET_MANIFEST_FILE, JSON.stringify(assetEntries, null, 2));
-  return assetEntries;
+  return {
+    assetEntries,
+    warnings,
+  };
 };
 
 export async function exportProject(params: {
@@ -339,7 +413,7 @@ export async function exportProject(params: {
     motorLibrary: Record<string, unknown>;
     selectedFileName: string | null;
     originalUrdfContent: string;
-    originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | null;
+    originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | null;
     usdPreparedExportCaches: Record<string, UsdPreparedExportCache>;
   };
   robotState: {
@@ -353,7 +427,7 @@ export async function exportProject(params: {
     activity: Array<{ id?: string; timestamp?: string; label?: string }>;
   };
   getMergedRobotData: () => RobotData | null;
-}) {
+}): Promise<ExportProjectResult> {
   const {
     name,
     uiState,
@@ -364,10 +438,14 @@ export async function exportProject(params: {
   } = params;
 
   const zip = new JSZip();
+  const warnings: ProjectExportWarning[] = [];
   const currentAssembly = stripTransientAssemblyState(assemblyState.present);
   const currentRobot = stripTransientJointMotionFromRobotData(robotState.present);
-  const assetEntries = await writePackedAssets(zip, assetsState.assets);
-  writeTextLibraryFiles(zip, assetsState.availableFiles);
+  const packedAssets = await writePackedAssets(zip, assetsState.assets);
+  warnings.push(...packedAssets.warnings);
+  assertNoProjectExportWarnings(packedAssets.warnings);
+  const assetEntries = packedAssets.assetEntries;
+  writeTextLibraryFiles(zip, assetsState.availableFiles, assetsState.allFileContents);
   await writeUsdPreparedExportCaches(zip, assetsState.usdPreparedExportCaches);
 
   zip.file(PROJECT_ALL_FILE_CONTENTS_FILE, JSON.stringify(assetsState.allFileContents, null, 2));
@@ -456,9 +534,11 @@ export async function exportProject(params: {
         componentFolder.file('README_ZH.md', COMPONENT_README_ZH);
 
         const sourceFile = assetsState.availableFiles.find((file) => file.name === component.sourceFile);
-        if (sourceFile?.content) {
-          componentFolder.file(sourceFile.name.split('/').pop() || 'model.urdf', sourceFile.content);
+        const sourceContent = sourceFile?.content || assetsState.allFileContents[component.sourceFile] || '';
+        if (!sourceFile || sourceContent.length === 0) {
+          throw new Error(`Missing component source content for project export: ${component.sourceFile}`);
         }
+        componentFolder.file(sourceFile.name.split('/').pop() || 'model.urdf', sourceContent);
 
         const referencedMeshes = getReferencedMeshes(component.robot);
         if (referencedMeshes.size === 0) return;
@@ -468,9 +548,24 @@ export async function exportProject(params: {
 
         referencedMeshes.forEach((meshPath) => {
           const blobUrl = assetsState.assets[meshPath];
-          if (!blobUrl) return;
+          if (!blobUrl) {
+            warnings.push({
+              code: 'project_component_mesh_asset_missing',
+              message: `Missing component mesh asset "${meshPath}" for ${component.id}`,
+              context: {
+                componentId: component.id,
+                meshPath,
+              },
+            });
+            return;
+          }
           const task = fetch(blobUrl)
-            .then((response) => response.blob())
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+              return response.blob();
+            })
             .then(async (blob) => {
               componentMeshesFolder.file(
                 meshPath.split('/').pop() || meshPath,
@@ -478,16 +573,25 @@ export async function exportProject(params: {
               );
             })
             .catch((error) => {
-              console.warn(
+              console.error(
                 `[ProjectExport] Failed to package component mesh "${meshPath}" for ${component.id}`,
                 error,
               );
+              warnings.push({
+                code: 'project_component_mesh_package_failed',
+                message: `Failed to package component mesh "${meshPath}" for ${component.id}: ${error instanceof Error ? error.message : String(error)}`,
+                context: {
+                  componentId: component.id,
+                  meshPath,
+                },
+              });
             });
           componentAssetTasks.push(task);
         });
       });
 
       await Promise.all(componentAssetTasks);
+      assertNoProjectExportWarnings(warnings);
     } else {
       const mainRobotFolder = componentsFolder.folder('main_robot');
       const mergedRobot = getMergedRobotData() ?? robotState.present;
@@ -500,12 +604,15 @@ export async function exportProject(params: {
         const componentMeshesFolder = mainRobotFolder.folder('meshes');
 
         if (componentMeshesFolder) {
-          await writeReferencedMeshesToFolder(componentMeshesFolder, mergedRobot, assetsState.assets);
+          const meshWarnings = await writeReferencedMeshesToFolder(componentMeshesFolder, mergedRobot, assetsState.assets);
+          warnings.push(...meshWarnings);
+          assertNoProjectExportWarnings(meshWarnings);
         }
 
         assetsState.availableFiles.forEach((file) => {
-          if (file.content.length === 0) return;
-          componentsFolder.file(file.name, file.content);
+          const content = file.content || assetsState.allFileContents[file.name] || '';
+          if (content.length === 0) return;
+          componentsFolder.file(file.name, content);
         });
       }
     }
@@ -540,12 +647,14 @@ export async function exportProject(params: {
 
       const outputMeshesFolder = outputFolder.folder('meshes');
       if (outputMeshesFolder) {
-        await writeReferencedMeshesToFolder(
+        const outputMeshWarnings = await writeReferencedMeshesToFolder(
           outputMeshesFolder,
           mergedRobot,
           assetsState.assets,
           mjcfMeshExport.convertedSourceMeshPaths,
         );
+        warnings.push(...outputMeshWarnings);
+        assertNoProjectExportWarnings(outputMeshWarnings);
         await Promise.all(
           Array.from(mjcfMeshExport.archiveFiles.entries()).map(async ([relativePath, blob]) => {
             outputMeshesFolder.file(relativePath, new Uint8Array(await blob.arrayBuffer()));
@@ -555,9 +664,15 @@ export async function exportProject(params: {
     }
   }
 
-  return zip.generateAsync({
+  const blob = await zip.generateAsync({
     type: 'blob',
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
+
+  return {
+    blob,
+    partial: false,
+    warnings: [],
+  };
 }

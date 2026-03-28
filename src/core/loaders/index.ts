@@ -8,6 +8,8 @@ export {
     findAssetByIndex,
     findAssetByPath,
     createLoadingManager,
+    resolveManagedAssetUrl,
+    postProcessColladaScene,
     createPlaceholderMesh,
     resetUnitDetection,
     createMeshLoader
@@ -21,6 +23,10 @@ export {
 export {
     applyColladaCoplanarMaterialFixups,
 } from './colladaCoplanarMaterialFixups';
+export {
+    isLikelyThinSheetGeometry,
+    prepareMeshSurfaceForSingleSidedRendering,
+} from './meshSurfaceOrientation';
 
 export type { AssetIndex } from './meshLoader';
 export { bakeColladaRootTransformInPlace } from './colladaRootTransform';

@@ -12,7 +12,7 @@ export const b64DecodeUnicode = (str: string): string => {
     }
     return new TextDecoder().decode(bytes)
   } catch (error) {
-    console.warn('Failed to decode base64 string', error)
+    console.error('Failed to decode base64 string', error)
     return ''
   }
 }

@@ -4,10 +4,18 @@
  */
 import { useCallback } from 'react';
 import JSZip from 'jszip';
+import { useShallow } from 'zustand/react/shallow';
 import type { RobotFile, RobotState } from '@/types';
 import { DEFAULT_LINK, GeometryType } from '@/types';
-import { generateURDF, generateMujocoXML, generateSkeletonXML, injectGazeboTags, parseMJCF, parseURDF, parseXacro } from '@/core/parsers';
-import { rewriteRobotMeshPathsForSource, rewriteUrdfAssetPathsForExport } from '@/core/parsers/meshPathUtils';
+import {
+  generateSDF,
+  generateSdfModelConfig,
+  generateURDF,
+  generateMujocoXML,
+  generateSkeletonXML,
+  injectGazeboTags,
+} from '@/core/parsers';
+import { rewriteUrdfAssetPathsForExport } from '@/core/parsers/meshPathUtils';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
 import {
   exportProject,
@@ -18,7 +26,9 @@ import {
 } from '@/features/file-io';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import { translations } from '@/shared/i18n';
-import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import type {
+  RobotAssetPackagingFailure,
+} from '../utils/exportArchiveAssets';
 import { addRobotAssetsToZip } from '../utils/exportArchiveAssets';
 import { resolveCurrentUsdExportMode } from '../utils/currentUsdExportMode';
 import { flushPendingHistory } from '../utils/pendingHistory';
@@ -28,6 +38,7 @@ import { buildLiveUsdRoundtripArchive } from '../utils/liveUsdRoundtripExport';
 import { convertUsdArchiveFilesToBinary } from '../utils/usdBinaryArchive';
 import { resolveUrdfSourceExportContent } from './urdfSourceExportUtils';
 import { buildGeneratedUrdfOptions } from '../utils/generatedUrdfOptions';
+import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
 
 type ExportTarget =
   | { type: 'current' }
@@ -53,6 +64,24 @@ interface HandleExportWithConfigOptions {
   onProgress?: (progress: ExportProgressState) => void;
 }
 
+export interface ExportExecutionIssue {
+  code: string;
+  message: string;
+  context?: Record<string, string>;
+}
+
+export interface ExportExecutionResult {
+  partial: boolean;
+  warnings: string[];
+  issues: ExportExecutionIssue[];
+}
+
+export interface ProjectExportExecutionResult {
+  partial: boolean;
+  warnings: string[];
+  issues: ExportExecutionIssue[];
+}
+
 interface UrdfSourceExportPreference {
   useRelativePaths?: boolean;
   preferSourceVisualMeshes?: boolean;
@@ -69,35 +98,69 @@ type ExportProgressReporter = (
 ) => void;
 
 export function useFileExport() {
-  const lang = useUIStore((state) => state.lang);
+  const { lang, appMode, sidebarTab } = useUIStore(useShallow((state) => ({
+    lang: state.lang,
+    appMode: state.appMode,
+    sidebarTab: state.sidebarTab,
+  })));
   const t = translations[lang];
-  const appMode = useUIStore((state) => state.appMode);
-  const sidebarTab = useUIStore((state) => state.sidebarTab);
-  const assets = useAssetsStore((state) => state.assets);
-  const availableFiles = useAssetsStore((state) => state.availableFiles);
-  const allFileContents = useAssetsStore((state) => state.allFileContents);
-  const motorLibrary = useAssetsStore((state) => state.motorLibrary);
-  const selectedFile = useAssetsStore((state) => state.selectedFile);
-  const documentLoadState = useAssetsStore((state) => state.documentLoadState);
-  const getUsdSceneSnapshot = useAssetsStore((state) => state.getUsdSceneSnapshot);
-  const getUsdPreparedExportCache = useAssetsStore((state) => state.getUsdPreparedExportCache);
-  const usdPreparedExportCaches = useAssetsStore((state) => state.usdPreparedExportCaches);
-  const originalUrdfContent = useAssetsStore((state) => state.originalUrdfContent);
-  const originalFileFormat = useAssetsStore((state) => state.originalFileFormat);
-  const assemblyState = useAssemblyStore((state) => state.assemblyState);
-  const assemblyHistory = useAssemblyStore((state) => state._history);
-  const assemblyActivity = useAssemblyStore((state) => state._activity);
-  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
+  const {
+    assets,
+    availableFiles,
+    allFileContents,
+    motorLibrary,
+    selectedFile,
+    documentLoadState,
+    getUsdSceneSnapshot,
+    getUsdPreparedExportCache,
+    usdPreparedExportCaches,
+    originalUrdfContent,
+    originalFileFormat,
+  } = useAssetsStore(useShallow((state) => ({
+    assets: state.assets,
+    availableFiles: state.availableFiles,
+    allFileContents: state.allFileContents,
+    motorLibrary: state.motorLibrary,
+    selectedFile: state.selectedFile,
+    documentLoadState: state.documentLoadState,
+    getUsdSceneSnapshot: state.getUsdSceneSnapshot,
+    getUsdPreparedExportCache: state.getUsdPreparedExportCache,
+    usdPreparedExportCaches: state.usdPreparedExportCaches,
+    originalUrdfContent: state.originalUrdfContent,
+    originalFileFormat: state.originalFileFormat,
+  })));
+  const {
+    assemblyState,
+    assemblyHistory,
+    assemblyActivity,
+    getMergedRobotData,
+  } = useAssemblyStore(useShallow((state) => ({
+    assemblyState: state.assemblyState,
+    assemblyHistory: state._history,
+    assemblyActivity: state._activity,
+    getMergedRobotData: state.getMergedRobotData,
+  })));
 
   // Get robot state from store
-  const robotName = useRobotStore((state) => state.name);
-  const robotLinks = useRobotStore((state) => state.links);
-  const robotJoints = useRobotStore((state) => state.joints);
-  const rootLinkId = useRobotStore((state) => state.rootLinkId);
-  const robotMaterials = useRobotStore((state) => state.materials);
-  const closedLoopConstraints = useRobotStore((state) => state.closedLoopConstraints);
-  const robotHistory = useRobotStore((state) => state._history);
-  const robotActivity = useRobotStore((state) => state._activity);
+  const {
+    robotName,
+    robotLinks,
+    robotJoints,
+    rootLinkId,
+    robotMaterials,
+    closedLoopConstraints,
+    robotHistory,
+    robotActivity,
+  } = useRobotStore(useShallow((state) => ({
+    robotName: state.name,
+    robotLinks: state.links,
+    robotJoints: state.joints,
+    rootLinkId: state.rootLinkId,
+    robotMaterials: state.materials,
+    closedLoopConstraints: state.closedLoopConstraints,
+    robotHistory: state._history,
+    robotActivity: state._activity,
+  })));
 
   const downloadBlob = useCallback((blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
@@ -183,6 +246,17 @@ export function useFileExport() {
       lastReportedAt = now;
       onProgress(nextProgress);
     };
+  }, []);
+
+  const throwForAssetPackagingFailures = useCallback((
+    failures: RobotAssetPackagingFailure[],
+  ): void => {
+    if (failures.length === 0) {
+      return;
+    }
+
+    const [firstFailure] = failures;
+    throw new Error(firstFailure?.message || 'Failed to package export assets');
   }, []);
 
   const generateZipBlobWithProgress = useCallback(async (
@@ -327,7 +401,7 @@ export function useFileExport() {
       currentFile: string;
     }) => void,
   ) => {
-    await addRobotAssetsToZip({
+    return addRobotAssetsToZip({
       robot,
       zip,
       assets,
@@ -353,48 +427,48 @@ export function useFileExport() {
     });
   }, []);
 
-  const buildLibraryRobotForExport = useCallback((file: RobotFile): RobotState | null => {
-    try {
-      if (file.format === 'urdf') {
-        const robot = parseURDF(file.content);
-        return robot ? rewriteRobotMeshPathsForSource(robot, file.name) : null;
-      }
+  const resolveLibraryRobotForExport = useCallback(async (file: RobotFile): Promise<RobotState> => {
+    const isSupportedFormat = (
+      file.format === 'urdf'
+      || file.format === 'mjcf'
+      || file.format === 'xacro'
+      || file.format === 'sdf'
+    );
 
-      if (file.format === 'mjcf') {
-        const resolved = resolveMJCFSource(file, availableFiles);
-        const robot = parseMJCF(resolved.content);
-        return robot ? rewriteRobotMeshPathsForSource(robot, file.name) : null;
-      }
-
-      if (file.format === 'xacro') {
-        const fileMap: Record<string, string> = {};
-        availableFiles.forEach((entry) => {
-          fileMap[entry.name] = entry.content;
-        });
-        Object.entries(assets).forEach(([path, content]) => {
-          if (typeof content === 'string') {
-            fileMap[path] = content;
-          }
-        });
-
-        const pathParts = file.name.split('/');
-        pathParts.pop();
-        const robot = parseXacro(file.content, {}, fileMap, pathParts.join('/'));
-        return robot ? rewriteRobotMeshPathsForSource(robot, file.name) : null;
-      }
-
-      return null;
-    } catch (error) {
-      console.error('[useFileExport] Failed to parse library file for export', error);
-      return null;
+    if (!isSupportedFormat) {
+      throw new Error(replaceTemplate(t.exportLibraryUnsupportedFormat, { format: file.format.toUpperCase() }));
     }
-  }, [assets, availableFiles]);
 
-  const buildUrdfSourceExportContent = useCallback((
+    const importResult = await resolveRobotFileDataWithWorker(file, {
+      availableFiles,
+      assets,
+      allFileContents,
+      usdRobotData: getUsdPreparedExportCache(file.name)?.robotData ?? null,
+    });
+
+    if (importResult.status !== 'ready') {
+      throw new Error(replaceTemplate(t.exportLibraryParseFailed, { file: file.name }));
+    }
+
+    return {
+      ...importResult.robotData,
+      selection: { type: null, id: null },
+    };
+  }, [
+    allFileContents,
+    assets,
+    availableFiles,
+    getUsdPreparedExportCache,
+    replaceTemplate,
+    t.exportLibraryParseFailed,
+    t.exportLibraryUnsupportedFormat,
+  ]);
+
+  const buildUrdfSourceExportContent = useCallback(async (
     target: ExportTarget,
     exportName: string,
     options: UrdfSourceExportPreference = {},
-  ): string | null => {
+  ): Promise<string | null> => {
     const {
       useRelativePaths = false,
       preferSourceVisualMeshes = true,
@@ -472,15 +546,7 @@ export function useFileExport() {
 
   const resolveExportContext = useCallback((target: ExportTarget = DEFAULT_EXPORT_TARGET): ExportContext | null => {
     if (target.type === 'library-file') {
-      const robot = buildLibraryRobotForExport(target.file);
-      if (!robot) {
-        return null;
-      }
-
-      return {
-        robot,
-        exportName: getFileBaseName(target.file.name),
-      };
+      return null;
     }
 
     if (selectedFile?.format === 'usd' && sidebarTab !== 'workspace') {
@@ -499,9 +565,7 @@ export function useFileExport() {
     };
   }, [
     buildCurrentUsdExportContext,
-    buildLibraryRobotForExport,
     buildRobotForExport,
-    getFileBaseName,
     getRobotExportName,
     selectedFile,
     sidebarTab,
@@ -534,7 +598,9 @@ export function useFileExport() {
     flushPendingHistory();
     const target = DEFAULT_EXPORT_TARGET;
     const exportContext = resolveExportContext(target);
-    if (!exportContext) return;
+    if (!exportContext) {
+      throw new Error(t.exportFailedParse);
+    }
     const { robot, exportName, extraMeshFiles } = exportContext;
     const zip = new JSZip();
     const archiveRoot = createArchiveRoot(zip, exportName);
@@ -542,7 +608,7 @@ export function useFileExport() {
 
     archiveRoot.file(
       `${exportName}.urdf`,
-      buildUrdfSourceExportContent(target, exportName)
+      (await buildUrdfSourceExportContent(target, exportName))
         ?? generateURDF(robot, generatedUrdfOptions),
     );
     await addMeshesToZip(robot, archiveRoot, undefined, extraMeshFiles);
@@ -555,12 +621,15 @@ export function useFileExport() {
     buildUrdfSourceExportContent,
     addMeshesToZip,
     downloadBlob,
+    t.exportFailedParse,
   ]);
 
   const handleExportMJCF = useCallback(async () => {
     flushPendingHistory();
     const exportContext = resolveExportContext();
-    if (!exportContext) return;
+    if (!exportContext) {
+      throw new Error(t.exportFailedParse);
+    }
     const { robot, exportName, extraMeshFiles } = exportContext;
     const mjcfMeshExport = await prepareMjcfMeshExportAssets({
       robot,
@@ -593,6 +662,7 @@ export function useFileExport() {
     addMeshesToZip,
     addArchiveFilesToZip,
     downloadBlob,
+    t.exportFailedParse,
   ]);
 
   // Export handler
@@ -600,7 +670,9 @@ export function useFileExport() {
     flushPendingHistory();
     const target = DEFAULT_EXPORT_TARGET;
     const exportContext = resolveExportContext(target);
-    if (!exportContext) return;
+    if (!exportContext) {
+      throw new Error(t.exportFailedParse);
+    }
     const { robot, exportName, extraMeshFiles } = exportContext;
     const mjcfMeshExport = await prepareMjcfMeshExportAssets({
       robot,
@@ -614,7 +686,11 @@ export function useFileExport() {
     const hardwareFolder = archiveRoot.folder("hardware");
 
     // 1. Generate Standard URDF
-    archiveRoot.file(`${exportName}.urdf`, buildUrdfSourceExportContent(target, exportName) ?? generateURDF(robot, generatedUrdfOptions));
+    archiveRoot.file(
+      `${exportName}.urdf`,
+      (await buildUrdfSourceExportContent(target, exportName))
+        ?? generateURDF(robot, generatedUrdfOptions),
+    );
 
     // 2. Generate Extended URDF (with hardware info)
     const extendedXml = generateURDF(robot, await buildGeneratedUrdfOptions(extraMeshFiles, { extended: true }));
@@ -648,13 +724,14 @@ export function useFileExport() {
     addMeshesToZip,
     addArchiveFilesToZip,
     downloadBlob,
+    t.exportFailedParse,
   ]);
 
   const handleExportWithConfig = useCallback(async (
     config: ExportDialogConfig,
     target: ExportTarget = DEFAULT_EXPORT_TARGET,
     options: HandleExportWithConfigOptions = {},
-  ) => {
+  ): Promise<ExportExecutionResult> => {
     flushPendingHistory();
     const requiresResolvedUsdContext = (
       target.type === 'current'
@@ -705,10 +782,19 @@ export function useFileExport() {
         const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
 
         downloadBlob(content, roundtripArchive.archiveFileName);
-        return;
+        return {
+          partial: false,
+          warnings: [],
+          issues: [],
+        };
       }
 
-      const exportContext = resolveExportContext(target);
+      const exportContext = target.type === 'library-file'
+        ? {
+          robot: await resolveLibraryRobotForExport(target.file),
+          exportName: getFileBaseName(target.file.name),
+        }
+        : resolveExportContext(target);
 
       if (!exportContext) {
         if (requiresResolvedUsdContext) {
@@ -811,27 +897,45 @@ export function useFileExport() {
       });
       const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
       downloadBlob(content, usdExport.archiveFileName);
-      return;
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+      };
     }
 
     const totalSteps = config.format === 'mjcf'
       ? (config.mjcf.includeMeshes ? 5 : 4)
-      : ((config.format === 'urdf' ? config.urdf.includeMeshes : config.xacro.includeMeshes) ? 4 : 3);
+      : (
+        (
+          config.format === 'urdf'
+            ? config.urdf.includeMeshes
+            : config.format === 'xacro'
+              ? config.xacro.includeMeshes
+              : config.sdf.includeMeshes
+        ) ? 4 : 3
+      );
     const reportProgress = createProgressReporter(options.onProgress, totalSteps);
     reportProgress(1, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
       stageProgress: 0.2,
       indeterminate: true,
     });
 
-    const exportContext = resolveExportContext(target);
+    const exportContext = target.type === 'library-file'
+      ? {
+        robot: await resolveLibraryRobotForExport(target.file),
+        exportName: getFileBaseName(target.file.name),
+      }
+      : resolveExportContext(target);
     if (!exportContext) {
       if (requiresResolvedUsdContext) {
         throw new Error(t.usdExportUnavailable);
       }
-      return;
+      throw new Error(t.exportFailedParse);
     }
 
     const { robot, exportName, extraMeshFiles } = exportContext;
+    const assetPackagingFailures: RobotAssetPackagingFailure[] = [];
     const zip = new JSZip();
     const archiveRoot = createArchiveRoot(zip, exportName);
     const skeletonUsesMeshes =
@@ -839,7 +943,9 @@ export function useFileExport() {
         ? config.mjcf.includeMeshes
         : config.format === 'urdf'
           ? config.urdf.includeMeshes
-          : config.xacro.includeMeshes;
+          : config.format === 'xacro'
+            ? config.xacro.includeMeshes
+            : config.sdf.includeMeshes;
 
     if (config.includeSkeleton) {
       addSkeletonToZip(robot, archiveRoot, exportName, skeletonUsesMeshes);
@@ -890,7 +996,7 @@ export function useFileExport() {
           indeterminate: true,
         });
 
-        await addMeshesToZip(
+        const meshPackagingResult = await addMeshesToZip(
           robot,
           archiveRoot,
           { compressSTL, stlQuality },
@@ -912,14 +1018,21 @@ export function useFileExport() {
             );
           },
         );
+        assetPackagingFailures.push(...meshPackagingResult.failedAssets);
         addArchiveFilesToZip(archiveRoot, 'meshes', mjcfMeshExport.archiveFiles);
       }
+      throwForAssetPackagingFailures(assetPackagingFailures);
       const content = await generateZipBlobWithProgress(
         zip,
         reportProgress,
         includeMeshes ? 5 : 4,
       );
       downloadBlob(content, `${exportName}_mjcf.zip`);
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+      };
     } else if (config.format === 'urdf') {
       const { includeExtended, includeBOM, useRelativePaths, includeMeshes, compressSTL, stlQuality } = config.urdf;
       const preferSourceVisualMeshes = config.urdf.preferSourceVisualMeshes;
@@ -931,10 +1044,10 @@ export function useFileExport() {
 
       const urdfContent = includeExtended
         ? generateURDF(robot, await buildGeneratedUrdfOptions(extraMeshFiles, { extended: true, useRelativePaths }))
-        : buildUrdfSourceExportContent(target, exportName, {
+        : (await buildUrdfSourceExportContent(target, exportName, {
           useRelativePaths,
           preferSourceVisualMeshes,
-        })
+        }))
           ?? generateURDF(robot, generatedUrdfOptions);
       archiveRoot.file(`${exportName}.urdf`, urdfContent);
       if (includeBOM) {
@@ -947,7 +1060,7 @@ export function useFileExport() {
           indeterminate: true,
         });
 
-        await addMeshesToZip(
+        const meshPackagingResult = await addMeshesToZip(
           robot,
           archiveRoot,
           { compressSTL, stlQuality },
@@ -969,13 +1082,73 @@ export function useFileExport() {
             );
           },
         );
+        assetPackagingFailures.push(...meshPackagingResult.failedAssets);
       }
+      throwForAssetPackagingFailures(assetPackagingFailures);
       const content = await generateZipBlobWithProgress(
         zip,
         reportProgress,
         includeMeshes ? 4 : 3,
       );
       downloadBlob(content, `${exportName}_urdf.zip`);
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+      };
+    } else if (config.format === 'sdf') {
+      const { includeMeshes, compressSTL, stlQuality } = config.sdf;
+      reportProgress(2, t.exportProgressGeneratingFiles, t.exportProgressGeneratingSdfDetail, {
+        stageProgress: 0.85,
+        indeterminate: false,
+      });
+
+      archiveRoot.file('model.sdf', generateSDF(robot, {
+        packageName: exportName,
+      }));
+      archiveRoot.file('model.config', generateSdfModelConfig(robot.name?.trim() || exportName));
+      if (includeMeshes) {
+        reportProgress(3, t.exportProgressCollectingAssets, t.exportProgressCollectingAssetsPreparingDetail, {
+          stageProgress: 0.04,
+          indeterminate: true,
+        });
+
+        const meshPackagingResult = await addMeshesToZip(
+          robot,
+          archiveRoot,
+          { compressSTL, stlQuality },
+          extraMeshFiles,
+          undefined,
+          ({ completed, total, currentFile }) => {
+            reportProgress(
+              3,
+              t.exportProgressCollectingAssets,
+              replaceTemplate(t.exportProgressCollectingAssetsDetail, {
+                current: completed,
+                total,
+                file: trimProgressFileLabel(currentFile) || t.exportProgressArchiveFallbackFile,
+              }),
+              {
+                stageProgress: total > 0 ? completed / total : 1,
+                indeterminate: false,
+              },
+            );
+          },
+        );
+        assetPackagingFailures.push(...meshPackagingResult.failedAssets);
+      }
+      throwForAssetPackagingFailures(assetPackagingFailures);
+      const content = await generateZipBlobWithProgress(
+        zip,
+        reportProgress,
+        includeMeshes ? 4 : 3,
+      );
+      downloadBlob(content, `${exportName}_sdf.zip`);
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+      };
     } else if (config.format === 'xacro') {
       const { rosVersion, rosHardwareInterface, useRelativePaths, includeMeshes, compressSTL, stlQuality } = config.xacro;
       const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles, { useRelativePaths });
@@ -984,7 +1157,7 @@ export function useFileExport() {
         indeterminate: false,
       });
 
-      const xacroBaseUrdf = buildUrdfSourceExportContent(target, exportName, { useRelativePaths })
+      const xacroBaseUrdf = (await buildUrdfSourceExportContent(target, exportName, { useRelativePaths }))
         ?? generateURDF(robot, generatedUrdfOptions);
       const xacroContent = injectGazeboTags(xacroBaseUrdf, robot, rosVersion, rosHardwareInterface);
       archiveRoot.file(`${exportName}.urdf.xacro`, xacroContent);
@@ -994,7 +1167,7 @@ export function useFileExport() {
           indeterminate: true,
         });
 
-        await addMeshesToZip(
+        const meshPackagingResult = await addMeshesToZip(
           robot,
           archiveRoot,
           { compressSTL, stlQuality },
@@ -1016,14 +1189,27 @@ export function useFileExport() {
             );
           },
         );
+        assetPackagingFailures.push(...meshPackagingResult.failedAssets);
       }
+      throwForAssetPackagingFailures(assetPackagingFailures);
       const content = await generateZipBlobWithProgress(
         zip,
         reportProgress,
         includeMeshes ? 4 : 3,
       );
       downloadBlob(content, `${exportName}_xacro.zip`);
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+      };
     }
+
+    return {
+      partial: false,
+      warnings: [],
+      issues: [],
+    };
   }, [
     addMeshesToZip,
     addArchiveFilesToZip,
@@ -1035,21 +1221,25 @@ export function useFileExport() {
     availableFiles,
     assets,
     allFileContents,
+    getFileBaseName,
     generateZipBlobWithProgress,
     generateBOM,
     buildUrdfSourceExportContent,
     replaceTemplate,
+    resolveLibraryRobotForExport,
     resolveExportContext,
     selectedFile,
     sidebarTab,
+    t.exportFailedParse,
     t,
+    throwForAssetPackagingFailures,
     trimProgressFileLabel,
   ]);
 
   // Export project as .usp
-  const handleExportProject = useCallback(async () => {
+  const handleExportProject = useCallback(async (): Promise<ProjectExportExecutionResult> => {
     flushPendingHistory();
-    const blob = await exportProject({
+    const result = await exportProject({
       name: robotName || assemblyState?.name || 'my_project',
       uiState: {
         appMode,
@@ -1084,7 +1274,7 @@ export function useFileExport() {
       },
       getMergedRobotData,
     });
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(result.blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `${robotName || assemblyState?.name || 'my_project'}.usp`;
@@ -1092,6 +1282,16 @@ export function useFileExport() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    return {
+      partial: result.partial,
+      warnings: result.warnings.map((warning) => warning.message),
+      issues: result.warnings.map((warning) => ({
+        code: warning.code,
+        message: warning.message,
+        context: warning.context,
+      })),
+    };
   }, [
     robotName,
     robotLinks,

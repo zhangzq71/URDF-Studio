@@ -3,9 +3,10 @@ export interface MutableValueRef<T> {
 }
 
 export interface UsdHoverPointerStateRefs {
-  hoverPointerClientRef: MutableValueRef<{ x: number; y: number } | null>;
+  hoverPointerLocalRef: MutableValueRef<{ x: number; y: number } | null>;
   hoverPointerInsideRef: MutableValueRef<boolean>;
   hoverNeedsRaycastRef: MutableValueRef<boolean>;
+  hoverPointerButtonsRef: MutableValueRef<number>;
 }
 
 export function markUsdHoverRaycastDirty(
@@ -20,10 +21,21 @@ export function setUsdHoverPointerState(
   refs: UsdHoverPointerStateRefs,
   pointer: { x: number; y: number },
   requestFrame?: () => void,
+  buttons = refs.hoverPointerButtonsRef.current,
 ): void {
-  refs.hoverPointerClientRef.current = pointer;
+  refs.hoverPointerLocalRef.current = pointer;
   refs.hoverPointerInsideRef.current = true;
   refs.hoverNeedsRaycastRef.current = true;
+  refs.hoverPointerButtonsRef.current = buttons;
+  requestFrame?.();
+}
+
+export function setUsdHoverPointerButtons(
+  hoverPointerButtonsRef: MutableValueRef<number>,
+  buttons: number,
+  requestFrame?: () => void,
+): void {
+  hoverPointerButtonsRef.current = buttons;
   requestFrame?.();
 }
 
@@ -32,7 +44,24 @@ export function clearUsdHoverPointerState(
   requestFrame?: () => void,
 ): void {
   refs.hoverPointerInsideRef.current = false;
-  refs.hoverPointerClientRef.current = null;
+  refs.hoverPointerLocalRef.current = null;
   refs.hoverNeedsRaycastRef.current = false;
+  refs.hoverPointerButtonsRef.current = 0;
   requestFrame?.();
+}
+
+export function shouldProcessUsdHoverRaycast(options: {
+  hoverPointerInside: boolean;
+  pointer: { x: number; y: number } | null;
+  hoverNeedsRaycast: boolean;
+  hoverPointerButtons: number;
+  justSelected: boolean;
+  dragging: boolean;
+}): boolean {
+  return options.hoverPointerInside
+    && Boolean(options.pointer)
+    && options.hoverNeedsRaycast
+    && options.hoverPointerButtons === 0
+    && !options.justSelected
+    && !options.dragging;
 }

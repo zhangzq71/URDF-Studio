@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { RobotState, UrdfJoint, UrdfLink, UrdfVisual } from '../../../types/index.ts';
+import { getVisualGeometryEntries } from '@/core/robot';
 import {
   buildColladaRootNormalizationHints,
   type ColladaRootNormalizationHints,
@@ -24,13 +25,17 @@ export type BuildUsdLinkSceneRootOptions = {
   onLinkVisit?: (link: UrdfLink) => void | Promise<void>;
 };
 
-const resolveLinkMaterialEntry = (robot: RobotState, link: UrdfLink): UsdMaterialMetadata => {
+const resolveLinkMaterialEntry = (
+  robot: RobotState,
+  link: UrdfLink,
+  visual: UrdfVisual,
+): UsdMaterialMetadata => {
   const entry = robot.materials?.[link.id]
     || robot.materials?.[link.name]
     || {};
 
   return {
-    color: entry.color || (entry.texture ? '#ffffff' : link.visual.color || undefined),
+    color: entry.color || (entry.texture ? '#ffffff' : visual.color || undefined),
     texture: entry.texture || undefined,
   };
 };
@@ -92,8 +97,8 @@ const createJointLocalMatrix = (joint: UrdfJoint): THREE.Matrix4 => {
   return originMatrix.multiply(motionMatrix);
 };
 
-const getPrimaryVisuals = (link: UrdfLink): UrdfVisual[] => {
-  return getGeometryType(link.visual?.type) === GEOMETRY_TYPES.NONE ? [] : [link.visual];
+const getVisuals = (link: UrdfLink): UrdfVisual[] => {
+  return getVisualGeometryEntries(link).map((entry) => entry.geometry);
 };
 
 const getCollisionVisuals = (link: UrdfLink): UrdfVisual[] => {
@@ -145,13 +150,13 @@ const buildLinkSceneNode = async (
   };
   await onLinkVisit?.(link);
 
-  const visuals = getPrimaryVisuals(link);
+  const visuals = getVisuals(link);
   if (visuals.length > 0) {
     const visualsScope = new THREE.Group();
     visualsScope.name = 'visuals';
-    const materialState = resolveLinkMaterialEntry(robot, link);
 
     for (const [index, visual] of visuals.entries()) {
+      const materialState = resolveLinkMaterialEntry(robot, link, visual);
       const visualNode = await buildUsdVisualSceneNode({
         visual,
         role: 'visual',

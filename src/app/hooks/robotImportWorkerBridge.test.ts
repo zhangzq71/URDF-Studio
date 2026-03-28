@@ -1,0 +1,439 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+
+import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
+import type { RobotFile } from '@/types';
+import type { RobotState } from '@/types';
+import type { RobotImportWorkerResponse } from '@/app/utils/robotImportWorker';
+import { createRobotImportWorkerClient } from './robotImportWorkerBridge';
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>');
+globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
+
+const demoUrdfFile: RobotFile = {
+  name: 'robots/demo/urdf/demo.urdf',
+  format: 'urdf',
+  content: '<robot name="demo"><link name="base_link" /></robot>',
+};
+
+type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
+
+class FakeWorker {
+  private readonly listeners = new Map<string, Set<WorkerEventHandler>>();
+
+  public readonly postedMessages: unknown[] = [];
+
+  public terminated = false;
+
+  addEventListener(type: string, handler: WorkerEventHandler): void {
+    const handlers = this.listeners.get(type) ?? new Set<WorkerEventHandler>();
+    handlers.add(handler);
+    this.listeners.set(type, handlers);
+  }
+
+  removeEventListener(type: string, handler: WorkerEventHandler): void {
+    this.listeners.get(type)?.delete(handler);
+  }
+
+  postMessage(message: unknown): void {
+    this.postedMessages.push(message);
+  }
+
+  terminate(): void {
+    this.terminated = true;
+  }
+
+  emitMessage(message: RobotImportWorkerResponse): void {
+    this.listeners.get('message')?.forEach((handler) => {
+      handler({ data: message });
+    });
+  }
+
+  emitError(error: Error): void {
+    this.listeners.get('error')?.forEach((handler) => {
+      handler({ error, message: error.message });
+    });
+  }
+}
+
+test('robot import worker client resolves successful worker responses', async () => {
+  const fakeWorker = new FakeWorker();
+
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const resultPromise = client.resolve(demoUrdfFile);
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as { requestId: number };
+
+  fakeWorker.emitMessage({
+    type: 'resolve-robot-file-result',
+    requestId: postedRequest.requestId,
+    result: resolveRobotFileData(demoUrdfFile),
+  });
+
+  const result = await resultPromise;
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected worker result to be ready');
+  }
+  assert.equal(result.robotData.name, 'demo');
+});
+
+test('robot import worker client rejects after worker errors and marks worker unavailable', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const firstResultPromise = client.resolve(demoUrdfFile);
+  assert.equal(fakeWorker.postedMessages.length, 1);
+
+  fakeWorker.emitError(new Error('worker exploded'));
+
+  await assert.rejects(firstResultPromise, /worker exploded/i);
+  assert.equal(fakeWorker.terminated, true);
+
+  await assert.rejects(
+    client.resolve(demoUrdfFile),
+    /worker is unavailable/i,
+  );
+  assert.equal(fakeWorker.postedMessages.length, 1);
+});
+
+test('robot import worker client resolves editable source parse responses', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const resultPromise = client.parseEditableSource({
+    file: {
+      name: demoUrdfFile.name,
+      format: demoUrdfFile.format,
+    },
+    content: demoUrdfFile.content,
+    availableFiles: [demoUrdfFile],
+  });
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as { requestId: number };
+  const resolvedRobot = resolveRobotFileData(demoUrdfFile);
+  assert.equal(resolvedRobot.status, 'ready');
+  if (resolvedRobot.status !== 'ready') {
+    assert.fail('Expected resolved robot to be ready');
+  }
+  const parsedRobot: RobotState = {
+    ...resolvedRobot.robotData,
+    selection: { type: null, id: null },
+  };
+
+  fakeWorker.emitMessage({
+    type: 'parse-editable-robot-source-result',
+    requestId: postedRequest.requestId,
+    result: parsedRobot,
+  });
+
+  const result = await resultPromise;
+
+  assert.deepEqual(result, parsedRobot);
+});
+
+test('robot import worker client rejects editable source parse errors', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const resultPromise = client.parseEditableSource({
+    file: {
+      name: demoUrdfFile.name,
+      format: demoUrdfFile.format,
+    },
+    content: '<robot name="broken">',
+    availableFiles: [demoUrdfFile],
+  });
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as { requestId: number };
+
+  fakeWorker.emitMessage({
+    type: 'parse-editable-robot-source-error',
+    requestId: postedRequest.requestId,
+    error: 'broken editable source',
+  });
+
+  await assert.rejects(resultPromise, /broken editable source/i);
+});
+
+test('robot import worker client prunes unused resolve payload fields before posting to the worker', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const usdRobotData = {
+    name: 'cached-usd',
+    links: {},
+    joints: {},
+    rootLinkId: null,
+  };
+
+  void client.resolve({
+    name: 'robots/demo/usd/demo.usd',
+    format: 'usd',
+    content: '#usda 1.0',
+  }, {
+    availableFiles: [
+      demoUrdfFile,
+      {
+        name: 'robots/demo/xacro/demo.xacro',
+        format: 'xacro',
+        content: '<robot />',
+      },
+    ],
+    assets: {
+      'robots/demo/meshes/base.stl': 'blob:mesh',
+    },
+    allFileContents: {
+      'robots/demo/materials/demo.material': 'material Demo {}',
+    },
+    usdRobotData,
+  }).catch(() => {});
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as {
+    options: {
+      availableFiles?: RobotFile[];
+      assets?: Record<string, string>;
+      allFileContents?: Record<string, string>;
+      usdRobotData?: unknown;
+    };
+  };
+
+  assert.deepEqual(postedRequest.options, {
+    usdRobotData,
+  });
+});
+
+test('robot import worker client prunes editable parse payload to source-relevant files', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  void client.parseEditableSource({
+    file: {
+      name: 'robots/demo/xacro/demo.xacro',
+      format: 'xacro',
+    },
+    content: '<robot />',
+    availableFiles: [
+      demoUrdfFile,
+      {
+        name: 'robots/demo/xacro/demo.xacro',
+        format: 'xacro',
+        content: '<robot />',
+      },
+      {
+        name: 'robots/demo/usd/demo.usd',
+        format: 'usd',
+        content: '#usda 1.0',
+      },
+      {
+        name: 'robots/demo/meshes/base.stl',
+        format: 'mesh',
+        content: 'solid demo',
+      },
+    ],
+    allFileContents: {
+      'robots/demo/xacro/macros/common.xacro': '<robot />',
+      'robots/demo/materials/demo.material': 'material Demo {}',
+    },
+  }).catch(() => {});
+
+  assert.equal(fakeWorker.postedMessages.length, 2);
+  const syncContextRequest = fakeWorker.postedMessages[0] as {
+    type: string;
+    context: {
+      availableFiles: RobotFile[];
+      allFileContents?: Record<string, string>;
+    };
+  };
+  const postedRequest = fakeWorker.postedMessages[1] as {
+    contextId?: string;
+    options: {
+      availableFiles?: RobotFile[];
+      allFileContents?: Record<string, string>;
+    };
+  };
+
+  assert.equal(syncContextRequest.type, 'sync-context');
+  assert.deepEqual(
+    syncContextRequest.context.availableFiles.map((file) => ({ name: file.name, format: file.format })),
+    [
+      { name: demoUrdfFile.name, format: demoUrdfFile.format },
+      { name: 'robots/demo/xacro/demo.xacro', format: 'xacro' },
+    ],
+  );
+  assert.deepEqual(syncContextRequest.context.allFileContents, {
+    'robots/demo/xacro/macros/common.xacro': '<robot />',
+    'robots/demo/materials/demo.material': 'material Demo {}',
+  });
+  assert.equal(typeof postedRequest.contextId, 'string');
+  assert.equal(postedRequest.options.availableFiles, undefined);
+  assert.equal(postedRequest.options.allFileContents, undefined);
+});
+
+test('robot import worker client reuses synced worker context for repeated xacro parse requests', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const requestOptions = {
+    file: {
+      name: 'robots/demo/xacro/demo.xacro',
+      format: 'xacro' as const,
+    },
+    content: '<robot />',
+    availableFiles: [
+      demoUrdfFile,
+      {
+        name: 'robots/demo/xacro/demo.xacro',
+        format: 'xacro' as const,
+        content: '<robot />',
+      },
+    ],
+    allFileContents: {
+      'robots/demo/xacro/macros/common.xacro': '<robot />',
+    },
+  };
+
+  void client.parseEditableSource(requestOptions).catch(() => {});
+  void client.parseEditableSource(requestOptions).catch(() => {});
+
+  assert.equal(fakeWorker.postedMessages.length, 3);
+  assert.equal((fakeWorker.postedMessages[0] as { type: string }).type, 'sync-context');
+  assert.equal((fakeWorker.postedMessages[1] as { type: string }).type, 'parse-editable-robot-source');
+  assert.equal((fakeWorker.postedMessages[2] as { type: string }).type, 'parse-editable-robot-source');
+});
+
+test('robot import worker client distributes concurrent resolve requests across the worker pool', async () => {
+  const fakeWorkers = [new FakeWorker(), new FakeWorker()];
+  let createdWorkerCount = 0;
+
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorkers[createdWorkerCount++] as unknown as Worker,
+    getWorkerCount: () => 2,
+  });
+
+  const firstResultPromise = client.resolve(demoUrdfFile);
+  const secondResultPromise = client.resolve(demoUrdfFile);
+
+  assert.equal(fakeWorkers[0].postedMessages.length, 1);
+  assert.equal(fakeWorkers[1].postedMessages.length, 1);
+
+  const firstRequest = fakeWorkers[0].postedMessages[0] as { requestId: number };
+  const secondRequest = fakeWorkers[1].postedMessages[0] as { requestId: number };
+
+  fakeWorkers[0].emitMessage({
+    type: 'resolve-robot-file-result',
+    requestId: firstRequest.requestId,
+    result: resolveRobotFileData(demoUrdfFile),
+  });
+  fakeWorkers[1].emitMessage({
+    type: 'resolve-robot-file-result',
+    requestId: secondRequest.requestId,
+    result: resolveRobotFileData(demoUrdfFile),
+  });
+
+  const [firstResult, secondResult] = await Promise.all([firstResultPromise, secondResultPromise]);
+
+  assert.equal(firstResult.status, 'ready');
+  assert.equal(secondResult.status, 'ready');
+});
+
+test('robot import worker client scales workers on demand up to the hardware-derived limit', async () => {
+  const previousNavigator = globalThis.navigator;
+  const fakeWorkers = Array.from({ length: 10 }, () => new FakeWorker());
+  let createdWorkerCount = 0;
+
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { hardwareConcurrency: 16 },
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    const client = createRobotImportWorkerClient({
+      canUseWorker: () => true,
+      createWorker: () => fakeWorkers[createdWorkerCount++] as unknown as Worker,
+    });
+
+    const firstResultPromise = client.resolve(demoUrdfFile);
+    assert.equal(createdWorkerCount, 1);
+
+    const secondResultPromise = client.resolve(demoUrdfFile);
+    assert.equal(createdWorkerCount, 2);
+
+    const extraResultPromises = Array.from({ length: 8 }, () => client.resolve(demoUrdfFile));
+    assert.equal(createdWorkerCount, 10);
+
+    const overflowResultPromise = client.resolve(demoUrdfFile);
+    assert.equal(createdWorkerCount, 10);
+
+    fakeWorkers.forEach((worker) => {
+      worker.postedMessages.forEach((message) => {
+        const request = message as { requestId?: number };
+        if (typeof request.requestId !== 'number') {
+          return;
+        }
+
+        worker.emitMessage({
+          type: 'resolve-robot-file-result',
+          requestId: request.requestId,
+          result: resolveRobotFileData(demoUrdfFile),
+        });
+      });
+    });
+
+    const results = await Promise.all([
+      firstResultPromise,
+      secondResultPromise,
+      ...extraResultPromises,
+      overflowResultPromise,
+    ]);
+
+    assert.equal(results.every((result) => result.status === 'ready'), true);
+  } finally {
+    if (previousNavigator === undefined) {
+      delete (globalThis as { navigator?: Navigator }).navigator;
+    } else {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: previousNavigator,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
+});

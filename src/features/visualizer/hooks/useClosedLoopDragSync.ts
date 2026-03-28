@@ -7,7 +7,7 @@ import {
   resolveClosedLoopJointOriginCompensation,
   resolveJointKey,
 } from '@/core/robot';
-import type { RobotState, UrdfJoint } from '@/types';
+import type { JointQuaternion, RobotState, UrdfJoint } from '@/types';
 
 interface UseClosedLoopDragSyncParams {
   robot: RobotState;
@@ -16,6 +16,7 @@ interface UseClosedLoopDragSyncParams {
 }
 
 const TEMP_EULER = new THREE.Euler(0, 0, 0, 'ZYX');
+const PREVIEW_EPSILON = 1e-6;
 
 function applyJointOriginToPivot(pivot: THREE.Group, origin: UrdfJoint['origin']): void {
   pivot.position.set(
@@ -45,16 +46,71 @@ function applyJointMotionToGroup(
   motionGroup.updateMatrixWorld(true);
 }
 
+function originsEqual(a: UrdfJoint['origin'], b: UrdfJoint['origin']): boolean {
+  return (
+    Math.abs((a.xyz.x ?? 0) - (b.xyz.x ?? 0)) <= PREVIEW_EPSILON &&
+    Math.abs((a.xyz.y ?? 0) - (b.xyz.y ?? 0)) <= PREVIEW_EPSILON &&
+    Math.abs((a.xyz.z ?? 0) - (b.xyz.z ?? 0)) <= PREVIEW_EPSILON &&
+    Math.abs((a.rpy.r ?? 0) - (b.rpy.r ?? 0)) <= PREVIEW_EPSILON &&
+    Math.abs((a.rpy.p ?? 0) - (b.rpy.p ?? 0)) <= PREVIEW_EPSILON &&
+    Math.abs((a.rpy.y ?? 0) - (b.rpy.y ?? 0)) <= PREVIEW_EPSILON
+  );
+}
+
+function quaternionsEqual(a: JointQuaternion, b: JointQuaternion): boolean {
+  const dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+  return Math.abs(1 - Math.abs(dot)) <= PREVIEW_EPSILON;
+}
+
 export function useClosedLoopDragSync({
   robot,
   jointPivots,
   jointMotions,
 }: UseClosedLoopDragSyncParams) {
-  const previewedJointIdsRef = useRef<string[]>([]);
-  const previewedMotionJointIdsRef = useRef<string[]>([]);
+  const previewedOriginsRef = useRef<Record<string, UrdfJoint['origin']>>({});
+  const previewedMotionAnglesRef = useRef<Record<string, number>>({});
+  const previewedMotionQuaternionsRef = useRef<Record<string, JointQuaternion>>({});
 
-  const resetConstraintPreview = useCallback(() => {
-    previewedJointIdsRef.current.forEach((jointId) => {
+  const clearOriginPreview = useCallback(() => {
+    Object.keys(previewedOriginsRef.current).forEach((jointId) => {
+      const joint = robot.joints[jointId];
+      const pivot = jointPivots[jointId];
+      if (!joint || !pivot) {
+        return;
+      }
+
+      applyJointOriginToPivot(pivot, joint.origin);
+    });
+    previewedOriginsRef.current = {};
+  }, [jointPivots, robot.joints]);
+
+  const clearMotionPreview = useCallback(() => {
+    const previewedJointIds = new Set([
+      ...Object.keys(previewedMotionAnglesRef.current),
+      ...Object.keys(previewedMotionQuaternionsRef.current),
+    ]);
+
+    previewedJointIds.forEach((jointId) => {
+      const joint = robot.joints[jointId];
+      const motionGroup = jointMotions[jointId];
+      if (!joint || !motionGroup) {
+        return;
+      }
+
+      applyJointMotionToGroup(motionGroup, joint);
+    });
+    previewedMotionAnglesRef.current = {};
+    previewedMotionQuaternionsRef.current = {};
+  }, [jointMotions, robot.joints]);
+
+  const reconcileOriginPreview = useCallback((nextOrigins: Record<string, UrdfJoint['origin']>) => {
+    const previousOrigins = previewedOriginsRef.current;
+
+    Object.keys(previousOrigins).forEach((jointId) => {
+      if (jointId in nextOrigins) {
+        return;
+      }
+
       const joint = robot.joints[jointId];
       const pivot = jointPivots[jointId];
       if (!joint || !pivot) {
@@ -64,25 +120,90 @@ export function useClosedLoopDragSync({
       applyJointOriginToPivot(pivot, joint.origin);
     });
 
-    previewedMotionJointIdsRef.current.forEach((jointId) => {
+    Object.entries(nextOrigins).forEach(([jointId, origin]) => {
+      const pivot = jointPivots[jointId];
+      if (!pivot) {
+        return;
+      }
+
+      const previousOrigin = previousOrigins[jointId];
+      if (previousOrigin && originsEqual(previousOrigin, origin)) {
+        return;
+      }
+
+      applyJointOriginToPivot(pivot, origin);
+    });
+
+    previewedOriginsRef.current = nextOrigins;
+  }, [jointPivots, robot.joints]);
+
+  const reconcileMotionPreview = useCallback((
+    nextAngles: Record<string, number>,
+    nextQuaternions: Record<string, JointQuaternion>,
+  ) => {
+    const previousAngles = previewedMotionAnglesRef.current;
+    const previousQuaternions = previewedMotionQuaternionsRef.current;
+    const jointIds = new Set([
+      ...Object.keys(previousAngles),
+      ...Object.keys(previousQuaternions),
+      ...Object.keys(nextAngles),
+      ...Object.keys(nextQuaternions),
+    ]);
+
+    jointIds.forEach((jointId) => {
       const joint = robot.joints[jointId];
       const motionGroup = jointMotions[jointId];
       if (!joint || !motionGroup) {
         return;
       }
 
-      applyJointMotionToGroup(motionGroup, joint);
+      const previousAngle = previousAngles[jointId];
+      const nextAngle = nextAngles[jointId];
+      const previousQuaternion = previousQuaternions[jointId];
+      const nextQuaternion = nextQuaternions[jointId];
+      const hasNextOverride = nextAngle !== undefined || nextQuaternion !== undefined;
+
+      if (!hasNextOverride) {
+        if (previousAngle !== undefined || previousQuaternion !== undefined) {
+          applyJointMotionToGroup(motionGroup, joint);
+        }
+        return;
+      }
+
+      const angleChanged =
+        previousAngle === undefined
+          ? nextAngle !== undefined
+          : nextAngle === undefined || Math.abs(previousAngle - nextAngle) > PREVIEW_EPSILON;
+      const quaternionChanged =
+        previousQuaternion === undefined
+          ? nextQuaternion !== undefined
+          : nextQuaternion === undefined || !quaternionsEqual(previousQuaternion, nextQuaternion);
+
+      if (!angleChanged && !quaternionChanged) {
+        return;
+      }
+
+      applyJointMotionToGroup(motionGroup, joint, {
+        angles: nextAngle === undefined ? undefined : { [jointId]: nextAngle },
+        quaternions: nextQuaternion === undefined ? undefined : { [jointId]: nextQuaternion },
+      });
     });
 
-    previewedJointIdsRef.current = [];
-    previewedMotionJointIdsRef.current = [];
-  }, [jointMotions, jointPivots, robot.joints]);
+    previewedMotionAnglesRef.current = nextAngles;
+    previewedMotionQuaternionsRef.current = nextQuaternions;
+  }, [jointMotions, robot.joints]);
+
+  const resetConstraintPreview = useCallback(() => {
+    clearOriginPreview();
+    clearMotionPreview();
+  }, [clearMotionPreview, clearOriginPreview]);
 
   const previewConstraintCompensation = useCallback((selectedObject: THREE.Group, selectionId: string | null | undefined) => {
-    resetConstraintPreview();
+    clearMotionPreview();
 
     const selectedJointId = resolveJointKey(robot.joints, selectionId);
     if (!selectedJointId) {
+      reconcileOriginPreview({});
       return;
     }
 
@@ -101,60 +222,21 @@ export function useClosedLoopDragSync({
     };
 
     const compensation = resolveClosedLoopJointOriginCompensation(robot, selectedJointId, selectedOrigin);
-
-    Object.entries(compensation).forEach(([jointId, origin]) => {
-      const pivot = jointPivots[jointId];
-      if (!pivot) {
-        return;
-      }
-
-      applyJointOriginToPivot(pivot, origin);
-      previewedJointIdsRef.current.push(jointId);
-    });
-  }, [jointPivots, resetConstraintPreview, robot]);
+    reconcileOriginPreview(compensation);
+  }, [clearMotionPreview, reconcileOriginPreview, robot]);
 
   const previewConstraintMotionCompensation = useCallback((selectionId: string | null | undefined, selectedAngle: number) => {
-    resetConstraintPreview();
+    clearOriginPreview();
 
     const selectedJointId = resolveJointKey(robot.joints, selectionId);
     if (!selectedJointId) {
+      reconcileMotionPreview({}, {});
       return;
     }
 
     const compensation = resolveClosedLoopJointMotionCompensation(robot, selectedJointId, selectedAngle);
-
-    Object.entries(compensation.angles).forEach(([jointId, angle]) => {
-      const joint = robot.joints[jointId];
-      const motionGroup = jointMotions[jointId];
-      if (!joint || !motionGroup) {
-        return;
-      }
-
-      applyJointMotionToGroup(motionGroup, joint, {
-        angles: { [jointId]: angle },
-      });
-
-      if (!previewedMotionJointIdsRef.current.includes(jointId)) {
-        previewedMotionJointIdsRef.current.push(jointId);
-      }
-    });
-
-    Object.entries(compensation.quaternions).forEach(([jointId, quaternion]) => {
-      const joint = robot.joints[jointId];
-      const motionGroup = jointMotions[jointId];
-      if (!joint || !motionGroup) {
-        return;
-      }
-
-      applyJointMotionToGroup(motionGroup, joint, {
-        quaternions: { [jointId]: quaternion },
-      });
-
-      if (!previewedMotionJointIdsRef.current.includes(jointId)) {
-        previewedMotionJointIdsRef.current.push(jointId);
-      }
-    });
-  }, [jointMotions, resetConstraintPreview, robot]);
+    reconcileMotionPreview(compensation.angles, compensation.quaternions);
+  }, [clearOriginPreview, reconcileMotionPreview, robot]);
 
   return {
     previewConstraintCompensation,

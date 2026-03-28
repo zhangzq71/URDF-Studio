@@ -47,6 +47,15 @@ export interface InertialDerivedValues {
   principalAxes: [PrincipalAxisVector, PrincipalAxisVector, PrincipalAxisVector];
 }
 
+export interface InertiaTensorComponents {
+  ixx: number;
+  ixy: number;
+  ixz: number;
+  iyy: number;
+  iyz: number;
+  izz: number;
+}
+
 export interface LinkDensityResult {
   value: number | null;
   volume: number | null;
@@ -96,6 +105,27 @@ function normalizeAxis(axis: PrincipalAxisVector): PrincipalAxisVector {
   }
 
   return normalized;
+}
+
+function normalizeAxisOrFallback(
+  axis: PrincipalAxisVector | undefined,
+  fallback: PrincipalAxisVector,
+): PrincipalAxisVector {
+  const candidate = axis ?? fallback;
+  const length = Math.hypot(candidate.x, candidate.y, candidate.z);
+  if (length <= 1e-12) {
+    return fallback;
+  }
+
+  return normalizeAxis(candidate);
+}
+
+function toFiniteMoment(value: number | undefined): number {
+  return Number.isFinite(value) ? Number(value) : 0;
+}
+
+function sanitizeTensorComponent(value: number): number {
+  return Math.abs(value) < 1e-12 ? 0 : value;
 }
 
 export function computeGeometryVolume(geometry: GeometryLike | undefined): number | null {
@@ -197,9 +227,9 @@ export function computeInertialDerivedValues(inertial: InertialLike | undefined)
     .map((value, index) => ({
       value,
       axis: normalizeAxis({
-        x: decomposition.eigenvectors[0][index],
-        y: decomposition.eigenvectors[1][index],
-        z: decomposition.eigenvectors[2][index],
+        x: decomposition.eigenvectors[index][0],
+        y: decomposition.eigenvectors[index][1],
+        z: decomposition.eigenvectors[index][2],
       }),
     }))
     .sort((left, right) => left.value - right.value);
@@ -219,5 +249,39 @@ export function computeInertialDerivedValues(inertial: InertialLike | undefined)
       principalPairs[1].axis,
       principalPairs[2].axis,
     ],
+  };
+}
+
+export function composeInertiaTensorFromDerivedValues(
+  diagonalInertia: [number, number, number],
+  principalAxes: [PrincipalAxisVector, PrincipalAxisVector, PrincipalAxisVector],
+): InertiaTensorComponents {
+  const axes = [
+    normalizeAxisOrFallback(principalAxes[0], { x: 1, y: 0, z: 0 }),
+    normalizeAxisOrFallback(principalAxes[1], { x: 0, y: 1, z: 0 }),
+    normalizeAxisOrFallback(principalAxes[2], { x: 0, y: 0, z: 1 }),
+  ] as const;
+
+  const moments = [
+    toFiniteMoment(diagonalInertia[0]),
+    toFiniteMoment(diagonalInertia[1]),
+    toFiniteMoment(diagonalInertia[2]),
+  ] as const;
+
+  const sumMomentProducts = (
+    rowAccessor: (axis: PrincipalAxisVector) => number,
+    colAccessor: (axis: PrincipalAxisVector) => number,
+  ): number => moments.reduce(
+    (sum, moment, index) => sum + moment * rowAccessor(axes[index]!) * colAccessor(axes[index]!),
+    0,
+  );
+
+  return {
+    ixx: sanitizeTensorComponent(sumMomentProducts((axis) => axis.x, (axis) => axis.x)),
+    ixy: sanitizeTensorComponent(sumMomentProducts((axis) => axis.x, (axis) => axis.y)),
+    ixz: sanitizeTensorComponent(sumMomentProducts((axis) => axis.x, (axis) => axis.z)),
+    iyy: sanitizeTensorComponent(sumMomentProducts((axis) => axis.y, (axis) => axis.y)),
+    iyz: sanitizeTensorComponent(sumMomentProducts((axis) => axis.y, (axis) => axis.z)),
+    izz: sanitizeTensorComponent(sumMomentProducts((axis) => axis.z, (axis) => axis.z)),
   };
 }

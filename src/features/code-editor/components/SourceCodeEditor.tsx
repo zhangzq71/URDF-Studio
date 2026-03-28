@@ -2,8 +2,7 @@
  * SourceCodeEditor - Unified Monaco source window for editable and read-only code.
  * Supports URDF, Xacro, MJCF, USD text, and equivalent MJCF previews in one reusable shell.
  */
-import React, { useState, useEffect, useRef, useCallback, useMemo, startTransition } from 'react';
-import Editor from '@monaco-editor/react';
+import React, { Suspense, useState, useEffect, useRef, useCallback, useMemo, startTransition } from 'react';
 import {
   AlertCircle,
   Check,
@@ -25,7 +24,6 @@ import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import type { SourceCodeDocumentFlavor } from '../types';
 import type { MonacoInstance } from '../utils/monacoLoader';
-import { ensureSourceCodeEditorLanguages } from '../utils/monacoLoader';
 import {
   getDocumentLanguageId,
   getXmlCompletionEntries,
@@ -79,6 +77,7 @@ const editorTexts = {
     saveShortcut: 'Ctrl+S',
     urdfLabel: 'URDF/XML',
     xacroLabel: 'Xacro/XML',
+    sdfLabel: 'SDF/XML',
     mjcfLabel: 'MJCF/XML',
     usdLabel: 'USD/ASCII',
     equivalentMjcfLabel: 'Equivalent MJCF',
@@ -121,6 +120,7 @@ const editorTexts = {
     saveShortcut: 'Ctrl+S',
     urdfLabel: 'URDF/XML',
     xacroLabel: 'Xacro/XML',
+    sdfLabel: 'SDF/XML',
     mjcfLabel: 'MJCF/XML',
     usdLabel: 'USD/ASCII',
     equivalentMjcfLabel: '等效 MJCF',
@@ -148,6 +148,7 @@ const HEADER_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover';
 const HEADER_PRIMARY_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors';
+const MonacoEditor = React.lazy(() => import('@monaco-editor/react').then((module) => ({ default: module.default })));
 
 const formatContentSize = (content: string): string => {
   const bytes = new Blob([content]).size;
@@ -180,6 +181,13 @@ const getDocumentMeta = (
       return {
         language,
         label: t.mjcfLabel,
+        supportsValidation: supportsDocumentValidation(documentFlavor),
+        isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
+      };
+    case 'sdf':
+      return {
+        language,
+        label: t.sdfLabel,
         supportsValidation: supportsDocumentValidation(documentFlavor),
         isXmlLike: isXmlLikeDocumentFlavor(documentFlavor),
       };
@@ -281,6 +289,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
+  const editorMountVersionRef = useRef(0);
   const [monacoInstance, setMonacoInstance] = useState<MonacoInstance | null>(null);
 
   const windowState = useDraggableWindow({
@@ -303,6 +312,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
   useEffect(() => {
     return () => {
+      editorMountVersionRef.current += 1;
       if (copyTimerRef.current) {
         clearTimeout(copyTimerRef.current);
       }
@@ -512,6 +522,42 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     return attachFindWidgetTooltipSuppression(editorRef.current);
   }, [isEditorReady]);
 
+  const handleEditorMount = useCallback((editor: unknown, monaco: MonacoInstance) => {
+    const mountVersion = editorMountVersionRef.current + 1;
+    editorMountVersionRef.current = mountVersion;
+    editorRef.current = editor;
+
+    void import('../utils/monacoLoader')
+      .then(({ ensureSourceCodeEditorLanguages }) => {
+        if (editorMountVersionRef.current !== mountVersion || editorRef.current !== editor) {
+          return;
+        }
+
+        setMonacoInstance(ensureSourceCodeEditorLanguages(monaco));
+        setIsEditorReady(true);
+        requestAnimationFrame(() => {
+          if (editorMountVersionRef.current === mountVersion && editorRef.current) {
+            editorRef.current.layout();
+          }
+        });
+      })
+      .catch((error) => {
+        console.error('Failed to initialize Monaco editor languages:', error);
+
+        if (editorMountVersionRef.current !== mountVersion || editorRef.current !== editor) {
+          return;
+        }
+
+        setMonacoInstance(monaco);
+        setIsEditorReady(true);
+        requestAnimationFrame(() => {
+          if (editorMountVersionRef.current === mountVersion && editorRef.current) {
+            editorRef.current.layout();
+          }
+        });
+      });
+  }, []);
+
   return (
     <DraggableWindow
       window={windowState}
@@ -622,41 +668,36 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           </div>
         ) : null}
 
-        <Editor
-          height="100%"
-          defaultLanguage={documentMeta.language}
-          defaultValue={code}
-          theme={theme === 'dark' ? 'vs-dark' : 'light'}
-          onMount={(editor, monaco) => {
-            editorRef.current = editor;
-            setMonacoInstance(ensureSourceCodeEditorLanguages(monaco));
-            setIsEditorReady(true);
-            requestAnimationFrame(() => {
-              editor.layout();
-            });
-          }}
-          onChange={handleEditorChange}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            fontFamily:
-              "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace",
-            fontLigatures: true,
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            automaticLayout: false,
-            tabSize: 2,
-            formatOnPaste: !isReadOnly && documentMeta.isXmlLike,
-            formatOnType: !isReadOnly && documentMeta.isXmlLike,
-            lineNumbersMinChars: 4,
-            padding: { top: 12, bottom: 14 },
-            renderLineHighlight: 'all',
-            readOnly: isReadOnly,
-            domReadOnly: isReadOnly,
-            glyphMargin: documentMeta.supportsValidation,
-            renderValidationDecorations: documentMeta.supportsValidation ? 'editable' : 'off',
-          }}
-        />
+        <Suspense fallback={null}>
+          <MonacoEditor
+            height="100%"
+            defaultLanguage={documentMeta.language}
+            defaultValue={code}
+            theme={theme === 'dark' ? 'vs-dark' : 'light'}
+            onMount={handleEditorMount}
+            onChange={handleEditorChange}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 13,
+              fontFamily:
+                "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace",
+              fontLigatures: true,
+              scrollBeyondLastLine: false,
+              wordWrap: 'on',
+              automaticLayout: false,
+              tabSize: 2,
+              formatOnPaste: !isReadOnly && documentMeta.isXmlLike,
+              formatOnType: !isReadOnly && documentMeta.isXmlLike,
+              lineNumbersMinChars: 4,
+              padding: { top: 12, bottom: 14 },
+              renderLineHighlight: 'all',
+              readOnly: isReadOnly,
+              domReadOnly: isReadOnly,
+              glyphMargin: documentMeta.supportsValidation,
+              renderValidationDecorations: documentMeta.supportsValidation ? 'editable' : 'off',
+            }}
+          />
+        </Suspense>
       </div>
 
       <div className="flex h-7 shrink-0 items-center justify-between border-t border-border-black bg-element-bg px-3 text-[10px] select-none">

@@ -5,10 +5,12 @@ import type {
   MeasureTargetResolver,
   RobotModelProps,
   ToolMode,
+  ViewerDocumentLoadEvent,
   URDFViewerProps,
   ViewerRuntimeStageBridge,
   UsdLoadingPhaseLabels,
 } from '../types';
+import { isContinuousHoverEnabledForToolMode } from '../utils/usdInteractionPolicy';
 import type { URDFViewerController } from '../hooks/useURDFViewerController';
 import type { RobotFile } from '@/types';
 import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
@@ -25,6 +27,7 @@ interface URDFViewerSceneProps {
   urdfContent: string;
   assets: Record<string, string>;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   sourceFilePath?: string;
   groundPlaneOffset?: number;
   mode: 'detail' | 'hardware';
@@ -52,6 +55,7 @@ export const URDFViewerScene = ({
   urdfContent,
   assets,
   onRobotDataResolved,
+  onDocumentLoadEvent,
   sourceFilePath,
   groundPlaneOffset,
   mode,
@@ -72,6 +76,8 @@ export const URDFViewerScene = ({
 }: URDFViewerSceneProps) => {
   const useUsdStage = sourceFile?.format === 'usd' && !isMeshPreview;
   const usdSourceFile = useUsdStage ? sourceFile : null;
+  const effectiveHoverSelectionEnabled =
+    hoverSelectionEnabled && isContinuousHoverEnabledForToolMode(toolMode);
   const measureTargetResolverRef = useRef<MeasureTargetResolver | null>(null);
   const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(() => ({
     onRobotResolved: controller.handleJointPanelRobotLoaded,
@@ -129,7 +135,7 @@ export const URDFViewerScene = ({
             justSelectedRef={controller.justSelectedRef}
             selection={selection}
             hoveredSelection={hoveredSelection}
-            hoverSelectionEnabled={hoverSelectionEnabled}
+            hoverSelectionEnabled={effectiveHoverSelectionEnabled}
             onHover={onHover}
             onMeshSelect={onMeshSelect}
             showOrigins={controller.showOrigins}
@@ -157,6 +163,7 @@ export const URDFViewerScene = ({
             loadingDetailLabel={t.loadingRobotPreparing}
             loadingPhaseLabels={usdLoadingPhaseLabels}
             onRobotDataResolved={onRobotDataResolved}
+            onDocumentLoadEvent={onDocumentLoadEvent}
             runtimeBridge={runtimeBridge}
             measureTargetResolverRef={measureTargetResolverRef}
           />
@@ -171,6 +178,7 @@ export const URDFViewerScene = ({
             sourceFormat={sourceFile?.format === 'mjcf' ? 'mjcf' : sourceFile?.format === 'urdf' ? 'urdf' : 'auto'}
             sourceFilePath={sourceFilePath}
             onRobotLoaded={controller.handleRobotLoaded}
+            onDocumentLoadEvent={onDocumentLoadEvent}
             showCollision={controller.showCollision}
             showVisual={controller.showVisual}
             onSelect={controller.handleSelectWrapper}
@@ -187,7 +195,7 @@ export const URDFViewerScene = ({
             mode={mode}
             selection={selection}
             hoveredSelection={hoveredSelection}
-            hoverSelectionEnabled={hoverSelectionEnabled}
+            hoverSelectionEnabled={effectiveHoverSelectionEnabled}
             groundPlaneOffset={groundPlaneOffset}
             highlightMode={controller.highlightMode}
             showInertia={controller.showInertia}

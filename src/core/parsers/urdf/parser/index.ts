@@ -50,11 +50,11 @@ export const parseURDF = (xmlString: string): RobotState | null => {
   const childLinkIds = new Set(Object.values(joints).map(j => j.childLinkId));
   const rootId = Object.keys(links).find(id => !childLinkIds.has(id));
 
-  if (!rootId && Object.keys(links).length > 0) {
-      console.warn("Could not determine root link. Selecting first link.");
+  if (!rootId) {
+      console.error("Invalid URDF: Could not determine a unique root link.");
+      return null;
   }
 
-  const finalRootId = rootId || Object.keys(links)[0] || '';
   const materials = Object.fromEntries(
       Object.entries(linkMaterials)
           .filter(([, material]) => Boolean(material.color || material.texture))
@@ -65,8 +65,8 @@ export const parseURDF = (xmlString: string): RobotState | null => {
       name,
       links,
       joints,
-      rootLinkId: finalRootId,
+      rootLinkId: rootId,
       ...(Object.keys(materials).length > 0 ? { materials } : {}),
-      selection: { type: 'link', id: finalRootId }
+      selection: { type: 'link', id: rootId }
   };
 };

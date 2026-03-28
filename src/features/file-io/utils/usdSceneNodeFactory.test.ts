@@ -37,6 +37,55 @@ const createUvObjBlob = () => {
   ].join('\n')], { type: 'text/plain;charset=utf-8' });
 };
 
+const createTriangleGltfBlob = () => {
+  const positions = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]);
+  const indices = new Uint16Array([0, 1, 2]);
+  const positionBytes = new Uint8Array(positions.buffer);
+  const indexBytes = new Uint8Array(indices.buffer);
+  const combined = new Uint8Array(positionBytes.byteLength + indexBytes.byteLength);
+
+  combined.set(positionBytes, 0);
+  combined.set(indexBytes, positionBytes.byteLength);
+
+  const gltf = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+    buffers: [{
+      uri: `data:application/octet-stream;base64,${Buffer.from(combined).toString('base64')}`,
+      byteLength: combined.byteLength,
+    }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: positionBytes.byteLength, target: 34962 },
+      { buffer: 0, byteOffset: positionBytes.byteLength, byteLength: indexBytes.byteLength, target: 34963 },
+    ],
+    accessors: [
+      {
+        bufferView: 0,
+        componentType: 5126,
+        count: 3,
+        type: 'VEC3',
+        min: [0, 0, 0],
+        max: [1, 1, 0],
+      },
+      {
+        bufferView: 1,
+        componentType: 5123,
+        count: 3,
+        type: 'SCALAR',
+      },
+    ],
+  };
+
+  return new Blob([JSON.stringify(gltf)], { type: 'model/gltf+json' });
+};
+
 const createMeshVisual = (meshPath: string): UrdfVisual => {
   return {
     type: GeometryType.MESH,
@@ -129,6 +178,58 @@ test('buildUsdVisualSceneNode marks collision mesh anchors and descendants for U
     assert.equal(mesh.userData.usdCollision, true);
     assert.equal(mesh.userData.usdMeshCollision, true);
   } finally {
+    tempObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  }
+});
+
+test('buildUsdVisualSceneNode reuses parsed GLTF assets per registry while returning isolated meshes', async () => {
+  const meshPath = 'meshes/reused_triangle.gltf';
+  const { registry, tempObjectUrls } = createUsdAssetRegistry({}, new Map([[meshPath, createTriangleGltfBlob()]]));
+  const originalFetch = globalThis.fetch;
+  let rootFetchCount = 0;
+
+  globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+    const request = args[0];
+    const requestUrl = typeof request === 'string'
+      ? request
+      : request instanceof URL
+        ? request.toString()
+        : request.url;
+
+    if (requestUrl === tempObjectUrls[0]) {
+      rootFetchCount += 1;
+    }
+
+    return await originalFetch(...args);
+  }) as typeof fetch;
+
+  try {
+    const firstNode = await buildUsdVisualSceneNode({
+      visual: createMeshVisual(meshPath),
+      role: 'visual',
+      registry,
+      materialState: { color: '#12ab34' },
+    });
+    const secondNode = await buildUsdVisualSceneNode({
+      visual: createMeshVisual(meshPath),
+      role: 'visual',
+      registry,
+      materialState: { color: '#12ab34' },
+    });
+
+    const firstMesh = firstNode?.getObjectByProperty('isMesh', true);
+    const secondMesh = secondNode?.getObjectByProperty('isMesh', true);
+
+    assert.ok(firstMesh instanceof THREE.Mesh);
+    assert.ok(secondMesh instanceof THREE.Mesh);
+    assert.equal(rootFetchCount, 1);
+    assert.notEqual(firstMesh.geometry, secondMesh.geometry);
+
+    const firstMaterial = Array.isArray(firstMesh.material) ? firstMesh.material[0] : firstMesh.material;
+    const secondMaterial = Array.isArray(secondMesh.material) ? secondMesh.material[0] : secondMesh.material;
+    assert.notEqual(firstMaterial, secondMaterial);
+  } finally {
+    globalThis.fetch = originalFetch;
     tempObjectUrls.forEach((url) => URL.revokeObjectURL(url));
   }
 });

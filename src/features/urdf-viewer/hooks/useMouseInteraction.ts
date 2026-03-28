@@ -5,14 +5,16 @@ import { throttle } from '@/shared/utils';
 import { THROTTLE_INTERVAL } from '../constants';
 import type { ToolMode } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
-import { collectGizmoRaycastTargets, findFirstIntersection, isGizmoObject } from '../utils/raycast';
+import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import { collectPickTargets, findPickIntersections, type PickTargetMode } from '../utils/pickTargets';
-import { resolveSelectionTarget } from '../utils/selectionTargets';
+import { resolveSelectionHit } from '../utils/selectionTargets';
 import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
 import { resolveRevoluteDragDelta } from '../utils/jointDragDelta';
 import { createJointDragStoreSync } from '../utils/jointDragStoreSync';
+import { createJointDragFrameSync } from '../utils/jointDragFrameSync';
 import { resolveActiveViewerJointKeyFromSelection } from '../utils/activeJointSelection';
 import { resolveMouseDownSelectionPlan } from '../utils/mouseDownSelectionPlan';
+import { hasEffectivelyFiniteJointLimits } from '@/shared/utils/jointUnits';
 import {
     armSelectionMissGuard,
     disarmSelectionMissGuard,
@@ -48,6 +50,7 @@ export interface UseMouseInteractionOptions {
         type: 'link' | 'joint' | null;
         id: string | null;
     };
+    rayIntersectsBoundingBox: (raycaster: THREE.Raycaster, forceRefresh?: boolean) => boolean;
     highlightGeometry: (
         linkName: string | null,
         revert: boolean,
@@ -63,6 +66,7 @@ export interface UseMouseInteractionResult {
     isDraggingJoint: React.RefObject<boolean>;
     needsRaycastRef: React.RefObject<boolean>;
     lastMousePosRef: React.RefObject<{ x: number; y: number }>;
+    pointerButtonsRef: React.RefObject<number>;
 }
 
 export function useMouseInteraction({
@@ -86,6 +90,7 @@ export function useMouseInteraction({
     isOrbitDragging,
     isSelectionLockedRef,
     selection,
+    rayIntersectsBoundingBox,
     highlightGeometry
 }: UseMouseInteractionOptions): UseMouseInteractionResult {
     const { camera, gl, scene, invalidate } = useThree();
@@ -100,6 +105,7 @@ export function useMouseInteraction({
     const lastMousePosRef = useRef({ x: 0, y: 0 });
     // OPTIMIZATION: Signal that raycast is needed on next frame
     const needsRaycastRef = useRef(false);
+    const pointerButtonsRef = useRef(0);
 
     const isDraggingJoint = useRef(false);
     const dragJoint = useRef<any>(null);
@@ -186,14 +192,20 @@ export function useMouseInteraction({
             }
         };
 
-        const updatePointerFromClient = (clientX: number, clientY: number) => {
-            const rect = gl.domElement.getBoundingClientRect();
-            mouseRef.current.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-            mouseRef.current.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+        const updatePointerFromLocalPoint = (localX: number, localY: number): boolean => {
+            const width = gl.domElement.clientWidth;
+            const height = gl.domElement.clientHeight;
+            if (width <= 0 || height <= 0) {
+                return false;
+            }
+
+            mouseRef.current.x = (localX / width) * 2 - 1;
+            mouseRef.current.y = -(localY / height) * 2 + 1;
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
+            return true;
         };
 
-        const shouldBlockOrbitForPointer = (clientX: number, clientY: number) => {
+        const shouldBlockOrbitForPointer = (localX: number, localY: number) => {
             if (!robot) return false;
 
             const isStandardSelectionMode = ['select', 'translate', 'rotate', 'universal', 'measure'].includes(toolMode || 'select');
@@ -208,7 +220,9 @@ export function useMouseInteraction({
                 return false;
             }
 
-            updatePointerFromClient(clientX, clientY);
+            if (!updatePointerFromLocalPoint(localX, localY)) {
+                return false;
+            }
 
             const gizmoTargets = getGizmoTargets();
             const nearestSceneHit = gizmoTargets.length > 0
@@ -218,11 +232,27 @@ export function useMouseInteraction({
                 return true;
             }
 
-            return findPickIntersections(robot, raycasterRef.current, getPickTargets('all'), 'all').length > 0;
+            const pickTargets = getPickTargets('all');
+            if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
+                return false;
+            }
+
+            return findPickIntersections(
+                robot,
+                raycasterRef.current,
+                pickTargets,
+                'all',
+                false,
+            ).length > 0;
         };
 
         const handlePointerDownCapture = (event: PointerEvent) => {
-            if (shouldBlockOrbitForPointer(event.clientX, event.clientY)) {
+            pointerButtonsRef.current = event.buttons;
+            if (event.button !== 0) {
+                return;
+            }
+
+            if (shouldBlockOrbitForPointer(event.offsetX, event.offsetY)) {
                 setOrbitControlsEnabled(false);
             }
         };
@@ -237,6 +267,16 @@ export function useMouseInteraction({
             // Keep drag motion fully local in Three.js, but cap React/store sync to once per frame.
             throttleChanges: throttleJointChangeDuringDrag,
             intervalMs: JOINT_DRAG_STORE_SYNC_INTERVAL,
+        });
+
+        const jointDragFrameSync = createJointDragFrameSync({
+            onFrame: (localX, localY) => {
+                if (!updatePointerFromLocalPoint(localX, localY)) {
+                    return;
+                }
+                moveRay(raycasterRef.current.ray);
+                invalidateRef.current();
+            },
         });
 
         const tempWorldQuat = new THREE.Quaternion();
@@ -259,25 +299,6 @@ export function useMouseInteraction({
 
             tempAxisWorld.copy(axis).applyQuaternion(tempWorldQuat).normalize();
             tempPivotPoint.setFromMatrixPosition(joint.matrixWorld);
-        };
-
-        /**
-         * Find the parent link of the clicked object
-         */
-        const findParentLink = (hitObject: THREE.Object3D): THREE.Object3D | null => {
-            let current: THREE.Object3D | null = hitObject;
-            while (current) {
-                if (current.userData?.isGizmo) return null;
-                if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
-                    return current;
-                }
-                if ((robot as any)?.links?.[current.name]) {
-                    return current;
-                }
-                if (current === robot) break;
-                current = current.parent;
-            }
-            return null;
         };
 
         /**
@@ -405,9 +426,7 @@ export function useMouseInteraction({
                 let newAngle = currentAngle + delta;
 
                 const limit = dragJoint.current.limit;
-                const hasFiniteLimit = limit
-                    && Number.isFinite(limit.lower)
-                    && Number.isFinite(limit.upper);
+                const hasFiniteLimit = hasEffectivelyFiniteJointLimits(limit);
                 if ((jt === 'revolute' || jt === 'prismatic') && hasFiniteLimit) {
                     newAngle = Math.max(limit.lower, Math.min(limit.upper, newAngle));
                 }
@@ -426,7 +445,9 @@ export function useMouseInteraction({
             lastMousePosRef.current.x = e.clientX;
             lastMousePosRef.current.y = e.clientY;
 
-            updatePointerFromClient(e.clientX, e.clientY);
+            if (!updatePointerFromLocalPoint(e.offsetX, e.offsetY)) {
+                return;
+            }
             needsRaycastRef.current = true;
 
             if (!isOrbitDragging?.current) {
@@ -439,11 +460,13 @@ export function useMouseInteraction({
 
         // Full handler: immediate for joint dragging, throttled for hover
         const handleMouseMove = (e: MouseEvent) => {
-            // Joint dragging needs immediate response - bypass throttle
+            pointerButtonsRef.current = e.buttons;
             if (isDraggingJoint.current && dragJoint.current) {
-                updatePointerFromClient(e.clientX, e.clientY);
-                moveRay(raycasterRef.current.ray);
-                invalidateRef.current();
+                // Drag math updates the live joint model and can become expensive on
+                // dense robots or high-frequency pointers. Coalesce raw mousemove
+                // bursts into a single animation-frame update to keep interaction
+                // responsive without starving rendering.
+                jointDragFrameSync.schedule(e.offsetX, e.offsetY);
             } else {
                 // Throttled for normal hover detection
                 throttledMouseMove(e);
@@ -453,6 +476,7 @@ export function useMouseInteraction({
         const handleMouseDown = (e: MouseEvent) => {
             if (!robot) return;
             if (isSelectionLockedRef?.current) return;
+            if (e.button !== 0) return;
 
             const isStandardSelectionMode = ['select', 'translate', 'rotate', 'universal', 'measure'].includes(toolMode || 'select');
 
@@ -469,7 +493,9 @@ export function useMouseInteraction({
             }
             const isCollisionInteraction = activeInteractionSubType === 'collision';
 
-            updatePointerFromClient(e.clientX, e.clientY);
+            if (!updatePointerFromLocalPoint(e.offsetX, e.offsetY)) {
+                return;
+            }
 
             // IMPORTANT:
             // TransformControls gizmo is not a child of `robot`.
@@ -485,58 +511,85 @@ export function useMouseInteraction({
                 return;
             }
 
+            if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
+                disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+                return;
+            }
+
             const intersections = findPickIntersections(
                 robot,
                 raycasterRef.current,
                 pickTargets,
-                activeInteractionSubType
+                activeInteractionSubType,
+                false,
             );
 
-            const hit = findFirstIntersection(intersections, (rayHit) => {
-                if (rayHit.object.userData?.isGizmo) return false;
-                let p = rayHit.object.parent;
-                while (p) {
-                    if (p.userData?.isGizmo) return false;
-                    p = p.parent;
-                }
-                if (isCollisionInteraction) {
-                    let obj: THREE.Object3D | null = rayHit.object;
-                    let isCollision = false;
-                    while (obj) {
-                        if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
-                            isCollision = true;
+            const resolvedHit = (() => {
+                for (const rayHit of intersections) {
+                    if (rayHit.object.userData?.isGizmo) continue;
+                    let p = rayHit.object.parent;
+                    let blockedByGizmo = false;
+                    while (p) {
+                        if (p.userData?.isGizmo) {
+                            blockedByGizmo = true;
                             break;
                         }
-                        obj = obj.parent;
+                        p = p.parent;
                     }
-                    return isCollision;
-                }
-                let obj: THREE.Object3D | null = rayHit.object;
-                while (obj) {
-                    if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
-                        return false;
-                    }
-                    obj = obj.parent;
-                }
-                return true;
-            });
+                    if (blockedByGizmo) continue;
 
-            if (!hit) {
+                    if (isCollisionInteraction) {
+                        let obj: THREE.Object3D | null = rayHit.object;
+                        let isCollision = false;
+                        while (obj) {
+                            if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
+                                isCollision = true;
+                                break;
+                            }
+                            obj = obj.parent;
+                        }
+                        if (!isCollision) continue;
+                    } else {
+                        let obj: THREE.Object3D | null = rayHit.object;
+                        let blockedByCollision = false;
+                        while (obj) {
+                            if (obj.userData?.isCollisionMesh || (obj as any).isURDFCollider) {
+                                blockedByCollision = true;
+                                break;
+                            }
+                            obj = obj.parent;
+                        }
+                        if (blockedByCollision) continue;
+                    }
+
+                    const selectionHit = resolveSelectionHit(robot, rayHit.object);
+                    if (selectionHit) {
+                        return {
+                            ...selectionHit,
+                            distance: rayHit.distance,
+                        };
+                    }
+                }
+
+                return null;
+            })();
+
+            if (!resolvedHit) {
                 disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
             }
 
-            if (hit) {
+            if (resolvedHit) {
                 armSelectionMissGuard(justSelectedRef);
 
-                const linkObj = findParentLink(hit.object);
-                const clickedJoint = isCollisionInteraction ? null : (linkObj ? findParentJoint(linkObj) : null);
+                const linkObj = resolvedHit.linkObject;
+                const clickedJoint = isCollisionInteraction ? null : findParentJoint(linkObj);
 
-                if (linkObj && (onSelect || onMeshSelect)) {
+                if (onSelect || onMeshSelect) {
                     const subType = activeInteractionSubType;
-                    const { objectIndex, highlightTarget } = resolveSelectionTarget(hit.object, linkObj);
+                    const { objectIndex, highlightTarget } = resolvedHit;
                     const selectionPlan = resolveMouseDownSelectionPlan({
                         mode,
-                        linkName: linkObj.name,
+                        linkName: resolvedHit.linkId,
                         jointName: clickedJoint?.name ?? null,
                         subType,
                     });
@@ -551,13 +604,13 @@ export function useMouseInteraction({
                     }
 
                     if (onMeshSelect && selectionPlan.shouldSyncMeshSelection) {
-                        onMeshSelect(linkObj.name, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
+                        onMeshSelect(resolvedHit.linkId, clickedJoint ? clickedJoint.name : null, objectIndex, subType);
                     }
 
                     if (mode === 'detail' || !((linkObj.parent as any)?.isURDFJoint)) {
                         // Clear all stale highlights first, then apply only the specific body
-                        highlightGeometry(linkObj.name, true, subType);
-                        highlightGeometry(linkObj.name, false, subType, highlightTarget);
+                        highlightGeometry(resolvedHit.linkId, true, subType);
+                        highlightGeometry(resolvedHit.linkId, false, subType, highlightTarget);
                     }
 
                     hoveredLinkRef.current = null;
@@ -577,7 +630,7 @@ export function useMouseInteraction({
                 if (joint) {
                     isDraggingJoint.current = true;
                     dragJoint.current = joint;
-                    dragHitDistance.current = hit.distance;
+                    dragHitDistance.current = resolvedHit.distance;
                     lastRayRef.current.copy(raycasterRef.current.ray);
                     setIsDraggingRef.current?.(true);
                     if (setActiveJointRef.current) {
@@ -590,7 +643,10 @@ export function useMouseInteraction({
         };
 
         const handleMouseUp = () => {
+            pointerButtonsRef.current = 0;
             if (isDraggingJoint.current) {
+                jointDragFrameSync.flush();
+
                 if (dragJoint.current) {
                     const currentAngle = dragJoint.current.angle ?? dragJoint.current.jointValue ?? 0;
                     jointDragStoreSync.commit(dragJoint.current.name, currentAngle);
@@ -616,6 +672,7 @@ export function useMouseInteraction({
         };
 
         const handleWindowBlur = () => {
+            pointerButtonsRef.current = 0;
             handleMouseUp();
         };
 
@@ -626,6 +683,7 @@ export function useMouseInteraction({
         };
 
         const handleMouseLeave = () => {
+            pointerButtonsRef.current = 0;
             mouseRef.current.set(-1000, -1000);
 
             if (hoveredLinkRef.current) {
@@ -649,13 +707,14 @@ export function useMouseInteraction({
         gl.domElement.addEventListener('mouseup', handleMouseUp);
         gl.domElement.addEventListener('mouseleave', handleMouseLeave);
         window.addEventListener('mouseup', handleMouseUp);
-            window.addEventListener('pointerup', handleMouseUp);
-            window.addEventListener('blur', handleWindowBlur);
-            document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('pointerup', handleMouseUp);
+        window.addEventListener('blur', handleWindowBlur);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
             // Cancel throttled handler to prevent pending callbacks
             throttledMouseMove.cancel();
+            jointDragFrameSync.cancel();
             jointDragStoreSync.dispose();
             clearSelectionMissGuardTimer(selectionResetTimerRef);
             setOrbitControlsEnabled(true);
@@ -672,7 +731,7 @@ export function useMouseInteraction({
             pickTargetCachesRef.current.visual.targets = [];
             pickTargetCachesRef.current.collision.targets = [];
         };
-    }, [gl, camera, scene, robot, robotVersion, orbitControls, onHover, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, selection, showCollision, showVisual, linkMeshMapRef, useExternalHover, throttleJointChangeDuringDrag]);
+    }, [gl, camera, scene, robot, robotVersion, orbitControls, onHover, onSelect, onMeshSelect, highlightGeometry, highlightMode, toolMode, mode, justSelectedRef, isOrbitDragging, isSelectionLockedRef, selection, showCollision, showVisual, linkMeshMapRef, useExternalHover, throttleJointChangeDuringDrag, rayIntersectsBoundingBox]);
 
     return {
         mouseRef,
@@ -680,6 +739,7 @@ export function useMouseInteraction({
         hoveredLinkRef,
         isDraggingJoint,
         needsRaycastRef,
-        lastMousePosRef
+        lastMousePosRef,
+        pointerButtonsRef,
     };
 }

@@ -1,15 +1,24 @@
 import JSZip from 'jszip';
-import { parseMJCF, parseURDF, generateMujocoXML, generateURDF } from '@/core/parsers';
+import {
+  parseMJCF,
+  parseSDF,
+  parseURDF,
+  generateMujocoXML,
+  generateSDF,
+  generateSdfModelConfig,
+  generateURDF,
+} from '@/core/parsers';
 import {
   normalizeMeshPathForExport,
   resolveMeshAssetUrl,
   rewriteUrdfAssetPathsForExport,
 } from '@/core/parsers/meshPathUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 import { GeometryType, type RobotFile, type RobotState } from '@/types';
 import { downloadBlob } from './assetUtils';
 import { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
 
-export type LibraryExportFormat = 'urdf' | 'mjcf';
+export type LibraryExportFormat = 'urdf' | 'mjcf' | 'sdf';
 
 export interface ExportLibraryRobotFileOptions {
   file: RobotFile;
@@ -31,6 +40,8 @@ function toRobotState(file: RobotFile): RobotState | null {
         return parseURDF(file.content);
       case 'mjcf':
         return parseMJCF(file.content);
+      case 'sdf':
+        return parseSDF(file.content, { sourcePath: file.name });
       default:
         return null;
     }
@@ -54,9 +65,11 @@ function createArchiveRoot(zip: JSZip, baseName: string): JSZip {
 function collectReferencedMeshes(robot: RobotState): string[] {
   const referenced = new Set<string>();
   Object.values(robot.links).forEach((link) => {
-    if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      referenced.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === GeometryType.MESH && entry.geometry.meshPath) {
+        referenced.add(entry.geometry.meshPath);
+      }
+    });
     if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referenced.add(link.collision.meshPath);
     }
@@ -113,7 +126,7 @@ export async function exportLibraryRobotFile(
   const { file, targetFormat, assets } = options;
   const robotState = toRobotState(file);
 
-  if (file.format !== 'urdf' && file.format !== 'mjcf') {
+  if (file.format !== 'urdf' && file.format !== 'mjcf' && file.format !== 'sdf') {
     return {
       success: false,
       missingMeshPaths: [],
@@ -146,7 +159,7 @@ export async function exportLibraryRobotFile(
         })
       : generateURDF(robotState, false);
     archiveRoot.file(`${baseName}.urdf`, urdfContent);
-  } else {
+  } else if (targetFormat === 'mjcf') {
     const mjcfContent = file.format === 'mjcf'
       ? file.content
       : generateMujocoXML(robotState, {
@@ -155,6 +168,9 @@ export async function exportLibraryRobotFile(
         visualMeshVariants: mjcfMeshExport?.visualMeshVariants,
       });
     archiveRoot.file(`${baseName}.xml`, mjcfContent);
+  } else {
+    archiveRoot.file('model.sdf', generateSDF(robotState, { packageName: baseName }));
+    archiveRoot.file('model.config', generateSdfModelConfig(robotState.name || baseName));
   }
 
   const missingMeshPaths = await addReferencedMeshesToZip(

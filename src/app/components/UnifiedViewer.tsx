@@ -1,18 +1,21 @@
 import React, { useEffect } from 'react';
+import type { Group as ThreeGroup, Object3D as ThreeObject3D } from 'three';
 import { AlertCircle, FileCode, X } from 'lucide-react';
 import type { RobotFile, RobotState, Theme } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { useResolvedTheme } from '@/shared/hooks';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
-import { WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
+import { STUDIO_ENVIRONMENT_INTENSITY, WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
 import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
 import {
   useURDFViewerController,
   URDFViewerPanels,
   URDFViewerScene,
+  buildViewerRobotLinksScopeSignature,
   createStableViewerResourceScope,
   type ToolMode,
+  type ViewerDocumentLoadEvent,
   type ViewerJointMotionStateValue,
   type ViewerRobotDataResolution,
   type ViewerResourceScope,
@@ -56,6 +59,7 @@ interface UnifiedViewerProps {
   sourceFilePath?: string;
   sourceFile?: RobotFile | null;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   jointAngleState?: Record<string, number>;
   jointMotionState?: Record<string, ViewerJointMotionStateValue>;
   onJointChange?: (jointName: string, angle: number) => void;
@@ -74,6 +78,45 @@ interface UnifiedViewerProps {
 }
 
 const emptySelection = { type: null as null, id: null as null };
+
+type RaycastableObject = ThreeObject3D & {
+  raycast?: ThreeObject3D['raycast'];
+};
+
+const NOOP_RAYCAST: ThreeObject3D['raycast'] = () => {};
+const INACTIVE_SCENE_UNMOUNT_DELAY_MS = 15_000;
+
+function syncGroupRaycastInteractivity(
+  root: ThreeGroup | null,
+  interactive: boolean,
+  originalRaycasts: WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>,
+) {
+  if (!root) {
+    return;
+  }
+
+  root.traverse((child) => {
+    const raycastable = child as RaycastableObject;
+    if (typeof raycastable.raycast !== 'function') {
+      return;
+    }
+
+    if (interactive) {
+      const originalRaycast = originalRaycasts.get(raycastable);
+      if (originalRaycast && raycastable.raycast === NOOP_RAYCAST) {
+        raycastable.raycast = originalRaycast;
+      }
+      return;
+    }
+
+    if (raycastable.raycast === NOOP_RAYCAST) {
+      return;
+    }
+
+    originalRaycasts.set(raycastable, raycastable.raycast);
+    raycastable.raycast = NOOP_RAYCAST;
+  });
+}
 
 function FilePreviewBanner({
   fileName,
@@ -131,6 +174,7 @@ interface ViewerSceneConnectorProps {
   effectiveSourceFilePath?: string;
   effectiveUrdfContent: string;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   mode: 'detail' | 'hardware';
   selection?: UnifiedViewerProps['selection'];
   onHover?: UnifiedViewerProps['onHover'];
@@ -153,6 +197,7 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
   effectiveSourceFilePath,
   effectiveUrdfContent,
   onRobotDataResolved,
+  onDocumentLoadEvent,
   mode,
   selection,
   onHover,
@@ -177,6 +222,7 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
       urdfContent={effectiveUrdfContent}
       assets={viewerResourceScope.assets}
       onRobotDataResolved={onRobotDataResolved}
+      onDocumentLoadEvent={onDocumentLoadEvent}
       sourceFilePath={effectiveSourceFilePath}
       groundPlaneOffset={groundPlaneOffset}
       mode={activePreview ? 'detail' : mode}
@@ -224,6 +270,7 @@ export const UnifiedViewer = React.memo(({
   sourceFilePath,
   sourceFile,
   onRobotDataResolved,
+  onDocumentLoadEvent,
   jointAngleState,
   jointMotionState,
   onJointChange,
@@ -244,6 +291,8 @@ export const UnifiedViewer = React.memo(({
   const activePreview = mode === 'skeleton' ? undefined : filePreview;
   const isPreviewing = !!activePreview;
   const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
+  const viewerVisible = isViewerMode;
+  const visualizerVisible = !isViewerMode;
   const [viewerSceneMode, setViewerSceneMode] = React.useState<'detail' | 'hardware'>(
     mode === 'hardware' ? 'hardware' : 'detail',
   );
@@ -257,6 +306,8 @@ export const UnifiedViewer = React.memo(({
   const resolvedTheme = useResolvedTheme(theme);
   const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
   const skeletonOptionsVisibleRef = React.useRef(showSkeletonOptionsPanel);
+  const viewerUnmountTimerRef = React.useRef<number | null>(null);
+  const visualizerUnmountTimerRef = React.useRef<number | null>(null);
   const optionsVisibleAtPointerDownRef = React.useRef({
     viewer: showOptionsPanel,
     skeleton: showSkeletonOptionsPanel,
@@ -277,11 +328,80 @@ export const UnifiedViewer = React.memo(({
     }));
   }, [isPreviewing, mode]);
 
+  // Keep quick mode flips warm, but unmount the inactive scene once the user
+  // settles so hidden useFrame subscriptions stop consuming work in the background.
+  useEffect(() => {
+    if (viewerVisible) {
+      if (viewerUnmountTimerRef.current !== null) {
+        window.clearTimeout(viewerUnmountTimerRef.current);
+        viewerUnmountTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (!mountState.viewerMounted) {
+      return;
+    }
+
+    viewerUnmountTimerRef.current = window.setTimeout(() => {
+      viewerUnmountTimerRef.current = null;
+      setMountState((current) => (current.viewerMounted
+        ? { ...current, viewerMounted: false }
+        : current));
+    }, INACTIVE_SCENE_UNMOUNT_DELAY_MS);
+
+    return () => {
+      if (viewerUnmountTimerRef.current !== null) {
+        window.clearTimeout(viewerUnmountTimerRef.current);
+        viewerUnmountTimerRef.current = null;
+      }
+    };
+  }, [mountState.viewerMounted, viewerVisible]);
+
+  useEffect(() => {
+    if (visualizerVisible) {
+      if (visualizerUnmountTimerRef.current !== null) {
+        window.clearTimeout(visualizerUnmountTimerRef.current);
+        visualizerUnmountTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (!mountState.visualizerMounted) {
+      return;
+    }
+
+    visualizerUnmountTimerRef.current = window.setTimeout(() => {
+      visualizerUnmountTimerRef.current = null;
+      setMountState((current) => (current.visualizerMounted
+        ? { ...current, visualizerMounted: false }
+        : current));
+    }, INACTIVE_SCENE_UNMOUNT_DELAY_MS);
+
+    return () => {
+      if (visualizerUnmountTimerRef.current !== null) {
+        window.clearTimeout(visualizerUnmountTimerRef.current);
+        visualizerUnmountTimerRef.current = null;
+      }
+    };
+  }, [mountState.visualizerMounted, visualizerVisible]);
+
   useEffect(() => {
     if (mode === 'detail' || mode === 'hardware') {
       setViewerSceneMode(mode);
     }
   }, [mode]);
+
+  useEffect(() => () => {
+    if (viewerUnmountTimerRef.current !== null) {
+      window.clearTimeout(viewerUnmountTimerRef.current);
+      viewerUnmountTimerRef.current = null;
+    }
+    if (visualizerUnmountTimerRef.current !== null) {
+      window.clearTimeout(visualizerUnmountTimerRef.current);
+      visualizerUnmountTimerRef.current = null;
+    }
+  }, []);
 
   const visualizerController = useVisualizerController({
     robot,
@@ -318,17 +438,43 @@ export const UnifiedViewer = React.memo(({
   const controlLayerKey = 'shared';
   const workspaceEnvironment = 'studio' as const;
   const workspaceEnvironmentIntensity = isViewerMode
-    ? (resolvedTheme === 'light' ? 0.24 : 0.22)
-    : 0.46;
-  const showWorldOriginAxes = isViewerMode
+    ? STUDIO_ENVIRONMENT_INTENSITY.viewer[resolvedTheme]
+    : STUDIO_ENVIRONMENT_INTENSITY.workspace[resolvedTheme];
+  const showWorldOriginAxesPreference = useUIStore((state) => state.viewOptions.showAxes);
+  const showUsageGuidePreference = useUIStore((state) => state.viewOptions.showUsageGuide);
+  const showWorldOriginAxes = showWorldOriginAxesPreference && (isViewerMode
     ? !viewerController.showOrigins
     : !(
       (mode === 'skeleton' && visualizerController.state.showSkeletonOrigin)
       || (mode === 'detail' && visualizerController.state.showDetailOrigin)
       || (mode === 'hardware' && visualizerController.state.showHardwareOrigin)
-    );
+    ));
   const viewerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
   const visualizerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
+  const viewerGroupRef = React.useRef<ThreeGroup | null>(null);
+  const visualizerGroupRef = React.useRef<ThreeGroup | null>(null);
+  const viewerRaycastCacheRef = React.useRef(
+    new WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>(),
+  );
+  const visualizerRaycastCacheRef = React.useRef(
+    new WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>(),
+  );
+  const viewerRobotLinksScopeSignature = React.useMemo(
+    () => buildViewerRobotLinksScopeSignature(activePreview ? undefined : robot.links),
+    [activePreview, robot.links],
+  );
+  const viewerRobotLinksForScope = React.useMemo(
+    () => (activePreview ? undefined : robot.links),
+    [activePreview, viewerRobotLinksScopeSignature],
+  );
+  const visualizerRobotLinksScopeSignature = React.useMemo(
+    () => buildViewerRobotLinksScopeSignature(robot.links),
+    [robot.links],
+  );
+  const visualizerRobotLinksForScope = React.useMemo(
+    () => robot.links,
+    [visualizerRobotLinksScopeSignature],
+  );
 
   const viewerResourceScope = React.useMemo(() => {
     const next = createStableViewerResourceScope(viewerResourceScopeRef.current, {
@@ -336,11 +482,11 @@ export const UnifiedViewer = React.memo(({
       availableFiles,
       sourceFile: effectiveSourceFile,
       sourceFilePath: effectiveSourceFilePath,
-      robotLinks: activePreview ? undefined : robot.links,
+      robotLinks: viewerRobotLinksForScope,
     });
     viewerResourceScopeRef.current = next;
     return next;
-  }, [activePreview, assets, availableFiles, effectiveSourceFile, effectiveSourceFilePath, robot.links]);
+  }, [assets, availableFiles, effectiveSourceFile, effectiveSourceFilePath, viewerRobotLinksForScope]);
 
   const visualizerResourceScope = React.useMemo(() => {
     const next = createStableViewerResourceScope(visualizerResourceScopeRef.current, {
@@ -348,11 +494,11 @@ export const UnifiedViewer = React.memo(({
       availableFiles,
       sourceFile,
       sourceFilePath,
-      robotLinks: robot.links,
+      robotLinks: visualizerRobotLinksForScope,
     });
     visualizerResourceScopeRef.current = next;
     return next;
-  }, [assets, availableFiles, robot.links, sourceFile, sourceFilePath]);
+  }, [assets, availableFiles, sourceFile, sourceFilePath, visualizerRobotLinksForScope]);
 
   const handleWorkspacePointerDownCapture = React.useCallback(() => {
     optionsVisibleAtPointerDownRef.current = {
@@ -396,8 +542,36 @@ export const UnifiedViewer = React.memo(({
     restoreSkeletonOptionsIfNeeded();
   }, [restoreSkeletonOptionsIfNeeded, visualizerController]);
 
-  const viewerVisible = isViewerMode;
-  const visualizerVisible = !isViewerMode;
+  const visualizerSceneSignature = React.useMemo(
+    () => [
+      robot.name,
+      robot.rootLinkId,
+      Object.keys(robot.links).length,
+      Object.keys(robot.joints).length,
+      mode,
+    ].join(':'),
+    [mode, robot.joints, robot.links, robot.name, robot.rootLinkId],
+  );
+
+  useEffect(() => {
+    const root = viewerGroupRef.current;
+    syncGroupRaycastInteractivity(root, viewerVisible, viewerRaycastCacheRef.current);
+
+    return () => {
+      syncGroupRaycastInteractivity(root, true, viewerRaycastCacheRef.current);
+    };
+  }, [viewerVisible, mountState.viewerMounted, viewerReloadKey]);
+
+  useEffect(() => {
+    const root = visualizerGroupRef.current;
+    // Hidden R3F groups can still receive pointer raycasts, so explicitly disable
+    // the inactive scene to prevent background hover/selection from leaking across modes.
+    syncGroupRaycastInteractivity(root, visualizerVisible, visualizerRaycastCacheRef.current);
+
+    return () => {
+      syncGroupRaycastInteractivity(root, true, visualizerRaycastCacheRef.current);
+    };
+  }, [mountState.visualizerMounted, visualizerSceneSignature, visualizerVisible]);
 
   useEffect(() => {
     if (!pendingViewerToolMode || !isViewerMode) {
@@ -458,6 +632,7 @@ export const UnifiedViewer = React.memo(({
       }
       background={WORKSPACE_CANVAS_BACKGROUND}
       contextLostMessage={isViewerMode ? t.webglContextRestoring : undefined}
+      showUsageGuide={showUsageGuidePreference}
       overlays={
         activePreview ? (
           <>
@@ -493,7 +668,7 @@ export const UnifiedViewer = React.memo(({
       }
     >
       {mountState.viewerMounted ? (
-        <group visible={viewerVisible}>
+        <group ref={viewerGroupRef} visible={viewerVisible}>
           <ViewerSceneConnector
             controller={viewerController}
             active={viewerVisible}
@@ -503,6 +678,7 @@ export const UnifiedViewer = React.memo(({
             effectiveSourceFilePath={effectiveSourceFilePath}
             effectiveUrdfContent={effectiveUrdfContent}
             onRobotDataResolved={onRobotDataResolved}
+            onDocumentLoadEvent={onDocumentLoadEvent}
             mode={viewerSceneMode}
             selection={selection}
             onHover={onHover}
@@ -518,7 +694,7 @@ export const UnifiedViewer = React.memo(({
         </group>
       ) : null}
       {mountState.visualizerMounted ? (
-        <group visible={visualizerVisible}>
+        <group ref={visualizerGroupRef} visible={visualizerVisible}>
           <VisualizerScene
             robot={robot}
             onSelect={onSelect}
@@ -527,6 +703,7 @@ export const UnifiedViewer = React.memo(({
             assets={visualizerResourceScope.assets}
             lang={lang}
             controller={visualizerController}
+            active={visualizerVisible}
           />
         </group>
       ) : null}

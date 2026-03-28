@@ -1,6 +1,7 @@
 import { GeometryType, type RobotState, type UrdfLink, type UrdfVisual } from '@/types';
 import { buildMeshLookupCandidates, resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
 import { isIdentityMeshScale } from '@/core/parsers/urdf/meshScale';
+import { getVisualGeometryEntries } from '@/core/robot';
 
 const addPathHintCandidates = (target: Set<string>, meshPath?: string, urdfDir: string = '') => {
   const rawPath = String(meshPath || '').trim();
@@ -25,9 +26,11 @@ const addPathHintCandidates = (target: Set<string>, meshPath?: string, urdfDir: 
 const collectMeshGeometries = (link: UrdfLink): UrdfVisual[] => {
   const geometries: UrdfVisual[] = [];
 
-  if (link.visual?.type === GeometryType.MESH) {
-    geometries.push(link.visual);
-  }
+  getVisualGeometryEntries(link).forEach((entry) => {
+    if (entry.geometry.type === GeometryType.MESH) {
+      geometries.push(entry.geometry);
+    }
+  });
 
   if (link.collision?.type === GeometryType.MESH) {
     geometries.push(link.collision);
@@ -42,14 +45,16 @@ const collectMeshGeometries = (link: UrdfLink): UrdfVisual[] => {
   return geometries;
 };
 
-export const collectExplicitlyScaledMeshPaths = (robot: RobotState | null | undefined): Set<string> => {
+export const collectExplicitlyScaledMeshPathsFromLinks = (
+  links: Record<string, UrdfLink> | null | undefined,
+): Set<string> => {
   const meshPaths = new Set<string>();
 
-  if (!robot) {
+  if (!links) {
     return meshPaths;
   }
 
-  Object.values(robot.links).forEach((link) => {
+  Object.values(links).forEach((link) => {
     collectMeshGeometries(link).forEach((geometry) => {
       if (!geometry.meshPath || isIdentityMeshScale(geometry.dimensions)) {
         return;
@@ -60,6 +65,10 @@ export const collectExplicitlyScaledMeshPaths = (robot: RobotState | null | unde
   });
 
   return meshPaths;
+};
+
+export const collectExplicitlyScaledMeshPaths = (robot: RobotState | null | undefined): Set<string> => {
+  return collectExplicitlyScaledMeshPathsFromLinks(robot?.links);
 };
 
 export const buildExplicitlyScaledMeshPathHints = (

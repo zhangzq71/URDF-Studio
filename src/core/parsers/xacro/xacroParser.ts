@@ -6,13 +6,14 @@
  * - ${...} variable substitution
  * - <xacro:include> (requires file content map)
  * - <xacro:macro> definitions and calls
+ * - <xacro:insert_block> block parameter expansion
  * - <xacro:if> / <xacro:unless> conditionals
  * - <xacro:arg> for command-line style arguments
+ * - Common Python-style boolean expressions used by upstream xacro files
  *
  * Limitations:
- * - No Python expression evaluation (only simple variable substitution)
  * - $(find package) only supports path resolution inside imported file map
- * - Complex expressions need manual simplification
+ * - Advanced Python xacro features still run in best-effort browser fallback mode
  */
 
 import { RobotState } from '@/types';
@@ -33,6 +34,107 @@ interface XacroContext {
     fileMap: XacroFileMap;
     basePath: string;
     includeStack: string[];
+}
+
+const EXPRESSION_KEYWORDS = new Map<string, string>([
+    ['and', '&&'],
+    ['or', '||'],
+    ['not', '!'],
+    ['True', 'true'],
+    ['False', 'false'],
+    ['None', 'null'],
+]);
+
+function resolveContextValue(identifier: string, ctx: XacroContext): string | undefined {
+    if (ctx.properties.has(identifier)) {
+        return ctx.properties.get(identifier);
+    }
+
+    if (ctx.args[identifier] !== undefined) {
+        return ctx.args[identifier];
+    }
+
+    return undefined;
+}
+
+function toJavaScriptLiteral(value: string): string {
+    const trimmed = value.trim();
+    if (trimmed === 'True') return 'true';
+    if (trimmed === 'False') return 'false';
+    if (trimmed === 'None') return 'null';
+
+    if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) {
+        return trimmed;
+    }
+
+    return JSON.stringify(trimmed);
+}
+
+function stringifyExpressionResult(result: unknown): string | null {
+    if (typeof result === 'string') return result;
+    if (typeof result === 'number') return Number.isFinite(result) ? String(result) : null;
+    if (typeof result === 'boolean') return result ? 'true' : 'false';
+    if (result === null) return '';
+    return null;
+}
+
+function coerceExpressionTruthy(result: unknown): boolean {
+    if (typeof result === 'boolean') return result;
+    if (typeof result === 'number') return Number.isFinite(result) && result !== 0;
+    if (typeof result === 'string') {
+        const normalized = result.replace(/^['"]|['"]$/g, '').trim().toLowerCase();
+        if (!normalized) return false;
+        return !['false', '0', 'none', 'no', 'off', 'null'].includes(normalized);
+    }
+    return Boolean(result);
+}
+
+function evaluateExpression(expr: string, ctx: XacroContext): unknown | undefined {
+    const translatedArgCalls = expr.replace(/\b(?:xacro\.)?arg\(\s*(["'])([^"']+)\1\s*\)/g, (_match, _quote, argName) => {
+        const resolved = ctx.args[argName];
+        if (resolved !== undefined) {
+            return toJavaScriptLiteral(resolved);
+        }
+
+        return _match;
+    });
+
+    const translated = translatedArgCalls.replace(/\b[A-Za-z_]\w*\b/g, (identifier) => {
+        const keyword = EXPRESSION_KEYWORDS.get(identifier);
+        if (keyword !== undefined) {
+            return keyword;
+        }
+
+        const resolved = resolveContextValue(identifier, ctx);
+        if (resolved !== undefined) {
+            return toJavaScriptLiteral(resolved);
+        }
+
+        return identifier;
+    });
+
+    if (/[`;\[\]{}]|=>/.test(translated)) {
+        return undefined;
+    }
+
+    const withoutStringLiterals = translated
+        .replace(/(["'])(?:\\.|(?!\1)[^\\])*\1/g, '')
+        .replace(/\b(?:true|false|null)\b/g, '');
+    if (/\b[A-Za-z_]\w*\b/.test(withoutStringLiterals)) {
+        return undefined;
+    }
+
+    try {
+        return Function(`"use strict"; return (${translated});`)();
+    } catch {
+        return undefined;
+    }
+}
+
+function unwrapExpression(value: string): string | null {
+    const trimmed = value.trim();
+    const match = trimmed.match(/^\$\{([\s\S]+)\}$/);
+    return match ? match[1].trim() : null;
 }
 
 /**
@@ -163,29 +265,10 @@ function substituteVariables(content: string, ctx: XacroContext): string {
             return ctx.args[trimmedExpr];
         }
 
-        // Try to evaluate simple expressions
-        try {
-            // Handle simple math expressions
-            const numericExpr = trimmedExpr
-                .replace(/(\w+)/g, (identifier: string) => {
-                    if (ctx.properties.has(identifier)) {
-                        return ctx.properties.get(identifier)!;
-                    }
-                    if (ctx.args[identifier] !== undefined) {
-                        return ctx.args[identifier];
-                    }
-                    return identifier;
-                });
-
-            // Only evaluate if it looks like a safe numeric expression
-            if (/^[-+*/\s\d.()]+$/.test(numericExpr)) {
-                const result = Function(`"use strict"; return (${numericExpr})`)();
-                if (typeof result === 'number' && !isNaN(result)) {
-                    return String(result);
-                }
-            }
-        } catch {
-            // Keep original if evaluation fails
+        const evaluated = evaluateExpression(trimmedExpr, ctx);
+        const serialized = evaluated === undefined ? null : stringifyExpressionResult(evaluated);
+        if (serialized !== null) {
+            return serialized;
         }
 
         // Return original if we can't resolve
@@ -306,7 +389,7 @@ function processIncludes(content: string, ctx: XacroContext): string {
         if (foundPath && ctx.fileMap[foundPath]) {
             const normalizedFoundPath = normalizePath(foundPath);
             if (ctx.includeStack.includes(normalizedFoundPath)) {
-                console.warn(`[Xacro] Circular include detected: ${resolvedFilename}`);
+                console.error(`[Xacro] Circular include detected: ${resolvedFilename}`);
                 return `<!-- Circular include ignored: ${resolvedFilename} -->`;
             }
 
@@ -336,14 +419,14 @@ function processIncludes(content: string, ctx: XacroContext): string {
             // Remove robot tags from included content to avoid nesting
             includedContent = includedContent
                 .replace(/<\?xml[^?]*\?>/g, '')
-                .replace(/<robot[^>]*>/g, '')
+                .replace(/<robot\b[^>]*>/g, '')
                 .replace(/<\/robot>/g, '');
 
             return includedContent;
         }
 
         // If file not found, return empty (or could return a comment)
-        console.warn(`[Xacro] Include file not found: ${resolvedFilename}`);
+        console.error(`[Xacro] Include file not found: ${resolvedFilename}`);
         return `<!-- Include not found: ${resolvedFilename} -->`;
     });
 }
@@ -356,7 +439,7 @@ function expandMacros(content: string, ctx: XacroContext): string {
     for (const [macroName, macroDef] of ctx.macros) {
         // Self-closing macro calls
         const selfClosingRegex = new RegExp(
-            `<xacro:${macroName}([^/>]*)/>`,
+            `<xacro:${macroName}(?=[\\s/>])([^/>]*)/>`,
             'g'
         );
 
@@ -366,7 +449,7 @@ function expandMacros(content: string, ctx: XacroContext): string {
 
         // Block macro calls
         const blockRegex = new RegExp(
-            `<xacro:${macroName}([^>]*)>([\\s\\S]*?)</xacro:${macroName}>`,
+            `<xacro:${macroName}(?=[\\s>])([^>]*)>([\\s\\S]*?)</xacro:${macroName}>`,
             'g'
         );
 
@@ -390,7 +473,8 @@ function expandMacroCall(
 ): string {
     // Parse attributes
     const attrs: Map<string, string> = new Map();
-    const attrRegex = /(\w+)=["']([^"']*)["']/g;
+    const attrRegex = /([A-Za-z_]\w*)\s*=\s*["']([^"']*)["']/g;
+    const blockParams: Map<string, string> = new Map();
     let match: RegExpExecArray | null;
     while ((match = attrRegex.exec(attrsStr)) !== null) {
         attrs.set(match[1], match[2]);
@@ -406,7 +490,13 @@ function expandMacroCall(
     for (const param of macroDef.params) {
         // Handle default values (param:=default or param:=^)
         const [paramName, defaultValue] = param.split(':=');
-        const cleanName = paramName.replace(/[*]$/, ''); // Remove block param marker
+        const isBlockParam = paramName.startsWith('*') || paramName.endsWith('*');
+        const cleanName = paramName.replace(/^[*]|[*]$/g, '');
+
+        if (isBlockParam) {
+            blockParams.set(cleanName, innerContent);
+            continue;
+        }
 
         if (attrs.has(cleanName)) {
             localCtx.properties.set(cleanName, attrs.get(cleanName)!);
@@ -415,12 +505,20 @@ function expandMacroCall(
         }
     }
 
-    // Substitute variables in macro body
     let expandedBody = macroDef.body;
-    expandedBody = substituteVariables(expandedBody, localCtx);
 
-    // Replace ${*} or any block content placeholder with inner content
+    // Replace legacy block placeholder with inner content before substitution.
     expandedBody = expandedBody.replace(/\$\{\*\}/g, innerContent);
+
+    // Replace named xacro block insertion points (e.g. <xacro:insert_block name="origin"/>).
+    expandedBody = expandedBody.replace(
+        /<xacro:insert_block\s+name=["']([^"']+)["']\s*(?:\/>|>\s*<\/xacro:insert_block>)/g,
+        (_insertBlockMatch, blockName) => blockParams.get(blockName) ?? ''
+    );
+
+    // Substitute variables after block insertion so the caller-provided block content
+    // can reference the same macro-local properties and arguments as the macro body.
+    expandedBody = substituteVariables(expandedBody, localCtx);
 
     return expandedBody;
 }
@@ -430,7 +528,20 @@ function expandMacroCall(
  */
 function processConditionals(content: string, ctx: XacroContext): string {
     const isTruthy = (rawCondition: string): boolean => {
+        const directExpression = unwrapExpression(rawCondition);
+        if (directExpression) {
+            const evaluated = evaluateExpression(directExpression, ctx);
+            if (evaluated !== undefined) {
+                return coerceExpressionTruthy(evaluated);
+            }
+        }
+
         const value = substituteVariables(rawCondition, ctx).trim();
+
+        const evaluated = evaluateExpression(value, ctx);
+        if (evaluated !== undefined) {
+            return coerceExpressionTruthy(evaluated);
+        }
 
         // If unresolved xacro syntax remains, treat as false in browser fallback mode.
         if (/\$\(|\$\{/.test(value)) {
@@ -444,14 +555,14 @@ function processConditionals(content: string, ctx: XacroContext): string {
     };
 
     // Process xacro:if
-    const ifRegex = /<xacro:if\s+value=["']([^"']+)["']>([\s\S]*?)<\/xacro:if>/g;
-    content = content.replace(ifRegex, (_match, conditionExpr, body) => {
+    const ifRegex = /<xacro:if\s+value=(["'])([\s\S]*?)\1>([\s\S]*?)<\/xacro:if>/g;
+    content = content.replace(ifRegex, (_match, _quote, conditionExpr, body) => {
         return isTruthy(conditionExpr) ? body : '';
     });
 
     // Process xacro:unless
-    const unlessRegex = /<xacro:unless\s+value=["']([^"']+)["']>([\s\S]*?)<\/xacro:unless>/g;
-    content = content.replace(unlessRegex, (_match, conditionExpr, body) => {
+    const unlessRegex = /<xacro:unless\s+value=(["'])([\s\S]*?)\1>([\s\S]*?)<\/xacro:unless>/g;
+    content = content.replace(unlessRegex, (_match, _quote, conditionExpr, body) => {
         return isTruthy(conditionExpr) ? '' : body;
     });
 

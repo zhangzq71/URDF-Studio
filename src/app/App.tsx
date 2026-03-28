@@ -3,16 +3,21 @@
  * Root component that assembles all pieces together
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
+import { prepareImportPayloadWithWorker } from './hooks/importPreparationWorkerBridge';
+import { resolveRobotFileDataWithWorker } from './hooks/robotImportWorkerBridge';
 import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
+import { consumePreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
+import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
-import { resolveRobotFileData } from '@/core/parsers';
-import type { MotorSpec, RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
+import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
+import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import {
@@ -31,30 +36,74 @@ const ExportDialog = lazy(() =>
   loadExportDialogModule().then((module) => ({ default: module.ExportDialog }))
 );
 
+interface AIApplyChangesPayload {
+  name?: string;
+  links?: Record<string, UrdfLink>;
+  joints?: Record<string, UrdfJoint>;
+  rootLinkId?: string;
+}
+
+function validateAIApplyPayload(
+  data: AIApplyChangesPayload,
+): { ok: true; value: Required<Pick<AIApplyChangesPayload, 'links' | 'joints' | 'rootLinkId'>> & Pick<AIApplyChangesPayload, 'name'> }
+  | { ok: false; reason: 'aiNoDataToApply' | 'aiNoLinksGenerated' } {
+  if (!data || typeof data !== 'object') {
+    return { ok: false, reason: 'aiNoDataToApply' };
+  }
+
+  if (!data.links || Object.keys(data.links).length === 0) {
+    return { ok: false, reason: 'aiNoLinksGenerated' };
+  }
+
+  if (!data.joints || typeof data.joints !== 'object') {
+    return { ok: false, reason: 'aiNoDataToApply' };
+  }
+
+  if (!data.rootLinkId || !data.links[data.rootLinkId]) {
+    return { ok: false, reason: 'aiNoDataToApply' };
+  }
+
+  return {
+    ok: true,
+    value: {
+      name: data.name,
+      links: data.links,
+      joints: data.joints,
+      rootLinkId: data.rootLinkId,
+    },
+  };
+}
+
 function AIModalConnector({
   isOpen,
   onClose,
-  motorLibrary,
   lang,
-  sidebarTab,
   onApplyChanges,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  motorLibrary: Record<string, MotorSpec[]>;
   lang: Language;
-  sidebarTab: string;
-  onApplyChanges: (data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => void;
+  onApplyChanges: (data: AIApplyChangesPayload) => void;
 }) {
-  const selection = useSelectionStore((state) => state.selection);
-  const setSelection = useSelectionStore((state) => state.setSelection);
-  const focusOn = useSelectionStore((state) => state.focusOn);
-  const robotName = useRobotStore((state) => state.name);
-  const robotLinks = useRobotStore((state) => state.links);
-  const robotJoints = useRobotStore((state) => state.joints);
-  const rootLinkId = useRobotStore((state) => state.rootLinkId);
-  const assemblyState = useAssemblyStore((state) => state.assemblyState);
-  const getMergedRobotData = useAssemblyStore((state) => state.getMergedRobotData);
+  const { sidebarTab } = useUIStore(useShallow((state) => ({
+    sidebarTab: state.sidebarTab,
+  })));
+  const { selection, setSelection, focusOn } = useSelectionStore(useShallow((state) => ({
+    selection: state.selection,
+    setSelection: state.setSelection,
+    focusOn: state.focusOn,
+  })));
+  const { robotName, robotLinks, robotJoints, rootLinkId } = useRobotStore(useShallow((state) => ({
+    robotName: state.name,
+    robotLinks: state.links,
+    robotJoints: state.joints,
+    rootLinkId: state.rootLinkId,
+  })));
+  const { assemblyState, getMergedRobotData } = useAssemblyStore(useShallow((state) => ({
+    assemblyState: state.assemblyState,
+    getMergedRobotData: state.getMergedRobotData,
+  })));
+  const motorLibrary = useAssetsStore((state) => state.motorLibrary);
 
   const mergedWorkspaceRobot = useMemo(() => {
     if (!assemblyState || sidebarTab !== 'workspace') {
@@ -104,6 +153,66 @@ function AIModalConnector({
   );
 }
 
+function ExportDialogConnector({
+  target,
+  lang,
+  isExporting,
+  onClose,
+  onExport,
+}: {
+  target: ExportDialogTarget;
+  lang: Language;
+  isExporting: boolean;
+  onClose: () => void;
+  onExport: (config: unknown, options?: { onProgress?: (progress: number, message?: string) => void }) => Promise<void>;
+}) {
+  const { sidebarTab } = useUIStore(useShallow((state) => ({
+    sidebarTab: state.sidebarTab,
+  })));
+  const {
+    selectedFile,
+    documentLoadState,
+    getUsdSceneSnapshot,
+    getUsdPreparedExportCache,
+  } = useAssetsStore(useShallow((state) => ({
+    selectedFile: state.selectedFile,
+    documentLoadState: state.documentLoadState,
+    getUsdSceneSnapshot: state.getUsdSceneSnapshot,
+    getUsdPreparedExportCache: state.getUsdPreparedExportCache,
+  })));
+
+  const isSelectedUsdHydrating = selectedFile?.format === 'usd'
+    && documentLoadState.status === 'hydrating'
+    && documentLoadState.fileName === selectedFile.name;
+
+  const currentUsdExportMode = selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+    ? resolveCurrentUsdExportMode({
+      isHydrating: isSelectedUsdHydrating,
+      hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
+      hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
+      hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
+    })
+    : 'unavailable';
+
+  const canExportUsd = target.type === 'current'
+    ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+      ? currentUsdExportMode !== 'unavailable'
+      : !isSelectedUsdHydrating
+    : target.file.format === 'urdf'
+      || target.file.format === 'mjcf'
+      || target.file.format === 'xacro';
+
+  return (
+    <ExportDialog
+      onClose={onClose}
+      onExport={onExport}
+      lang={lang}
+      isExporting={isExporting}
+      canExportUsd={canExportUsd}
+    />
+  );
+}
+
 function waitForNextPaint(): Promise<void> {
   if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
     return Promise.resolve();
@@ -125,32 +234,34 @@ function AppContent() {
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
   const loadRobotByNameRef = useRef<((file: RobotFile, options?: { forceReload?: boolean }) => Promise<void> | void) | null>(null);
+  const loadRequestIdRef = useRef(0);
   const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
   const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({ type: 'current' });
   const [viewerReloadKey, setViewerReloadKey] = useState(0);
 
   // UI Store
-  const lang = useUIStore((state) => state.lang);
+  const { lang, setAppMode, openSettings } = useUIStore(useShallow((state) => ({
+    lang: state.lang,
+    setAppMode: state.setAppMode,
+    openSettings: state.openSettings,
+  })));
   const t = translations[lang];
-  const setAppMode = useUIStore((state) => state.setAppMode);
-  const openSettings = useUIStore((state) => state.openSettings);
-  const sidebarTab = useUIStore((state) => state.sidebarTab);
 
   // Selection Store
   const setSelection = useSelectionStore((state) => state.setSelection);
 
   // Assets Store
-  const setOriginalUrdfContent = useAssetsStore((state) => state.setOriginalUrdfContent);
-  const setOriginalFileFormat = useAssetsStore((state) => state.setOriginalFileFormat);
-  const setSelectedFile = useAssetsStore((state) => state.setSelectedFile);
-  const documentLoadState = useAssetsStore((state) => state.documentLoadState);
-  const setDocumentLoadState = useAssetsStore((state) => state.setDocumentLoadState);
-  const selectedFile = useAssetsStore((state) => state.selectedFile);
-  const availableFiles = useAssetsStore((state) => state.availableFiles);
-  const assets = useAssetsStore((state) => state.assets);
-  const getUsdSceneSnapshot = useAssetsStore((state) => state.getUsdSceneSnapshot);
-  const getUsdPreparedExportCache = useAssetsStore((state) => state.getUsdPreparedExportCache);
-  const motorLibrary = useAssetsStore((state) => state.motorLibrary);
+  const {
+    setOriginalUrdfContent,
+    setOriginalFileFormat,
+    setSelectedFile,
+    setDocumentLoadState,
+  } = useAssetsStore(useShallow((state) => ({
+    setOriginalUrdfContent: state.setOriginalUrdfContent,
+    setOriginalFileFormat: state.setOriginalFileFormat,
+    setSelectedFile: state.setSelectedFile,
+    setDocumentLoadState: state.setDocumentLoadState,
+  })));
 
   // Robot Store
   const setRobot = useRobotStore((state) => state.setRobot);
@@ -173,55 +284,7 @@ function AppContent() {
     setViewConfig,
   } = useAppShellState();
 
-  const isSelectedUsdHydrating = selectedFile?.format === 'usd'
-    && documentLoadState.status === 'hydrating'
-    && documentLoadState.fileName === selectedFile.name;
-  const currentUsdExportMode = selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
-    ? resolveCurrentUsdExportMode({
-      isHydrating: isSelectedUsdHydrating,
-      hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
-      hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
-      hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
-    })
-    : 'unavailable';
-
-  // Keep one internal loader so debug automation can force a reload of the
-  // currently selected file without changing normal click behavior.
-  const loadRobotFile = useCallback(async (file: RobotFile, options?: { forceReload?: boolean }) => {
-    if (
-      !options?.forceReload
-      && selectedFile
-      && selectedFile.name === file.name
-      && selectedFile.format === file.format
-      && selectedFile.content === file.content
-      && selectedFile.blobUrl === file.blobUrl
-    ) {
-      setAppMode('detail');
-      return;
-    }
-    const liveAssetsState = useAssetsStore.getState();
-    setDocumentLoadState({
-      status: 'loading',
-      fileName: file.name,
-      format: file.format,
-      error: null,
-    });
-
-    setViewerReloadKey((value) => value + 1);
-    setSelectedFile(file);
-    setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-    setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
-    setSelection({ type: null, id: null });
-    setAppMode('detail');
-
-    await waitForNextPaint();
-
-    const importResult = resolveRobotFileData(file, {
-      availableFiles: liveAssetsState.availableFiles,
-      assets: liveAssetsState.assets,
-      usdRobotData: getUsdPreparedExportCache(file.name)?.robotData ?? null,
-    });
-
+  const applyResolvedRobotImport = useCallback((file: RobotFile, importResult: RobotImportResult) => {
     if (importResult.status === 'ready' || importResult.status === 'needs_hydration') {
       if (importResult.status === 'ready') {
         setRobot(
@@ -230,32 +293,152 @@ function AppContent() {
             ? { resetHistory: true, label: 'Load USD stage' }
             : undefined,
         );
+
+        if (file.format === 'xacro' && importResult.resolvedUrdfContent) {
+          setOriginalUrdfContent(importResult.resolvedUrdfContent);
+        }
       }
       setDocumentLoadState({
-        status: importResult.status === 'needs_hydration' ? 'hydrating' : 'ready',
+        status: importResult.status === 'needs_hydration' ? 'hydrating' : 'loading',
         fileName: file.name,
         format: file.format,
         error: null,
+        phase: importResult.status === 'needs_hydration'
+          ? 'checking-path'
+          : file.format === 'usd'
+            ? 'checking-path'
+            : 'preparing-scene',
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
       });
-    } else {
+      return;
+    }
+
+    if (importResult.reason === 'source_only_fragment') {
+      setDocumentLoadState({
+        status: 'ready',
+        fileName: file.name,
+        format: file.format,
+        error: null,
+        phase: null,
+        message: t.xacroSourceOnlyPreviewHint,
+        progressPercent: 100,
+        loadedCount: null,
+        totalCount: null,
+      });
+      showToast(t.xacroSourceOnlyPreviewHint, 'info');
+      return;
+    }
+
+    const message = t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
+    setDocumentLoadState({
+      status: 'error',
+      fileName: file.name,
+      format: file.format,
+      error: message,
+    });
+    showToast(message, 'info');
+  }, [
+    setDocumentLoadState,
+    setOriginalUrdfContent,
+    setRobot,
+    showToast,
+    t,
+  ]);
+
+  // Keep one internal loader so debug automation can force a reload of the
+  // currently selected file without changing normal click behavior.
+  const loadRobotFile = useCallback(async (file: RobotFile, options?: { forceReload?: boolean }) => {
+    const liveAssetsState = useAssetsStore.getState();
+    const currentSelectedFile = liveAssetsState.selectedFile;
+    if (
+      !options?.forceReload
+      && currentSelectedFile
+      && currentSelectedFile.name === file.name
+      && currentSelectedFile.format === file.format
+      && currentSelectedFile.content === file.content
+      && currentSelectedFile.blobUrl === file.blobUrl
+    ) {
+      setAppMode('detail');
+      return;
+    }
+
+    setDocumentLoadState({
+      status: 'loading',
+      fileName: file.name,
+      format: file.format,
+      error: null,
+      phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
+      message: null,
+      progressPercent: null,
+      loadedCount: null,
+      totalCount: null,
+    });
+
+    setViewerReloadKey((value) => value + 1);
+    setSelectedFile(file);
+    setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
+    setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+    setSelection({ type: null, id: null });
+    setAppMode('detail');
+    const requestId = ++loadRequestIdRef.current;
+
+    prewarmUsdSelectionInBackground(file, liveAssetsState.availableFiles, liveAssetsState.assets);
+
+    const preResolvedImportResult = consumePreResolvedRobotImport(file);
+    if (preResolvedImportResult) {
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
+
+      applyResolvedRobotImport(file, preResolvedImportResult);
+      return;
+    }
+
+    const importResultPromise = resolveRobotFileDataWithWorker(file, {
+      availableFiles: liveAssetsState.availableFiles,
+      assets: liveAssetsState.assets,
+      usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
+    });
+
+    await waitForNextPaint();
+
+    let importResult: Awaited<ReturnType<typeof resolveRobotFileDataWithWorker>>;
+    try {
+      importResult = await importResultPromise;
+    } catch (error) {
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
+
+      const message = error instanceof Error
+        ? error.message
+        : t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
       setDocumentLoadState({
         status: 'error',
         fileName: file.name,
         format: file.format,
-        error: t.failedToParseFormat.replace('{format}', file.format.toUpperCase()),
+        error: message,
       });
-      alert(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()));
+      showToast(message, 'info');
+      return;
     }
+
+    if (requestId !== loadRequestIdRef.current) {
+      return;
+    }
+
+    applyResolvedRobotImport(file, importResult);
   }, [
+    applyResolvedRobotImport,
     setDocumentLoadState,
-    getUsdPreparedExportCache,
-    selectedFile,
-    setRobot,
     setSelection,
     setSelectedFile,
-    setOriginalUrdfContent,
     setOriginalFileFormat,
     setAppMode,
+    showToast,
     t,
   ]);
 
@@ -264,6 +447,33 @@ function AppContent() {
   }, [loadRobotFile]);
 
   loadRobotByNameRef.current = loadRobotFile;
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof Worker === 'undefined') {
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      void Promise.allSettled([
+        prepareImportPayloadWithWorker({ files: [], existingPaths: [] }),
+        resolveRobotFileDataWithWorker({
+          name: '__urdf_studio_worker_prewarm__/warmup.stl',
+          format: 'mesh',
+          content: '',
+        }),
+      ]);
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') {
@@ -307,19 +517,43 @@ function AppContent() {
 
   // File import/export hooks
   const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
-  const { handleExportProject, handleExportWithConfig } = useFileExport();
+  const { handleExportProject: runProjectExport, handleExportWithConfig } = useFileExport();
+
+  const handleExportProject = useCallback(() => {
+    void (async () => {
+      try {
+        const result = await runProjectExport();
+        if (result.partial && result.warnings.length > 0) {
+          showToast(result.warnings[0], 'info');
+        }
+      } catch (error) {
+        showToast(
+          error instanceof Error && error.message
+            ? error.message
+            : t.exportFailedParse,
+          'info',
+        );
+      }
+    })();
+  }, [runProjectExport, showToast, t.exportFailedParse]);
 
   // AI changes handler
-  const handleApplyAIChanges = useCallback((data: { name?: string; links?: Record<string, UrdfLink>; joints?: Record<string, UrdfJoint>; rootLinkId?: string }) => {
+  const handleApplyAIChanges = useCallback((data: AIApplyChangesPayload) => {
+    const validated = validateAIApplyPayload(data);
+    if (!validated.ok) {
+      showToast(t[validated.reason], 'info');
+      return;
+    }
+
     const currentRobot = useRobotStore.getState();
     setRobot({
-      name: data.name || currentRobot.name,
-      links: data.links || currentRobot.links,
-      joints: data.joints || currentRobot.joints,
-      rootLinkId: data.rootLinkId || currentRobot.rootLinkId,
+      name: validated.value.name?.trim() || currentRobot.name,
+      links: validated.value.links,
+      joints: validated.value.joints,
+      rootLinkId: validated.value.rootLinkId,
     });
     setAppMode('skeleton');
-  }, [setAppMode, setRobot]);
+  }, [setAppMode, setRobot, showToast, t]);
 
   useImportInputBinding({
     importInputRef,
@@ -328,6 +562,13 @@ function AppContent() {
   });
 
   const handleOpenAIModal = useCallback(() => {
+    const liveAssetsState = useAssetsStore.getState();
+    const currentSelectedFile = liveAssetsState.selectedFile;
+    const currentDocumentLoadState = liveAssetsState.documentLoadState;
+    const isSelectedUsdHydrating = currentSelectedFile?.format === 'usd'
+      && currentDocumentLoadState.status === 'hydrating'
+      && currentDocumentLoadState.fileName === currentSelectedFile.name;
+
     if (isSelectedUsdHydrating) {
       showToast(t.usdLoadInProgress, 'info');
       return;
@@ -335,7 +576,7 @@ function AppContent() {
     setShouldRenderAIModal(true);
     void loadAIModalModule();
     setIsAIModalOpen(true);
-  }, [isSelectedUsdHydrating, setIsAIModalOpen, showToast, t.usdLoadInProgress]);
+  }, [setIsAIModalOpen, showToast, t.usdLoadInProgress]);
 
   const handleOpenExportDialog = useCallback(() => {
     void loadExportDialogModule();
@@ -348,14 +589,6 @@ function AppContent() {
     setExportDialogTarget({ type: 'library-file', file });
     setIsExportDialogOpen(true);
   }, [setIsExportDialogOpen]);
-
-  const canExportUsd = exportDialogTarget.type === 'current'
-    ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
-      ? currentUsdExportMode !== 'unavailable'
-      : !isSelectedUsdHydrating
-    : exportDialogTarget.file.format === 'urdf'
-      || exportDialogTarget.file.format === 'mjcf'
-      || exportDialogTarget.file.format === 'xacro';
 
   const loadingLabel = t.loadingPanel;
 
@@ -387,10 +620,11 @@ function AppContent() {
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
           <AIModalConnector
             isOpen={isAIModalOpen}
-            onClose={() => setIsAIModalOpen(false)}
-            motorLibrary={motorLibrary}
+            onClose={() => {
+              setIsAIModalOpen(false);
+              setShouldRenderAIModal(false);
+            }}
             lang={lang}
-            sidebarTab={sidebarTab}
             onApplyChanges={handleApplyAIChanges}
           />
         </Suspense>
@@ -399,7 +633,10 @@ function AppContent() {
       {/* Export Dialog */}
       {isExportDialogOpen && (
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
-          <ExportDialog
+          <ExportDialogConnector
+            target={exportDialogTarget}
+            lang={lang}
+            isExporting={isExporting}
             onClose={() => {
               if (!isExporting) {
                 setIsExportDialogOpen(false);
@@ -411,9 +648,12 @@ function AppContent() {
                 requestAnimationFrame(() => resolve());
               });
               try {
-                await handleExportWithConfig(config, exportDialogTarget, {
+                const result = await handleExportWithConfig(config as never, exportDialogTarget, {
                   onProgress: options?.onProgress,
                 });
+                if (result.partial && result.warnings.length > 0) {
+                  showToast(result.warnings[0], 'info');
+                }
                 setIsExportDialogOpen(false);
               } catch (error) {
                 showToast(
@@ -426,9 +666,6 @@ function AppContent() {
                 setIsExporting(false);
               }
             }}
-            lang={lang}
-            isExporting={isExporting}
-            canExportUsd={canExportUsd}
           />
         </Suspense>
       )}

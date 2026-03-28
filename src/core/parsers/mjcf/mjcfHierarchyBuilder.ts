@@ -9,6 +9,7 @@ import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
 import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial, MJCFTexture } from './mjcfUtils';
+import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 
 export interface MJCFHierarchyGeom {
     name?: string;
@@ -58,6 +59,7 @@ interface BuildMJCFHierarchyOptions {
     textureMap: Map<string, MJCFTexture>;
     sourceFileDir?: string;
     onProgress?: (progress: { processedGeoms: number; totalGeoms: number }) => void;
+    yieldIfNeeded?: () => Promise<void>;
 }
 
 export interface MJCFHierarchyResult {
@@ -78,6 +80,29 @@ function restackLinkVisualRoots(linkTarget: THREE.Object3D): void {
     }
 
     stackCoincidentVisualRoots(visualRoots);
+}
+
+function restackRobotVisualRoots(root: THREE.Object3D): void {
+    root.updateMatrixWorld(true);
+
+    const visualRoots: Array<{ root: THREE.Object3D; stableId: number }> = [];
+    let visualIndex = 0;
+    root.traverse((child: any) => {
+        if (!child?.isURDFVisual) {
+            return;
+        }
+
+        visualRoots.push({
+            root: child,
+            stableId: visualIndex++,
+        });
+    });
+
+    if (visualRoots.length < 2) {
+        return;
+    }
+
+    stackCoincidentVisualRoots(visualRoots, { space: 'world' });
 }
 
 function countBodyGeoms(body: MJCFHierarchyBody): number {
@@ -149,7 +174,7 @@ function getTexturePromise(assetUrl: string): Promise<THREE.Texture | null> {
             return texture;
         })
         .catch((error) => {
-            console.warn(`[MJCFLoader] Failed to load texture asset: ${assetUrl}`, error);
+            console.error(`[MJCFLoader] Failed to load texture asset: ${assetUrl}`, error);
             return null;
         });
 
@@ -194,7 +219,7 @@ async function loadMaterialTexture(
 
     const assetUrl = findAssetByPath(textureDef.file, assets, sourceFileDir);
     if (!assetUrl) {
-        console.warn(`[MJCFLoader] Texture asset not found: ${textureDef.file}`);
+        console.error(`[MJCFLoader] Texture asset not found: ${textureDef.file}`);
         return null;
     }
 
@@ -242,11 +267,12 @@ async function applyMaterialAssetToMesh(
 
     mesh.traverse((child: any) => {
         if (!child.isMesh) return;
+        const preferDoubleSide = alpha < 1 || Boolean(child.userData?.mjcfPreferDoubleSide);
         child.material = createMatteMaterial({
             color: createThreeColorFromSRGB(r, g, b),
             opacity: alpha,
             transparent: alpha < 1,
-            side: THREE.DoubleSide,
+            side: preferDoubleSide ? THREE.DoubleSide : THREE.FrontSide,
             map: texture,
             name: materialName || materialDef.name || 'mjcf_material_asset',
             preserveExactColor: hasAuthoredRgba || Boolean(texture),
@@ -296,6 +322,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         textureMap,
         sourceFileDir = '',
         onProgress,
+        yieldIfNeeded = createMainThreadYieldController(),
     } = options;
     const linksMap: Record<string, THREE.Object3D> = {};
     const jointsMap: Record<string, THREE.Object3D> = {};
@@ -376,9 +403,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                 }
 
                 if (isCollisionGeom) {
-                    // Log collision geom creation for debugging
-                    console.debug(`[MJCFLoader] Adding collision geom: type="${geom.type}", size=[${geom.size?.join(', ') || 'none'}], pos=[${geom.pos?.join(', ') || 'none'}]`);
-
                     // Clone if already added to visual, otherwise use directly
                     const collisionMesh = isVisualGeom ? mesh.clone(true) : mesh;
                     const collisionGroup = new URDFCollider();
@@ -423,6 +447,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
             } finally {
                 processedGeoms += 1;
                 onProgress?.({ processedGeoms, totalGeoms });
+                await yieldIfNeeded();
             }
         }
     }
@@ -576,13 +601,17 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
 
         for (const childBody of body.children) {
             await buildBody(childBody, linkGroup);
+            await yieldIfNeeded();
         }
     }
 
     // Build all top-level bodies
     for (const body of bodies) {
         await buildBody(body, rootGroup);
+        await yieldIfNeeded();
     }
+
+    restackRobotVisualRoots(rootGroup);
 
     return { linksMap, jointsMap };
 }

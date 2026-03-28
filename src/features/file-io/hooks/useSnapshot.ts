@@ -39,7 +39,7 @@ export function useSnapshot(options: UseSnapshotOptions = {}): UseSnapshotReturn
         onError?.(e as Error);
       }
     } else {
-      console.warn('Snapshot action not bound');
+      console.error('Snapshot action not bound');
     }
   }, [onSuccess, onError, showToast, t]);
 

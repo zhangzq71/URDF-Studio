@@ -26,6 +26,16 @@ function loadGo2RobotData(): RobotData {
   return robot;
 }
 
+function loadSimpleRobotData(): RobotData {
+  const source = `<?xml version="1.0"?>
+<robot name="simple_export">
+  <link name="base_link" />
+</robot>`;
+  const robot = parseURDF(source);
+  assert.ok(robot, 'expected simple URDF to parse');
+  return robot;
+}
+
 function buildGo2AssetMap(): Record<string, string> {
   const assets: Record<string, string> = {};
 
@@ -61,7 +71,7 @@ test('exportProject preserves go2 split visual materials in generated MJCF outpu
   const assets = buildGo2AssetMap();
   const originalUrdfContent = fs.readFileSync(GO2_URDF_PATH, 'utf8');
 
-  const projectBlob = await exportProject({
+  const exportResult = await exportProject({
     name: 'go2_project',
     uiState: {
       appMode: 'detail',
@@ -97,8 +107,10 @@ test('exportProject preserves go2 split visual materials in generated MJCF outpu
     },
     getMergedRobotData: () => robot,
   });
+  assert.equal(exportResult.partial, false);
+  assert.equal(exportResult.warnings.length, 0);
 
-  const zip = await JSZip.loadAsync(await projectBlob.arrayBuffer());
+  const zip = await JSZip.loadAsync(await exportResult.blob.arrayBuffer());
   const mjcfOutput = await zip.file('output/go2_description.xml')?.async('string');
 
   assert.ok(mjcfOutput, 'expected project export to include output/go2_description.xml');
@@ -115,5 +127,97 @@ test('exportProject preserves go2 split visual materials in generated MJCF outpu
   assert.ok(
     splitBaseMeshPaths.length >= 2,
     `expected split base OBJ variants in output/meshes, received: ${splitBaseMeshPaths.join(', ')}`,
+  );
+});
+
+test('exportProject fails fast when a packed workspace asset cannot be fetched', async () => {
+  const robot = loadSimpleRobotData();
+  const originalUrdfContent = `<?xml version="1.0"?>
+<robot name="simple_export">
+  <link name="base_link" />
+</robot>`;
+
+  await assert.rejects(
+    exportProject({
+      name: 'broken_asset_project',
+      uiState: {
+        appMode: 'detail',
+        lang: 'en',
+      },
+      assetsState: {
+        availableFiles: [
+          {
+            name: 'robots/simple_export.urdf',
+            format: 'urdf',
+            content: originalUrdfContent,
+          },
+        ],
+        assets: {
+          'textures/missing.png': 'blob:missing-project-asset',
+        },
+        allFileContents: {
+          'robots/simple_export.urdf': originalUrdfContent,
+        },
+        motorLibrary: {},
+        selectedFileName: 'robots/simple_export.urdf',
+        originalUrdfContent,
+        originalFileFormat: 'urdf',
+        usdPreparedExportCaches: {},
+      },
+      robotState: {
+        present: robot,
+        history: { past: [], future: [] },
+        activity: [],
+      },
+      assemblyState: {
+        present: null,
+        history: { past: [], future: [] },
+        activity: [],
+      },
+      getMergedRobotData: () => robot,
+    }),
+    /Failed to pack asset "textures\/missing\.png"/,
+  );
+});
+
+test('exportProject fails fast when a non-mesh library source file has no content', async () => {
+  const robot = loadSimpleRobotData();
+
+  await assert.rejects(
+    exportProject({
+      name: 'missing_library_source_project',
+      uiState: {
+        appMode: 'detail',
+        lang: 'en',
+      },
+      assetsState: {
+        availableFiles: [
+          {
+            name: 'robots/simple_export.urdf',
+            format: 'urdf',
+            content: '',
+          },
+        ],
+        assets: {},
+        allFileContents: {},
+        motorLibrary: {},
+        selectedFileName: 'robots/simple_export.urdf',
+        originalUrdfContent: '',
+        originalFileFormat: 'urdf',
+        usdPreparedExportCaches: {},
+      },
+      robotState: {
+        present: robot,
+        history: { past: [], future: [] },
+        activity: [],
+      },
+      assemblyState: {
+        present: null,
+        history: { past: [], future: [] },
+        activity: [],
+      },
+      getMergedRobotData: () => robot,
+    }),
+    /Missing library source content for project export: robots\/simple_export\.urdf/,
   );
 });

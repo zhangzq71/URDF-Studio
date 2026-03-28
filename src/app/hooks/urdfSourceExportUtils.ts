@@ -1,10 +1,12 @@
-import { parseURDF } from '@/core/parsers';
 import {
   rewriteRobotMeshPathsForSource,
   rewriteUrdfAssetPathsForExport,
 } from '@/core/parsers/meshPathUtils';
 import type { RobotState } from '@/types';
-import { createRobotSourceSnapshot } from './workspaceSourceSyncUtils';
+import {
+  createRobotSourceSnapshot,
+  createRobotSourceSnapshotFromUrdfContent,
+} from './workspaceSourceSyncUtils';
 
 interface ResolveUrdfSourceExportContentOptions {
   currentRobot: RobotState;
@@ -23,24 +25,16 @@ function normalizeRobotForSnapshot(robot: RobotState): RobotState {
   };
 }
 
-function buildSnapshotFromUrdfContent(
+async function buildSnapshotFromUrdfContent(
   urdfContent: string,
   sourceFilePath: string,
-): string | null {
-  const parsed = parseURDF(urdfContent);
-  if (!parsed) {
-    return null;
-  }
-
-  const normalizedRobot = rewriteRobotMeshPathsForSource(
-    normalizeRobotForSnapshot(parsed),
-    sourceFilePath,
-  );
-
-  return createRobotSourceSnapshot(normalizedRobot);
+): Promise<string | null> {
+  return createRobotSourceSnapshotFromUrdfContent(urdfContent, {
+    sourcePath: sourceFilePath,
+  });
 }
 
-export function resolveUrdfSourceExportContent({
+export async function resolveUrdfSourceExportContent({
   currentRobot,
   exportRobotName,
   selectedFileName,
@@ -48,7 +42,7 @@ export function resolveUrdfSourceExportContent({
   originalUrdfContent,
   useRelativePaths = false,
   preferSourceVisualMeshes = true,
-}: ResolveUrdfSourceExportContentOptions): string | null {
+}: ResolveUrdfSourceExportContentOptions): Promise<string | null> {
   if (!preferSourceVisualMeshes) {
     return null;
   }
@@ -69,7 +63,7 @@ export function resolveUrdfSourceExportContent({
   });
 
   for (const candidateContent of candidateContents) {
-    const candidateSnapshot = buildSnapshotFromUrdfContent(
+    const candidateSnapshot = await buildSnapshotFromUrdfContent(
       candidateContent,
       selectedFileName,
     );

@@ -30,7 +30,7 @@ export async function runAnimationFrame(args) {
         }
         catch (timeError) {
             drawFailed = true;
-            console.warn("Disabling USD animation updates after SetTime failure.", timeError);
+            console.error("Disabling USD animation updates after SetTime failure.", timeError);
         }
     }
     if (!drawFailed && shouldRunDraw) {
@@ -59,7 +59,7 @@ export async function runAnimationFrame(args) {
             }
             catch (drawError) {
                 drawFailed = true;
-                console.warn("Disabling live USD redraw after Draw failure.", drawError);
+                console.error("Disabling live USD redraw after Draw failure.", drawError);
                 break;
             }
             finally {

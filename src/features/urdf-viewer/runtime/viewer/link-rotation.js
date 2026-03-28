@@ -64,8 +64,9 @@ export class LinkRotationController {
         this.tempPrevRayOriginLocal = new Vector3();
         this.tempPrevRayDirectionLocal = new Vector3();
         this.dragHitDistance = 0;
-        this.dragLastClientX = 0;
-        this.dragLastClientY = 0;
+        this.dragLastLocalX = 0;
+        this.dragLastLocalY = 0;
+        this.pointerBounds = null;
         this.handlePointerDown = (event) => {
             if (!this.enabled || event.button !== 0)
                 return;
@@ -73,13 +74,13 @@ export class LinkRotationController {
             const hit = this.pickLinkHitAtPointer(event);
             if (!hit)
                 return;
-            const { linkPath, distance } = hit;
+            const { linkPath, distance, localX, localY } = hit;
             this.selectedLinkPath = linkPath;
             this.activeLinkPath = null;
             this.dragging = false;
             this.dragHitDistance = distance;
-            this.dragLastClientX = event.clientX;
-            this.dragLastClientY = event.clientY;
+            this.dragLastLocalX = localX;
+            this.dragLastLocalY = localY;
             const jointState = this.getOrResolveJointStateForLinkPath(linkPath);
             if (!jointState) {
                 this.updateCursor();
@@ -104,11 +105,14 @@ export class LinkRotationController {
             const jointState = this.getOrResolveJointStateForLinkPath(this.activeLinkPath);
             if (!jointState)
                 return;
-            const deltaAngleDeg = this.getRevoluteDeltaDeg(jointState, this.dragLastClientX, this.dragLastClientY, event.clientX, event.clientY);
+            const localPoint = this.resolveLocalPointerFromClient(event.clientX, event.clientY);
+            if (!localPoint)
+                return;
+            const deltaAngleDeg = this.getRevoluteDeltaDeg(jointState, this.dragLastLocalX, this.dragLastLocalY, localPoint.x, localPoint.y);
             const interactiveLimits = getInteractiveJointLimits(jointState.lowerLimitDeg, jointState.upperLimitDeg);
             const nextAngle = clampJointAnglePreservingNeutralZero(jointState.angleDeg + deltaAngleDeg, interactiveLimits.lower, interactiveLimits.upper);
-            this.dragLastClientX = event.clientX;
-            this.dragLastClientY = event.clientY;
+            this.dragLastLocalX = localPoint.x;
+            this.dragLastLocalY = localPoint.y;
             if (Math.abs(nextAngle - jointState.angleDeg) <= 1e-8)
                 return;
             jointState.angleDeg = nextAngle;
@@ -122,6 +126,7 @@ export class LinkRotationController {
             this.dragging = false;
             this.activeLinkPath = null;
             this.dragHitDistance = 0;
+            this.pointerBounds = null;
             if (this.controls)
                 this.controls.enabled = true;
             if (this.selectedLinkPath) {
@@ -289,12 +294,6 @@ export class LinkRotationController {
             }
         }
         const entries = [];
-        if (profileJointCatalog) {
-            const readyAtMs = (typeof performance !== "undefined" && typeof performance.now === "function")
-                ? performance.now()
-                : Date.now();
-            console.info("[LinkRotation] getAllJointInfos collected candidate links:", linkPaths.size, "waited", Math.round(readyAtMs - profileStartMs), "ms");
-        }
         for (const linkPath of linkPaths) {
             const isKnownLinkPath = this.jointCatalogByLinkPath.has(linkPath) || this.linkJointStateByLinkPath.has(linkPath);
             if (!isKnownLinkPath && !scanMeshLinksForJoints)
@@ -305,12 +304,6 @@ export class LinkRotationController {
             entries.push(info);
         }
         entries.sort((left, right) => left.linkPath.localeCompare(right.linkPath));
-        if (profileJointCatalog) {
-            const endMs = (typeof performance !== "undefined" && typeof performance.now === "function")
-                ? performance.now()
-                : Date.now();
-            console.info("[LinkRotation] getAllJointInfos returned", entries.length, "rows in", Math.round(endMs - profileStartMs), "ms");
-        }
         return entries;
     }
     setJointAngleForLink(linkPath, angleDeg, options = {}) {
@@ -607,15 +600,59 @@ export class LinkRotationController {
             dragging: this.dragging,
         });
     }
-    pickLinkHitAtPointer(event) {
-        if (!this.camera || !this.domElement || !this.renderInterface?.meshes)
+    getPointerBounds(forceRefresh = false) {
+        if (!this.domElement)
             return null;
+        const cachedBounds = this.pointerBounds;
+        const width = this.domElement.clientWidth;
+        const height = this.domElement.clientHeight;
+        if (!forceRefresh && cachedBounds && cachedBounds.width === width && cachedBounds.height === height) {
+            return cachedBounds;
+        }
         const rect = this.domElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0)
             return null;
-        this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        this.pointerBounds = {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+        };
+        return this.pointerBounds;
+    }
+    setRayFromLocalPointer(localX, localY) {
+        if (!this.camera || !this.domElement)
+            return false;
+        const width = this.domElement.clientWidth;
+        const height = this.domElement.clientHeight;
+        if (width <= 0 || height <= 0)
+            return false;
+        this.pointer.x = (localX / width) * 2 - 1;
+        this.pointer.y = -(localY / height) * 2 + 1;
         this.raycaster.setFromCamera(this.pointer, this.camera);
+        return true;
+    }
+    resolveLocalPointerFromClient(clientX, clientY, forceRefresh = false) {
+        const bounds = this.getPointerBounds(forceRefresh);
+        if (!bounds)
+            return null;
+        return {
+            x: clientX - bounds.left,
+            y: clientY - bounds.top,
+            width: bounds.width,
+            height: bounds.height,
+        };
+    }
+    pickLinkHitAtPointer(event) {
+        if (!this.camera || !this.domElement || !this.renderInterface?.meshes)
+            return null;
+        const localPoint = this.resolveLocalPointerFromClient(event.clientX, event.clientY, true);
+        if (!localPoint)
+            return null;
+        if (localPoint.x < 0 || localPoint.x > localPoint.width || localPoint.y < 0 || localPoint.y > localPoint.height)
+            return null;
+        if (!this.setRayFromLocalPointer(localPoint.x, localPoint.y))
+            return null;
         const pickMeshes = [];
         const pickMap = new Map();
         for (const [meshId, hydraMesh] of Object.entries(this.renderInterface.meshes)) {
@@ -639,21 +676,19 @@ export class LinkRotationController {
             const linkPath = getLinkPathFromMeshId(hitMeshId);
             if (linkPath)
                 return {
+                    localX: localPoint.x,
+                    localY: localPoint.y,
                     linkPath,
                     distance: hit.distance,
                 };
         }
         return null;
     }
-    getLocalPointerRay(clientX, clientY, outOrigin, outDirection) {
+    getLocalPointerRay(localX, localY, outOrigin, outDirection) {
         if (!this.camera || !this.domElement)
             return false;
-        const rect = this.domElement.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0)
+        if (!this.setRayFromLocalPointer(localX, localY))
             return false;
-        this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-        this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-        this.raycaster.setFromCamera(this.pointer, this.camera);
         outOrigin.copy(this.raycaster.ray.origin);
         outDirection.copy(this.raycaster.ray.direction);
         const usdRoot = window.usdRoot;
@@ -677,7 +712,7 @@ export class LinkRotationController {
         }
         return outDirection.lengthSq() > 1e-12;
     }
-    getRevoluteDeltaDeg(jointState, startClientX, startClientY, endClientX, endClientY) {
+    getRevoluteDeltaDeg(jointState, startLocalX, startLocalY, endLocalX, endLocalY) {
         const linkMatrix = this.getCurrentLinkFrameMatrixForLinkPath(jointState.linkPath);
         if (!linkMatrix)
             return 0;
@@ -690,9 +725,9 @@ export class LinkRotationController {
         else {
             this.tempPivotWorld.setFromMatrixPosition(linkMatrix);
         }
-        if (!this.getLocalPointerRay(startClientX, startClientY, this.tempPrevRayOriginLocal, this.tempPrevRayDirectionLocal))
+        if (!this.getLocalPointerRay(startLocalX, startLocalY, this.tempPrevRayOriginLocal, this.tempPrevRayDirectionLocal))
             return 0;
-        if (!this.getLocalPointerRay(endClientX, endClientY, this.tempRayOriginLocal, this.tempRayDirectionLocal))
+        if (!this.getLocalPointerRay(endLocalX, endLocalY, this.tempRayOriginLocal, this.tempRayDirectionLocal))
             return 0;
         this.tempPrevDragPointWorld.copy(this.tempPrevRayDirectionLocal).multiplyScalar(this.dragHitDistance).add(this.tempPrevRayOriginLocal);
         this.tempDragPointWorld.copy(this.tempRayDirectionLocal).multiplyScalar(this.dragHitDistance).add(this.tempRayOriginLocal);
@@ -1346,12 +1381,6 @@ export class LinkRotationController {
             skipUrdfTruthFallback: true,
         }), runtimeLinkPathIndex);
         if (importedFromRenderSnapshot > 0) {
-            if (profileJointCatalog) {
-                const nowMs = (typeof performance !== "undefined" && typeof performance.now === "function")
-                    ? Math.round(performance.now())
-                    : Date.now();
-                console.info("[LinkRotation] Render snapshot joint import count:", importedFromRenderSnapshot, "at", nowMs, "ms");
-            }
             return;
         }
         const rootPathSet = new Set([

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { RefObject } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { URDFLoader } from '@/core/parsers/urdf/loader';
+import { buildRuntimeRobotFromState, URDFLoader } from '@/core/parsers/urdf/loader';
 import { disposeObject3D } from '../utils/dispose';
 import {
     alignRobotToGroundBeforeFirstMount,
@@ -17,9 +17,8 @@ import {
     createLoadingManager,
     createMeshLoader,
 } from '@/core/loaders';
-import { collectExplicitlyScaledMeshPaths } from '@/core/loaders/meshScaleHints';
+import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
-import { parseURDF } from '@/core/parsers/urdf/parser';
 import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 import type { UrdfJoint, UrdfLink } from '@/types';
 import { setRegressionRuntimeRobot } from '@/shared/debug/regressionBridge';
@@ -27,9 +26,11 @@ import { isSingleDofJoint } from '../utils/jointTypes';
 import { detectSingleGeometryPatch, detectSingleJointPatch } from '../utils/robotLoaderDiff';
 import { applyGeometryPatchInPlace } from '../utils/robotLoaderGeometryPatch';
 import { patchJointInPlace } from '../utils/robotLoaderJointPatch';
-import { parseURDFMaterials } from '../utils/urdfMaterials';
+import { resolveURDFMaterialsForScene } from '../utils/urdfMaterials';
 import { syncLoadedRobotScene } from '../utils/loadedRobotSceneSync';
 import { shouldMountRobotBeforeAssetsComplete } from '../utils/loadStrategy';
+import { resolveRobotLoaderSourceMetadata } from '../utils/robotLoaderSourceMetadata';
+import type { RobotLoadingPhase, ViewerDocumentLoadEvent } from '../types';
 
 function preprocessURDFForLoader(content: string): string {
     // Remove <transmission> blocks to prevent urdf-loader from finding duplicate joints
@@ -59,8 +60,6 @@ function waitForLoadingHudPaint(invalidate?: () => void): Promise<void> {
     });
 }
 
-type RobotLoadingPhase = 'preparing-scene' | 'streaming-meshes' | 'finalizing-scene' | 'ready';
-
 interface RobotLoadingProgress {
     phase: RobotLoadingPhase;
     loadedCount?: number | null;
@@ -80,6 +79,7 @@ export interface UseRobotLoaderOptions {
     initialJointAngles?: Record<string, number>;
     sourceFilePath?: string;
     onRobotLoaded?: (robot: THREE.Object3D) => void;
+    onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
     groundPlaneOffset?: number;
 }
 
@@ -91,6 +91,18 @@ export interface UseRobotLoaderResult {
     robotVersion: number;
     robotRef: RefObject<THREE.Object3D | null>;
     linkMeshMapRef: RefObject<Map<string, THREE.Mesh[]>>;
+}
+
+interface PendingLoadingDispatch {
+    event: ViewerDocumentLoadEvent;
+    progress: RobotLoadingProgress | null;
+}
+
+function createLoadingDispatchKey(
+    progress: RobotLoadingProgress | null,
+    event: ViewerDocumentLoadEvent | null,
+): string {
+    return JSON.stringify({ progress, event });
 }
 
 export function useRobotLoader({
@@ -105,6 +117,7 @@ export function useRobotLoader({
     initialJointAngles,
     sourceFilePath,
     onRobotLoaded,
+    onDocumentLoadEvent,
     groundPlaneOffset = 0,
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
     const [robot, setRobot] = useState<THREE.Object3D | null>(null);
@@ -125,7 +138,10 @@ export function useRobotLoader({
     const pendingDisposeRobotRef = useRef<THREE.Object3D | null>(null);
     const pendingDisposeFrameRef = useRef<number | null>(null);
     const groundAlignTimerRef = useRef<number[]>([]);
-    const deferredSceneSyncTimerRef = useRef<number[]>([]);
+    const progressDispatchFrameRef = useRef<number | null>(null);
+    const pendingLoadingDispatchRef = useRef<PendingLoadingDispatch | null>(null);
+    const lastPublishedLoadingDispatchKeyRef = useRef('');
+    const lastPublishedProgressRef = useRef<RobotLoadingProgress | null>(null);
 
     // Refs for visibility state (used in loading callback)
     const showVisualRef = useRef(showVisual);
@@ -176,10 +192,67 @@ export function useRobotLoader({
         groundAlignTimerRef.current = [];
     }, []);
 
-    const clearDeferredSceneSyncTimers = useCallback(() => {
-        deferredSceneSyncTimerRef.current.forEach((timer) => window.clearTimeout(timer));
-        deferredSceneSyncTimerRef.current = [];
-    }, []);
+    const emitDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
+        onDocumentLoadEvent?.(event);
+    }, [onDocumentLoadEvent]);
+
+    const applyLoadingDispatch = useCallback((dispatch: PendingLoadingDispatch) => {
+        const dispatchKey = createLoadingDispatchKey(dispatch.progress, dispatch.event);
+        if (dispatchKey === lastPublishedLoadingDispatchKeyRef.current) {
+            return;
+        }
+
+        lastPublishedLoadingDispatchKeyRef.current = dispatchKey;
+        lastPublishedProgressRef.current = dispatch.progress;
+        setLoadingProgress(dispatch.progress);
+        emitDocumentLoadEvent(dispatch.event);
+    }, [emitDocumentLoadEvent]);
+
+    const flushPendingLoadingDispatch = useCallback(() => {
+        if (progressDispatchFrameRef.current !== null && typeof window !== 'undefined') {
+            window.cancelAnimationFrame(progressDispatchFrameRef.current);
+            progressDispatchFrameRef.current = null;
+        }
+
+        const pendingDispatch = pendingLoadingDispatchRef.current;
+        pendingLoadingDispatchRef.current = null;
+        if (!pendingDispatch) {
+            return;
+        }
+
+        applyLoadingDispatch(pendingDispatch);
+    }, [applyLoadingDispatch]);
+
+    const publishLoadingDispatch = useCallback((
+        progress: RobotLoadingProgress | null,
+        event: ViewerDocumentLoadEvent,
+        options: { defer?: boolean } = {},
+    ) => {
+        const nextDispatch: PendingLoadingDispatch = { progress, event };
+
+        if (!options.defer) {
+            pendingLoadingDispatchRef.current = null;
+            flushPendingLoadingDispatch();
+            applyLoadingDispatch(nextDispatch);
+            return;
+        }
+
+        pendingLoadingDispatchRef.current = nextDispatch;
+
+        if (progressDispatchFrameRef.current !== null) {
+            return;
+        }
+
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+            progressDispatchFrameRef.current = window.requestAnimationFrame(() => {
+                progressDispatchFrameRef.current = null;
+                flushPendingLoadingDispatch();
+            });
+            return;
+        }
+
+        queueMicrotask(flushPendingLoadingDispatch);
+    }, [applyLoadingDispatch, flushPendingLoadingDispatch]);
 
     const schedulePreviousRobotDispose = useCallback((previousRobot: THREE.Object3D | null) => {
         if (!previousRobot) return;
@@ -304,8 +377,8 @@ export function useRobotLoader({
     useEffect(() => {
         return () => {
             clearGroundAlignTimers();
-            clearDeferredSceneSyncTimers();
             flushPendingRobotDispose();
+            flushPendingLoadingDispatch();
 
             // Deep cleanup of robot resources on unmount
             if (robotRef.current) {
@@ -313,7 +386,7 @@ export function useRobotLoader({
                 robotRef.current = null;
             }
         };
-    }, [clearDeferredSceneSyncTimers, clearGroundAlignTimers, disposeRobotObject, flushPendingRobotDispose]);
+    }, [clearGroundAlignTimers, disposeRobotObject, flushPendingLoadingDispatch, flushPendingRobotDispose]);
 
     useEffect(() => {
         if (!import.meta.env.DEV || isMeshPreview) {
@@ -330,9 +403,8 @@ export function useRobotLoader({
     useEffect(() => {
         return () => {
             clearGroundAlignTimers();
-            clearDeferredSceneSyncTimers();
         };
-    }, [clearDeferredSceneSyncTimers, clearGroundAlignTimers]);
+    }, [clearGroundAlignTimers]);
 
     // Load robot with proper cleanup and abort handling
     useEffect(() => {
@@ -349,12 +421,18 @@ export function useRobotLoader({
         const loadRobot = async () => {
             try {
                 setIsLoading(true);
-                setLoadingProgress({
+                publishLoadingDispatch({
                     phase: 'preparing-scene',
-                    progressPercent: 0,
+                    progressPercent: null,
+                }, {
+                    status: 'loading',
+                    phase: 'preparing-scene',
+                    progressPercent: null,
+                    loadedCount: null,
+                    totalCount: null,
+                    message: null,
                 });
                 setError(null);
-                clearDeferredSceneSyncTimers();
                 await waitForLoadingHudPaint(invalidate);
 
                 if (abortController.aborted || !isMountedRef.current) {
@@ -368,7 +446,7 @@ export function useRobotLoader({
                 let hasMountedRobot = false;
                 const isMJCFAsset = resolvedSourceFormat === 'mjcf';
                 const preserveAuthoredRootTransform = false;
-                const urdfMaterials = isMJCFAsset ? null : parseURDFMaterials(urdfContent);
+                const urdfMaterials = isMJCFAsset ? null : resolveURDFMaterialsForScene(urdfContent, robotLinks);
 
                 const syncLoadedRobot = (loadedRobot: THREE.Object3D) => {
                     const { changed, linkMeshMap } = syncLoadedRobotScene({
@@ -381,26 +459,6 @@ export function useRobotLoader({
 
                     linkMeshMapRef.current = linkMeshMap;
                     return changed;
-                };
-
-                const scheduleDeferredSceneSync = (loadedRobot: THREE.Object3D) => {
-                    if (isMJCFAsset || typeof window === 'undefined') {
-                        return;
-                    }
-
-                    clearDeferredSceneSyncTimers();
-                    deferredSceneSyncTimerRef.current = [0, 80, 220, 500].map((delay) =>
-                        window.setTimeout(() => {
-                            if (!isMountedRef.current) return;
-                            if (robotRef.current !== loadedRobot) return;
-
-                            const changed = syncLoadedRobot(loadedRobot);
-                            if (!changed) return;
-
-                            setRobotVersion((value) => value + 1);
-                            invalidate();
-                        }, delay),
-                    );
                 };
 
                 const mountLoadedRobot = (loadedRobot: THREE.Object3D) => {
@@ -444,27 +502,40 @@ export function useRobotLoader({
                     setError(null);
                     invalidate();
                     scheduleGroundAlignment(loadedRobot);
-                    scheduleDeferredSceneSync(loadedRobot);
 
                     if (previousRobot && previousRobot !== loadedRobot) {
                         schedulePreviousRobotDispose(previousRobot);
                     }
                 };
 
-                const finalizeLoadedRobot = (loadedRobot: THREE.Object3D) => {
+                const finalizeLoadedRobot = async (loadedRobot: THREE.Object3D) => {
                     const wasMountedBeforeFinalize = hasMountedRobot;
                     mountLoadedRobot(loadedRobot);
                     if (abortController.aborted || !isMountedRef.current) {
                         return;
                     }
 
-                    const changed = syncLoadedRobot(loadedRobot);
-                    if (changed) {
-                        setRobotVersion((value) => value + 1);
+                    if (wasMountedBeforeFinalize) {
+                        const changed = syncLoadedRobot(loadedRobot);
+                        if (changed) {
+                            setRobotVersion((value) => value + 1);
+                        }
+                    }
+
+                    await waitForLoadingHudPaint(invalidate);
+                    if (abortController.aborted || !isMountedRef.current) {
+                        return;
                     }
 
                     setIsLoading(false);
-                    setLoadingProgress(null);
+                    publishLoadingDispatch(null, {
+                        status: 'ready',
+                        phase: 'ready',
+                        progressPercent: 100,
+                        loadedCount: null,
+                        totalCount: null,
+                        message: null,
+                    });
                     setError(null);
                     invalidate();
                     if (wasMountedBeforeFinalize) {
@@ -481,12 +552,22 @@ export function useRobotLoader({
                             return;
                         }
 
-                        setLoadingProgress(nextProgress.phase === 'ready' ? null : {
+                        const normalizedProgress = nextProgress.phase === 'ready' ? null : {
                             phase: nextProgress.phase,
                             loadedCount: nextProgress.loadedCount ?? null,
                             totalCount: nextProgress.totalCount ?? null,
                             progressPercent: nextProgress.progressPercent ?? null,
-                        });
+                        };
+                        if (nextProgress.phase !== 'ready') {
+                            publishLoadingDispatch(normalizedProgress, {
+                                status: 'loading',
+                                phase: nextProgress.phase,
+                                progressPercent: nextProgress.progressPercent ?? null,
+                                loadedCount: nextProgress.loadedCount ?? null,
+                                totalCount: nextProgress.totalCount ?? null,
+                                message: null,
+                            }, { defer: true });
+                        }
                     });
 
                     if (abortController.aborted) {
@@ -498,9 +579,15 @@ export function useRobotLoader({
                 } else {
                     // Standard URDF loading
                     const urdfDir = sourceFileDir;
-                    const fullRobotState = parseURDF(urdfContent);
-                    const explicitlyScaledMeshPaths = collectExplicitlyScaledMeshPaths(fullRobotState);
-                    const colladaRootNormalizationHints = buildColladaRootNormalizationHints(fullRobotState.links);
+                    const {
+                        robotJoints: sourceRobotJoints,
+                        explicitlyScaledMeshPaths,
+                        colladaRootNormalizationHints,
+                    } = resolveRobotLoaderSourceMetadata({
+                        urdfContent,
+                        robotLinks,
+                        robotJoints,
+                    });
                     const manager = createLoadingManager(assets, urdfDir);
                     manager.onProgress = (_url, itemsLoaded, itemsTotal) => {
                         if (abortController.aborted || !isMountedRef.current) {
@@ -512,51 +599,84 @@ export function useRobotLoader({
                             return;
                         }
 
-                        setLoadingProgress({
+                        publishLoadingDispatch({
                             phase: 'streaming-meshes',
                             loadedCount: Math.min(itemsLoaded, adjustedTotalCount),
                             totalCount: adjustedTotalCount,
                             progressPercent: null,
-                        });
+                        }, {
+                            status: 'loading',
+                            phase: 'streaming-meshes',
+                            progressPercent: null,
+                            loadedCount: Math.min(itemsLoaded, adjustedTotalCount),
+                            totalCount: adjustedTotalCount,
+                            message: null,
+                        }, { defer: true });
                     };
                     manager.onLoad = () => {
                         if (!robotModel) return;
                         if (!abortController.aborted && isMountedRef.current) {
-                            setLoadingProgress((current) => ({
+                            const currentProgress = pendingLoadingDispatchRef.current?.progress ?? lastPublishedProgressRef.current;
+                            const nextProgress: RobotLoadingProgress = {
                                 phase: 'finalizing-scene',
-                                loadedCount: current?.totalCount ?? current?.loadedCount ?? null,
-                                totalCount: current?.totalCount ?? null,
-                                progressPercent: current?.totalCount ? 100 : 96,
-                            }));
+                                loadedCount: currentProgress?.totalCount ?? currentProgress?.loadedCount ?? null,
+                                totalCount: currentProgress?.totalCount ?? null,
+                                progressPercent: currentProgress?.totalCount ? 100 : 96,
+                            };
+                            publishLoadingDispatch(nextProgress, {
+                                status: 'loading',
+                                phase: nextProgress.phase,
+                                progressPercent: nextProgress.progressPercent ?? null,
+                                loadedCount: nextProgress.loadedCount ?? null,
+                                totalCount: nextProgress.totalCount ?? null,
+                                message: null,
+                            });
                         }
-                        finalizeLoadedRobot(robotModel);
+                        void finalizeLoadedRobot(robotModel);
                     };
                     // Use new local URDFLoader
                     const loader = new URDFLoader(manager);
+                    const yieldIfNeeded = createMainThreadYieldController();
                     loader.parseCollision = true;
                     loader.parseVisual = true;
                     loader.loadMeshCb = createMeshLoader(assets, manager, urdfDir, {
                         colladaRootNormalizationHints,
                         explicitScaleMeshPaths: explicitlyScaledMeshPaths,
+                        yieldIfNeeded,
                     });
                     loader.packages = '';
 
                     const loadCompletionKey = '__urdf_studio_robot_finalize__';
                     manager.itemStart(loadCompletionKey);
                     try {
-                        const cleanContent = preprocessURDFForLoader(urdfContent);
-                        robotModel = loader.parse(cleanContent);
-                        if (fullRobotState && fullRobotState.joints && (robotModel as any).joints) {
-                            Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
-                                const parsedJoint = fullRobotState.joints[name];
-                                if (parsedJoint && parsedJoint.limit) {
-                                    if (!joint.limit) joint.limit = {};
-                                    joint.limit.effort = parsedJoint.limit.effort;
-                                    joint.limit.velocity = parsedJoint.limit.velocity;
-                                    if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
-                                    if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
-                                }
+                        // The editor already has canonical link/joint state in the hot path.
+                        // Rebuilding the runtime scene from that state avoids a second URDF XML parse.
+                        const canBuildFromState = Boolean(robotLinks && robotJoints);
+                        if (canBuildFromState) {
+                            robotModel = await buildRuntimeRobotFromState({
+                                links: robotLinks!,
+                                joints: robotJoints!,
+                                manager,
+                                loadMeshCb: loader.loadMeshCb,
+                                parseVisual: true,
+                                parseCollision: true,
+                                yieldIfNeeded,
                             });
+                        } else {
+                            const cleanContent = preprocessURDFForLoader(urdfContent);
+                            robotModel = await loader.parseAsync(cleanContent, loader.workingPath, { yieldIfNeeded });
+                            if (sourceRobotJoints && (robotModel as any).joints) {
+                                Object.entries((robotModel as any).joints).forEach(([name, joint]: [string, any]) => {
+                                    const parsedJoint = sourceRobotJoints[name];
+                                    if (parsedJoint && parsedJoint.limit) {
+                                        if (!joint.limit) joint.limit = {};
+                                        joint.limit.effort = parsedJoint.limit.effort;
+                                        joint.limit.velocity = parsedJoint.limit.velocity;
+                                        if (joint.limit.lower === undefined) joint.limit.lower = parsedJoint.limit.lower;
+                                        if (joint.limit.upper === undefined) joint.limit.upper = parsedJoint.limit.upper;
+                                    }
+                                });
+                            }
                         }
 
                         if (abortController.aborted) {
@@ -577,11 +697,20 @@ export function useRobotLoader({
                 }
 
                 if (robotModel && isMountedRef.current) {
-                    setLoadingProgress((current) => current ?? {
+                    const currentProgress = pendingLoadingDispatchRef.current?.progress ?? lastPublishedProgressRef.current;
+                    const nextProgress = currentProgress ?? {
                         phase: 'finalizing-scene',
                         progressPercent: 96,
+                    };
+                    publishLoadingDispatch(nextProgress, {
+                        status: 'loading',
+                        phase: 'finalizing-scene',
+                        progressPercent: nextProgress.progressPercent ?? 96,
+                        loadedCount: nextProgress.loadedCount ?? null,
+                        totalCount: nextProgress.totalCount ?? null,
+                        message: null,
                     });
-                    finalizeLoadedRobot(robotModel);
+                    void finalizeLoadedRobot(robotModel);
                 } else if (robotModel) {
                      // Aborted or unmounted after load but before we could use it
                      disposeObject3D(robotModel, true, SHARED_MATERIALS);
@@ -589,9 +718,18 @@ export function useRobotLoader({
             } catch (err) {
                 if (!abortController.aborted && isMountedRef.current) {
                     console.error('[URDFViewer] Failed to load URDF:', err);
-                    setError(err instanceof Error ? err.message : 'Unknown error');
+                    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+                    setError(errorMessage);
                     setIsLoading(false);
-                    setLoadingProgress(null);
+                    publishLoadingDispatch(null, {
+                        status: 'error',
+                        phase: null,
+                        progressPercent: null,
+                        loadedCount: null,
+                        totalCount: null,
+                        message: null,
+                        error: errorMessage,
+                    });
                 }
             }
         };
@@ -603,13 +741,12 @@ export function useRobotLoader({
             // Mark this load as aborted to prevent state updates
             abortController.aborted = true;
             clearGroundAlignTimers();
-            clearDeferredSceneSyncTimers();
 
             // NOTE: We do NOT dispose robotRef.current here.
             // We allow the old robot to persist until the new one is ready, 
             // or until the component unmounts (handled by the separate useEffect).
         };
-    }, [assets, clearDeferredSceneSyncTimers, clearGroundAlignTimers, groundPlaneOffset, invalidate, onRobotLoaded, resolvedSourceFormat, scheduleGroundAlignment, sourceFileDir, urdfContent]);
+    }, [assets, clearGroundAlignTimers, groundPlaneOffset, invalidate, onRobotLoaded, publishLoadingDispatch, resolvedSourceFormat, scheduleGroundAlignment, sourceFileDir, urdfContent]);
 
     return {
         robot,

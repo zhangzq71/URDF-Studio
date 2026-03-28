@@ -16,6 +16,7 @@ export const DEFAULT_LINK: UrdfLink = {
     color: '#3b82f6',
     origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }
   },
+  visualBodies: [],
   collision: {
     type: GeometryType.CYLINDER,
     dimensions: { x: 0.05, y: 0.5, z: 0.05 },

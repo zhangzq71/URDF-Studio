@@ -34,6 +34,7 @@ interface AppLayoutOverlaysProps {
   isCodeViewerOpen: boolean;
   sourceCodeContent: string;
   sourceCodeDocumentFlavor: SourceCodeDocumentFlavor;
+  forceSourceCodeReadOnly?: boolean;
   onCodeChange: (newCode: string) => void;
   onCloseCodeViewer: () => void;
   theme: Theme;
@@ -73,6 +74,7 @@ export function AppLayoutOverlays({
   isCodeViewerOpen,
   sourceCodeContent,
   sourceCodeDocumentFlavor,
+  forceSourceCodeReadOnly = false,
   onCodeChange,
   onCloseCodeViewer,
   theme,
@@ -110,7 +112,7 @@ export function AppLayoutOverlays({
             fileName={codeEditorFileName}
             lang={lang}
             documentFlavor={sourceCodeDocumentFlavor}
-            readOnly={isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor)}
+            readOnly={forceSourceCodeReadOnly || isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor)}
           />
         </Suspense>
       )}

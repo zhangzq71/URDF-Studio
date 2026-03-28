@@ -26,7 +26,7 @@ export function safeExportStageRootLayerText(stage) {
         return "";
     }
 }
-export function resolveStageUpAxis({ reportedUpAxis = null, stage = null, fallbackUpAxis = "y" } = {}) {
+export function resolveStageUpAxis({ reportedUpAxis = null, stage = null } = {}) {
     const normalizedReportedAxis = normalizeStageUpAxisToken(reportedUpAxis);
     if (normalizedReportedAxis) {
         return normalizedReportedAxis;
@@ -36,7 +36,7 @@ export function resolveStageUpAxis({ reportedUpAxis = null, stage = null, fallba
     if (axisFromLayerText) {
         return axisFromLayerText;
     }
-    return normalizeStageUpAxisToken(fallbackUpAxis) || "y";
+    return null;
 }
 export function resolveAxisAlignmentRotationX({ sourceUpAxis = null, targetUpAxis = "z" } = {}) {
     const normalizedSourceAxis = normalizeStageUpAxisToken(sourceUpAxis);
@@ -51,4 +51,19 @@ export function resolveAxisAlignmentRotationX({ sourceUpAxis = null, targetUpAxi
         return -Math.PI / 2;
     }
     return 0;
+}
+export function applyStageAxisAlignmentToRoot(root, { reportedUpAxis = null, stage = null, targetUpAxis = "z" } = {}) {
+    if (!root?.rotation) {
+        return 0;
+    }
+    const stageUpAxis = resolveStageUpAxis({
+        reportedUpAxis,
+        stage,
+    });
+    const rotationX = resolveAxisAlignmentRotationX({
+        sourceUpAxis: stageUpAxis,
+        targetUpAxis,
+    });
+    root.rotation.x = rotationX;
+    return rotationX;
 }

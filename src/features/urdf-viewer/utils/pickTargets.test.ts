@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { collectPickTargets, findPickIntersections } from './pickTargets';
+import { collectPickTargets, findPickIntersections } from './pickTargets.ts';
 
 function createBoxMesh(material?: THREE.Material): THREE.Mesh {
   return new THREE.Mesh(

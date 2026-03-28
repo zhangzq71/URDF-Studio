@@ -8,6 +8,11 @@ interface ParsedMaterialDefinition {
     texture?: string;
 }
 
+interface ParsedVisualGeometry {
+    geometry: UrdfLink['visual'];
+    material?: ParsedMaterialDefinition;
+}
+
 function resolveMaterialDefinition(
     materialEl: Element,
     globalMaterials: Record<string, ParsedMaterialDefinition>,
@@ -35,6 +40,78 @@ function parseAuthoredMaterials(
     return authoredMaterials.length > 0 ? authoredMaterials : undefined;
 }
 
+function getDirectChildElements(parent: Element, tagName: string): Element[] {
+    return Array.from(parent.children).filter(
+        (child): child is Element => child.tagName === tagName,
+    );
+}
+
+function parseVisualElement(
+    visualEl: Element,
+    globalMaterials: Record<string, ParsedMaterialDefinition>,
+    linkGazeboMaterial?: string,
+): ParsedVisualGeometry {
+    const visualOriginEl = getDirectChildElements(visualEl, 'origin')[0];
+    let visualGeo = parseGeometry(visualEl.querySelector("geometry"), DEFAULT_LINK.visual);
+    if (!visualGeo) {
+        visualGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
+    }
+
+    const materialEls = getDirectChildElements(visualEl, 'material');
+    const hasMultipleMeshMaterials = visualGeo.type === GeometryType.MESH && materialEls.length > 1;
+    const authoredMaterials = hasMultipleMeshMaterials
+        ? parseAuthoredMaterials(materialEls, globalMaterials)
+        : undefined;
+
+    let visualColor: string | undefined;
+    let visualTexture: string | undefined;
+    let materialSource: 'inline' | 'named' | 'gazebo' | undefined;
+
+    if (!hasMultipleMeshMaterials) {
+        const materialEl = materialEls[0] ?? null;
+        const resolvedMaterial = materialEl
+            ? resolveMaterialDefinition(materialEl, globalMaterials)
+            : {};
+
+        if (resolvedMaterial.name && globalMaterials[resolvedMaterial.name]) {
+            visualColor = resolvedMaterial.color;
+            visualTexture = resolvedMaterial.texture;
+            materialSource = 'named';
+        } else {
+            visualColor = resolvedMaterial.color;
+            visualTexture = resolvedMaterial.texture;
+            if (visualColor || visualTexture) {
+                materialSource = 'inline';
+            }
+        }
+    }
+
+    if (!visualColor && linkGazeboMaterial) {
+        visualColor = linkGazeboMaterial;
+        materialSource = 'gazebo';
+    }
+
+    return {
+        geometry: {
+            ...DEFAULT_LINK.visual,
+            ...visualGeo,
+            origin: {
+                xyz: parseVec3(visualOriginEl?.getAttribute("xyz")),
+                rpy: parseRPY(visualOriginEl?.getAttribute("rpy"))
+            },
+            color: visualColor,
+            ...(authoredMaterials ? { authoredMaterials } : {}),
+            materialSource,
+        },
+        material: (visualColor || visualTexture)
+            ? {
+                ...(visualColor ? { color: visualColor } : {}),
+                ...(visualTexture ? { texture: visualTexture } : {}),
+            }
+            : undefined,
+    };
+}
+
 export const parseLinks = (
     robotEl: Element,
     globalMaterials: Record<string, ParsedMaterialDefinition>,
@@ -51,70 +128,26 @@ export const parseLinks = (
         if (!linkName) return;
         const id = linkName; // Use name as ID for imported structure
 
-        // Visual
-        const visualEl = linkEl.querySelector("visual");
-        const visualOriginEl = visualEl?.querySelector("origin");
-
-        let visualGeo: Partial<UrdfLink['visual']>;
-        let visualColor: string | undefined = undefined;
-        let visualTexture: string | undefined = undefined;
-        let authoredMaterials: UrdfVisualMaterial[] | undefined = undefined;
-        let materialSource: 'inline' | 'named' | 'gazebo' | undefined = undefined;
-
-        if (visualEl) {
-            visualGeo = parseGeometry(visualEl.querySelector("geometry"), DEFAULT_LINK.visual);
-            if (!visualGeo) visualGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
-
-            const materialEls = Array.from(visualEl.children).filter(
-                (node): node is Element => node.tagName === 'material',
-            );
-            const hasMultipleMeshMaterials = visualGeo.type === GeometryType.MESH && materialEls.length > 1;
-            authoredMaterials = hasMultipleMeshMaterials
-                ? parseAuthoredMaterials(materialEls, globalMaterials)
-                : undefined;
-
-            // URDF visuals can only express a single material override cleanly.
-            // When imported mesh visuals carry multiple named material tags
-            // (common for Collada assets such as Unitree go2/go2w), collapsing
-            // them into one link-level color would destroy the mesh's embedded
-            // material palette on export. Preserve the mesh materials instead.
-            // Likewise, if a visual does not author any material tag, keep the
-            // parsed color undefined instead of inferring it from sibling links
-            // or shared mesh paths.
-            if (!hasMultipleMeshMaterials) {
-                const materialEl = materialEls[0] ?? null;
-                const resolvedMaterial = materialEl
-                    ? resolveMaterialDefinition(materialEl, globalMaterials)
-                    : {};
-
-                if (resolvedMaterial.name && globalMaterials[resolvedMaterial.name]) {
-                    // Isaac Sim resolves same-name conflicts to the global definition.
-                    visualColor = resolvedMaterial.color;
-                    visualTexture = resolvedMaterial.texture;
-                    materialSource = 'named';
-                } else {
-                    visualColor = resolvedMaterial.color;
-                    visualTexture = resolvedMaterial.texture;
-                    if (visualColor || visualTexture) {
-                        materialSource = 'inline';
-                    }
-                }
-            }
-        } else {
-            // If no visual tag exists, map to NONE
-            visualGeo = { type: GeometryType.NONE, dimensions: { x:0, y:0, z:0 } };
-        }
-
-        // Gazebo material override:
-        // - Inline RGBA in URDF keeps highest priority
-        // - Named URDF material can be overridden by gazebo reference
-        if (!visualColor && linkGazeboMaterials[linkName]) {
-            visualColor = linkGazeboMaterials[linkName];
-            materialSource = 'gazebo';
-        }
+        const visualEls = getDirectChildElements(linkEl, 'visual');
+        const parsedVisuals = visualEls.map((visualEl) => (
+            parseVisualElement(visualEl, globalMaterials, linkGazeboMaterials[linkName])
+        ));
+        const primaryVisual = parsedVisuals[0]?.geometry ?? {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.NONE,
+            dimensions: { x: 0, y: 0, z: 0 },
+            origin: {
+                xyz: parseVec3(undefined),
+                rpy: parseRPY(undefined),
+            },
+            color: undefined,
+            materialSource: undefined,
+        };
+        const visualBodies = parsedVisuals.slice(1).map((visual) => visual.geometry);
+        const primaryVisualMaterial = parsedVisuals[0]?.material;
 
         // Collision (Handle multiple collisions)
-        const collisionEls = linkEl.querySelectorAll("collision");
+        const collisionEls = getDirectChildElements(linkEl, 'collision');
         let mainCollisionGeo: any = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
         let mainCollisionOrigin = { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
 
@@ -158,17 +191,8 @@ export const parseLinks = (
         links[id] = {
             id,
             name: linkName,
-            visual: {
-                ...DEFAULT_LINK.visual,
-                ...visualGeo,
-                origin: {
-                    xyz: parseVec3(visualOriginEl?.getAttribute("xyz")),
-                    rpy: parseRPY(visualOriginEl?.getAttribute("rpy"))
-                },
-                color: visualColor,
-                ...(authoredMaterials ? { authoredMaterials } : {}),
-                materialSource
-            },
+            visual: primaryVisual,
+            visualBodies,
             collision: {
                 ...DEFAULT_LINK.collision,
                 ...mainCollisionGeo,
@@ -178,11 +202,8 @@ export const parseLinks = (
             inertial
         };
 
-        if (visualColor || visualTexture) {
-            linkMaterials[id] = {
-                ...(visualColor ? { color: visualColor } : {}),
-                ...(visualTexture ? { texture: visualTexture } : {}),
-            };
+        if (primaryVisualMaterial) {
+            linkMaterials[id] = primaryVisualMaterial;
         }
 
         // Keep additional collisions on the same link

@@ -39,6 +39,7 @@ interface PendingWorkerRequest {
   signal?: AbortSignal;
 }
 
+const MAX_MESH_ANALYSIS_CACHE_SIZE = 256;
 const meshAnalysisCache = new Map<string, MeshAnalysis | null>();
 const pendingWorkerRequests = new Map<number, PendingWorkerRequest>();
 let requestIdCounter = 0;
@@ -59,6 +60,23 @@ function createRequestCacheKey(cacheKey: string, options?: MeshAnalysisOptions):
 
 function createAbortError(): DOMException {
   return new DOMException('Mesh analysis aborted', 'AbortError');
+}
+
+function setMeshAnalysisCacheEntry(cacheKey: string, analysis: MeshAnalysis | null): void {
+  if (meshAnalysisCache.has(cacheKey)) {
+    meshAnalysisCache.delete(cacheKey);
+  }
+
+  meshAnalysisCache.set(cacheKey, analysis);
+
+  while (meshAnalysisCache.size > MAX_MESH_ANALYSIS_CACHE_SIZE) {
+    const oldestKey = meshAnalysisCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    meshAnalysisCache.delete(oldestKey);
+  }
 }
 
 function clearPendingWorkerRequest(requestId: number): PendingWorkerRequest | null {
@@ -109,7 +127,7 @@ function handleSharedWorkerMessage(event: MessageEvent<MeshAnalysisWorkerRespons
 
   const workerResults = message.results ?? [];
   workerResults.forEach((entry) => {
-    meshAnalysisCache.set(entry.cacheKey, entry.analysis ?? null);
+    setMeshAnalysisCacheEntry(entry.cacheKey, entry.analysis ?? null);
     pendingRequest.results[entry.targetId] = entry.analysis ?? null;
   });
   pendingRequest.resolve(pendingRequest.results);
@@ -155,7 +173,7 @@ async function analyzeMeshBatchOnMainThread({
       options,
     );
 
-    meshAnalysisCache.set(requestCacheKey, analysis ?? null);
+    setMeshAnalysisCacheEntry(requestCacheKey, analysis ?? null);
     results[task.targetId] = analysis ?? null;
   }
 

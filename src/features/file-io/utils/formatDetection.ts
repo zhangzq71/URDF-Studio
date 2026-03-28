@@ -4,6 +4,7 @@
  */
 
 import { isMJCF } from '@/core/parsers/mjcf';
+import { isSDF } from '@/core/parsers/sdf/sdfParser';
 import { isUSDA } from '@/core/parsers/usd';
 import { isXacro } from '@/core/parsers/xacro';
 import type { FileFormat } from '../types';
@@ -20,11 +21,13 @@ export function detectFormat(content: string, filename: string): FileFormat | nu
   // Check by extension first (fastest)
   if (lowerName.endsWith('.xacro') || lowerName.endsWith('.urdf.xacro')) return 'xacro';
   if (lowerName.endsWith('.urdf')) return 'urdf';
+  if (lowerName.endsWith('.sdf')) return 'sdf';
   if (lowerName.endsWith('.usda') || lowerName.endsWith('.usdc') || lowerName.endsWith('.usd')) return 'usd';
 
   // For XML files, check content
   if (lowerName.endsWith('.xml')) {
     if (isMJCF(content)) return 'mjcf';
+    if (isSDF(content)) return 'sdf';
     // Check for xacro content
     if (isXacro(content)) return 'xacro';
     // Could also be URDF (though rare with .xml extension)
@@ -34,6 +37,7 @@ export function detectFormat(content: string, filename: string): FileFormat | nu
   // Try content-based detection
   if (isUSDA(content)) return 'usd';
   if (isMJCF(content)) return 'mjcf';
+  if (isSDF(content)) return 'sdf';
   if (isXacro(content)) return 'xacro';
   if (content.includes('<robot')) return 'urdf';
 
@@ -47,6 +51,7 @@ export function isRobotDefinitionFile(filename: string): boolean {
   const lowerName = filename.toLowerCase();
   return (
     lowerName.endsWith('.urdf') ||
+    lowerName.endsWith('.sdf') ||
     lowerName.endsWith('.xml') ||
     lowerName.endsWith('.mjcf') ||
     lowerName.endsWith('.usda') ||
@@ -60,7 +65,24 @@ export function isRobotDefinitionFile(filename: string): boolean {
  */
 export function isAssetFile(filename: string): boolean {
   const ext = filename.split('.').pop()?.toLowerCase();
-  return ['stl', 'obj', 'dae', 'png', 'jpg', 'jpeg', 'tga', 'bmp', 'tiff', 'tif', 'webp', 'hdr'].includes(ext || '');
+  return [
+    'stl',
+    'obj',
+    'dae',
+    'gltf',
+    'glb',
+    'vtk',
+    'bin',
+    'png',
+    'jpg',
+    'jpeg',
+    'tga',
+    'bmp',
+    'tiff',
+    'tif',
+    'webp',
+    'hdr',
+  ].includes(ext || '');
 }
 
 /**
@@ -76,7 +98,7 @@ export function isMotorLibraryFile(path: string): boolean {
  */
 export function isMeshFile(filename: string): boolean {
   const ext = filename.split('.').pop()?.toLowerCase();
-  return ['stl', 'obj', 'dae'].includes(ext || '');
+  return ['stl', 'obj', 'dae', 'gltf', 'glb', 'vtk'].includes(ext || '');
 }
 
 /**

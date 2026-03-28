@@ -3,6 +3,8 @@
  * Features: File tree, robot structure tree, link/joint management
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { unstable_batchedUpdates } from 'react-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { getPrimaryTreeRenderRootLinkId, getTreeRenderRootLinkIds } from '@/core/robot';
 import type { AppMode, AssemblyState, RobotData, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
@@ -92,12 +94,25 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   isReadOnly = false,
 }) => {
   const t = translations[lang];
-  const sidebarTab = useUIStore((state) => state.sidebarTab);
-  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
-  const structureTreeShowGeometryDetails = useUIStore((state) => state.structureTreeShowGeometryDetails);
-  const setStructureTreeShowGeometryDetails = useUIStore((state) => state.setStructureTreeShowGeometryDetails);
-  const toggleComponentVisibility = useAssemblyStore((state) => state.toggleComponentVisibility);
-  const initAssembly = useAssemblyStore((state) => state.initAssembly);
+  const {
+    sidebarTab,
+    setSidebarTab,
+    structureTreeShowGeometryDetails,
+    setStructureTreeShowGeometryDetails,
+  } = useUIStore(
+    useShallow((state) => ({
+      sidebarTab: state.sidebarTab,
+      setSidebarTab: state.setSidebarTab,
+      structureTreeShowGeometryDetails: state.structureTreeShowGeometryDetails,
+      setStructureTreeShowGeometryDetails: state.setStructureTreeShowGeometryDetails,
+    })),
+  );
+  const { toggleComponentVisibility, initAssembly } = useAssemblyStore(
+    useShallow((state) => ({
+      toggleComponentVisibility: state.toggleComponentVisibility,
+      initAssembly: state.initAssembly,
+    })),
+  );
 
   const {
     width,
@@ -115,10 +130,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const isAssemblyView = !isReadOnly && sidebarTab === 'workspace' && Boolean(assemblyState);
 
   const handleSwitchToProMode = useCallback(() => {
-    if (!assemblyState) {
-      initAssembly(robot.name || 'assembly');
-    }
-    setSidebarTab('workspace');
+    unstable_batchedUpdates(() => {
+      if (!assemblyState) {
+        initAssembly(robot.name || 'assembly');
+      }
+      setSidebarTab('workspace');
+    });
   }, [assemblyState, initAssembly, robot.name, setSidebarTab]);
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -142,14 +159,26 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const robotSelection = robot.selection ?? { type: null as const, id: null as const };
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
-  const treeRobot = useMemo<RobotData>(() => ({
-    name: robot.name,
-    links: robot.links,
-    joints: robot.joints,
-    rootLinkId: robot.rootLinkId,
-    materials: robot.materials,
-    closedLoopConstraints: robot.closedLoopConstraints,
-  }), [
+  const treeRobot = useMemo<RobotData>(() => {
+    if (isAssemblyView) {
+      return {
+        name: '',
+        links: {},
+        joints: {},
+        rootLinkId: '',
+      };
+    }
+
+    return {
+      name: robot.name,
+      links: robot.links,
+      joints: robot.joints,
+      rootLinkId: robot.rootLinkId,
+      materials: robot.materials,
+      closedLoopConstraints: robot.closedLoopConstraints,
+    };
+  }, [
+    isAssemblyView,
     robot.closedLoopConstraints,
     robot.joints,
     robot.links,
@@ -171,13 +200,16 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   }, [availableFiles]);
 
   const childJointsByParent = useMemo<Record<string, RobotState['joints'][string][]>>(
-    () => buildChildJointsByParent(robot.joints),
-    [robot.joints],
+    () => (isAssemblyView ? {} : buildChildJointsByParent(robot.joints)),
+    [isAssemblyView, robot.joints],
   );
-  const parentLinkByChild = useMemo(() => buildParentLinkByChild(robot.joints), [robot.joints]);
+  const parentLinkByChild = useMemo(
+    () => (isAssemblyView ? {} : buildParentLinkByChild(robot.joints)),
+    [isAssemblyView, robot.joints],
+  );
   const treeRootLinkIds = useMemo(
-    () => getTreeRenderRootLinkIds(robot),
-    [robot.joints, robot.links, robot.rootLinkId],
+    () => (isAssemblyView ? [] : getTreeRenderRootLinkIds(robot)),
+    [isAssemblyView, robot.joints, robot.links, robot.rootLinkId],
   );
 
   const toggleFolder = useCallback((path: string) => {
@@ -508,7 +540,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
           {isFileBrowserOpen && isStructureOpen && (
             <div
-              className="h-1 bg-border-black cursor-row-resize hover:bg-system-blue transition-colors shrink-0 z-10"
+              className="h-1 bg-border-black/80 cursor-row-resize hover:bg-system-blue/40 transition-colors shrink-0 z-10"
               onMouseDown={handleVerticalResizeStart}
             />
           )}
@@ -558,7 +590,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
           />
 
           <div
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue-solid/50 transition-colors z-20"
+            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue/40 transition-colors z-20"
             onMouseDown={handleHorizontalResizeStart}
           />
         </div>

@@ -1,4 +1,3 @@
-import { ViewModeBadge } from '@/shared/components/3d';
 import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
@@ -24,10 +23,6 @@ export const VisualizerPanels = ({
 
   return (
     <>
-      <ViewModeBadge
-        label={`${mode === 'skeleton' ? t.skeleton : mode === 'hardware' ? t.hardware : t.detail} ${t.modeLabel}`}
-      />
-
       {showOptionsPanel && mode === 'skeleton' && (
         <SkeletonOptionsPanel
           key="skeleton"

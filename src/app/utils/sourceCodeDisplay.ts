@@ -26,6 +26,10 @@ export function getSourceCodeDocumentFlavor(
     return 'xacro';
   }
 
+  if (file.format === 'sdf') {
+    return 'sdf';
+  }
+
   if (shouldUseEquivalentMjcfForUsdSource(file)) {
     return 'equivalent-mjcf';
   }

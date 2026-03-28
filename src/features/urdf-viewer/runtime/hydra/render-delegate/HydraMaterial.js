@@ -68,8 +68,6 @@ class HydraMaterial {
         }
         /** @type {MeshPhysicalMaterial} */
         this._material = getDefaultMaterial();
-        if (debugMaterials)
-            console.log("Hydra Material", this);
     }
     static getNodePreviewSurfaceScore(node) {
         if (!node || typeof node !== 'object')
@@ -120,8 +118,6 @@ class HydraMaterial {
         return bestNode;
     }
     updateNode(networkId, path, parameters) {
-        if (debugTextures)
-            console.log('Updating Material Node: ' + networkId + ' ' + path, parameters);
         this._nodes[path] = parameters;
     }
     async applyNetworkUpdate(networkUpdates) {
@@ -171,7 +167,7 @@ class HydraMaterial {
         return new Promise((resolve, reject) => {
             const materialParameterMapName = HydraMaterial.usdPreviewToMeshPhysicalTextureMap[parameterName];
             if (materialParameterMapName === undefined) {
-                console.warn(`Unsupported material texture parameter '${parameterName}'.`);
+                console.error(`Unsupported material texture parameter '${parameterName}'.`);
                 resolve();
                 return;
             }
@@ -189,10 +185,8 @@ class HydraMaterial {
             if (mainMaterial[parameterName] && mainMaterial[parameterName].nodeIn) {
                 const nodeIn = mainMaterial[parameterName].nodeIn;
                 if (!nodeIn.resolvedPath) {
-                    console.warn("Texture node has no file!", nodeIn);
+                    console.error("Texture node has no file!", nodeIn);
                 }
-                if (debugTextures)
-                    console.log("Assigning texture with resolved path", parameterName, nodeIn.resolvedPath);
                 const textureFileName = String(nodeIn.resolvedPath || '').replace("./", "");
                 const channel = String(mainMaterial[parameterName].inputName || 'rgb').toLowerCase();
                 if (!textureFileName) {
@@ -202,14 +196,11 @@ class HydraMaterial {
                 }
                 // For debugging
                 const matName = Object.keys(this._nodes).find(key => this._nodes[key] === mainMaterial);
-                if (debugTextures)
-                    console.log(`Setting texture '${materialParameterMapName}' (${textureFileName}) of material '${matName}'... with channel '${channel}'`);
                 this._interface.registry.getTexture(textureFileName).then(texture => {
                     if (!this._material) {
                         console.error("Material not set when trying to assign texture, this is likely a bug");
                         resolve();
                     }
-                    // console.log("getTexture", texture, nodeIn);
                     if (materialParameterMapName === 'alphaMap') {
                         // If this is an opacity map, check if it's using the alpha channel of the diffuse map.
                         // If so, simply change the format of that diffuse map to RGBA and make the material transparent.
@@ -222,7 +213,7 @@ class HydraMaterial {
                         }
                         else {
                             // TODO: Extract the alpha channel into a new RGB texture.
-                            console.warn("Separate alpha channel is currently not supported.", nodeIn.file, mainMaterial.diffuseColor?.nodeIn?.file, channel);
+                            console.error("Separate alpha channel is currently not supported.", nodeIn.file, mainMaterial.diffuseColor?.nodeIn?.file, channel);
                         }
                         if (!(this._material.alphaTest > 0))
                             this._material.transparent = true;
@@ -240,7 +231,7 @@ class HydraMaterial {
                         this._material.emissive = new Color(0xffffff);
                     }
                     else if (!HydraMaterial.channelMap[channel]) {
-                        console.warn(`Unsupported texture channel '${channel}'!`);
+                        console.error(`Unsupported texture channel '${channel}'!`);
                         resolve();
                         return;
                     }
@@ -262,7 +253,6 @@ class HydraMaterial {
                         targetSwizzle = channel + channel + channel + channel;
                     }
                     clonedTexture.colorSpace = HydraMaterial.usdPreviewToColorSpaceMap[parameterName] || LinearSRGBColorSpace;
-                    // console.log("Cloned texture", clonedTexture, "swizzled with", targetSwizzle);
                     // clonedTexture.image = HydraMaterial._swizzleImageChannels(clonedTexture.image, targetSwizzle);
                     // if (materialParameterToTargetChannel[materialParameterMapName] && channel != materialParameterToTargetChannel[materialParameterMapName])
                     if (targetSwizzle != 'rgba') {
@@ -273,7 +263,6 @@ class HydraMaterial {
                     clonedTexture.needsUpdate = true;
                     if (nodeIn.st && nodeIn.st.nodeIn) {
                         const uvData = nodeIn.st.nodeIn;
-                        // console.log("Tiling data", uvData);
                         // TODO this is messed up but works for scale and translation, not really for rotation.
                         // Refer to https://github.com/mrdoob/three.js/blob/e5426b0514a1347d7aafca69aa34117503c1be88/examples/jsm/exporters/USDZExporter.js#L461
                         // (which is also not perfect but close)
@@ -300,16 +289,12 @@ class HydraMaterial {
                     // TODO use nodeIn.wrapS and wrapT and map to THREE
                     clonedTexture.wrapS = this.convertWrap(nodeIn.wrapS);
                     clonedTexture.wrapT = this.convertWrap(nodeIn.wrapT);
-                    if (debugTextures)
-                        console.log("Setting texture " + materialParameterMapName + " to", clonedTexture);
                     this._material[materialParameterMapName] = clonedTexture;
                     this._material.needsUpdate = true;
-                    if (debugTextures)
-                        console.log("RESOLVED TEXTURE", clonedTexture.name, matName, parameterName);
                     resolve();
                     return;
                 }).catch(err => {
-                    console.warn("Error when loading texture", err);
+                    console.error("Error when loading texture", err);
                     resolve();
                     return;
                 });
@@ -344,7 +329,6 @@ class HydraMaterial {
             context.drawImage(image, 0, 0, image.width, image.height);
             const imageData = context.getImageData(0, 0, image.width, image.height);
             const data = imageData.data;
-            // console.log(data);
             const swizzleToIndex = {
                 'r': 0,
                 'g': 1,
@@ -404,14 +388,14 @@ class HydraMaterial {
             };
         }
         else {
-            console.warn('ImageUtils.sRGBToLinear(): Unsupported image type. No color space conversion applied.');
+            console.error('ImageUtils.sRGBToLinear(): Unsupported image type. No color space conversion applied.');
             return image;
         }
     }
     assignProperty(mainMaterial, parameterName) {
         const materialParameterName = HydraMaterial.usdPreviewToMeshPhysicalMap[parameterName];
         if (materialParameterName === undefined) {
-            console.warn(`Unsupported material parameter '${parameterName}'.`);
+            console.error(`Unsupported material parameter '${parameterName}'.`);
             return;
         }
         if (mainMaterial[parameterName] === undefined || mainMaterial[parameterName]?.nodeIn)
@@ -470,9 +454,6 @@ class HydraMaterial {
             const nodeIn = this._nodes[relationship.inputId];
             const nodeOut = this._nodes[relationship.outputId];
             if (!nodeIn || !nodeOut) {
-                if (debugMaterials) {
-                    console.warn("Skipping incomplete material relationship", this._id, relationship);
-                }
                 continue;
             }
             relationship.nodeIn = nodeIn;
@@ -484,10 +465,6 @@ class HydraMaterial {
                 relationship.nodeOut[relationship.outputName] = relationship;
             }
         }
-        if (debugMaterials)
-            console.log('Finalizing Material: ' + this._id);
-        if (debugMaterials)
-            console.log("updateFinished", type, relationships);
         const mainMaterialNode = HydraMaterial.resolveMainMaterialNode(this._nodes);
         if (disableMaterials) {
             this._material = getDefaultMaterial();
@@ -517,13 +494,6 @@ class HydraMaterial {
         const haveRoughnessMap = hasTextureInput(['roughness', 'reflection_roughness']);
         const haveMetalnessMap = hasTextureInput(['metallic', 'metalness']);
         const haveOcclusionMap = hasTextureInput(['occlusion', 'ao', 'ambientOcclusion']);
-        if (debugMaterials) {
-            console.log('Creating Material: ' + this._id, mainMaterialNode, {
-                haveRoughnessMap,
-                haveMetalnessMap,
-                haveOcclusionMap
-            });
-        }
         if (!disableTextures) {
             /** @type {Array<Promise<any>>} */
             const texturePromises = [];
@@ -533,8 +503,6 @@ class HydraMaterial {
             await Promise.all(texturePromises);
             // Need to sanitize metallic/roughness/occlusion maps - if we want to export glTF they need to be identical right now
             if (haveRoughnessMap && !haveMetalnessMap) {
-                if (debugMaterials)
-                    console.log(this._material.roughnessMap, this._material);
                 this._material.metalnessMap = this._material.roughnessMap;
                 if (this._material.metalnessMap)
                     this._material.metalnessMap.needsUpdate = true;
@@ -549,15 +517,13 @@ class HydraMaterial {
                     console.error("Something went wrong with the texture promise; haveMetalnessMap is true but no metalnessMap was loaded.");
             }
             else if (haveMetalnessMap && haveRoughnessMap) {
-                console.warn("TODO: [Three USD] separate metalness and roughness textures need to be merged");
+                console.error("TODO: [Three USD] separate metalness and roughness textures need to be merged");
             }
         }
         // Assign material properties
         for (let key in HydraMaterial.usdPreviewToMeshPhysicalMap) {
             this.assignProperty(mainMaterialNode, key);
         }
-        if (debugMaterials)
-            console.log("Material Node \"" + this._material.name + "\"", mainMaterialNode, "Resulting Material", this._material);
     }
 }
 // Maps USD preview material texture names to Three.js MeshPhysicalMaterial names

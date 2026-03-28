@@ -55,6 +55,12 @@ export {
 } from './collisionBodies';
 
 export {
+    getVisualGeometryEntries,
+    getVisualGeometryByObjectIndex,
+    updateVisualGeometryByObjectIndex,
+} from './visualBodies';
+
+export {
     resolveJointKey,
     resolveLinkKey,
 } from './identity';

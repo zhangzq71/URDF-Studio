@@ -74,13 +74,34 @@ export function AIModal({
   const [aiResponse, setAiResponse] = useState<AIModalAIResponse | null>(null)
   const [inspectionReport, setInspectionReport] = useState<InspectionReport | null>(null)
   const activeIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
+  const isMountedRef = useRef(false)
+  const inspectionRunIdRef = useRef(0)
+
+  const clearActiveTimers = useCallback(() => {
+    activeIntervalsRef.current.forEach(clearInterval)
+    activeIntervalsRef.current = []
+  }, [])
+
+  const resetTransientInspectionState = useCallback(() => {
+    clearActiveTimers()
+    setInspectionProgress(null)
+    setReportGenerationTimer(null)
+    setInspectionReport(null)
+    setAiResponse(null)
+    setIsReportChatOpen(false)
+    setRetestingItem(null)
+    setIsGeneratingAI(false)
+  }, [clearActiveTimers])
 
   useEffect(() => {
+    isMountedRef.current = true
+
     return () => {
-      activeIntervalsRef.current.forEach(clearInterval);
-      activeIntervalsRef.current = [];
-    };
-  }, []);
+      isMountedRef.current = false
+      inspectionRunIdRef.current += 1
+      clearActiveTimers()
+    }
+  }, [clearActiveTimers])
 
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(INSPECTION_CRITERIA.map(category => category.id))
@@ -100,10 +121,10 @@ export function AIModal({
   const [retestingItem, setRetestingItem] = useState<RetestingItemState | null>(null)
 
   const handleClose = useCallback(() => {
-    setInspectionProgress(null)
-    setReportGenerationTimer(null)
+    inspectionRunIdRef.current += 1
+    resetTransientInspectionState()
     onClose()
-  }, [onClose])
+  }, [onClose, resetTransientInspectionState])
 
   const handleGenerateAI = async () => {
     if (!aiPrompt.trim()) return
@@ -140,6 +161,13 @@ export function AIModal({
   }
 
   const handleRunInspection = async () => {
+    if (isGeneratingAI) return
+
+    inspectionRunIdRef.current += 1
+    const runId = inspectionRunIdRef.current
+    const isRunActive = () => isMountedRef.current && inspectionRunIdRef.current === runId
+
+    clearActiveTimers()
     setIsGeneratingAI(true)
     setAiResponse(null)
     setInspectionReport(null)
@@ -178,10 +206,18 @@ export function AIModal({
 
     setInspectionProgress({ completed: 0, total: totalItems })
 
+    if (totalItems === 0) {
+      setInspectionProgress(null)
+      setIsGeneratingAI(false)
+      return
+    }
+
     try {
       let currentIndex = 0
       let reportReady = false
       let generatedReport: InspectionReport | null = null
+      let progressCompleted = false
+      let timerCount = 0
       let timerInterval: ReturnType<typeof setInterval> | null = null
       let progressInterval: ReturnType<typeof setInterval> | null = null
       let checkReportInterval: ReturnType<typeof setInterval> | null = null
@@ -212,7 +248,30 @@ export function AIModal({
         checkReportInterval = null;
       }
 
+      const stopInspectionRun = () => {
+        clearProgressInterval()
+        clearTimerInterval()
+        clearCheckReportInterval()
+      }
+
+      const showReport = () => {
+        if (!isRunActive()) return
+
+        stopInspectionRun()
+        setInspectionProgress(null)
+        setReportGenerationTimer(null)
+        if (generatedReport) {
+          setInspectionReport(generatedReport)
+        }
+        setIsGeneratingAI(false)
+      }
+
       progressInterval = trackInterval(setInterval(() => {
+        if (!isRunActive()) {
+          stopInspectionRun()
+          return
+        }
+
         currentIndex++
         if (currentIndex <= totalItems) {
           const currentItem = selectedItemsList[currentIndex - 1]
@@ -224,6 +283,7 @@ export function AIModal({
           })
         } else {
           clearProgressInterval()
+          progressCompleted = true
 
           setInspectionProgress({
             currentCategory: undefined,
@@ -233,19 +293,14 @@ export function AIModal({
           })
 
           setReportGenerationTimer(1)
-          let timerCount = 1
-
-          const showReport = () => {
-            clearTimerInterval()
-            clearCheckReportInterval()
-            setInspectionProgress(null)
-            setReportGenerationTimer(null)
-            if (generatedReport) {
-              setInspectionReport(generatedReport)
-            }
-          }
+          timerCount = 1
 
           timerInterval = trackInterval(setInterval(() => {
+            if (!isRunActive()) {
+              stopInspectionRun()
+              return
+            }
+
             timerCount++
             setReportGenerationTimer(timerCount)
 
@@ -256,6 +311,11 @@ export function AIModal({
               } else {
                 setReportGenerationTimer(null)
                 checkReportInterval = trackInterval(setInterval(() => {
+                  if (!isRunActive()) {
+                    stopInspectionRun()
+                    return
+                  }
+
                   if (reportReady) {
                     clearCheckReportInterval()
                     showReport()
@@ -267,29 +327,37 @@ export function AIModal({
 
           runRobotInspection(robot, selectedItemsMap, lang)
             .then(report => {
+              if (!isRunActive()) {
+                return
+              }
+
               generatedReport = report
               reportReady = true
-              if (timerCount < 30 && timerInterval) {
+              if (progressCompleted && timerCount < 30 && timerInterval) {
                 clearTimerInterval()
                 showReport()
-              } else if (timerCount >= 30) {
+              } else if (progressCompleted && timerCount >= 30) {
                 showReport()
               }
             })
             .catch(error => {
+              if (!isRunActive()) {
+                return
+              }
+
               console.error('Inspection Error', error)
-              clearTimerInterval()
-              clearCheckReportInterval()
+              stopInspectionRun()
               setInspectionProgress(null)
               setReportGenerationTimer(null)
+              setIsGeneratingAI(false)
             })
         }
       }, 300))
     } catch (error: any) {
       console.error('Inspection Error', error)
+      clearActiveTimers()
       setInspectionProgress(null)
       setReportGenerationTimer(null)
-    } finally {
       setIsGeneratingAI(false)
     }
   }
@@ -598,11 +666,11 @@ export function AIModal({
             {(aiResponse || inspectionReport) && !inspectionProgress && (
               <button
                 onClick={() => {
+                  inspectionRunIdRef.current += 1
+                  resetTransientInspectionState()
                   setAiResponse(null)
                   setInspectionReport(null)
                   setAiPrompt('')
-                  setInspectionProgress(null)
-                  setReportGenerationTimer(null)
                 }}
                 className="h-8 flex items-center gap-1.5 px-3 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-element-hover rounded-lg transition-colors"
               >

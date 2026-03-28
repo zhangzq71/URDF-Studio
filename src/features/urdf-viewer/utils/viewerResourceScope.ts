@@ -1,4 +1,6 @@
+import { buildAssetIndex, findAssetByIndex } from '@/core/loaders';
 import { resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 import { GeometryType, type RobotFile, type UrdfLink } from '@/types';
 
 import { inferUsdBundleVirtualDirectory, isUsdPathWithinBundleDirectory } from './usdPreloadSources';
@@ -114,9 +116,11 @@ function collectReferencedMeshPaths(robotLinks?: Record<string, UrdfLink>): Set<
   }
 
   Object.values(robotLinks).forEach((link) => {
-    if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      referencedPaths.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === GeometryType.MESH && entry.geometry.meshPath) {
+        referencedPaths.add(entry.geometry.meshPath);
+      }
+    });
 
     if (link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       referencedPaths.add(link.collision.meshPath);
@@ -130,6 +134,14 @@ function collectReferencedMeshPaths(robotLinks?: Record<string, UrdfLink>): Set<
   });
 
   return referencedPaths;
+}
+
+export function buildViewerRobotLinksScopeSignature(
+  robotLinks?: Record<string, UrdfLink>,
+): string {
+  return Array.from(collectReferencedMeshPaths(robotLinks))
+    .sort((left, right) => left.localeCompare(right))
+    .join('\n');
 }
 
 function collectMatchingAssetKeys(
@@ -170,6 +182,27 @@ function collectMatchingAssetKeys(
   return matches;
 }
 
+function buildAssetKeysByUrl(assets: Record<string, string>): Map<string, string[]> {
+  const keysByUrl = new Map<string, string[]>();
+
+  Object.entries(assets).forEach(([assetPath, assetUrl]) => {
+    const normalizedAssetPath = normalizePath(assetPath);
+    if (!normalizedAssetPath) {
+      return;
+    }
+
+    const existing = keysByUrl.get(assetUrl);
+    if (existing) {
+      existing.push(normalizedAssetPath);
+      return;
+    }
+
+    keysByUrl.set(assetUrl, [normalizedAssetPath]);
+  });
+
+  return keysByUrl;
+}
+
 function buildScopedAssets(options: {
   assets: Record<string, string>;
   sourceFile?: Pick<RobotFile, 'name' | 'format'> | null;
@@ -196,6 +229,9 @@ function buildScopedAssets(options: {
 
   const directAssetKeys = new Set<string>();
   const referencedMeshPaths = collectReferencedMeshPaths(robotLinks);
+  const sourceDirectory = getParentDirectory(normalizedSourcePath);
+  const assetIndex = buildAssetIndex(assets, sourceDirectory);
+  const assetKeysByUrl = buildAssetKeysByUrl(assets);
 
   if (sourceFile?.format === 'mesh' && normalizedSourcePath) {
     referencedMeshPaths.add(normalizedSourcePath);
@@ -209,6 +245,17 @@ function buildScopedAssets(options: {
         relevantDirectories.add(assetDirectory);
       }
     });
+
+    const resolvedAssetUrl = findAssetByIndex(meshPath, assetIndex, sourceDirectory);
+    if (resolvedAssetUrl) {
+      (assetKeysByUrl.get(resolvedAssetUrl) || []).forEach((assetKey) => {
+        directAssetKeys.add(assetKey);
+        const assetDirectory = getParentDirectory(assetKey);
+        if (assetDirectory) {
+          relevantDirectories.add(assetDirectory);
+        }
+      });
+    }
 
     const resolvedMeshPath = resolveImportedAssetPath(meshPath, normalizedSourcePath);
     const meshDirectory = getParentDirectory(resolvedMeshPath || meshPath);

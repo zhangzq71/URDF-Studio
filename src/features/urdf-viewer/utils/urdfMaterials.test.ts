@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
+import { GeometryType, type UrdfLink } from '@/types';
 
-import { applyURDFMaterials, parseURDFMaterials } from './urdfMaterials';
+import { applyURDFMaterials, collectURDFMaterialsFromLinks, parseURDFMaterials, resolveURDFMaterialsForScene } from './urdfMaterials';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
@@ -116,4 +117,68 @@ test('applyURDFMaterials interprets unitree-style orange as sRGB instead of line
 
     assert.deepEqual(toFixedColorArray(appliedMaterial.color), toFixedColorArray(expected));
     assert.notDeepEqual(toFixedColorArray(appliedMaterial.color), toFixedColorArray(incorrectLinear));
+});
+
+test('collectURDFMaterialsFromLinks reuses authored multi-material palettes without reparsing XML', () => {
+    const links: Record<string, UrdfLink> = {
+        base_link: {
+            id: 'base_link',
+            name: 'base_link',
+            visual: {
+                type: GeometryType.MESH,
+                meshPath: 'package://demo/meshes/base.dae',
+                dimensions: { x: 1, y: 1, z: 1 },
+                color: '#ffffff',
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                authoredMaterials: [
+                    { name: 'Orange-effect', color: '#ff6c0a' },
+                    { name: 'Rubber-effect', color: '#1a1a1a' },
+                ],
+            },
+            collision: {
+                type: GeometryType.NONE,
+                dimensions: { x: 0, y: 0, z: 0 },
+                color: '#ffffff',
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+            },
+        },
+    };
+
+    const materials = collectURDFMaterialsFromLinks(links);
+
+    assert.deepEqual(
+        materials.get('Orange-effect')?.rgba?.map((value) => Number(value.toFixed(4))),
+        [1, 0.4235, 0.0392, 1],
+    );
+    assert.deepEqual(
+        materials.get('Rubber-effect')?.rgba?.map((value) => Number(value.toFixed(4))),
+        [0.102, 0.102, 0.102, 1],
+    );
+});
+
+test('resolveURDFMaterialsForScene prefers pre-parsed link materials when available', () => {
+    const links: Record<string, UrdfLink> = {
+        base_link: {
+            id: 'base_link',
+            name: 'base_link',
+            visual: {
+                type: GeometryType.MESH,
+                meshPath: 'package://demo/meshes/base.dae',
+                dimensions: { x: 1, y: 1, z: 1 },
+                color: '#ffffff',
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                authoredMaterials: [{ name: 'Orange-effect', color: '#ff6c0a' }],
+            },
+            collision: {
+                type: GeometryType.NONE,
+                dimensions: { x: 0, y: 0, z: 0 },
+                color: '#ffffff',
+                origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+            },
+        },
+    };
+
+    const materials = resolveURDFMaterialsForScene('<robot name="demo" />', links);
+
+    assert.equal(materials.has('Orange-effect'), true);
 });

@@ -1,14 +1,19 @@
 import * as THREE from 'three';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 import type { UrdfVisual } from '@/types';
 import {
   shouldNormalizeColladaRoot,
   type ColladaRootNormalizationHints,
 } from '@/core/loaders/colladaRootNormalization.ts';
+import { loadColladaScene } from '@/core/loaders/colladaParseWorkerBridge.ts';
+import {
+  createObjectFromSerializedObjData,
+  loadSerializedObjModelData,
+} from '@/core/loaders/objParseWorkerBridge.ts';
+import { createGeometryFromSerializedStlData } from '@/core/loaders/stlGeometryData.ts';
+import { loadSerializedStlGeometryData } from '@/core/loaders/stlParseWorkerBridge.ts';
 
 import {
   createUsdTextureLoadingManager,
@@ -44,6 +49,11 @@ export interface UsdMeshCompressionOptions {
   quality: number;
 }
 
+type CachedUsdGltfSceneAsset = {
+  preserveSkeletons: boolean;
+  scene: THREE.Object3D;
+};
+
 type SerializedPrimitiveType = 'Cube' | 'Sphere' | 'Cylinder' | 'Capsule';
 
 type BuildUsdVisualSceneNodeOptions = {
@@ -53,6 +63,112 @@ type BuildUsdVisualSceneNodeOptions = {
   materialState?: UsdMaterialMetadata;
   meshCompression?: UsdMeshCompressionOptions;
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
+};
+
+const usdTextureLoadingManagerCache = new WeakMap<UsdAssetRegistry, THREE.LoadingManager>();
+const usdGltfSceneAssetCache = new WeakMap<UsdAssetRegistry, Map<string, Promise<CachedUsdGltfSceneAsset>>>();
+
+const getUsdTextureLoadingManager = (registry: UsdAssetRegistry): THREE.LoadingManager => {
+  const cachedManager = usdTextureLoadingManagerCache.get(registry);
+  if (cachedManager) {
+    return cachedManager;
+  }
+
+  const manager = createUsdTextureLoadingManager(registry);
+  usdTextureLoadingManagerCache.set(registry, manager);
+  return manager;
+};
+
+const getUsdGltfSceneAssetCache = (
+  registry: UsdAssetRegistry,
+): Map<string, Promise<CachedUsdGltfSceneAsset>> => {
+  const cached = usdGltfSceneAssetCache.get(registry);
+  if (cached) {
+    return cached;
+  }
+
+  const nextCache = new Map<string, Promise<CachedUsdGltfSceneAsset>>();
+  usdGltfSceneAssetCache.set(registry, nextCache);
+  return nextCache;
+};
+
+const cloneMaterialInstance = <TMaterial extends THREE.Material>(material: TMaterial): TMaterial => {
+  const clonedMaterial = material.clone() as TMaterial;
+  clonedMaterial.userData = {
+    ...(material.userData ?? {}),
+    ...(clonedMaterial.userData ?? {}),
+  };
+  return clonedMaterial;
+};
+
+const objectHasSkinnedMeshes = (root: THREE.Object3D): boolean => {
+  let hasSkinnedMeshes = false;
+
+  root.traverse((child) => {
+    if ((child as THREE.SkinnedMesh).isSkinnedMesh) {
+      hasSkinnedMeshes = true;
+    }
+  });
+
+  return hasSkinnedMeshes;
+};
+
+const cloneUsdGltfSceneAsset = (asset: CachedUsdGltfSceneAsset): THREE.Object3D => {
+  const clonedRoot = asset.preserveSkeletons
+    ? cloneSkeleton(asset.scene)
+    : asset.scene.clone(true);
+
+  clonedRoot.traverse((child) => {
+    const meshLike = child as THREE.Mesh;
+
+    if (meshLike.geometry?.isBufferGeometry) {
+      meshLike.geometry = meshLike.geometry.clone();
+    }
+
+    if (!meshLike.isMesh) {
+      return;
+    }
+
+    if (Array.isArray(meshLike.material)) {
+      meshLike.material = meshLike.material.map((material) => cloneMaterialInstance(material));
+      return;
+    }
+
+    if (meshLike.material) {
+      meshLike.material = cloneMaterialInstance(meshLike.material);
+    }
+  });
+
+  return clonedRoot;
+};
+
+const loadUsdGltfSceneAsset = async (
+  assetUrl: string,
+  registry: UsdAssetRegistry,
+): Promise<CachedUsdGltfSceneAsset> => {
+  const cache = getUsdGltfSceneAssetCache(registry);
+  const cached = cache.get(assetUrl);
+  if (cached) {
+    return await cached;
+  }
+
+  const pendingLoad = (async (): Promise<CachedUsdGltfSceneAsset> => {
+    const loader = new GLTFLoader(getUsdTextureLoadingManager(registry));
+    const gltf = await loader.loadAsync(assetUrl);
+    return {
+      scene: gltf.scene,
+      preserveSkeletons: objectHasSkinnedMeshes(gltf.scene),
+    };
+  })();
+
+  cache.set(assetUrl, pendingLoad);
+
+  try {
+    return await pendingLoad;
+  } catch (error) {
+    cache.delete(assetUrl);
+    throw error;
+  }
 };
 
 export const getUsdGeometryType = (value: string | null | undefined): string => {
@@ -173,65 +289,45 @@ const loadUsdMeshObject = async (
 
   const resolvedUrl = resolveUsdAssetUrl(meshPath, registry);
   if (!resolvedUrl) {
-    console.warn(`[USD export] Mesh asset not found for: ${meshPath}`);
+    console.error(`[USD export] Mesh asset not found for: ${meshPath}`);
     return null;
   }
 
-  const manager = createUsdTextureLoadingManager(registry);
   const lowerPath = meshPath.toLowerCase();
 
   if (lowerPath.endsWith('.stl')) {
-    const loader = new STLLoader(manager);
-    const geometry = await loader.loadAsync(resolvedUrl);
+    const serializedGeometry = await loadSerializedStlGeometryData(resolvedUrl);
+    const geometry = createGeometryFromSerializedStlData(serializedGeometry);
     return new THREE.Mesh(geometry, createUsdBaseMaterial(colorOverride || visual.color));
   }
 
   if (lowerPath.endsWith('.obj')) {
-    const loader = new OBJLoader(manager);
-    const object = await loader.loadAsync(resolvedUrl);
+    const serializedObject = await loadSerializedObjModelData(resolvedUrl);
+    const object = createObjectFromSerializedObjData(serializedObject);
     normalizeUsdRenderableMaterials(object, colorOverride || visual.color);
     expandUsdMultiMaterialMeshesForSerialization(object);
     return object;
   }
 
   if (lowerPath.endsWith('.dae')) {
-    const loader = new ColladaLoader(manager);
-    const normalizeColladaRoot = shouldNormalizeColladaRoot(
-      meshPath,
-      colladaRootNormalizationHints,
-    );
-    let collada: Awaited<ReturnType<ColladaLoader['loadAsync']>>;
-
-    if (normalizeColladaRoot && typeof DOMParser === 'function') {
-      const fileLoader = new THREE.FileLoader(manager);
-      const text = await new Promise<string>((resolve, reject) => {
-        fileLoader.load(resolvedUrl, (data) => resolve(data as string), undefined, reject);
-      });
-      const patchedText = text.replace(/<up_axis>\s*Z_UP\s*<\/up_axis>/g, '<up_axis>Y_UP</up_axis>');
-      const baseUrl = THREE.LoaderUtils.extractUrlBase(resolvedUrl);
-      collada = loader.parse(patchedText, baseUrl);
-    } else {
-      collada = await loader.loadAsync(resolvedUrl);
+    const object = await loadColladaScene(resolvedUrl, getUsdTextureLoadingManager(registry));
+    normalizeUsdRenderableMaterials(object, colorOverride || visual.color);
+    expandUsdMultiMaterialMeshesForSerialization(object);
+    if (shouldNormalizeColladaRoot(meshPath, colladaRootNormalizationHints)) {
+      object.rotation.set(0, 0, 0);
+      object.updateMatrix();
     }
-
-    normalizeUsdRenderableMaterials(collada.scene, colorOverride || visual.color);
-    expandUsdMultiMaterialMeshesForSerialization(collada.scene);
-    if (normalizeColladaRoot) {
-      collada.scene.rotation.set(0, 0, 0);
-      collada.scene.updateMatrix();
-    }
-    return collada.scene;
+    return object;
   }
 
   if (lowerPath.endsWith('.gltf') || lowerPath.endsWith('.glb')) {
-    const loader = new GLTFLoader(manager);
-    const gltf = await loader.loadAsync(resolvedUrl);
-    normalizeUsdRenderableMaterials(gltf.scene, colorOverride || visual.color);
-    expandUsdMultiMaterialMeshesForSerialization(gltf.scene);
-    return gltf.scene;
+    const object = cloneUsdGltfSceneAsset(await loadUsdGltfSceneAsset(resolvedUrl, registry));
+    normalizeUsdRenderableMaterials(object, colorOverride || visual.color);
+    expandUsdMultiMaterialMeshesForSerialization(object);
+    return object;
   }
 
-  console.warn(`[USD export] Unsupported mesh format for: ${meshPath}`);
+  console.error(`[USD export] Unsupported mesh format for: ${meshPath}`);
   return null;
 };
 

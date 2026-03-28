@@ -24,21 +24,33 @@ export interface UsdStageJointRotationRuntime {
   pickSubType: InteractiveGeometrySubType | null;
 }
 
+function isInteractiveSelectionEnabledForToolMode(toolMode: ToolMode): boolean {
+  return toolMode !== 'view' && toolMode !== 'face';
+}
+
+export function isContinuousHoverEnabledForToolMode(toolMode: ToolMode): boolean {
+  return toolMode !== 'view';
+}
+
 export function resolveUsdStageInteractionPolicy(
   mode: 'detail' | 'hardware',
+  toolMode: ToolMode = 'select',
 ): UsdStageInteractionPolicy {
+  const enableContinuousHover = isContinuousHoverEnabledForToolMode(toolMode);
+  const enableSelection = isInteractiveSelectionEnabledForToolMode(toolMode);
+
   if (mode === 'hardware') {
     return {
-      enableContinuousHover: true,
-      enableJointRotation: true,
+      enableContinuousHover,
+      enableJointRotation: enableSelection,
       enableMeshSelection: false,
     };
   }
 
   return {
-    enableContinuousHover: true,
+    enableContinuousHover,
     enableJointRotation: false,
-    enableMeshSelection: true,
+    enableMeshSelection: enableSelection,
   };
 }
 
@@ -49,7 +61,7 @@ export function resolveUsdStageJointRotationRuntime({
   showCollision,
   toolMode,
 }: ResolveUsdStageJointRotationOptions): UsdStageJointRotationRuntime {
-  if (toolMode === 'measure') {
+  if (toolMode === 'measure' || !isInteractiveSelectionEnabledForToolMode(toolMode)) {
     return {
       enabled: false,
       pickSubType: null,

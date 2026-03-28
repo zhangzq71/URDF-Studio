@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { isGizmoObject } from './raycast';
+import { isGizmoObject } from './raycast.ts';
 import {
   hasPickableMaterial,
   isInternalHelperObject,
   isPickableMeshObject,
   isVisibleInHierarchy,
-} from './pickFilter';
+} from './pickFilter.ts';
 
 export type PickTargetMode = 'all' | 'visual' | 'collision';
 
@@ -71,7 +71,6 @@ export function findPickIntersections(
     ? raycaster
         .intersectObjects(pickTargets, false)
         .filter((hit) => matchesIntersectionMode(hit, mode))
-        .sort((left, right) => left.distance - right.distance)
     : [];
 
   if (directHits.length > 0 || !fallbackOnMiss || !robot) {
@@ -80,6 +79,5 @@ export function findPickIntersections(
 
   return raycaster
     .intersectObject(robot, true)
-    .filter((hit) => matchesIntersectionMode(hit, mode))
-    .sort((left, right) => left.distance - right.distance);
+    .filter((hit) => matchesIntersectionMode(hit, mode));
 }

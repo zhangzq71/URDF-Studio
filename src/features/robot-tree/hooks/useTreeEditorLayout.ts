@@ -52,27 +52,36 @@ export function useTreeEditorLayout({ collapsed }: UseTreeEditorLayoutOptions) {
     document.body.style.userSelect = 'none';
   }, [captureBodyInteractionStyles, fileBrowserHeight]);
 
-  useEffect(() => {
-    const handleMouseMove = (event: MouseEvent) => {
-      if (isResizing.current) {
-        const delta = event.clientX - startX.current;
-        const nextWidth = Math.max(200, Math.min(600, startWidth.current + delta));
-        setWidth(nextWidth);
-      }
+  const handleMouseMove = useCallback((event: MouseEvent) => {
+    if (isResizing.current) {
+      const delta = event.clientX - startX.current;
+      const nextWidth = Math.max(200, Math.min(600, startWidth.current + delta));
+      setWidth(nextWidth);
+    }
 
-      if (isVerticalResizing.current) {
-        const delta = event.clientY - startY.current;
-        const nextHeight = Math.max(100, Math.min(600, startHeight.current + delta));
-        setFileBrowserHeight(nextHeight);
-      }
-    };
+    if (isVerticalResizing.current) {
+      const delta = event.clientY - startY.current;
+      const nextHeight = Math.max(100, Math.min(600, startHeight.current + delta));
+      setFileBrowserHeight(nextHeight);
+    }
+  }, []);
 
-    const handleMouseUp = () => {
-      isResizing.current = false;
-      isVerticalResizing.current = false;
-      setIsDragging(false);
+  const handleMouseUp = useCallback(() => {
+    const wasResizing = isResizing.current || isVerticalResizing.current;
+
+    isResizing.current = false;
+    isVerticalResizing.current = false;
+    setIsDragging(false);
+
+    if (wasResizing) {
       restoreBodyInteractionStyles();
-    };
+    }
+  }, [restoreBodyInteractionStyles]);
+
+  useEffect(() => {
+    if (!isDragging) {
+      return undefined;
+    }
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
@@ -84,7 +93,7 @@ export function useTreeEditorLayout({ collapsed }: UseTreeEditorLayoutOptions) {
       window.removeEventListener('blur', handleMouseUp);
       restoreBodyInteractionStyles();
     };
-  }, [restoreBodyInteractionStyles]);
+  }, [handleMouseMove, handleMouseUp, isDragging, restoreBodyInteractionStyles]);
 
   const actualWidth = collapsed ? 0 : width;
   const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;

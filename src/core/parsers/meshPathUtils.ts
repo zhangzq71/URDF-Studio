@@ -27,8 +27,13 @@ const normalizeRelativePath = (path: string): string => {
 };
 
 const stripPackagePrefix = (path: string): string => {
-  if (!path.startsWith('package://')) return path;
-  const withoutScheme = path.slice('package://'.length);
+  const scheme = path.startsWith('package://')
+    ? 'package://'
+    : path.startsWith('model://')
+      ? 'model://'
+      : null;
+  if (!scheme) return path;
+  const withoutScheme = path.slice(scheme.length);
   const slashIndex = withoutScheme.indexOf('/');
   return slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1) : withoutScheme;
 };
@@ -46,9 +51,14 @@ const stripExternalPrefix = (path: string): string => {
 };
 
 const normalizePackageAssetPath = (path: string): string | null => {
-  if (!path.startsWith('package://')) return null;
+  const scheme = path.startsWith('package://')
+    ? 'package://'
+    : path.startsWith('model://')
+      ? 'model://'
+      : null;
+  if (!scheme) return null;
 
-  const withoutScheme = path.slice('package://'.length).replace(/\\/g, '/');
+  const withoutScheme = path.slice(scheme.length).replace(/\\/g, '/');
   const slashIndex = withoutScheme.indexOf('/');
   const packageName = slashIndex >= 0 ? withoutScheme.slice(0, slashIndex) : withoutScheme;
   const relativePath = slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1) : '';
@@ -150,8 +160,20 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
 
   Object.entries(robot.links).forEach(([linkId, link]) => {
     const nextVisual = rewriteMeshGeometryForSource(link.visual, sourceFilePath);
+    let nextVisualBodies = link.visualBodies;
     const nextCollision = rewriteMeshGeometryForSource(link.collision, sourceFilePath);
     let nextCollisionBodies = link.collisionBodies;
+
+    if (link.visualBodies?.length) {
+      const rewrittenBodies = link.visualBodies.map((body) =>
+        rewriteMeshGeometryForSource(body, sourceFilePath),
+      );
+
+      const bodiesChanged = rewrittenBodies.some((body, index) => body !== link.visualBodies?.[index]);
+      if (bodiesChanged) {
+        nextVisualBodies = rewrittenBodies;
+      }
+    }
 
     if (link.collisionBodies?.length) {
       const rewrittenBodies = link.collisionBodies.map((body) =>
@@ -166,6 +188,7 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
 
     const linkChanged =
       nextVisual !== link.visual ||
+      nextVisualBodies !== link.visualBodies ||
       nextCollision !== link.collision ||
       nextCollisionBodies !== link.collisionBodies;
 
@@ -174,6 +197,7 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
       nextLinks[linkId] = {
         ...link,
         visual: nextVisual,
+        visualBodies: nextVisualBodies,
         collision: nextCollision,
         collisionBodies: nextCollisionBodies,
       };

@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { computePreviewUrdf, generateMujocoXML, generateURDF } from '@/core/parsers';
+import { generateMujocoXML, generateURDF } from '@/core/parsers';
+import { findStandaloneXacroTruthFile } from '@/core/parsers/importRobotFile';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
+import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
 import { DEFAULT_LINK, GeometryType, type AssemblyState, type JointQuaternion, type RobotClosedLoopConstraint, type RobotData, type RobotFile, type RobotState, type UrdfJoint, type UrdfLink } from '@/types';
 import { stripTransientJointMotionFromJoints } from '@/shared/utils/robot/semanticSnapshot';
 import { getSourceCodeDocumentFlavor, type SourceCodeDocumentFlavor } from '@/app/utils/sourceCodeDisplay';
 import {
-  createPreviewRobotState,
+  createPreviewRobotStateFromImportResult,
   createRobotSourceSnapshot,
+  createRobotSourceSnapshotFromUrdfContent,
   getPreferredMjcfContent,
   getPreferredUrdfContent,
 } from './workspaceSourceSyncUtils';
+import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
 
 export interface JointMotionStateValue {
   angle?: number;
@@ -73,6 +77,41 @@ function areJointSourceCompatible(
   return true;
 }
 
+function buildPreviewUrdfFromImportResult(
+  file: RobotFile,
+  availableFiles: RobotFile[],
+  previewRobot: RobotState | null,
+  importResult: Awaited<ReturnType<typeof resolveRobotFileDataWithWorker>>,
+): string | null {
+  if (file.format === 'urdf') {
+    return file.content;
+  }
+
+  if (file.format === 'xacro') {
+    if (importResult.status === 'ready') {
+      return importResult.resolvedUrdfContent ?? '';
+    }
+
+    return importResult.status === 'error' && importResult.reason === 'source_only_fragment'
+      ? null
+      : '';
+  }
+
+  if (file.format === 'mjcf') {
+    return resolveMJCFSource(file, availableFiles).content;
+  }
+
+  if (file.format === 'usd') {
+    return '';
+  }
+
+  if (!previewRobot) {
+    return importResult.status === 'error' ? '' : null;
+  }
+
+  return generateURDF(previewRobot, { preserveMeshPaths: true });
+}
+
 export function useWorkspaceSourceSync({
   assemblyState,
   sidebarTab,
@@ -97,24 +136,64 @@ export function useWorkspaceSourceSync({
   setAllFileContents,
   setOriginalUrdfContent,
 }: UseWorkspaceSourceSyncOptions) {
+  const generatedSourceCacheRef = useRef(new Map<string, string>());
   const isWorkspaceAssembly = Boolean(assemblyState && sidebarTab === 'workspace');
+  const hasWorkspaceComponents = Boolean(
+    assemblyState && Object.keys(assemblyState.components).length > 0,
+  );
+  // Keep the current robot rendered while the workspace is empty so switching
+  // modes does not force an unnecessary viewer reload to an empty assembly.
+  const shouldRenderAssembly = isWorkspaceAssembly && hasWorkspaceComponents;
   const [filePreviewFile, setFilePreviewFile] = useState<RobotFile | null>(null);
+  const [previewRobot, setPreviewRobot] = useState<RobotState | null>(null);
+  const [filePreview, setFilePreview] = useState<{ urdfContent: string; fileName: string } | undefined>(undefined);
+  const [selectedFilePreviewSourceSnapshot, setSelectedFilePreviewSourceSnapshot] = useState<string | null>(null);
+  const [selectedXacroBaselineSourceSnapshot, setSelectedXacroBaselineSourceSnapshot] = useState<string | null>(null);
   const sourceJointsRef = useRef<Record<string, UrdfJoint>>({});
-  const urdfSourceBaselineRef = useRef<{ fileName: string | null; snapshot: string | null }>({
+  const sourceBaselineRef = useRef<{ fileName: string | null; snapshot: string | null }>({
     fileName: null,
     snapshot: null,
   });
   const mjcfViewerBaselineKeyRef = useRef<string | null>(null);
   const mjcfViewerBaselineContentRef = useRef<string | null>(null);
+  const selectedFilePreviewRequestRef = useRef(0);
+  const selectedXacroBaselineRequestRef = useRef(0);
+  const filePreviewRequestRef = useRef(0);
+  const activeSourceFile = useMemo(
+    () => filePreviewFile ?? selectedFile,
+    [filePreviewFile, selectedFile],
+  );
+  const readCachedGeneratedSource = useCallback((cacheKey: string, buildSource: () => string): string => {
+    const cache = generatedSourceCacheRef.current;
+    const cachedSource = cache.get(cacheKey);
+    if (cachedSource !== undefined) {
+      cache.delete(cacheKey);
+      cache.set(cacheKey, cachedSource);
+      return cachedSource;
+    }
+
+    const nextSource = buildSource();
+    cache.set(cacheKey, nextSource);
+
+    while (cache.size > 64) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      cache.delete(oldestKey);
+    }
+
+    return nextSource;
+  }, []);
   const sourceCodeDocumentFlavor = useMemo<SourceCodeDocumentFlavor>(
-    () => getSourceCodeDocumentFlavor(selectedFile),
-    [selectedFile],
+    () => getSourceCodeDocumentFlavor(activeSourceFile),
+    [activeSourceFile],
   );
 
   const mergedRobotData = useMemo(() => {
-    if (!isWorkspaceAssembly) return null;
+    if (!shouldRenderAssembly) return null;
     return getMergedRobotData() ?? null;
-  }, [assemblyState, getMergedRobotData, isWorkspaceAssembly]);
+  }, [getMergedRobotData, shouldRenderAssembly]);
 
   const emptyRobot = useMemo<RobotState>(() => ({
     name: '',
@@ -145,7 +224,7 @@ export function useWorkspaceSourceSync({
   }), []);
 
   const robot = useMemo<RobotState>(() => {
-    if (isWorkspaceAssembly) {
+    if (shouldRenderAssembly) {
       if (mergedRobotData) {
         return { ...mergedRobotData, selection };
       }
@@ -166,7 +245,19 @@ export function useWorkspaceSourceSync({
       closedLoopConstraints,
       selection,
     };
-  }, [closedLoopConstraints, emptyRobot, isSelectedUsdHydrating, isWorkspaceAssembly, mergedRobotData, robotJoints, robotLinks, robotMaterials, robotName, rootLinkId, selection]);
+  }, [
+    closedLoopConstraints,
+    emptyRobot,
+    isSelectedUsdHydrating,
+    mergedRobotData,
+    robotJoints,
+    robotLinks,
+    robotMaterials,
+    robotName,
+    rootLinkId,
+    selection,
+    shouldRenderAssembly,
+  ]);
 
   const jointAngleState = useMemo(() => {
     const angles: Record<string, number> = {};
@@ -226,28 +317,123 @@ export function useWorkspaceSourceSync({
     () => createRobotSourceSnapshot(currentRobotSourceState),
     [currentRobotSourceState],
   );
-
-  const selectedFilePreviewSourceSnapshot = useMemo(() => {
-    if (isWorkspaceAssembly || !selectedFile) {
+  const workspaceRobotSourceSnapshot = useMemo(() => {
+    if (!shouldRenderAssembly) {
       return null;
     }
 
-    const previewRobotState = createPreviewRobotState(selectedFile, {
-      availableFiles,
-      assets,
-      usdRobotData: getUsdPreparedExportCache(selectedFile.name)?.robotData ?? null,
+    return createRobotSourceSnapshot({
+      ...(mergedRobotData ?? emptyRobot),
+      selection: { type: null, id: null },
     });
+  }, [emptyRobot, mergedRobotData, shouldRenderAssembly]);
 
-    if (!previewRobotState) {
+  const selectedXacroTruthFile = useMemo(() => {
+    if (shouldRenderAssembly || selectedFile?.format !== 'xacro') {
       return null;
     }
 
-    return createRobotSourceSnapshot(previewRobotState);
-  }, [assets, availableFiles, getUsdPreparedExportCache, isWorkspaceAssembly, selectedFile]);
+    return findStandaloneXacroTruthFile(selectedFile, availableFiles);
+  }, [availableFiles, selectedFile, shouldRenderAssembly]);
+
+  const selectedXacroResolvedSourceFilePath = useMemo(
+    () => selectedXacroTruthFile?.name ?? selectedFile?.name ?? null,
+    [selectedFile?.name, selectedXacroTruthFile],
+  );
 
   useEffect(() => {
-    if (isWorkspaceAssembly || !selectedFile || selectedFile.format !== 'urdf') {
-      urdfSourceBaselineRef.current = { fileName: null, snapshot: null };
+    if (shouldRenderAssembly || !selectedFile || selectedFile.format === 'xacro') {
+      setSelectedFilePreviewSourceSnapshot(null);
+      return;
+    }
+
+    const requestId = ++selectedFilePreviewRequestRef.current;
+
+    void resolveRobotFileDataWithWorker(selectedFile, {
+      availableFiles,
+      assets,
+      allFileContents,
+      usdRobotData: getUsdPreparedExportCache(selectedFile.name)?.robotData ?? null,
+    }).then((result) => {
+      if (requestId !== selectedFilePreviewRequestRef.current) {
+        return;
+      }
+
+      const previewRobotState = createPreviewRobotStateFromImportResult(selectedFile, result);
+      setSelectedFilePreviewSourceSnapshot(
+        previewRobotState ? createRobotSourceSnapshot(previewRobotState) : null,
+      );
+    }).catch((error) => {
+      if (requestId !== selectedFilePreviewRequestRef.current) {
+        return;
+      }
+
+      setSelectedFilePreviewSourceSnapshot(null);
+      scheduleFailFastInDev(
+        'useWorkspaceSourceSync:selectedFilePreviewSourceSnapshot',
+        new Error(`Failed to build preview snapshot for "${selectedFile.name}".`, { cause: error }),
+      );
+    });
+  }, [
+    allFileContents,
+    assets,
+    availableFiles,
+    getUsdPreparedExportCache,
+    selectedFile,
+    shouldRenderAssembly,
+  ]);
+
+  useEffect(() => {
+    if (shouldRenderAssembly || selectedFile?.format !== 'xacro' || !originalUrdfContent) {
+      setSelectedXacroBaselineSourceSnapshot(null);
+      return;
+    }
+
+    const requestId = ++selectedXacroBaselineRequestRef.current;
+    const sourcePath = selectedXacroResolvedSourceFilePath ?? selectedFile.name;
+
+    void createRobotSourceSnapshotFromUrdfContent(originalUrdfContent, {
+      sourcePath,
+    }).then((snapshot) => {
+      if (requestId !== selectedXacroBaselineRequestRef.current) {
+        return;
+      }
+
+      setSelectedXacroBaselineSourceSnapshot(snapshot);
+    }).catch((error) => {
+      if (requestId !== selectedXacroBaselineRequestRef.current) {
+        return;
+      }
+
+      setSelectedXacroBaselineSourceSnapshot(null);
+      scheduleFailFastInDev(
+        'useWorkspaceSourceSync:selectedXacroBaselineSourceSnapshot',
+        new Error(`Failed to build Xacro baseline snapshot for "${selectedFile.name}".`, { cause: error }),
+      );
+    });
+  }, [
+    originalUrdfContent,
+    selectedFile,
+    selectedXacroResolvedSourceFilePath,
+    shouldRenderAssembly,
+  ]);
+
+  const isSelectedUrdfSource = selectedFile?.format === 'urdf';
+  const isSelectedXacroSource = selectedFile?.format === 'xacro';
+
+  useEffect(() => {
+    if (
+      shouldRenderAssembly
+      || !selectedFile
+      || (!isSelectedUrdfSource && !isSelectedXacroSource)
+    ) {
+      sourceBaselineRef.current = { fileName: null, snapshot: null };
+      return;
+    }
+  }, [isSelectedUrdfSource, isSelectedXacroSource, selectedFile, shouldRenderAssembly]);
+
+  useEffect(() => {
+    if (shouldRenderAssembly || !selectedFile || !isSelectedUrdfSource) {
       return;
     }
 
@@ -256,59 +442,140 @@ export function useWorkspaceSourceSync({
     }
 
     if (
-      urdfSourceBaselineRef.current.fileName === selectedFile.name
-      && urdfSourceBaselineRef.current.snapshot === currentRobotSourceSnapshot
+      sourceBaselineRef.current.fileName === selectedFile.name
+      && sourceBaselineRef.current.snapshot === currentRobotSourceSnapshot
     ) {
       return;
     }
 
-    urdfSourceBaselineRef.current = {
+    sourceBaselineRef.current = {
       fileName: selectedFile.name,
       snapshot: currentRobotSourceSnapshot,
     };
   }, [
     currentRobotSourceSnapshot,
-    isWorkspaceAssembly,
+    isSelectedUrdfSource,
     selectedFile,
     selectedFilePreviewSourceSnapshot,
+    shouldRenderAssembly,
   ]);
 
-  const hasUrdfStoreEdits = useMemo(() => {
-    if (isWorkspaceAssembly || !selectedFile || selectedFile.format !== 'urdf') {
+  useEffect(() => {
+    if (shouldRenderAssembly || !selectedFile || !isSelectedXacroSource) {
+      return;
+    }
+
+    if (selectedXacroBaselineSourceSnapshot !== currentRobotSourceSnapshot) {
+      return;
+    }
+
+    if (
+      sourceBaselineRef.current.fileName === selectedFile.name
+      && sourceBaselineRef.current.snapshot === currentRobotSourceSnapshot
+    ) {
+      return;
+    }
+
+    sourceBaselineRef.current = {
+      fileName: selectedFile.name,
+      snapshot: currentRobotSourceSnapshot,
+    };
+  }, [
+    currentRobotSourceSnapshot,
+    isSelectedXacroSource,
+    selectedFile,
+    selectedXacroBaselineSourceSnapshot,
+    shouldRenderAssembly,
+  ]);
+
+  const hasSourceStoreEdits = useMemo(() => {
+    if (
+      shouldRenderAssembly
+      || !selectedFile
+      || (!isSelectedUrdfSource && !isSelectedXacroSource)
+    ) {
       return false;
     }
 
-    const baseline = urdfSourceBaselineRef.current;
+    const baseline = sourceBaselineRef.current;
     if (!baseline.fileName || baseline.fileName !== selectedFile.name) {
       return false;
     }
 
     return baseline.snapshot !== currentRobotSourceSnapshot;
-  }, [currentRobotSourceSnapshot, isWorkspaceAssembly, selectedFile]);
+  }, [
+    currentRobotSourceSnapshot,
+    isSelectedUrdfSource,
+    isSelectedXacroSource,
+    selectedFile,
+    shouldRenderAssembly,
+  ]);
 
   const generatedUrdfContent = useMemo(() => {
-    if (isWorkspaceAssembly || isSelectedUsdHydrating || selectedFile?.format === 'mjcf') {
+    if (shouldRenderAssembly || isSelectedUsdHydrating || selectedFile?.format === 'mjcf') {
       return null;
     }
 
-    return generateURDF(currentRobotSourceState, { includeHardware: 'auto' });
-  }, [currentRobotSourceState, isSelectedUsdHydrating, isWorkspaceAssembly, selectedFile?.format]);
+    return readCachedGeneratedSource(
+      `urdf:${currentRobotSourceSnapshot}`,
+      () => generateURDF(currentRobotSourceState, { includeHardware: 'auto' }),
+    );
+  }, [
+    currentRobotSourceSnapshot,
+    currentRobotSourceState,
+    isSelectedUsdHydrating,
+    readCachedGeneratedSource,
+    selectedFile?.format,
+    shouldRenderAssembly,
+  ]);
+
+  const viewerGeneratedUrdfContent = useMemo(() => {
+    if (shouldRenderAssembly || isSelectedUsdHydrating || selectedFile?.format === 'mjcf') {
+      return null;
+    }
+
+    return readCachedGeneratedSource(
+      `viewer-urdf:${currentRobotSourceSnapshot}`,
+      () => generateURDF(currentRobotSourceState, { preserveMeshPaths: true }),
+    );
+  }, [
+    currentRobotSourceSnapshot,
+    currentRobotSourceState,
+    isSelectedUsdHydrating,
+    readCachedGeneratedSource,
+    selectedFile?.format,
+    shouldRenderAssembly,
+  ]);
 
   const viewerUrdfContent = useMemo(() => {
-    if (isWorkspaceAssembly || isSelectedUsdHydrating || selectedFile?.format === 'mjcf') {
+    if (shouldRenderAssembly || isSelectedUsdHydrating || selectedFile?.format === 'mjcf') {
       return null;
+    }
+
+    if (selectedFile?.format === 'xacro') {
+      return hasSourceStoreEdits
+        ? viewerGeneratedUrdfContent
+        : originalUrdfContent ?? viewerGeneratedUrdfContent;
     }
 
     return getPreferredUrdfContent({
       fileContent: selectedFile?.format === 'urdf' ? selectedFile.content : null,
       originalContent: originalUrdfContent,
-      generatedContent: generateURDF(currentRobotSourceState, { preserveMeshPaths: true }),
-      hasStoreEdits: selectedFile?.format === 'urdf' ? hasUrdfStoreEdits : true,
+      generatedContent: viewerGeneratedUrdfContent,
+      hasStoreEdits: isSelectedUrdfSource ? hasSourceStoreEdits : true,
     });
-  }, [currentRobotSourceState, hasUrdfStoreEdits, isSelectedUsdHydrating, isWorkspaceAssembly, originalUrdfContent, selectedFile]);
+  }, [
+    hasSourceStoreEdits,
+    isSelectedUrdfSource,
+    isSelectedUsdHydrating,
+    originalUrdfContent,
+    selectedFile,
+    viewerGeneratedUrdfContent,
+    shouldRenderAssembly,
+  ]);
 
   const generatedMjcfContent = useMemo(() => {
-    const shouldGenerateMjcfSource = !isWorkspaceAssembly && !isSelectedUsdHydrating && (
+    const shouldGenerateMjcfSource = !shouldRenderAssembly && !isSelectedUsdHydrating && (
       selectedFile?.format === 'mjcf'
       || (isCodeViewerOpen && sourceCodeDocumentFlavor === 'equivalent-mjcf')
     );
@@ -317,11 +584,23 @@ export function useWorkspaceSourceSync({
       return null;
     }
 
-    return generateMujocoXML(currentRobotSourceState, {
-      meshdir: 'meshes/',
-      includeSceneHelpers: false,
-    });
-  }, [currentRobotSourceState, isCodeViewerOpen, isSelectedUsdHydrating, isWorkspaceAssembly, selectedFile?.format, sourceCodeDocumentFlavor]);
+    return readCachedGeneratedSource(
+      `mjcf:${currentRobotSourceSnapshot}`,
+      () => generateMujocoXML(currentRobotSourceState, {
+        meshdir: 'meshes/',
+        includeSceneHelpers: false,
+      }),
+    );
+  }, [
+    currentRobotSourceSnapshot,
+    currentRobotSourceState,
+    isCodeViewerOpen,
+    isSelectedUsdHydrating,
+    readCachedGeneratedSource,
+    selectedFile?.format,
+    shouldRenderAssembly,
+    sourceCodeDocumentFlavor,
+  ]);
 
   const resolvedMjcfSource = useMemo(() => {
     if (!selectedFile || selectedFile.format !== 'mjcf') {
@@ -383,18 +662,27 @@ export function useWorkspaceSourceSync({
   }, [generatedMjcfContent, mjcfViewerBaselineKey]);
 
   const workspaceViewerContent = useMemo(() => {
-    if (!isWorkspaceAssembly) {
+    if (!shouldRenderAssembly || !workspaceRobotSourceSnapshot) {
       return null;
     }
 
-    return generateURDF({
-      ...(mergedRobotData ?? emptyRobot),
-      selection: { type: null, id: null },
-    }, { preserveMeshPaths: true });
-  }, [emptyRobot, isWorkspaceAssembly, mergedRobotData]);
+    return readCachedGeneratedSource(
+      `workspace-viewer-urdf:${workspaceRobotSourceSnapshot}`,
+      () => generateURDF({
+        ...(mergedRobotData ?? emptyRobot),
+        selection: { type: null, id: null },
+      }, { preserveMeshPaths: true }),
+    );
+  }, [
+    emptyRobot,
+    mergedRobotData,
+    readCachedGeneratedSource,
+    shouldRenderAssembly,
+    workspaceRobotSourceSnapshot,
+  ]);
 
   const syncedSourceContent = useMemo(() => {
-    if (!selectedFile || isWorkspaceAssembly) {
+    if (!selectedFile || shouldRenderAssembly) {
       return null;
     }
 
@@ -403,8 +691,12 @@ export function useWorkspaceSourceSync({
         fileContent: selectedFile.content,
         originalContent: originalUrdfContent,
         generatedContent: generatedUrdfContent,
-        hasStoreEdits: hasUrdfStoreEdits,
+        hasStoreEdits: hasSourceStoreEdits,
       });
+    }
+
+    if (selectedFile.format === 'xacro') {
+      return selectedFile.content;
     }
 
     if (selectedFile.format === 'mjcf' && isCodeViewerOpen) {
@@ -424,13 +716,12 @@ export function useWorkspaceSourceSync({
     generatedMjcfContent,
     generatedUrdfContent,
     hasMjcfViewerEdits,
-    hasUrdfStoreEdits,
+    hasSourceStoreEdits,
     isCodeViewerOpen,
-    isWorkspaceAssembly,
     originalUrdfContent,
-    resolvedMjcfSource,
     selectedFile,
     sourceCodeDocumentFlavor,
+    shouldRenderAssembly,
   ]);
 
   const syncTextFileContent = useCallback((
@@ -483,7 +774,7 @@ export function useWorkspaceSourceSync({
   ]);
 
   const urdfContentForViewer = useMemo(() => {
-    if (isWorkspaceAssembly) {
+    if (shouldRenderAssembly) {
       return workspaceViewerContent!;
     }
 
@@ -501,21 +792,21 @@ export function useWorkspaceSourceSync({
       return generatedMjcfContent ?? sourceMjcfContent;
     }
 
-    return viewerUrdfContent ?? generateURDF(currentRobotSourceState, { preserveMeshPaths: true });
+    return viewerUrdfContent ?? viewerGeneratedUrdfContent;
   }, [
-    currentRobotSourceState,
     generatedMjcfContent,
     hasMjcfViewerEdits,
     isSelectedUsdHydrating,
-    isWorkspaceAssembly,
     resolvedMjcfSource,
     selectedFile,
+    viewerGeneratedUrdfContent,
     viewerUrdfContent,
     workspaceViewerContent,
+    shouldRenderAssembly,
   ]);
 
   const viewerSourceFilePath = useMemo(() => {
-    if (isWorkspaceAssembly) {
+    if (shouldRenderAssembly) {
       return undefined;
     }
 
@@ -523,19 +814,36 @@ export function useWorkspaceSourceSync({
       return resolvedMjcfSource?.effectiveFile.name ?? selectedFile.name;
     }
 
+    if (selectedFile?.format === 'xacro') {
+      return hasSourceStoreEdits
+        ? selectedFile.name
+        : (selectedXacroResolvedSourceFilePath ?? selectedFile.name);
+    }
+
     return selectedFile?.name;
-  }, [isWorkspaceAssembly, resolvedMjcfSource, selectedFile]);
+  }, [
+    hasSourceStoreEdits,
+    resolvedMjcfSource,
+    selectedFile,
+    selectedXacroResolvedSourceFilePath,
+    shouldRenderAssembly,
+  ]);
 
   useEffect(() => {
-    if (!selectedFile || selectedFile.format !== 'urdf' || !generatedUrdfContent || !hasUrdfStoreEdits) {
+    if (
+      !selectedFile
+      || selectedFile.format !== 'urdf'
+      || !generatedUrdfContent
+      || !hasSourceStoreEdits
+    ) {
       return;
     }
 
     syncTextFileContent(selectedFile.name, generatedUrdfContent);
-  }, [generatedUrdfContent, hasUrdfStoreEdits, selectedFile, syncTextFileContent]);
+  }, [generatedUrdfContent, hasSourceStoreEdits, selectedFile, syncTextFileContent]);
 
   useEffect(() => {
-    if (!isWorkspaceAssembly || !assemblyState) {
+    if (!shouldRenderAssembly || !assemblyState) {
       return;
     }
 
@@ -551,11 +859,25 @@ export function useWorkspaceSourceSync({
       };
 
       if (sourceFile.format === 'urdf') {
-        generatedComponentSources.set(sourceFile.name, generateURDF(sourceRobotState, { includeHardware: 'auto' }));
+        const componentSnapshot = createRobotSourceSnapshot(sourceRobotState);
+        generatedComponentSources.set(
+          sourceFile.name,
+          readCachedGeneratedSource(
+            `component-urdf:${sourceFile.name}:${componentSnapshot}`,
+            () => generateURDF(sourceRobotState, { includeHardware: 'auto' }),
+          ),
+        );
       }
 
       if (sourceFile.format === 'mjcf') {
-        generatedComponentSources.set(sourceFile.name, generateMujocoXML(sourceRobotState, { meshdir: 'meshes/' }));
+        const componentSnapshot = createRobotSourceSnapshot(sourceRobotState);
+        generatedComponentSources.set(
+          sourceFile.name,
+          readCachedGeneratedSource(
+            `component-mjcf:${sourceFile.name}:${componentSnapshot}`,
+            () => generateMujocoXML(sourceRobotState, { meshdir: 'meshes/' }),
+          ),
+        );
       }
     });
 
@@ -607,34 +929,72 @@ export function useWorkspaceSourceSync({
     allFileContents,
     assemblyState,
     availableFiles,
-    isWorkspaceAssembly,
+    readCachedGeneratedSource,
+    shouldRenderAssembly,
     selectedFile,
     setAllFileContents,
     setAvailableFiles,
     setSelectedFile,
   ]);
 
-  const previewRobot = useMemo(() => {
+  useEffect(() => {
     if (!filePreviewFile) {
-      return null;
+      setPreviewRobot(null);
+      setFilePreview(undefined);
+      return;
     }
 
-    return createPreviewRobotState(filePreviewFile, {
+    const requestId = ++filePreviewRequestRef.current;
+    setPreviewRobot(null);
+    setFilePreview(undefined);
+
+    void resolveRobotFileDataWithWorker(filePreviewFile, {
       availableFiles,
       assets,
+      allFileContents,
       usdRobotData: getUsdPreparedExportCache(filePreviewFile.name)?.robotData ?? null,
+    }).then((result) => {
+      if (requestId !== filePreviewRequestRef.current) {
+        return;
+      }
+
+      const nextPreviewRobot = createPreviewRobotStateFromImportResult(filePreviewFile, result);
+      const previewUrdf = buildPreviewUrdfFromImportResult(
+        filePreviewFile,
+        availableFiles,
+        nextPreviewRobot,
+        result,
+      );
+
+      setPreviewRobot(nextPreviewRobot);
+      setFilePreview(
+        previewUrdf != null
+          ? { urdfContent: previewUrdf, fileName: filePreviewFile.name }
+          : undefined,
+      );
+    }).catch((error) => {
+      if (requestId !== filePreviewRequestRef.current) {
+        return;
+      }
+
+      setPreviewRobot(null);
+      setFilePreview(undefined);
+      scheduleFailFastInDev(
+        'useWorkspaceSourceSync:filePreview',
+        new Error(`Failed to resolve file preview for "${filePreviewFile.name}".`, { cause: error }),
+      );
     });
-  }, [assets, availableFiles, filePreviewFile, getUsdPreparedExportCache]);
+  }, [
+    allFileContents,
+    assets,
+    availableFiles,
+    filePreviewFile,
+    getUsdPreparedExportCache,
+  ]);
 
-  const filePreview = useMemo(() => {
-    if (!filePreviewFile) return undefined;
-    const urdf = computePreviewUrdf(filePreviewFile, availableFiles);
-    return urdf != null
-      ? { urdfContent: urdf, fileName: filePreviewFile.name }
-      : undefined;
-  }, [availableFiles, filePreviewFile]);
-
-  const sourceCodeContent = syncedSourceContent ?? (selectedFile ? selectedFile.content : urdfContentForViewer);
+  const sourceCodeContent = filePreviewFile?.content
+    ?? syncedSourceContent
+    ?? (selectedFile ? selectedFile.content : urdfContentForViewer);
 
   const handlePreviewFile = useCallback((file: RobotFile) => {
     setFilePreviewFile(file);
@@ -665,6 +1025,7 @@ export function useWorkspaceSourceSync({
     filePreview,
     previewRobot,
     previewFileName: filePreviewFile?.name,
+    sourceCodeFileName: activeSourceFile?.name,
     sourceCodeContent,
     sourceCodeDocumentFlavor,
     handlePreviewFile,

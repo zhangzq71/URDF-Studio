@@ -9,6 +9,11 @@ export interface JointLimitDefaults {
   velocity: number;
 }
 
+export interface JointLimitLike {
+  lower?: number;
+  upper?: number;
+}
+
 const ANGULAR_DEFAULT_LIMIT: JointLimitDefaults = {
   lower: -Math.PI,
   upper: Math.PI,
@@ -21,6 +26,16 @@ const LINEAR_DEFAULT_LIMIT: JointLimitDefaults = {
   upper: 1,
   effort: 100,
   velocity: 1,
+};
+
+// Some robot descriptions author IEEE double max values as a stand-in for
+// "unbounded". Those values are technically finite, but they break sliders and
+// drag clamps the same way an actual infinity would.
+export const EFFECTIVELY_UNBOUNDED_JOINT_LIMIT_THRESHOLD = 10000;
+
+const toFiniteNumericLimit = (value: unknown): number | null => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 };
 
 export const normalizeJointTypeValue = (jointType: string | JointType | undefined | null): string => (
@@ -39,6 +54,26 @@ export const isLinearJointType = (jointType: string | JointType | undefined | nu
 export const supportsFiniteJointLimits = (jointType: string | JointType | undefined | null): boolean => {
   const normalized = normalizeJointTypeValue(jointType);
   return normalized === JointType.REVOLUTE || normalized === JointType.PRISMATIC;
+};
+
+export const hasEffectivelyFiniteJointLimits = (
+  limit: JointLimitLike | null | undefined,
+): limit is Required<Pick<JointLimitLike, 'lower' | 'upper'>> => {
+  const lower = toFiniteNumericLimit(limit?.lower);
+  const upper = toFiniteNumericLimit(limit?.upper);
+
+  if (lower === null || upper === null) {
+    return false;
+  }
+
+  if (
+    Math.abs(lower) > EFFECTIVELY_UNBOUNDED_JOINT_LIMIT_THRESHOLD
+    || Math.abs(upper) > EFFECTIVELY_UNBOUNDED_JOINT_LIMIT_THRESHOLD
+  ) {
+    return false;
+  }
+
+  return Math.abs(upper - lower) <= EFFECTIVELY_UNBOUNDED_JOINT_LIMIT_THRESHOLD * 2;
 };
 
 export const getDefaultJointLimit = (jointType: string | JointType | undefined | null): JointLimitDefaults => (

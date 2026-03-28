@@ -4,6 +4,10 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+const threeRoot = path.resolve(__dirname, 'node_modules/three');
+const threeModuleEntry = path.resolve(threeRoot, 'build/three.module.js');
+const threeExamplesDir = path.resolve(threeRoot, 'examples/jsm');
+
 function buildConfigurationFileIndex(rootDirs: string[]): Map<string, string> {
   const fileIndex = new Map<string, string>();
 
@@ -100,6 +104,26 @@ function isSharedUrdfViewerChunkModule(normalizedId: string): boolean {
     || normalizedId.includes('/src/features/urdf-viewer/utils/visualizationFactories.ts');
 }
 
+function isMonacoReactChunkModule(normalizedId: string): boolean {
+  return normalizedId.includes('/@monaco-editor/react/');
+}
+
+function isMonacoLanguageChunkModule(normalizedId: string): boolean {
+  return normalizedId.includes('/monaco-editor/esm/vs/basic-languages/')
+    || normalizedId.includes('/monaco-editor/esm/vs/language/');
+}
+
+function isMonacoCoreChunkModule(normalizedId: string): boolean {
+  return normalizedId.includes('/monaco-editor/esm/')
+    && !isMonacoLanguageChunkModule(normalizedId)
+    && !isMonacoReactChunkModule(normalizedId)
+    && normalizedId.includes('/monaco-editor/esm/vs/');
+}
+
+function isCodeEditorRuntimeChunkModule(normalizedId: string): boolean {
+  return normalizedId.includes('/src/features/code-editor/utils/monacoLoader.ts');
+}
+
 const GENERATED_ARTIFACT_WATCH_IGNORES = [
   '**/tmp/**',
   '**/.tmp/**',
@@ -154,6 +178,10 @@ export default defineConfig(({ mode }) => {
                 return 'feature-property-editor';
               }
 
+              if (isCodeEditorRuntimeChunkModule(normalizedId)) {
+                return 'feature-code-editor-runtime';
+              }
+
               if (normalizedId.includes('/src/features/code-editor/')) {
                 return 'feature-code-editor';
               }
@@ -196,8 +224,16 @@ export default defineConfig(({ mode }) => {
                 return 'three-core';
               }
 
-              if (normalizedId.includes('monaco-editor') || normalizedId.includes('@monaco-editor')) {
-                return 'editor-vendor';
+              if (isMonacoReactChunkModule(normalizedId)) {
+                return 'editor-monaco-react';
+              }
+
+              if (isMonacoLanguageChunkModule(normalizedId)) {
+                return 'editor-monaco-language';
+              }
+
+              if (isMonacoCoreChunkModule(normalizedId)) {
+                return 'editor-monaco-core';
               }
 
               if (
@@ -238,10 +274,36 @@ export default defineConfig(({ mode }) => {
         'process.env.OPENAI_BASE_URL': JSON.stringify(env.OPENAI_BASE_URL),
         'process.env.OPENAI_MODEL': JSON.stringify(env.OPENAI_MODEL)
       },
+      optimizeDeps: {
+        // Keep the dependency optimizer on the same Three.js entry that the
+        // application source and R3F use, otherwise optimized deps can pull in
+        // a second copy from a different workspace path.
+        include: [
+          'three',
+          '@react-three/fiber',
+          '@react-three/drei',
+        ],
+      },
       resolve: {
-        alias: {
-          '@': path.resolve(__dirname, './src'),
-        }
+        dedupe: ['three', '@react-three/fiber', '@react-three/drei'],
+        alias: [
+          {
+            find: '@',
+            replacement: path.resolve(__dirname, './src'),
+          },
+          {
+            find: /^three$/,
+            replacement: threeModuleEntry,
+          },
+          {
+            find: /^three\/addons\//,
+            replacement: `${threeExamplesDir}/`,
+          },
+          {
+            find: /^three\/examples\/jsm\//,
+            replacement: `${threeExamplesDir}/`,
+          },
+        ],
       }
     };
 });

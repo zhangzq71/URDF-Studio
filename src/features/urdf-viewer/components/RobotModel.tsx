@@ -1,6 +1,7 @@
 import React, { memo, useRef, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
+import { SceneCompileWarmup } from '@/shared/components/3d';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps } from '../types';
@@ -20,6 +21,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     sourceFormat = 'auto',
     sourceFilePath,
     onRobotLoaded,
+    onDocumentLoadEvent,
     showCollision = false,
     showVisual = true,
     onSelect,
@@ -98,6 +100,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robotJoints,
         initialJointAngles,
         onRobotLoaded,
+        onDocumentLoadEvent,
         groundPlaneOffset,
     });
 
@@ -162,6 +165,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         isOrbitDragging,
         isSelectionLockedRef,
         selection,
+        rayIntersectsBoundingBox,
         highlightGeometry
     });
 
@@ -180,6 +184,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robot,
         robotVersion,
         toolMode,
+        hoverSelectionEnabled,
         mode,
         highlightMode,
         showCollision,
@@ -226,9 +231,9 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     });
 
     useEffect(() => {
-        if (hoveredSelection === undefined) return;
-        syncHoverHighlight(hoveredSelection);
+        syncHoverHighlight(hoverSelectionEnabled ? hoveredSelection : undefined);
     }, [
+        hoverSelectionEnabled,
         hoveredSelection?.type,
         hoveredSelection?.id,
         hoveredSelection?.subType,
@@ -272,6 +277,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                 ? t.loadingRobotFinalizingScene
                 : null;
     const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
+    const sceneCompileWarmupKey = [
+        sourceFilePath ?? 'viewer-inline',
+        String(robotVersion),
+        showVisual ? 'visual-on' : 'visual-off',
+        showCollision ? 'collision-on' : 'collision-off',
+    ].join('|');
 
     if (error) {
         return (
@@ -285,8 +296,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
     return (
         <>
+            <SceneCompileWarmup
+                active={active && Boolean(robot) && !isLoading}
+                warmupKey={sceneCompileWarmupKey}
+            />
             {robot ? <primitive object={robot} /> : null}
-            {isLoading ? (
+            {isLoading && !onDocumentLoadEvent ? (
                 <Html fullscreen>
                     <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
                         <ViewerLoadingHud

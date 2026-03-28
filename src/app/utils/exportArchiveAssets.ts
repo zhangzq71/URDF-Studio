@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 
 import { findAssetByPath } from '@/core/loaders';
 import { normalizeMeshPathForExport, normalizeTexturePathForExport } from '@/core/parsers/meshPathUtils';
+import { getVisualGeometryEntries } from '@/core/robot';
 import { compressSTLBlob } from '@/core/stl-compressor';
 import { GeometryType, type RobotState, type UrdfLink } from '@/types';
 
@@ -24,6 +25,26 @@ interface AddRobotAssetsToZipOptions {
   }) => void;
 }
 
+export type RobotAssetPackagingFailureCode =
+  | 'mesh_asset_missing'
+  | 'mesh_fetch_failed'
+  | 'texture_asset_missing'
+  | 'texture_fetch_failed';
+
+export interface RobotAssetPackagingFailure {
+  code: RobotAssetPackagingFailureCode;
+  assetType: 'mesh' | 'texture';
+  sourcePath: string;
+  exportPath: string;
+  message: string;
+}
+
+export interface AddRobotAssetsToZipResult {
+  totalTasks: number;
+  completedTasks: number;
+  failedAssets: RobotAssetPackagingFailure[];
+}
+
 function isExternalAssetPath(path: string): boolean {
   return /^(?:blob:|https?:\/\/|data:)/i.test(path);
 }
@@ -36,9 +57,11 @@ export function collectRobotAssetReferences(robot: RobotState): {
   const texturePaths = new Set<string>();
 
   Object.values(robot.links).forEach((link: UrdfLink) => {
-    if (link.visual.type === GeometryType.MESH && link.visual.meshPath) {
-      meshPaths.add(link.visual.meshPath);
-    }
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type === GeometryType.MESH && entry.geometry.meshPath) {
+        meshPaths.add(entry.geometry.meshPath);
+      }
+    });
     if (link.collision && link.collision.type === GeometryType.MESH && link.collision.meshPath) {
       meshPaths.add(link.collision.meshPath);
     }
@@ -69,7 +92,7 @@ export async function addRobotAssetsToZip({
   extraMeshFiles,
   skipMeshPaths,
   onProgress,
-}: AddRobotAssetsToZipOptions): Promise<void> {
+}: AddRobotAssetsToZipOptions): Promise<AddRobotAssetsToZipResult> {
   const meshFolder = zip.folder('meshes');
   const textureFolder = zip.folder('textures');
   const { meshPaths, texturePaths } = collectRobotAssetReferences(robot);
@@ -77,6 +100,7 @@ export async function addRobotAssetsToZip({
   const tasks: Array<{ currentFile: string; run: () => Promise<void> }> = [];
   const exportedMeshPaths = new Set<string>();
   const exportedTexturePaths = new Set<string>();
+  const failedAssets: RobotAssetPackagingFailure[] = [];
 
   meshPaths.forEach((meshPath) => {
     const exportPath = normalizeMeshPathForExport(meshPath);
@@ -111,30 +135,46 @@ export async function addRobotAssetsToZip({
 
     const assetUrl = findAssetByPath(meshPath, assets);
     if (!assetUrl) {
-      console.warn(`[Export] Mesh asset not found for: ${meshPath}`);
+      console.error(`[Export] Mesh asset not found for: ${meshPath}`);
+      failedAssets.push({
+        code: 'mesh_asset_missing',
+        assetType: 'mesh',
+        sourcePath: meshPath,
+        exportPath,
+        message: `Mesh asset not found: ${meshPath}`,
+      });
       return;
     }
 
     tasks.push({
       currentFile: exportPath,
       run: async () => {
-        await fetch(assetUrl)
-          .then((response) => response.blob())
-          .then(async (blob) => {
-            if (compressOptions?.compressSTL && /\.stl$/i.test(exportPath)) {
-              const filename = exportPath.split('/').pop() ?? exportPath;
-              const result = await compressSTLBlob(blob, filename, {
-                quality: compressOptions.stlQuality,
-              });
-              meshFolder?.file(exportPath, await result.blob.arrayBuffer());
-              return;
-            }
+        try {
+          const response = await fetch(assetUrl);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const blob = await response.blob();
+          if (compressOptions?.compressSTL && /\.stl$/i.test(exportPath)) {
+            const filename = exportPath.split('/').pop() ?? exportPath;
+            const result = await compressSTLBlob(blob, filename, {
+              quality: compressOptions.stlQuality,
+            });
+            meshFolder?.file(exportPath, await result.blob.arrayBuffer());
+            return;
+          }
 
-            meshFolder?.file(exportPath, await blob.arrayBuffer());
-          })
-          .catch((error: unknown) => {
-            console.error(`Failed to load mesh ${meshPath}`, error);
+          meshFolder?.file(exportPath, await blob.arrayBuffer());
+        } catch (error: unknown) {
+          console.error(`Failed to load mesh ${meshPath}`, error);
+          failedAssets.push({
+            code: 'mesh_fetch_failed',
+            assetType: 'mesh',
+            sourcePath: meshPath,
+            exportPath,
+            message: error instanceof Error ? error.message : String(error),
           });
+        }
       },
     });
   });
@@ -148,28 +188,48 @@ export async function addRobotAssetsToZip({
 
     const assetUrl = findAssetByPath(texturePath, assets);
     if (!assetUrl) {
-      console.warn(`[Export] Texture asset not found for: ${texturePath}`);
+      console.error(`[Export] Texture asset not found for: ${texturePath}`);
+      failedAssets.push({
+        code: 'texture_asset_missing',
+        assetType: 'texture',
+        sourcePath: texturePath,
+        exportPath,
+        message: `Texture asset not found: ${texturePath}`,
+      });
       return;
     }
 
     tasks.push({
       currentFile: exportPath,
       run: async () => {
-        await fetch(assetUrl)
-          .then((response) => response.blob())
-          .then(async (blob) => {
-            textureFolder?.file(exportPath, await blob.arrayBuffer());
-          })
-          .catch((error: unknown) => {
-            console.error(`Failed to load texture ${texturePath}`, error);
+        try {
+          const response = await fetch(assetUrl);
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const blob = await response.blob();
+          textureFolder?.file(exportPath, await blob.arrayBuffer());
+        } catch (error: unknown) {
+          console.error(`Failed to load texture ${texturePath}`, error);
+          failedAssets.push({
+            code: 'texture_fetch_failed',
+            assetType: 'texture',
+            sourcePath: texturePath,
+            exportPath,
+            message: error instanceof Error ? error.message : String(error),
           });
+        }
       },
     });
   });
 
   const total = tasks.length;
   if (total === 0) {
-    return;
+    return {
+      totalTasks: 0,
+      completedTasks: 0,
+      failedAssets,
+    };
   }
 
   onProgress?.({
@@ -188,4 +248,10 @@ export async function addRobotAssetsToZip({
       currentFile: task.currentFile,
     });
   }));
+
+  return {
+    totalTasks: total,
+    completedTasks: completed,
+    failedAssets,
+  };
 }

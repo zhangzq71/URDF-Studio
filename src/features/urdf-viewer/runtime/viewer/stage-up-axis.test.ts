@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  applyStageAxisAlignmentToRoot,
   extractStageUpAxisFromLayerText,
   resolveAxisAlignmentRotationX,
   resolveStageUpAxis,
@@ -35,7 +36,6 @@ test('prefers reported stage metadata before parsing layer text', () => {
           ExportToString: () => '#usda 1.0\n(\n    upAxis = "Y"\n)\n',
         }),
       },
-      fallbackUpAxis: 'y',
     }),
     'z',
   );
@@ -50,41 +50,38 @@ test('falls back to root-layer metadata when reported up-axis is missing', () =>
           ExportToString: () => '#usda 1.0\n(\n    upAxis = "Z"\n)\n',
         }),
       },
-      fallbackUpAxis: 'y',
     }),
     'z',
   );
 });
 
-test('uses fallback axis when neither metadata source is available', () => {
+test('returns null when neither metadata source is available', () => {
   assert.equal(
     resolveStageUpAxis({
       reportedUpAxis: null,
       stage: null,
-      fallbackUpAxis: 'y',
     }),
-    'y',
+    null,
   );
 });
 
-test('defaults to y-axis fallback when no metadata source is available', () => {
+test('keeps unresolved up-axis null when no metadata source is available', () => {
   assert.equal(
     resolveStageUpAxis({
       reportedUpAxis: null,
       stage: null,
     }),
-    'y',
+    null,
   );
 });
 
-test('falls back to y-axis when no explicit up-axis metadata exists and fallback is null', () => {
+test('does not invent an up-axis when metadata is missing', () => {
   assert.equal(
     resolveStageUpAxis({
       reportedUpAxis: null,
       stage: null,
-      fallbackUpAxis: null,
     }),
-    'y',
+    null,
   );
 });
 
@@ -101,4 +98,32 @@ test('computes generic source->target up-axis alignment rotations', () => {
     resolveAxisAlignmentRotationX({ sourceUpAxis: 'z', targetUpAxis: 'y' }),
     -Math.PI / 2,
   );
+});
+
+test('re-applies root alignment when late stage metadata resolves an initially unknown up-axis', () => {
+  const root = {
+    rotation: {
+      x: 123,
+      y: 0,
+      z: 0,
+    },
+  };
+
+  assert.equal(
+    applyStageAxisAlignmentToRoot(root, {
+      reportedUpAxis: null,
+      stage: null,
+    }),
+    0,
+  );
+  assert.equal(root.rotation.x, 0);
+
+  assert.equal(
+    applyStageAxisAlignmentToRoot(root, {
+      reportedUpAxis: 'z',
+      stage: null,
+    }),
+    0,
+  );
+  assert.equal(root.rotation.x, 0);
 });

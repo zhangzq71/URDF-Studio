@@ -10,6 +10,7 @@ import {
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
 } from '@/core/utils/numberPrecision';
+import { getVisualGeometryEntries } from '@/core/robot';
 import { normalizeMeshPathForExport, normalizeTexturePathForExport } from '../meshPathUtils';
 
 export type MjcfActuatorType = 'position' | 'velocity' | 'motor';
@@ -39,7 +40,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   const addFloatBase = options.addFloatBase ?? false;
   const includeActuators = options.includeActuators ?? true;
   const actuatorType = options.actuatorType ?? 'position';
-  const includeSceneHelpers = options.includeSceneHelpers ?? true;
+  const includeSceneHelpers = options.includeSceneHelpers ?? false;
   const meshPathOverrides = options.meshPathOverrides;
   const visualMeshVariants = options.visualMeshVariants;
 
@@ -151,16 +152,20 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   };
 
   Object.values(links).forEach(link => {
-    if (link.visual.type === GeometryType.MESH) {
-      const variants = resolveVisualMeshVariants(link.visual.meshPath);
+    getVisualGeometryEntries(link).forEach((entry) => {
+      if (entry.geometry.type !== GeometryType.MESH) {
+        return;
+      }
+
+      const variants = resolveVisualMeshVariants(entry.geometry.meshPath);
       if (variants) {
         variants.forEach((variant) => {
-          registerMeshAsset(variant.meshPath, link.visual.dimensions);
+          registerMeshAsset(variant.meshPath, entry.geometry.dimensions);
         });
       } else {
-        registerMeshAsset(link.visual.meshPath, link.visual.dimensions);
+        registerMeshAsset(entry.geometry.meshPath, entry.geometry.dimensions);
       }
-    }
+    });
     if (link.collision && link.collision.type === GeometryType.MESH) {
       registerMeshAsset(link.collision.meshPath, link.collision.dimensions);
     }
@@ -260,11 +265,13 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     const emissiveIntensity = Number.isFinite(usdMaterial.emissiveIntensity)
       ? Math.max(0, Number(usdMaterial.emissiveIntensity))
       : null;
-    const emission = clampUnitScalar(
-      emissivePeak !== null
-        ? emissivePeak * (emissiveIntensity ?? 1)
-        : emissiveIntensity,
-    );
+    const emission = usdMaterial.emissiveEnabled === false
+      ? undefined
+      : clampUnitScalar(
+        emissivePeak !== null
+          ? emissivePeak * (emissiveIntensity ?? 1)
+          : emissiveIntensity,
+      );
 
     return {
       ...(roughness !== undefined ? { shininess: clampUnitScalar(1 - roughness) } : {}),
@@ -396,7 +403,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   const hasGeometry = (link: UrdfLink | undefined): boolean => {
     if (!link) return false;
 
-    const hasVisual = link.visual.type !== GeometryType.NONE;
+    const hasVisual = getVisualGeometryEntries(link).length > 0;
     const hasCollision = link.collision.type !== GeometryType.NONE;
     const hasExtraCollisions = (link.collisionBodies || []).some((body) => body.type !== GeometryType.NONE);
 
@@ -472,7 +479,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     if (!link) return '';
 
     if (path.has(linkId)) {
-      console.warn(`[MJCFGenerator] Skipping cyclic link reference at "${linkId}"`);
+      console.error(`[MJCFGenerator] Skipping cyclic link reference at "${linkId}"`);
       return '';
     }
 
@@ -541,8 +548,9 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
     // 3. Visual Geom
     // Offset visual geom by its origin
-    const v = link.visual;
-    if (v.type !== GeometryType.NONE) {
+    const linkLevelMaterial = robot.materials?.[link.id] || robot.materials?.[link.name];
+    getVisualGeometryEntries(link).forEach((visualEntry) => {
+        const v = visualEntry.geometry;
         let vPos = "0 0 0";
         if (v.origin) {
             vPos = vecStr(v.origin.xyz);
@@ -561,7 +569,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
           if (materialNameOverride) {
             vGeomAttrs += ` material="${materialNameOverride}"`;
           } else {
-            vGeomAttrs += ` rgba="${rgbaOverride || hexToRgba(resolveLinkMaterialColor(link))}"`;
+            vGeomAttrs += ` rgba="${rgbaOverride || hexToRgba(v.color || resolveLinkMaterialColor(link))}"`;
           }
 
           if (v.type === GeometryType.BOX) {
@@ -586,22 +594,22 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         };
 
         if (meshVariants && meshVariants.length > 0) {
-          meshVariants.forEach((variant, variantIndex) => {
-            const materialName = visualVariantMaterialNameMap.get(`${linkId}@@${variantIndex}`);
+          meshVariants.forEach((variant) => {
             bodyXml += `${indent}  <geom ${buildVisualGeomAttrs(
               variant.meshPath,
-              materialName,
+              undefined,
               variant.color ? hexToRgba(variant.color) : undefined,
             )} />\n`;
           });
         } else {
-          const visualMaterialName = visualMaterialNameMap.get(linkId);
+          const visualMaterialName = linkLevelMaterial ? visualMaterialNameMap.get(linkId) : undefined;
           bodyXml += `${indent}  <geom ${buildVisualGeomAttrs(
             v.meshPath,
             visualMaterialName,
+            linkLevelMaterial ? undefined : hexToRgba(v.color || resolveLinkMaterialColor(link)),
           )} />\n`;
         }
-    }
+    });
 
     // 4. Collision geoms use a dedicated visualization group so the runtime
     // loader can classify them as collision-only and keep them hidden unless

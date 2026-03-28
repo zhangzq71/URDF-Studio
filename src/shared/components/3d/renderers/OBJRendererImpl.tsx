@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo } from 'react';
-import { useLoader } from '@react-three/fiber';
+import { use, useEffect, useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { useLoadingManager } from '../meshLoadingManager';
+import {
+  createObjectFromSerializedObjData,
+  loadSerializedObjModelData,
+} from '@/core/loaders/objParseWorkerBridge';
 
 interface ScaleProps {
   x: number;
@@ -20,26 +21,51 @@ interface OBJRendererImplProps {
   onResolved?: () => void;
 }
 
+function enableVertexColorMaterials(mesh: THREE.Mesh): void {
+  if (!mesh.geometry?.getAttribute?.('color')) {
+    return;
+  }
+
+  const currentMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  let didCloneMaterial = false;
+  const nextMaterials = currentMaterials.map((entry) => {
+    if (!entry || !('vertexColors' in entry) || (entry as THREE.MeshPhongMaterial).vertexColors === true) {
+      return entry;
+    }
+
+    const cloned = entry.clone();
+    (cloned as THREE.MeshPhongMaterial).vertexColors = true;
+    cloned.needsUpdate = true;
+    didCloneMaterial = true;
+    return cloned;
+  });
+
+  if (!didCloneMaterial) {
+    return;
+  }
+
+  mesh.material = Array.isArray(mesh.material) ? nextMaterials : nextMaterials[0];
+}
+
 export function OBJRendererImpl({
   url,
   material,
-  assets,
-  assetBaseDir,
   scale,
   onResolved,
 }: OBJRendererImplProps) {
-  const manager = useLoadingManager(assets, assetBaseDir);
-  const obj = useLoader(OBJLoader, url, (loader) => {
-    loader.manager = manager;
-  });
+  const serializedObject = use(useMemo(
+    () => loadSerializedObjModelData(url),
+    [url],
+  ));
   const { clone, overrideMeshes } = useMemo(() => {
-    const nextClone = obj.clone();
+    const nextClone = createObjectFromSerializedObjData(serializedObject);
     const meshes: THREE.Mesh[] = [];
 
     nextClone.traverse((child) => {
       if (!(child as THREE.Mesh).isMesh) return;
 
       const mesh = child as THREE.Mesh;
+      enableVertexColorMaterials(mesh);
       const existingMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       const hasTextureMap = existingMaterials.some((entry) => (
         Boolean(entry && 'map' in entry && (entry as THREE.MeshStandardMaterial).map)
@@ -52,7 +78,7 @@ export function OBJRendererImpl({
     });
 
     return { clone: nextClone, overrideMeshes: meshes };
-  }, [obj]);
+  }, [serializedObject]);
 
   useLayoutEffect(() => {
     overrideMeshes.forEach((mesh) => {

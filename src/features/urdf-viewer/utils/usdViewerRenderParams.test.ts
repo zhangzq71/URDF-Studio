@@ -10,13 +10,25 @@ test('createEmbeddedUsdViewerLoadParams keeps USD auto-fit aligned with the work
 
   assert.equal(params.get('threads'), '4');
   assert.equal(params.get('fastLoad'), '1');
-  assert.equal(params.get('nonBlockingLoad'), '0');
+  assert.equal(params.get('nonBlockingLoad'), '1');
   assert.equal(params.get('aggressiveInitialDraw'), '1');
-  assert.equal(params.get('strictOneShot'), '1');
-  assert.equal(params.get('resolveRobotMetadataBeforeReady'), '1');
-  assert.equal(params.get('requireCompleteRobotMetadata'), '1');
-  assert.equal(params.get('warmupRuntimeBridge'), '1');
+  assert.equal(params.get('strictOneShot'), '0');
+  assert.equal(params.get('resolveRobotMetadataBeforeReady'), '0');
+  assert.equal(params.get('requireCompleteRobotMetadata'), '0');
+  assert.equal(params.get('warmupRuntimeBridge'), '0');
   assert.equal(params.get('cameraX'), String(WORKSPACE_DEFAULT_CAMERA_POSITION[0]));
   assert.equal(params.get('cameraY'), String(WORKSPACE_DEFAULT_CAMERA_POSITION[1]));
   assert.equal(params.get('cameraZ'), String(WORKSPACE_DEFAULT_CAMERA_POSITION[2]));
+});
+
+test('createEmbeddedUsdViewerLoadParams prioritizes fast interactive readiness for embedded USD loads', () => {
+  const params = createEmbeddedUsdViewerLoadParams(4);
+
+  assert.equal(params.get('nonBlockingLoad'), '1');
+  assert.equal(params.get('strictOneShot'), '0');
+  assert.equal(params.get('resolveRobotMetadataBeforeReady'), '0');
+  assert.equal(params.get('requireCompleteRobotMetadata'), '0');
+  assert.equal(params.get('warmupRuntimeBridge'), '0');
+  assert.equal(params.has('autoLoadDependencies'), false);
+  assert.equal(params.has('initialDrawYieldMs'), false);
 });

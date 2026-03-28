@@ -1,6 +1,9 @@
 import * as THREE from 'three';
+import { loadMJCFMeshObject, type MJCFMeshCache } from './mjcfMeshAssetLoader';
+import { applyMeshAssetTransform, resolveMJCFAssetUrl } from './mjcfGeometry';
 import type { MJCFModelBody, MJCFModelGeom, ParsedMJCFModel } from './mjcfModel';
 import type { MJCFMesh } from './mjcfUtils';
+import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 
 const MAX_FIT_POINTS = 4096;
 
@@ -45,7 +48,9 @@ interface FitPrimitiveFromMeshAssetParams {
 
 interface ResolveMJCFMeshBackedPrimitiveOptions {
   assets: Record<string, string>;
+  meshCache?: MJCFMeshCache;
   sourceFileDir?: string;
+  yieldIfNeeded?: () => Promise<void>;
   fitPrimitiveFromMeshAsset?: (
     params: FitPrimitiveFromMeshAssetParams,
   ) => Promise<MJCFFittedPrimitive | null>;
@@ -645,52 +650,6 @@ function disposeTemporaryObject(root: THREE.Object3D): void {
   });
 }
 
-async function loadMeshObjectForUrl(assetUrl: string, filePath: string): Promise<THREE.Object3D | null> {
-  const extension = filePath.split('.').pop()?.toLowerCase() || '';
-
-  try {
-    if (extension === 'stl') {
-      const { STLLoader } = await import('three/examples/jsm/loaders/STLLoader.js');
-      const loader = new STLLoader();
-      const geometry = await new Promise<THREE.BufferGeometry>((resolve, reject) => {
-        loader.load(assetUrl, resolve, undefined, reject);
-      });
-      return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
-    }
-
-    if (extension === 'dae') {
-      const { ColladaLoader } = await import('three/examples/jsm/loaders/ColladaLoader.js');
-      const loader = new ColladaLoader();
-      const result = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) => {
-        loader.load(assetUrl, resolve, undefined, reject);
-      });
-      return result.scene;
-    }
-
-    if (extension === 'obj') {
-      const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js');
-      const loader = new OBJLoader();
-      return await new Promise<THREE.Group>((resolve, reject) => {
-        loader.load(assetUrl, resolve, undefined, reject);
-      });
-    }
-
-    if (extension === 'gltf' || extension === 'glb') {
-      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
-      const loader = new GLTFLoader();
-      const result = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) => {
-        loader.load(assetUrl, resolve, undefined, reject);
-      });
-      return result.scene;
-    }
-  } catch (error) {
-    console.warn(`[MJCFLoader] Failed to load mesh-backed primitive asset "${filePath}"`, error);
-    return null;
-  }
-
-  return null;
-}
-
 export function fitPrimitiveFromPoints(
   points: PrimitivePoint[],
   geomType: 'capsule' | 'cylinder',
@@ -723,14 +682,14 @@ async function fitPrimitiveFromMeshAssetViaUrl(
   meshDef: MJCFMesh,
   assets: Record<string, string>,
   sourceFileDir: string,
+  meshCache: MJCFMeshCache,
 ): Promise<MJCFFittedPrimitive | null> {
-  const { applyMeshAssetTransform, resolveMJCFAssetUrl } = await import('./mjcfGeometry');
   const assetUrl = resolveMJCFAssetUrl(meshDef.file, assets, sourceFileDir);
   if (!assetUrl) {
     return null;
   }
 
-  const loadedObject = await loadMeshObjectForUrl(assetUrl, meshDef.file);
+  const loadedObject = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache);
   if (!loadedObject) {
     return null;
   }
@@ -802,6 +761,7 @@ function applyFittedPrimitiveToGeom(geom: MJCFModelGeom, fit: MJCFFittedPrimitiv
 function createDefaultMeshPrimitiveFitter(
   assets: Record<string, string>,
   sourceFileDir: string,
+  meshCache: MJCFMeshCache,
 ) {
   const meshSpaceFitCache = new Map<string, Promise<MJCFFittedPrimitive | null>>();
 
@@ -818,7 +778,7 @@ function createDefaultMeshPrimitiveFitter(
     if (!meshSpaceFitCache.has(cacheKey)) {
       meshSpaceFitCache.set(
         cacheKey,
-        fitPrimitiveFromMeshAssetViaUrl(geomType, meshDef, assets, sourceFileDir),
+        fitPrimitiveFromMeshAssetViaUrl(geomType, meshDef, assets, sourceFileDir, meshCache),
       );
     }
 
@@ -829,6 +789,7 @@ function createDefaultMeshPrimitiveFitter(
 async function resolveBodyMeshBackedPrimitives(
   body: MJCFModelBody,
   parsedModel: ParsedMJCFModel,
+  yieldIfNeeded: () => Promise<void>,
   fitPrimitiveFromMeshAsset: (
     params: FitPrimitiveFromMeshAssetParams,
   ) => Promise<MJCFFittedPrimitive | null>,
@@ -851,15 +812,18 @@ async function resolveBodyMeshBackedPrimitives(
     });
 
     if (!fit) {
+      await yieldIfNeeded();
       continue;
     }
 
     applyFittedPrimitiveToGeom(geom, transformFittedPrimitiveIntoBodySpace(fit, geom));
     resolvedCount += 1;
+    await yieldIfNeeded();
   }
 
   for (const child of body.children) {
-    resolvedCount += await resolveBodyMeshBackedPrimitives(child, parsedModel, fitPrimitiveFromMeshAsset);
+    resolvedCount += await resolveBodyMeshBackedPrimitives(child, parsedModel, yieldIfNeeded, fitPrimitiveFromMeshAsset);
+    await yieldIfNeeded();
   }
 
   return resolvedCount;
@@ -869,13 +833,16 @@ export async function resolveMJCFMeshBackedPrimitiveGeoms(
   parsedModel: ParsedMJCFModel,
   {
     assets,
+    meshCache = new Map(),
     sourceFileDir = '',
-    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(assets, sourceFileDir),
+    yieldIfNeeded = createMainThreadYieldController(),
+    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(assets, sourceFileDir, meshCache),
   }: ResolveMJCFMeshBackedPrimitiveOptions,
 ): Promise<number> {
   return await resolveBodyMeshBackedPrimitives(
     parsedModel.worldBody,
     parsedModel,
+    yieldIfNeeded,
     fitPrimitiveFromMeshAsset,
   );
 }

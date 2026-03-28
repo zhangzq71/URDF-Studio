@@ -8,6 +8,7 @@ import {
     buildColladaRootNormalizationHints,
     createLoadingManager,
     createMeshLoader,
+    createPlaceholderMesh,
     isCoplanarOffsetMaterial,
 } from '@/core/loaders';
 import { parseURDF } from '@/core/parsers/urdf/parser';
@@ -140,6 +141,45 @@ test('URDFLoader applies local visual material to nested mesh groups', () => {
     );
 });
 
+test('URDFLoader.parseAsync preserves robot structure while yielding between batches', async () => {
+    const loader = new URDFLoader();
+    const yieldMarkers: number[] = [];
+
+    const robot = await loader.parseAsync(`<?xml version="1.0"?>
+<robot name="async_probe">
+  <material name="orange">
+    <color rgba="1 0.4235294118 0.0392156863 1" />
+  </material>
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="1 1 1" />
+      </geometry>
+    </visual>
+  </link>
+  <link name="child_link">
+    <visual>
+      <geometry>
+        <sphere radius="0.2" />
+      </geometry>
+    </visual>
+  </link>
+  <joint name="base_to_child" type="fixed">
+    <parent link="base_link" />
+    <child link="child_link" />
+  </joint>
+</robot>`, '/tmp/', {
+        yieldIfNeeded: async () => {
+            yieldMarkers.push(yieldMarkers.length);
+        },
+    });
+
+    assert.equal(robot.robotName, 'async_probe');
+    assert.equal(Object.keys(robot.links).length, 2);
+    assert.equal(Object.keys(robot.joints).length, 1);
+    assert.ok(yieldMarkers.length >= 3);
+});
+
 test('URDFLoader preserves named mesh materials for multi-material DAE groups', () => {
     const loader = new URDFLoader();
     loader.loadMeshCb = (_url, _manager, onLoad) => {
@@ -185,6 +225,74 @@ test('URDFLoader preserves named mesh materials for multi-material DAE groups', 
     assert.deepEqual(materialNames, ['磨砂铝合金.008', '灰色硅胶.009']);
 });
 
+test('URDFLoader keeps placeholder meshes for missing visual geometry', () => {
+    const loader = new URDFLoader();
+    loader.loadMeshCb = (_url, _manager, onLoad) => {
+        onLoad(createPlaceholderMesh('missing-visual.stl'));
+    };
+
+    const robot = loader.parse(`<?xml version="1.0"?>
+<robot name="missing_visual">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="missing-visual.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`, '/tmp/');
+
+    const baseLink = robot.links.base_link as THREE.Object3D | undefined;
+    assert.ok(baseLink);
+
+    const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+    assert.ok(visualGroup);
+
+    let placeholderMesh: THREE.Mesh | null = null;
+    visualGroup.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh && child.userData?.isPlaceholder) {
+            placeholderMesh = child as THREE.Mesh;
+        }
+    });
+
+    assert.ok(placeholderMesh);
+    assert.equal(placeholderMesh.userData?.missingMeshPath, 'missing-visual.stl');
+});
+
+test('URDFLoader skips placeholder meshes for missing collision geometry', () => {
+    const loader = new URDFLoader();
+    loader.parseCollision = true;
+    loader.loadMeshCb = (_url, _manager, onLoad) => {
+        onLoad(createPlaceholderMesh('missing-collision.stl'));
+    };
+
+    const robot = loader.parse(`<?xml version="1.0"?>
+<robot name="missing_collision">
+  <link name="base_link">
+    <collision>
+      <geometry>
+        <mesh filename="missing-collision.stl" />
+      </geometry>
+    </collision>
+  </link>
+</robot>`, '/tmp/');
+
+    const baseLink = robot.links.base_link as THREE.Object3D | undefined;
+    assert.ok(baseLink);
+
+    const collisionGroup = baseLink.children.find((child: any) => child.isURDFCollider) as THREE.Object3D | undefined;
+    assert.ok(collisionGroup);
+    assert.equal(collisionGroup.children.length, 0);
+
+    let meshCount = 0;
+    collisionGroup.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+            meshCount += 1;
+        }
+    });
+    assert.equal(meshCount, 0);
+});
+
 test('URDFLoader stabilizes coincident sibling visuals on the same link', () => {
     const loader = new URDFLoader();
     let loadCount = 0;
@@ -225,6 +333,66 @@ test('URDFLoader stabilizes coincident sibling visuals on the same link', () => 
 
     const innerMesh = visualGroups[0]?.children[0] as THREE.Mesh | undefined;
     const outerMesh = visualGroups[1]?.children[0] as THREE.Mesh | undefined;
+    assert.ok(innerMesh);
+    assert.ok(outerMesh);
+
+    assert.equal(innerMesh.renderOrder, 0);
+    assert.equal(outerMesh.renderOrder, 1);
+    assert.equal(isCoplanarOffsetMaterial(innerMesh.material as THREE.Material), false);
+    assert.equal(isCoplanarOffsetMaterial(outerMesh.material as THREE.Material), true);
+});
+
+test('URDFLoader stabilizes coincident visuals that arrive through fixed child links', () => {
+    const loader = new URDFLoader();
+    let loadCount = 0;
+    loader.loadMeshCb = (_url, _manager, onLoad) => {
+        const size = loadCount === 0 ? 1 : 1.02;
+        const material = new THREE.MeshPhongMaterial({
+            name: loadCount === 0 ? 'inner_shell' : 'outer_shell',
+            color: new THREE.Color(loadCount === 0 ? 0xffffff : 0x111111),
+        });
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
+        loadCount += 1;
+        onLoad(mesh);
+    };
+
+    const robot = loader.parse(`<?xml version="1.0"?>
+<robot name="fixed_overlay_visuals">
+  <link name="base_link">
+    <visual name="inner_visual">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="inner_shell.obj" />
+      </geometry>
+    </visual>
+  </link>
+  <link name="outer_link">
+    <visual name="outer_visual">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="outer_shell.obj" />
+      </geometry>
+    </visual>
+  </link>
+  <joint name="base_to_outer" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="outer_link" />
+  </joint>
+</robot>`, '/tmp/');
+
+    const baseLink = robot.links.base_link as THREE.Object3D | undefined;
+    const outerLink = robot.links.outer_link as THREE.Object3D | undefined;
+    assert.ok(baseLink);
+    assert.ok(outerLink);
+
+    const baseVisual = baseLink.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+    const outerVisual = outerLink.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+    assert.ok(baseVisual);
+    assert.ok(outerVisual);
+
+    const innerMesh = baseVisual.children[0] as THREE.Mesh | undefined;
+    const outerMesh = outerVisual.children[0] as THREE.Mesh | undefined;
     assert.ok(innerMesh);
     assert.ok(outerMesh);
 

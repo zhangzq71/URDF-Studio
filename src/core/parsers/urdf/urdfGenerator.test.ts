@@ -1,0 +1,116 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+
+import { parseURDF } from './parser/index.ts';
+import { generateURDF, injectGazeboTags } from './urdfGenerator.ts';
+import { processXacro } from '../xacro/xacroParser.ts';
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>');
+globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
+
+const CONTROL_FIXTURE_URDF = `<?xml version="1.0"?>
+<robot name="demo_description">
+  <link name="base_link" />
+  <link name="tip_link" />
+  <joint name="shoulder_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="tip_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1" upper="1" effort="10" velocity="5" />
+  </joint>
+</robot>`;
+
+test('injectGazeboTags emits parameterized xacro with a ROS1 default profile', () => {
+  const robot = parseURDF(CONTROL_FIXTURE_URDF);
+  assert.ok(robot);
+
+  const ros1Xacro = injectGazeboTags(CONTROL_FIXTURE_URDF, robot, 'ros1', 'effort');
+  const ros1Expanded = processXacro(ros1Xacro);
+  const ros2Expanded = processXacro(ros1Xacro, {
+    ros_profile: 'ros2',
+    ros_hardware_interface: 'position',
+  });
+
+  assert.match(ros1Xacro, /xmlns:xacro="http:\/\/www\.ros\.org\/wiki\/xacro"/);
+  assert.match(ros1Xacro, /<xacro:arg name="ros_profile" default="ros1"\s*\/>/);
+  assert.match(ros1Xacro, /<xacro:arg name="ros_hardware_interface" default="effort"\s*\/>/);
+  assert.match(ros1Xacro, /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros1' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/);
+  assert.match(ros1Xacro, /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros2' and xacro\.arg\('ros_hardware_interface'\) == 'position'\}">/);
+  assert.match(ros1Expanded, /<transmission name="shoulder_joint_trans">/);
+  assert.match(ros1Expanded, /<hardwareInterface>hardware_interface\/EffortJointInterface<\/hardwareInterface>/);
+  assert.match(ros1Expanded, /<plugin name="gazebo_ros_control" filename="libgazebo_ros_control\.so">/);
+  assert.doesNotMatch(ros1Expanded, /<ros2_control\b/);
+  assert.match(ros2Expanded, /<ros2_control name="demo_description" type="system">/);
+  assert.match(ros2Expanded, /<plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control\.so">/);
+  assert.match(ros2Expanded, /<command_interface name="position"\/>/);
+  assert.doesNotMatch(ros2Expanded, /<state_interface name="effort"\/>/);
+  assert.doesNotMatch(ros2Expanded, /<transmission\b/);
+});
+
+test('injectGazeboTags emits parameterized xacro with a ROS2 default profile', () => {
+  const robot = parseURDF(CONTROL_FIXTURE_URDF);
+  assert.ok(robot);
+
+  const ros2Xacro = injectGazeboTags(CONTROL_FIXTURE_URDF, robot, 'ros2', 'velocity');
+  const ros2Expanded = processXacro(ros2Xacro);
+  const ros1Expanded = processXacro(ros2Xacro, {
+    ros_profile: 'ros1',
+    ros_hardware_interface: 'position',
+  });
+
+  assert.match(ros2Xacro, /xmlns:xacro="http:\/\/www\.ros\.org\/wiki\/xacro"/);
+  assert.match(ros2Xacro, /<xacro:arg name="ros_profile" default="ros2"\s*\/>/);
+  assert.match(ros2Xacro, /<xacro:arg name="ros_hardware_interface" default="velocity"\s*\/>/);
+  assert.match(ros2Xacro, /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros2' and xacro\.arg\('ros_hardware_interface'\) == 'velocity'\}">/);
+  assert.match(ros2Expanded, /<ros2_control name="demo_description" type="system">/);
+  assert.match(ros2Expanded, /<plugin>gazebo_ros2_control\/GazeboSystem<\/plugin>/);
+  assert.match(ros2Expanded, /<command_interface name="velocity"\/>/);
+  assert.match(ros2Expanded, /<plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control\.so">/);
+  assert.match(ros2Expanded, /<robot_param>robot_description<\/robot_param>/);
+  assert.match(ros2Expanded, /<robot_param_node>robot_state_publisher<\/robot_param_node>/);
+  assert.doesNotMatch(ros2Expanded, /<transmission\b/);
+  assert.match(ros1Expanded, /<transmission name="shoulder_joint_trans">/);
+  assert.match(ros1Expanded, /<hardwareInterface>hardware_interface\/PositionJointInterface<\/hardwareInterface>/);
+  assert.match(ros1Expanded, /<plugin name="gazebo_ros_control" filename="libgazebo_ros_control\.so">/);
+});
+
+test('generateURDF preserves per-visual colors for links with multiple visuals', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="multi_visual_demo">
+  <material name="printed_yellow">
+    <color rgba="1.0 0.82 0.12 1.0"/>
+  </material>
+  <material name="motor_black">
+    <color rgba="0.1 0.1 0.1 1.0"/>
+  </material>
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="1 1 1"/>
+      </geometry>
+      <material name="printed_yellow"/>
+    </visual>
+    <visual>
+      <origin xyz="1 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.5 0.5 0.5"/>
+      </geometry>
+      <material name="motor_black"/>
+    </visual>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+  assert.equal(robot.links.base_link.visual.color, '#ffd11e');
+  assert.equal(robot.links.base_link.visualBodies?.[0]?.color, '#191919');
+  assert.equal(robot.materials?.base_link?.color, '#ffd11e');
+
+  const regenerated = generateURDF(robot);
+  const reparsed = parseURDF(regenerated);
+
+  assert.ok(reparsed);
+  assert.equal(reparsed.links.base_link.visual.color, '#ffd11e');
+  assert.equal(reparsed.links.base_link.visualBodies?.[0]?.color, '#191919');
+});

@@ -75,6 +75,9 @@ export interface TranslationKeys {
   parentLink: string;
   childComponent: string;
   childLink: string;
+  bridgePickHint: string;
+  bridgePickParent: string;
+  bridgePickChild: string;
   add: string;
 
   // Property Editor
@@ -108,6 +111,7 @@ export interface TranslationKeys {
   materialSourceInline: string;
   materialSourceNamed: string;
   materialSourceGazebo: string;
+  multipleMaterials: string;
   originReferenceFrame: string;
   originRelativeLink: string;
   originRelativeParent: string;
@@ -195,6 +199,7 @@ export interface TranslationKeys {
   instructionMac: string;
   instructionLinux: string;
   instructionOther: string;
+  showWorldOriginAxes: string;
   hideUsageGuide: string;
   showUsageGuide: string;
   clickToSelect: string;
@@ -253,6 +258,8 @@ export interface TranslationKeys {
   loadingRobotApplyingStageFixes: string;
   loadingRobotResolvingMetadata: string;
   loadingRobotFinalizingScene: string;
+  loadingRobotFailed: string;
+  loadingRobotPreviewUnavailable: string;
   enterRobotName: string;
   enterMotorType: string;
   modeLabel: string;
@@ -372,10 +379,14 @@ export interface TranslationKeys {
   loadingOptimizer: string;
   loadingBridgeDialog: string;
   failedToParseFormat: string;
+  xacroSourceOnlyPreviewHint: string;
+  usdPreviewRequiresOpen: string;
   privacyNoticeLocalProcessing: string;
+  importPackageAssetBundleHint: string;
   importUspSuccess: string;
   addedFilesToAssetLibrary: string;
   libraryImportSuccessful: string;
+  libraryImportPartialWithErrors: string;
   noDefinitionFilesFound: string;
   importFailedCheckFiles: string;
   jointName: string;
@@ -391,9 +402,12 @@ export interface TranslationKeys {
   deletedAllLibraryFiles: string;
   onlyUrdfMjcfExport: string;
   exportFailedParse: string;
+  exportLibraryParseFailed: string;
+  exportLibraryUnsupportedFormat: string;
   usdExportRequiresLoadedStage: string;
   usdExportUnavailable: string;
   usdLoadInProgress: string;
+  exportPartialWithAssetFailures: string;
   exportedWithMissingMeshes: string;
   exportedSuccess: string;
   generatingSnapshot: string;
@@ -454,6 +468,8 @@ export interface TranslationKeys {
   exportFormat: string;
   exportFormatMJCF: string;
   exportFormatURDF: string;
+  exportFormatXacro: string;
+  exportFormatSDF: string;
   exportFormatUSD: string;
   exportComingSoon: string;
   exportCompressMeshes: string;
@@ -494,6 +510,7 @@ export interface TranslationKeys {
   exportProgressGeneratingUrdfDetail: string;
   exportProgressGeneratingMjcfDetail: string;
   exportProgressGeneratingXacroDetail: string;
+  exportProgressGeneratingSdfDetail: string;
   exportProgressPreparingSimulationMeshes: string;
   exportProgressPreparingSimulationMeshesDetail: string;
   exportProgressCollectingAssets: string;
@@ -596,7 +613,14 @@ export interface TranslationKeys {
   compressionSmallerFile: string;
   compressionMoreDetail: string;
   rosVersion: string;
+  rosProfileRos1: string;
+  rosProfileRos2: string;
+  rosProfileDescRos1: string;
+  rosProfileDescRos2: string;
+  exportXacroStaticHint: string;
   hardwareInterface: string;
+  hardwareInterfaceDescRos1: string;
+  hardwareInterfaceDescRos2: string;
   hardwareInterfaceEffort: string;
   hardwareInterfacePosition: string;
   hardwareInterfaceVelocity: string;
@@ -607,6 +631,9 @@ export interface TranslationKeys {
   collisionOptimizerScopePrimitive: string;
   collisionOptimizerScopeSelected: string;
   collisionOptimizerSettings: string;
+  collisionOptimizerDefaultStrategies: string;
+  collisionOptimizerShowDefaultStrategies: string;
+  collisionOptimizerHideDefaultStrategies: string;
   collisionOptimizerStrategySmart: string;
   collisionOptimizerStrategyKeep: string;
   collisionOptimizerMeshStrategyLabel: string;
@@ -620,6 +647,10 @@ export interface TranslationKeys {
   collisionOptimizerRules: string;
   collisionOptimizerAvoidSiblingOverlap: string;
   collisionOptimizerAvoidSiblingOverlapDesc: string;
+  collisionOptimizerSelectedCandidate: string;
+  collisionOptimizerSelectCandidateHint: string;
+  collisionOptimizerIncludeCandidate: string;
+  collisionOptimizerExcludeCandidate: string;
   collisionOptimizerCurrent: string;
   collisionOptimizerSuggested: string;
   collisionOptimizerReason: string;

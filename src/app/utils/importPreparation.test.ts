@@ -5,8 +5,11 @@ import JSZip from 'jszip';
 import {
   prepareImportPayload,
   type ImportPreparationFileDescriptor,
-} from './importPreparation';
-import { pickPreferredImportFile } from '@/app/hooks/importPreferredFile';
+} from './importPreparation.ts';
+import { ensureWorkerXmlDomApis } from '@/app/workers/ensureWorkerXmlDomApis';
+import { buildPreResolvedImportContentSignature } from './preResolvedImportSignature.ts';
+
+ensureWorkerXmlDomApis(globalThis as typeof globalThis);
 
 function createLooseFile(
   name: string,
@@ -183,8 +186,78 @@ test('prepareImportPayload synthesizes a bundle root when loose robot folders ar
     ['demo_pkg/meshes/base.stl'],
   );
   assert.equal(
-    pickPreferredImportFile(result.robotFiles, result.robotFiles)?.name,
+    result.preferredFileName,
     'demo_pkg/urdf/demo.urdf',
+  );
+});
+
+test('prepareImportPayload synthesizes a bundle root for rootless gazebo zip bundles with thumbnails', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'model.sdf',
+    `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <mesh>
+            <uri>model://NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/meshes/base_link.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+  );
+  zip.file(
+    'materials/scripts/demo.material',
+    `material Demo/Diffuse
+{
+}`,
+  );
+  zip.file('materials/textures/demo.png', new Uint8Array([137, 80, 78, 71]));
+  zip.file('meshes/base_link.dae', '<dae />');
+  zip.file('thumbnails/preview.png', new Uint8Array([137, 80, 78, 71]));
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY.zip', {
+    type: 'application/zip',
+  });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      {
+        name: 'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/meshes/base_link.dae',
+        format: 'mesh',
+      },
+      {
+        name: 'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/model.sdf',
+        format: 'sdf',
+      },
+    ],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name).sort(),
+    [
+      'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/materials/textures/demo.png',
+      'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/meshes/base_link.dae',
+      'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/thumbnails/preview.png',
+    ],
+  );
+  assert.deepEqual(
+    result.textFiles.map((file) => file.path),
+    ['NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/materials/scripts/demo.material'],
+  );
+  assert.equal(
+    result.preferredFileName,
+    'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/model.sdf',
   );
 });
 
@@ -213,4 +286,400 @@ test('prepareImportPayload preserves explicit relativePath metadata when files a
     result.assetFiles.map((file) => file.name),
     ['casbot mini/meshes/pelvis_link.STL'],
   );
+});
+
+test('prepareImportPayload prefixes rootless ROS package contents using package asset roots', async () => {
+  const files = [
+    createLooseFile(
+      'valkyrie_sim.urdf',
+      `<?xml version="1.0"?>
+<robot name="valkyrie">
+  <link name="pelvis">
+    <visual>
+      <geometry>
+        <mesh filename="package://val_description/model/meshes/pelvis/pelvis.dae" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'robots/valkyrie_sim.urdf',
+    ),
+    createLooseFile('pelvis.dae', '<dae />', 'meshes/pelvis/pelvis.dae'),
+    createLooseFile('pelvistexture.png', new Uint8Array([137, 80, 78, 71]), 'materials/textures/pelvistexture.png'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'val_description/model/meshes/pelvis/pelvis.dae', format: 'mesh' },
+      { name: 'val_description/model/robots/valkyrie_sim.urdf', format: 'urdf' },
+    ],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name).sort(),
+    [
+      'val_description/model/materials/textures/pelvistexture.png',
+      'val_description/model/meshes/pelvis/pelvis.dae',
+    ],
+  );
+  assert.equal(
+    result.preferredFileName,
+    'val_description/model/robots/valkyrie_sim.urdf',
+  );
+});
+
+test('prepareImportPayload prefixes rootless package assets when only the package-dependent definition sits at the root', async () => {
+  const files = [
+    createLooseFile(
+      'robot.urdf',
+      `<?xml version="1.0"?>
+<robot name="demo">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://demo_pkg/meshes/base.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'robot.urdf',
+    ),
+    createLooseFile('base.stl', 'solid demo', 'meshes/base.stl'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'demo_pkg/meshes/base.stl', format: 'mesh' },
+      { name: 'demo_pkg/robot.urdf', format: 'urdf' },
+    ],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name),
+    ['demo_pkg/meshes/base.stl'],
+  );
+});
+
+test('prepareImportPayload keeps package-rooted assets stable when the referenced package root is already present', async () => {
+  const files = [
+    createLooseFile(
+      'robot.urdf',
+      `<?xml version="1.0"?>
+<robot name="sigmaban2019_urdf">
+  <link name="tronc">
+    <visual>
+      <geometry>
+        <mesh filename="package://assets/merged/tronc_visual.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'robot.urdf',
+    ),
+    createLooseFile('tronc_visual.stl', 'solid tronc', 'assets/merged/tronc_visual.stl'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'assets/merged/tronc_visual.stl', format: 'mesh' },
+      { name: 'robot.urdf', format: 'urdf' },
+    ],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name),
+    ['assets/merged/tronc_visual.stl'],
+  );
+});
+
+test('prepareImportPayload pre-resolves standalone urdf imports for immediate loading', async () => {
+  const files = [
+    createLooseFile(
+      'demo.xml',
+      `<?xml version="1.0"?>
+<robot name="demo">
+  <link name="base_link" />
+</robot>`,
+      'robot/demo.xml',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.equal(result.robotFiles.length, 1);
+  assert.equal(result.robotFiles[0]?.format, 'urdf');
+  assert.equal(result.preResolvedImports.length, 1);
+  assert.equal(result.preResolvedImports[0]?.fileName, 'robot/demo.xml');
+  assert.equal(result.preResolvedImports[0]?.format, 'urdf');
+  assert.equal(
+    result.preResolvedImports[0]?.contentSignature,
+    buildPreResolvedImportContentSignature(files[0]?.text ? await files[0].text() : ''),
+  );
+  assert.equal(result.preResolvedImports[0]?.result.status, 'ready');
+  if (result.preResolvedImports[0]?.result.status !== 'ready') {
+    assert.fail('Expected pre-resolved URDF import result to be ready');
+  }
+  assert.equal(result.preResolvedImports[0].result.robotData.name, 'demo');
+  assert.equal(result.preResolvedImports[0].result.robotData.rootLinkId, 'base_link');
+  assert.equal(result.preResolvedImports[0].result.resolvedUrdfSourceFilePath, null);
+});
+
+test('prepareImportPayload pre-resolves only the preferred robot file to keep worker responses compact', async () => {
+  const files = [
+    createLooseFile(
+      'primary.urdf',
+      `<?xml version="1.0"?>
+<robot name="primary">
+  <link name="base_link" />
+</robot>`,
+      'robot/primary.urdf',
+    ),
+    createLooseFile(
+      'secondary.urdf',
+      `<?xml version="1.0"?>
+<robot name="secondary">
+  <link name="secondary_link" />
+</robot>`,
+      'robot/secondary.urdf',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'robot/primary.urdf');
+  assert.equal(result.preResolvedImports.length, 1);
+  assert.equal(result.preResolvedImports[0]?.fileName, 'robot/primary.urdf');
+  assert.equal(result.preResolvedImports[0]?.format, 'urdf');
+});
+
+test('prepareImportPayload pre-resolves preferred mjcf imports for immediate loading', async () => {
+  const files = [
+    createLooseFile(
+      'mjmodel.xml',
+      `<?xml version="1.0"?>
+<mujoco model="demo_mjcf">
+  <worldbody>
+    <body name="base">
+      <geom type="box" size="0.1 0.1 0.1" />
+    </body>
+  </worldbody>
+</mujoco>`,
+      'robot/mjcf/mjmodel.xml',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'robot/mjcf/mjmodel.xml');
+  assert.equal(result.preResolvedImports.length, 1);
+  assert.equal(result.preResolvedImports[0]?.fileName, 'robot/mjcf/mjmodel.xml');
+  assert.equal(result.preResolvedImports[0]?.format, 'mjcf');
+  assert.equal(result.preResolvedImports[0]?.result.status, 'ready');
+  if (result.preResolvedImports[0]?.result.status !== 'ready') {
+    assert.fail('Expected pre-resolved MJCF import result to be ready');
+  }
+  assert.equal(result.preResolvedImports[0].result.robotData.name, 'demo_mjcf');
+});
+
+test('prepareImportPayload pre-resolves xacro imports with package-local includes', async () => {
+  const files = [
+    createLooseFile(
+      'robot.xacro',
+      `<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="demo_xacro">
+  <xacro:include filename="parts/link.xacro" />
+</robot>`,
+      'demo_pkg/xacro/robot.xacro',
+    ),
+    createLooseFile(
+      'link.xacro',
+      `<robot name="included_links">
+  <link name="base_link" />
+</robot>`,
+      'demo_pkg/xacro/parts/link.xacro',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  const rootEntry = result.preResolvedImports.find((entry) => entry.fileName === 'demo_pkg/xacro/robot.xacro');
+  assert.ok(rootEntry, 'Expected root xacro import to be pre-resolved');
+  assert.equal(
+    result.preResolvedImports.filter((entry) => entry.format === 'xacro').length,
+    1,
+  );
+  assert.equal(rootEntry?.format, 'xacro');
+  assert.equal(rootEntry?.result.status, 'ready');
+  if (!rootEntry || rootEntry.result.status !== 'ready') {
+    assert.fail('Expected pre-resolved xacro import result to be ready');
+  }
+  assert.equal(rootEntry.result.robotData.name, 'demo_xacro');
+  assert.equal(rootEntry.result.robotData.rootLinkId, 'base_link');
+  assert.equal(rootEntry.result.resolvedUrdfSourceFilePath, 'demo_pkg/xacro/robot.xacro');
+});
+
+test('prepareImportPayload pre-resolves preferred usd imports as hydration-ready placeholders', async () => {
+  const usdText = `#usda 1.0
+def Xform "robot"
+{
+}`;
+  const files = [
+    createLooseFile('scene.usd', usdText, 'scene/scene.usd'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'scene/scene.usd');
+  assert.equal(result.preResolvedImports.length, 1);
+  assert.equal(result.preResolvedImports[0]?.fileName, 'scene/scene.usd');
+  assert.equal(result.preResolvedImports[0]?.format, 'usd');
+  assert.equal(result.preResolvedImports[0]?.result.status, 'needs_hydration');
+});
+
+test('prepareImportPayload classifies sdf bundles as robot definition files', async () => {
+  const files = [
+    createLooseFile(
+      'model.sdf',
+      `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="bus_stop">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <mesh>
+            <uri>model://bus_stop/meshes/base_link.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+      'bus_stop/model.sdf',
+    ),
+    createLooseFile('base_link.dae', '<dae />', 'bus_stop/meshes/base_link.dae'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'bus_stop/meshes/base_link.dae', format: 'mesh' },
+      { name: 'bus_stop/model.sdf', format: 'sdf' },
+    ],
+  );
+});
+
+test('prepareImportPayload keeps gazebo material scripts as auxiliary text files', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'demo/model.sdf',
+    `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="demo">
+    <link name="base_link" />
+  </model>
+</sdf>`,
+  );
+  zip.file(
+    'demo/materials/scripts/demo.material',
+    `material Demo/Diffuse
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture demo.png
+      }
+    }
+  }
+}`,
+  );
+  zip.file('demo/materials/textures/demo.png', new Uint8Array([137, 80, 78, 71]));
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'bundle.zip', { type: 'application/zip' });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.textFiles.map((file) => file.path),
+    ['demo/materials/scripts/demo.material'],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name).sort(),
+    ['demo/materials/textures/demo.png'],
+  );
+});
+
+test('prepareImportPayload skips unrelated loose files that are neither robot definitions nor importable assets', async () => {
+  const files = [
+    createLooseFile(
+      'demo.urdf',
+      `<?xml version="1.0"?>
+<robot name="demo">
+  <link name="base_link" />
+</robot>`,
+      'robot/demo.urdf',
+    ),
+    createLooseFile('README.md', '# Demo robot', 'robot/README.md'),
+    createLooseFile('LICENSE', 'Apache-2.0', 'robot/LICENSE'),
+    createLooseFile('preview.png', new Uint8Array([137, 80, 78, 71]), 'robot/docs/preview.png'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles.map((file) => ({ name: file.name, format: file.format })).sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'robot/demo.urdf', format: 'urdf' },
+    ],
+  );
+  assert.deepEqual(
+    result.assetFiles.map((file) => file.name),
+    ['robot/docs/preview.png'],
+  );
+  assert.deepEqual(result.textFiles, []);
+  assert.equal(result.preResolvedImports.length, 1);
+  assert.equal(result.preResolvedImports[0]?.fileName, 'robot/demo.urdf');
 });

@@ -5,12 +5,13 @@ import { GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Language } from '@/shared/i18n';
 import {
+  AdaptiveGroundPlane,
   CanvasResizeSync,
-  GroundShadowPlane,
   NeutralStudioEnvironment,
-  ReferenceGrid,
   SceneLighting,
   SnapshotManager,
+  STUDIO_ENVIRONMENT_INTENSITY,
+  useAdaptiveInteractionQuality,
   UsageGuide,
   WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
@@ -20,74 +21,6 @@ import {
   WorldOriginAxes,
 } from '@/shared/components/3d';
 import { attachContextMenuBlocker } from '@/shared/utils';
-
-const INTERACTION_RECOVERY_DELAY_MS = 180;
-const RESTING_DPR_CAP = 1.75;
-// Keep the same DPR while orbiting; dropping to 1.0 makes the whole scene,
-// especially the reference grid, look blurry on HiDPI displays.
-const INTERACTION_DPR_CAP = RESTING_DPR_CAP;
-
-function useAdaptiveInteractionQuality() {
-  const [isInteracting, setIsInteracting] = useState(false);
-  const interactionTimeoutRef = useRef<number | null>(null);
-
-  const clearInteractionTimeout = useCallback(() => {
-    if (typeof window === 'undefined' || interactionTimeoutRef.current === null) {
-      return;
-    }
-
-    window.clearTimeout(interactionTimeoutRef.current);
-    interactionTimeoutRef.current = null;
-  }, []);
-
-  const beginInteraction = useCallback(() => {
-    clearInteractionTimeout();
-    setIsInteracting(true);
-  }, [clearInteractionTimeout]);
-
-  const endInteraction = useCallback(
-    (delay = INTERACTION_RECOVERY_DELAY_MS) => {
-      if (typeof window === 'undefined') {
-        setIsInteracting(false);
-        return;
-      }
-
-      clearInteractionTimeout();
-      interactionTimeoutRef.current = window.setTimeout(() => {
-        interactionTimeoutRef.current = null;
-        setIsInteracting(false);
-      }, delay);
-    },
-    [clearInteractionTimeout]
-  );
-
-  const pulseInteraction = useCallback(
-    (delay = INTERACTION_RECOVERY_DELAY_MS) => {
-      beginInteraction();
-      endInteraction(delay);
-    },
-    [beginInteraction, endInteraction]
-  );
-
-  useEffect(() => () => clearInteractionTimeout(), [clearInteractionTimeout]);
-
-  const dpr = useMemo(() => {
-    if (typeof window === 'undefined') {
-      return isInteracting ? INTERACTION_DPR_CAP : RESTING_DPR_CAP;
-    }
-
-    const devicePixelRatio = window.devicePixelRatio || 1;
-    return Math.min(devicePixelRatio, isInteracting ? INTERACTION_DPR_CAP : RESTING_DPR_CAP);
-  }, [isInteracting]);
-
-  return {
-    dpr,
-    isInteracting,
-    beginInteraction,
-    endInteraction,
-    pulseInteraction,
-  };
-}
 
 interface URDFViewerCanvasProps {
   lang: Language;
@@ -121,7 +54,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
   const [contextLost, setContextLost] = useState(false);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const canvasContextMenuCleanupRef = useRef<(() => void) | null>(null);
-  const environmentIntensity = resolvedTheme === 'light' ? 0.34 : 0.32;
+  const environmentIntensity = STUDIO_ENVIRONMENT_INTENSITY.viewer[resolvedTheme];
   const {
     dpr,
     isInteracting,
@@ -228,8 +161,7 @@ export const URDFViewerCanvas = memo(function URDFViewerCanvas({
           <SceneLighting theme={resolvedTheme} cameraFollowPrimary />
           <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
           {children}
-          <GroundShadowPlane theme={resolvedTheme} groundOffset={groundOffset} />
-          <ReferenceGrid theme={resolvedTheme} groundOffset={groundOffset} />
+          <AdaptiveGroundPlane theme={resolvedTheme} groundOffset={groundOffset} showShadow />
           <WorldOriginAxes />
           <WorkspaceOrbitControls
             enabled={orbitEnabled}

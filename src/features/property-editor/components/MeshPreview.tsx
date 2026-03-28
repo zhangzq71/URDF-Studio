@@ -5,7 +5,7 @@
 import React, { Suspense, useMemo, useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { STLRenderer, OBJRenderer, DAERenderer } from '@/shared/components/3d';
+import { STLRenderer, OBJRenderer, DAERenderer, GLTFRenderer } from '@/shared/components/3d';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
 import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 
@@ -138,6 +138,16 @@ function MeshContent({
         assets={assets}
         assetBaseDir={assetBaseDir}
         normalizeRoot={normalizeColladaRoot}
+      />
+    );
+  } else if (ext === 'gltf' || ext === 'glb') {
+    return (
+      <GLTFRenderer
+        url={assetUrl}
+        material={material}
+        assets={assets}
+        assetBaseDir={assetBaseDir}
+        preserveOriginalMaterial
       />
     );
   }

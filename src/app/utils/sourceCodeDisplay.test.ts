@@ -69,3 +69,15 @@ test('keeps explicit Xacro files in Xacro mode and editable', () => {
   assert.equal(getSourceCodeDocumentFlavor(file), 'xacro');
   assert.equal(isSourceCodeDocumentReadOnly('xacro'), false);
 });
+
+test('keeps explicit SDF files in SDF mode and editable', () => {
+  const file = {
+    name: 'robots/demo/model.sdf',
+    format: 'sdf' as const,
+    content: '<sdf version="1.7"><model name="demo"><link name="base_link" /></model></sdf>',
+  };
+
+  assert.equal(shouldUseEquivalentMjcfForUsdSource(file), false);
+  assert.equal(getSourceCodeDocumentFlavor(file), 'sdf');
+  assert.equal(isSourceCodeDocumentReadOnly('sdf'), false);
+});

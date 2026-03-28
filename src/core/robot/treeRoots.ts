@@ -1,4 +1,5 @@
 import { GeometryType, type RobotState, type UrdfLink } from '@/types';
+import { getVisualGeometryEntries } from './visualBodies';
 
 const SYNTHETIC_JOINT_STAGE_MARKER = '__joint_stage_';
 
@@ -7,7 +8,7 @@ function hasRenderableGeometry(link: UrdfLink | undefined): boolean {
     return false;
   }
 
-  if (link.visual.type !== GeometryType.NONE) {
+  if (getVisualGeometryEntries(link).length > 0) {
     return true;
   }
 

@@ -1,11 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo } from 'react';
-import { useLoader } from '@react-three/fiber';
+import { use, useEffect, useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { useLoadingManager } from '../meshLoadingManager';
 import { cloneColladaScenePreservingRootTransform } from './colladaScene';
 import { isCoplanarOffsetMaterial, markMaterialAsCoplanarOffset } from '@/core/loaders';
-import { normalizeColladaUpAxis } from '@/core/loaders/colladaUpAxis';
+import { loadColladaScene } from '@/core/loaders/colladaParseWorkerBridge';
 
 interface ScaleProps {
   x: number;
@@ -19,6 +17,7 @@ interface DAERendererImplProps {
   assets: Record<string, string>;
   assetBaseDir?: string;
   normalizeRoot?: boolean;
+  preserveOriginalMaterial?: boolean;
   scale?: ScaleProps;
   onResolved?: () => void;
 }
@@ -69,20 +68,22 @@ export function DAERendererImpl({
   assets,
   assetBaseDir,
   normalizeRoot = false,
+  preserveOriginalMaterial = false,
   scale,
   onResolved,
 }: DAERendererImplProps) {
   const manager = useLoadingManager(assets, assetBaseDir);
-  const colladaText = useLoader(THREE.FileLoader, url, (loader) => {
-    loader.manager = manager;
-    loader.setResponseType('text');
-  });
+  const colladaScene = use(useMemo(
+    () => loadColladaScene(url, manager),
+    [manager, url],
+  ));
   const { clone, overrideMeshes } = useMemo(() => {
-    const loader = new ColladaLoader(manager);
-    const colladaContent = normalizeRoot ? normalizeColladaUpAxis(colladaText).content : colladaText;
-    const dae = loader.parse(colladaContent, THREE.LoaderUtils.extractUrlBase(url));
-    return cloneColladaScenePreservingRootTransform(dae.scene, normalizeRoot);
-  }, [colladaText, manager, normalizeRoot, url]);
+    return cloneColladaScenePreservingRootTransform(
+      colladaScene,
+      normalizeRoot,
+      preserveOriginalMaterial,
+    );
+  }, [colladaScene, normalizeRoot, preserveOriginalMaterial]);
 
   useLayoutEffect(() => {
     overrideMeshes.forEach((mesh) => {

@@ -40,7 +40,7 @@ export function logHydraCallbackError(label, error) {
     hydraCallbackErrorCounts.set(key, nextCount);
     if (previousCount >= maxHydraCallbackErrorLogsPerMethod)
         return;
-    console.warn(`[HydraDelegate] ${key} callback failed`, error);
+    console.error(`[HydraDelegate] ${key} callback failed`, error);
 }
 export function wrapHydraCallbackObject(target, label) {
     if (!target || typeof target !== "object")

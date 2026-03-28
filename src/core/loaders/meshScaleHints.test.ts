@@ -6,6 +6,7 @@ import { GeometryType, JointType, type RobotState } from '@/types';
 import {
   buildExplicitlyScaledMeshPathHints,
   collectExplicitlyScaledMeshPaths,
+  collectExplicitlyScaledMeshPathsFromLinks,
   hasExplicitMeshScaleHint,
 } from './meshScaleHints';
 
@@ -59,6 +60,18 @@ const TEST_ROBOT: RobotState = {
 
 test('collectExplicitlyScaledMeshPaths keeps only non-identity mesh scales', () => {
   const scaledPaths = collectExplicitlyScaledMeshPaths(TEST_ROBOT);
+
+  assert.deepEqual(
+    Array.from(scaledPaths).sort(),
+    [
+      '../meshes/base_collision.STL',
+      'package://demo_description/meshes/foot_collision.STL',
+    ],
+  );
+});
+
+test('collectExplicitlyScaledMeshPathsFromLinks reuses the same extraction logic for pre-parsed links', () => {
+  const scaledPaths = collectExplicitlyScaledMeshPathsFromLinks(TEST_ROBOT.links);
 
   assert.deepEqual(
     Array.from(scaledPaths).sort(),
