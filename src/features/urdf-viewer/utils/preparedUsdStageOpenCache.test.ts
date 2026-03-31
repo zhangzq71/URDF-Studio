@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import type { RobotFile } from '@/types';
 import {
   clearPreparedUsdStageOpenCache,
+  loadPreparedUsdStageOpenDataFromWorker,
   loadPreparedUsdStageOpenDataCached,
 } from './preparedUsdStageOpenCache.ts';
 
@@ -181,4 +182,50 @@ test('loadPreparedUsdStageOpenDataCached reuses semantically identical inputs ev
 
   assert.equal(loadCount, 1);
   assert.strictEqual(secondResult, firstResult);
+});
+
+test('loadPreparedUsdStageOpenDataFromWorker rejects when worker preparation fails', async () => {
+  let prepareCallCount = 0;
+
+  await assert.rejects(
+    loadPreparedUsdStageOpenDataFromWorker(
+      demoSourceFile,
+      demoAvailableFiles,
+      demoAssets,
+      async () => {
+        prepareCallCount += 1;
+        throw new Error('worker exploded');
+      },
+    ),
+    /worker exploded/i,
+  );
+
+  assert.equal(prepareCallCount, 1);
+});
+
+test('loadPreparedUsdStageOpenDataFromWorker rejects incomplete worker payloads instead of allowing a main-thread repair path', async () => {
+  let prepareCallCount = 0;
+
+  await assert.rejects(
+    loadPreparedUsdStageOpenDataFromWorker(
+      demoSourceFile,
+      demoAvailableFiles,
+      demoAssets,
+      async () => {
+        prepareCallCount += 1;
+        return {
+          stageSourcePath: '/robots/go2/usd/go2.usd',
+          criticalDependencyPaths: [],
+          preloadFiles: [{
+            path: '/robots/go2/usd/go2.usd',
+            blob: null,
+            error: 'missing-root',
+          }],
+        };
+      },
+    ),
+    /returned no root stage payload/i,
+  );
+
+  assert.equal(prepareCallCount, 1);
 });

@@ -217,6 +217,20 @@ export function getLinkMeasureCenter(
   objectType: MeasureObjectType = 'visual',
   objectIndex = 0,
 ): THREE.Vector3 {
+  const directBodies = linkObject.children.filter((child) => isMeasureBody(child, objectType));
+  const targetBody = directBodies[objectIndex] ?? directBodies[0] ?? null;
+  if (targetBody) {
+    return getObjectWorldCenter(targetBody);
+  }
+
+  const directMeshes = linkObject.children.filter((child): child is THREE.Mesh => (
+    isMeasureMesh(child, objectType)
+  ));
+  const targetMesh = directMeshes[objectIndex] ?? directMeshes[0] ?? null;
+  if (targetMesh) {
+    return getObjectWorldCenter(targetMesh);
+  }
+
   const linkBounds = new THREE.Box3();
   let hasLinkBounds = false;
 
@@ -230,20 +244,6 @@ export function getLinkMeasureCenter(
 
   if (hasLinkBounds) {
     return linkBounds.getCenter(new THREE.Vector3());
-  }
-
-  const directBodies = linkObject.children.filter((child) => isMeasureBody(child, objectType));
-  const targetBody = directBodies[objectIndex] ?? directBodies[0] ?? null;
-  if (targetBody) {
-    return getObjectWorldCenter(targetBody);
-  }
-
-  const directMeshes = linkObject.children.filter((child): child is THREE.Mesh => (
-    isMeasureMesh(child, objectType)
-  ));
-  const targetMesh = directMeshes[objectIndex] ?? directMeshes[0] ?? null;
-  if (targetMesh) {
-    return getObjectWorldCenter(targetMesh);
   }
 
   return linkObject.getWorldPosition(new THREE.Vector3());

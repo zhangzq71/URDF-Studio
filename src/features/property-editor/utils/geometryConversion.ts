@@ -636,6 +636,12 @@ function computeBroadPhaseRadius(geometry: GeomData): number | null {
   switch (type) {
     case GeometryType.SPHERE:
       return toPositive(dims.x, 0.05);
+    case GeometryType.ELLIPSOID:
+      return Math.max(
+        toPositive(dims.x, 0.05),
+        toPositive(dims.y, 0.05),
+        toPositive(dims.z, 0.05),
+      );
     case GeometryType.BOX:
       return Math.hypot(dims.x, dims.y, dims.z) / 2;
     case GeometryType.CYLINDER:
@@ -1564,6 +1570,23 @@ function addCandidateAxis(axes: Point3[], axis: Point3): void {
   }
 }
 
+function computeAxisAlignmentScore(
+  axis: Point3,
+  preferredAxis: Point3,
+): number {
+  const normalizedAxis = canonicalizeAxis(axis);
+  const normalizedPreferredAxis = canonicalizeAxis(preferredAxis);
+  if (!normalizedAxis || !normalizedPreferredAxis) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  return Math.abs(
+    normalizedAxis.x * normalizedPreferredAxis.x +
+    normalizedAxis.y * normalizedPreferredAxis.y +
+    normalizedAxis.z * normalizedPreferredAxis.z,
+  );
+}
+
 function computePrincipalAxes(points: Point3[]): Point3[] {
   if (points.length === 0) return [];
 
@@ -2160,6 +2183,7 @@ function selectBestPrimitiveFitCandidate(
   newType: GeometryType,
   origin: ConversionResult['origin'],
   context?: ConversionContext,
+  preferredAxis?: Point3,
 ): {
   fit: PrimitiveFit;
   centeredOrigin: ConversionResult['origin'];
@@ -2176,7 +2200,28 @@ function selectBestPrimitiveFitCandidate(
     return null;
   }
 
-  const evaluated = candidates
+  const axisPreferredCandidates = preferredAxis
+    ? (() => {
+        let bestAlignmentScore = Number.NEGATIVE_INFINITY;
+        const scoredCandidates = candidates.map((fit) => {
+          const alignmentScore = computeAxisAlignmentScore(fit.axis, preferredAxis);
+          if (alignmentScore > bestAlignmentScore) {
+            bestAlignmentScore = alignmentScore;
+          }
+          return { fit, alignmentScore };
+        });
+
+        return scoredCandidates
+          .filter(({ alignmentScore }) => alignmentScore >= bestAlignmentScore - 1e-6)
+          .map(({ fit }) => fit);
+      })()
+    : candidates;
+
+  const resolvedCandidates = axisPreferredCandidates.length > 0
+    ? axisPreferredCandidates
+    : candidates;
+
+  const evaluated = resolvedCandidates
     .map((fit) => {
       const centeredOrigin = offsetOriginByLocalVector(origin, fit.center);
       const axisInLinkSpace = rotateLocalVectorByOrigin(origin, fit.axis);
@@ -2300,11 +2345,13 @@ export function convertGeometryType(
 
   // ── Smart conversion FROM mesh using actual bounding box ──────────────────
   if (currentType === GeometryType.MESH && meshAnalysis?.bounds) {
+    const preservedLocalAxis = getAxisVectorForPrimaryAxis('z');
     const fittedPrimitive = selectBestPrimitiveFitCandidate(
       meshAnalysis.primitiveFits,
       newType,
       origin,
       context,
+      preservedLocalAxis,
     );
 
     if (fittedPrimitive) {
@@ -2315,7 +2362,7 @@ export function convertGeometryType(
           y: fittedPrimitive.length,
           z: fittedPrimitive.radius,
         },
-        origin: alignOriginToAxis(fittedPrimitive.centeredOrigin, fittedPrimitive.fit.axis),
+        origin: fittedPrimitive.centeredOrigin,
       };
     }
 
@@ -2352,6 +2399,18 @@ export function convertGeometryType(
       };
     }
 
+    if (newType === GeometryType.ELLIPSOID) {
+      return {
+        type: newType,
+        dimensions: {
+          x: toPositive(bx / 2, DEFAULT_DIMENSIONS.x / 2),
+          y: toPositive(by / 2, DEFAULT_DIMENSIONS.y / 2),
+          z: toPositive(bz / 2, DEFAULT_DIMENSIONS.z / 2),
+        },
+        origin: centeredOrigin,
+      };
+    }
+
     if (newType === GeometryType.SPHERE) {
       const sphereRadius = toPositive(computeEquivalentSphereRadius(targetVolume), 0.1);
       return {
@@ -2362,9 +2421,8 @@ export function convertGeometryType(
     }
 
     if (newType === GeometryType.CYLINDER) {
-      const primaryAxis = getPrimaryAxis(meshAnalysis.bounds);
-      const localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
-      const { length } = getCrossSectionDimensions(meshAnalysis.bounds, primaryAxis);
+      const localAxis = preservedLocalAxis;
+      const { length } = getCrossSectionDimensions(meshAnalysis.bounds, 'z');
       const rawRadius = computeEquivalentCylinderRadius(length, targetVolume);
       const radius = toPositive(rawRadius, 0.05);
       const safeLength = toPositive(length, 0.5);
@@ -2409,14 +2467,13 @@ export function convertGeometryType(
           y: meshAdjustedSize.length,
           z: meshAdjustedSize.radius,
         },
-        origin: alignOriginToPrimaryAxis(shiftedOrigin, primaryAxis),
+        origin: shiftedOrigin,
       };
     }
 
     if (newType === GeometryType.CAPSULE) {
-      const primaryAxis = getPrimaryAxis(meshAnalysis.bounds);
-      const localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
-      const { length } = getCrossSectionDimensions(meshAnalysis.bounds, primaryAxis);
+      const localAxis = preservedLocalAxis;
+      const { length } = getCrossSectionDimensions(meshAnalysis.bounds, 'z');
       const safeLength = toPositive(length, 0.5);
       const rawRadius = computeEquivalentCapsuleRadius(safeLength, targetVolume);
       const radius = toPositive(rawRadius, 0.05);
@@ -2461,7 +2518,7 @@ export function convertGeometryType(
           y: Math.max(meshAdjustedSize.length, meshAdjustedSize.radius * 2),
           z: meshAdjustedSize.radius,
         },
-        origin: alignOriginToPrimaryAxis(shiftedOrigin, primaryAxis),
+        origin: shiftedOrigin,
       };
     }
   }
@@ -2481,6 +2538,17 @@ export function convertGeometryType(
       primaryAxis = getPrimaryAxis(currentDims);
       localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
       const crossSection = getCrossSectionDimensions(currentDims, primaryAxis);
+      radius = toPositive(Math.max(crossSection.crossA, crossSection.crossB) / 2, 0.05);
+      length = toPositive(crossSection.length, 0.5);
+    } else if (currentType === GeometryType.ELLIPSOID) {
+      const ellipsoidDiameters = {
+        x: currentDims.x * 2,
+        y: currentDims.y * 2,
+        z: currentDims.z * 2,
+      };
+      primaryAxis = getPrimaryAxis(ellipsoidDiameters);
+      localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
+      const crossSection = getCrossSectionDimensions(ellipsoidDiameters, primaryAxis);
       radius = toPositive(Math.max(crossSection.crossA, crossSection.crossB) / 2, 0.05);
       length = toPositive(crossSection.length, 0.5);
     } else if (currentType === GeometryType.SPHERE) {
@@ -2553,6 +2621,8 @@ export function convertGeometryType(
       sphereRadius = Math.max(currentDims.x, currentDims.y / 2);
     } else if (currentType === GeometryType.BOX) {
       sphereRadius = Math.max(currentDims.x, currentDims.y, currentDims.z) / 2;
+    } else if (currentType === GeometryType.ELLIPSOID) {
+      sphereRadius = Math.max(currentDims.x, currentDims.y, currentDims.z);
     } else {
       sphereRadius = currentDims.x;
     }
@@ -2565,11 +2635,49 @@ export function convertGeometryType(
     };
   }
 
+  if (newType === GeometryType.ELLIPSOID) {
+    let newDims = { x: 0.1, y: 0.1, z: 0.1 };
+
+    if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
+      newDims = {
+        x: currentDims.x,
+        y: currentDims.x,
+        z: Math.max(currentDims.y / 2, currentDims.x),
+      };
+    } else if (currentType === GeometryType.BOX) {
+      newDims = {
+        x: currentDims.x / 2,
+        y: currentDims.y / 2,
+        z: currentDims.z / 2,
+      };
+    } else if (currentType === GeometryType.SPHERE) {
+      newDims = {
+        x: currentDims.x,
+        y: currentDims.x,
+        z: currentDims.x,
+      };
+    } else if (currentType === GeometryType.ELLIPSOID) {
+      newDims = { ...currentDims };
+    }
+
+    return {
+      type: newType,
+      dimensions: {
+        x: toPositive(newDims.x, 0.1),
+        y: toPositive(newDims.y, 0.1),
+        z: toPositive(newDims.z, 0.1),
+      },
+      origin,
+    };
+  }
+
   if (newType === GeometryType.BOX) {
     let newDims = { ...currentDims };
     let nextOrigin = origin;
     if (currentType === GeometryType.CYLINDER || currentType === GeometryType.CAPSULE) {
       newDims = { x: currentDims.x * 2, y: currentDims.x * 2, z: currentDims.y };
+    } else if (currentType === GeometryType.ELLIPSOID) {
+      newDims = { x: currentDims.x * 2, y: currentDims.y * 2, z: currentDims.z * 2 };
     } else if (currentType === GeometryType.SPHERE) {
       const diameter = currentDims.x * 2;
       newDims = { x: diameter, y: diameter, z: diameter };

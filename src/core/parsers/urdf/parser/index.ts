@@ -25,6 +25,7 @@ export const parseURDF = (xmlString: string): RobotState | null => {
   }
 
   const name = robotEl.getAttribute("name") || "imported_robot";
+  const version = robotEl.getAttribute("version")?.trim() || undefined;
 
   // Parse Materials
   const { globalMaterials, linkGazeboMaterials } = parseMaterials(robotEl);
@@ -63,6 +64,7 @@ export const parseURDF = (xmlString: string): RobotState | null => {
 
   return {
       name,
+      version,
       links,
       joints,
       rootLinkId: rootId,

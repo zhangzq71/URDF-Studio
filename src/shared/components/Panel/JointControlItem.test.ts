@@ -118,6 +118,31 @@ test('clicking elsewhere in the joint card exits the upper limit edit mode', asy
   dom.window.close();
 });
 
+test('joint card prefers the authored joint name for display when the internal key differs', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root, {
+    name: 'joint_1743499999999',
+    joint: {
+      id: 'joint_1743499999999',
+      name: 'joint_1',
+      jointType: 'revolute',
+      limit: { lower: -1.57, upper: 3.49, effort: 1, velocity: 1 },
+    },
+  });
+
+  const nameLabel = Array.from(container.querySelectorAll('span')).find(
+    (node) => node.textContent === 'joint_1',
+  );
+  assert.ok(nameLabel, 'joint card should display the authored joint name');
+  assert.equal(nameLabel.getAttribute('title'), 'joint_1');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
 test('the main joint value editor uses the compact width and font sizing', async () => {
   const { dom, container, root } = createComponentRoot();
 

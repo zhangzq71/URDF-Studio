@@ -76,10 +76,17 @@ export function AIModal({
   const activeIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const isMountedRef = useRef(false)
   const inspectionRunIdRef = useRef(0)
+  const generationRequestIdRef = useRef(0)
+  const retestRequestIdRef = useRef(0)
 
   const clearActiveTimers = useCallback(() => {
     activeIntervalsRef.current.forEach(clearInterval)
     activeIntervalsRef.current = []
+  }, [])
+
+  const invalidateAsyncModalRequests = useCallback(() => {
+    generationRequestIdRef.current += 1
+    retestRequestIdRef.current += 1
   }, [])
 
   const resetTransientInspectionState = useCallback(() => {
@@ -99,9 +106,10 @@ export function AIModal({
     return () => {
       isMountedRef.current = false
       inspectionRunIdRef.current += 1
+      invalidateAsyncModalRequests()
       clearActiveTimers()
     }
-  }, [clearActiveTimers])
+  }, [clearActiveTimers, invalidateAsyncModalRequests])
 
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(INSPECTION_CRITERIA.map(category => category.id))
@@ -122,12 +130,19 @@ export function AIModal({
 
   const handleClose = useCallback(() => {
     inspectionRunIdRef.current += 1
+    invalidateAsyncModalRequests()
     resetTransientInspectionState()
     onClose()
-  }, [onClose, resetTransientInspectionState])
+  }, [invalidateAsyncModalRequests, onClose, resetTransientInspectionState])
 
   const handleGenerateAI = async () => {
     if (!aiPrompt.trim()) return
+
+    const requestId = generationRequestIdRef.current + 1
+    generationRequestIdRef.current = requestId
+    const isRequestActive = () => (
+      isMountedRef.current && generationRequestIdRef.current === requestId
+    )
 
     setIsGeneratingAI(true)
     setAiResponse(null)
@@ -135,6 +150,10 @@ export function AIModal({
 
     try {
       const response = await generateRobotFromPrompt(aiPrompt, robot, motorLibrary, lang)
+      if (!isRequestActive()) {
+        return
+      }
+
       if (response) {
         setAiResponse({
           explanation: response.explanation || t.aiNoValidResponse,
@@ -149,6 +168,10 @@ export function AIModal({
         })
       }
     } catch (error: any) {
+      if (!isRequestActive()) {
+        return
+      }
+
       console.error('AI Generation Error', error)
       setAiResponse({
         explanation: t.aiGenerationFailed.replace('{message}', error?.message || t.unknownError),
@@ -156,7 +179,9 @@ export function AIModal({
         data: undefined
       })
     } finally {
-      setIsGeneratingAI(false)
+      if (isRequestActive()) {
+        setIsGeneratingAI(false)
+      }
     }
   }
 
@@ -363,6 +388,12 @@ export function AIModal({
   }
 
   const handleRetestItem = async (categoryId: string, itemId: string) => {
+    const requestId = retestRequestIdRef.current + 1
+    retestRequestIdRef.current = requestId
+    const isRequestActive = () => (
+      isMountedRef.current && retestRequestIdRef.current === requestId
+    )
+
     setRetestingItem({ categoryId, itemId })
     try {
       const selectedItemsMap: Record<string, string[]> = {
@@ -370,6 +401,10 @@ export function AIModal({
       }
 
       const report = await runRobotInspection(robot, selectedItemsMap, lang)
+      if (!isRequestActive()) {
+        return
+      }
+
       if (report && inspectionReport) {
         const updatedIssues = inspectionReport.issues.filter(
           issue => !(issue.category === categoryId && issue.itemId === itemId)
@@ -396,9 +431,15 @@ export function AIModal({
         })
       }
     } catch (error) {
+      if (!isRequestActive()) {
+        return
+      }
+
       console.error('Retest Error', error)
     } finally {
-      setRetestingItem(null)
+      if (isRequestActive()) {
+        setRetestingItem(null)
+      }
     }
   }
 
@@ -418,7 +459,8 @@ export function AIModal({
     exportInspectionReportPdf({
       inspectionReport,
       robotName: robot.name,
-      lang
+      lang,
+      inspectionContext: robot.inspectionContext
     })
   }
 

@@ -243,3 +243,14 @@ test('pickPreferredImportFile prefers the richest self-contained URDF over helpe
     'test/awesome_robot_descriptions_repos/talos-data/urdf/talos_full.urdf',
   );
 });
+
+test('pickPreferredImportFile keeps g1 folder imports on the canonical base humanoid instead of heavier hand variants', () => {
+  const files = loadImportableRobotFilesFromDirectory('test/unitree_ros/robots/g1_description');
+
+  const preferredFile = pickPreferredImportFile(files, files);
+
+  assert.match(
+    preferredFile?.name ?? '',
+    /test\/unitree_ros\/robots\/g1_description\/g1_29dof(?:_rev_1_0)?\.urdf$/,
+  );
+});

@@ -178,6 +178,61 @@ test('robot import worker client rejects editable source parse errors', async ()
   await assert.rejects(resultPromise, /broken editable source/i);
 });
 
+test('robot import worker client rejects resolve requests immediately when Worker is unavailable', async () => {
+  const originalWorker = globalThis.Worker;
+
+  Object.defineProperty(globalThis, 'Worker', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  try {
+    const client = createRobotImportWorkerClient();
+    await assert.rejects(
+      client.resolve(demoUrdfFile),
+      /Web Worker is not available in this environment/i,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: originalWorker,
+    });
+  }
+});
+
+test('robot import worker client rejects editable source parsing immediately when Worker is unavailable', async () => {
+  const originalWorker = globalThis.Worker;
+
+  Object.defineProperty(globalThis, 'Worker', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  try {
+    const client = createRobotImportWorkerClient();
+    await assert.rejects(
+      client.parseEditableSource({
+        file: {
+          name: demoUrdfFile.name,
+          format: demoUrdfFile.format,
+        },
+        content: demoUrdfFile.content,
+        availableFiles: [demoUrdfFile],
+      }),
+      /Web Worker is not available in this environment/i,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: originalWorker,
+    });
+  }
+});
+
 test('robot import worker client prunes unused resolve payload fields before posting to the worker', async () => {
   const fakeWorker = new FakeWorker();
   const client = createRobotImportWorkerClient({

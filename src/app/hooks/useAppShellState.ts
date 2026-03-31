@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { ExportProgressState } from '@/features/file-io';
+
 export interface AppToastState {
   show: boolean;
   message: string;
-  type: 'info' | 'success';
+  type: 'info' | 'success' | 'error';
 }
 
 export interface AppViewConfig {
   showToolbar: boolean;
   showOptionsPanel: boolean;
-  showSkeletonOptionsPanel: boolean;
+  showVisualizerOptionsPanel: boolean;
   showJointPanel: boolean;
 }
 
@@ -22,7 +24,7 @@ const DEFAULT_TOAST_STATE: AppToastState = {
 const DEFAULT_VIEW_CONFIG: AppViewConfig = {
   showToolbar: true,
   showOptionsPanel: true,
-  showSkeletonOptionsPanel: true,
+  showVisualizerOptionsPanel: true,
   showJointPanel: true,
 };
 
@@ -33,11 +35,12 @@ export function useAppShellState() {
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(null);
   const [viewConfig, setViewConfig] = useState<AppViewConfig>(DEFAULT_VIEW_CONFIG);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = useCallback((message: string, type: 'info' | 'success' = 'info') => {
+  const showToast = useCallback((message: string, type: 'info' | 'success' | 'error' = 'info') => {
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
     }
@@ -75,6 +78,8 @@ export function useAppShellState() {
     setIsExportDialogOpen,
     isExporting,
     setIsExporting,
+    projectExportProgress,
+    setProjectExportProgress,
     viewConfig,
     setViewConfig,
   };

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import * as THREE from 'three';
 
+import { MJCFLoadAbortedError } from './mjcfLoadLifecycle.ts';
 import { buildMJCFHierarchy } from './mjcfHierarchyBuilder.ts';
 
 function toFixedColorArray(color: THREE.Color, digits = 4): number[] {
@@ -103,6 +104,256 @@ test('applies texture-backed material assets to generated visual meshes', async 
     assert.equal(visualMaterial.toneMapped, false);
     assert.equal(visualMaterial.roughness, 0);
     assert.equal(visualMaterial.metalness, 0.4);
+});
+
+test('scopes texture loader cache to a single MJCF hierarchy build', async (t) => {
+    const originalLoadAsync = THREE.TextureLoader.prototype.loadAsync;
+    let loadCount = 0;
+    THREE.TextureLoader.prototype.loadAsync = async function mockLoadAsync(
+        _url: string,
+        _onProgress?: (event: ProgressEvent<EventTarget>) => void,
+    ): Promise<THREE.Texture<HTMLImageElement>> {
+        loadCount += 1;
+        const texture = new THREE.Texture() as THREE.Texture<HTMLImageElement>;
+        texture.needsUpdate = true;
+        return texture;
+    };
+    t.after(() => {
+        THREE.TextureLoader.prototype.loadAsync = originalLoadAsync;
+    });
+
+    const createBuildOptions = (rootGroup: THREE.Group) => ({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0] as [number, number, number],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'base',
+                        pos: [0, 0, 0] as [number, number, number],
+                        geoms: [
+                            {
+                                name: 'body-shell-a',
+                                type: 'box',
+                                size: [0.1, 0.1, 0.1],
+                                material: 'carbon_fibre',
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                            {
+                                name: 'body-shell-b',
+                                type: 'box',
+                                size: [0.08, 0.08, 0.08],
+                                material: 'carbon_fibre',
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                        ],
+                        joints: [],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map(),
+        assets: {
+            'assets/carbon.png': 'mock://assets/carbon.png',
+        },
+        meshCache: new Map(),
+        compilerSettings: {
+            angleUnit: 'radian' as const,
+            meshdir: '',
+            texturedir: 'assets',
+            eulerSequence: 'xyz' as const,
+        },
+        materialMap: new Map([
+            ['carbon_fibre', {
+                name: 'carbon_fibre',
+                texture: 'carbon',
+                texrepeat: [2, 3] as [number, number],
+            }],
+        ]),
+        textureMap: new Map([
+            ['carbon', {
+                name: 'carbon',
+                file: 'assets/carbon.png',
+                type: '2d' as const,
+            }],
+        ]),
+        sourceFileDir: '',
+    });
+
+    await buildMJCFHierarchy(createBuildOptions(new THREE.Group()));
+    await buildMJCFHierarchy(createBuildOptions(new THREE.Group()));
+
+    assert.equal(
+        loadCount,
+        2,
+        'each hierarchy build should resolve its own texture cache instead of retaining a module-global texture promise',
+    );
+});
+
+test('disposes temporary base textures after a hierarchy build completes', async (t) => {
+    const originalLoadAsync = THREE.TextureLoader.prototype.loadAsync;
+    const loadedTextures: THREE.Texture[] = [];
+    let disposeCount = 0;
+    THREE.TextureLoader.prototype.loadAsync = async function mockLoadAsync(
+        _url: string,
+        _onProgress?: (event: ProgressEvent<EventTarget>) => void,
+    ): Promise<THREE.Texture<HTMLImageElement>> {
+        const texture = new THREE.Texture() as THREE.Texture<HTMLImageElement>;
+        const originalDispose = texture.dispose.bind(texture);
+        texture.dispose = () => {
+            disposeCount += 1;
+            originalDispose();
+        };
+        texture.needsUpdate = true;
+        loadedTextures.push(texture);
+        return texture;
+    };
+    t.after(() => {
+        THREE.TextureLoader.prototype.loadAsync = originalLoadAsync;
+    });
+
+    const rootGroup = new THREE.Group();
+    await buildMJCFHierarchy({
+        bodies: [
+            {
+                name: 'world',
+                pos: [0, 0, 0],
+                geoms: [],
+                joints: [],
+                children: [
+                    {
+                        name: 'base',
+                        pos: [0, 0, 0],
+                        geoms: [
+                            {
+                                name: 'body-shell',
+                                type: 'box',
+                                size: [0.1, 0.1, 0.1],
+                                material: 'carbon_fibre',
+                                contype: 0,
+                                conaffinity: 0,
+                            },
+                        ],
+                        joints: [],
+                        children: [],
+                    },
+                ],
+            },
+        ],
+        rootGroup,
+        meshMap: new Map(),
+        assets: {
+            'assets/carbon.png': 'mock://assets/carbon.png',
+        },
+        meshCache: new Map(),
+        compilerSettings: {
+            angleUnit: 'radian',
+            meshdir: '',
+            texturedir: 'assets',
+            eulerSequence: 'xyz',
+        },
+        materialMap: new Map([
+            ['carbon_fibre', {
+                name: 'carbon_fibre',
+                texture: 'carbon',
+            }],
+        ]),
+        textureMap: new Map([
+            ['carbon', {
+                name: 'carbon',
+                file: 'assets/carbon.png',
+                type: '2d',
+            }],
+        ]),
+        sourceFileDir: '',
+    });
+
+    await Promise.resolve();
+
+    let visualMap: THREE.Texture | null = null;
+    rootGroup.traverse((child) => {
+        if (!('isMesh' in child) || !(child as any).isMesh) {
+            return;
+        }
+
+        const mesh = child as THREE.Mesh;
+        if (mesh.userData.isVisualMesh && mesh.material instanceof THREE.MeshStandardMaterial) {
+            visualMap = mesh.material.map;
+        }
+    });
+
+    assert.equal(loadedTextures.length, 1);
+    assert.equal(disposeCount, 1);
+    assert.ok(visualMap instanceof THREE.Texture);
+    assert.notEqual(visualMap, loadedTextures[0]);
+});
+
+test('stops MJCF hierarchy work at abort boundaries without processing later geoms', async () => {
+    const abortSignal = { aborted: false };
+    let processedGeoms = 0;
+
+    await assert.rejects(
+        buildMJCFHierarchy({
+            bodies: [
+                {
+                    name: 'world',
+                    pos: [0, 0, 0],
+                    geoms: [],
+                    joints: [],
+                    children: [
+                        {
+                            name: 'base',
+                            pos: [0, 0, 0],
+                            geoms: [
+                                {
+                                    name: 'geom_a',
+                                    type: 'box',
+                                    size: [0.1, 0.1, 0.1],
+                                },
+                                {
+                                    name: 'geom_b',
+                                    type: 'box',
+                                    size: [0.1, 0.1, 0.1],
+                                },
+                            ],
+                            joints: [],
+                            children: [],
+                        },
+                    ],
+                },
+            ],
+            rootGroup: new THREE.Group(),
+            meshMap: new Map(),
+            assets: {},
+            abortSignal,
+            meshCache: new Map(),
+            compilerSettings: {
+                angleUnit: 'radian',
+                meshdir: '',
+                texturedir: '',
+                eulerSequence: 'xyz',
+            },
+            materialMap: new Map(),
+            textureMap: new Map(),
+            onProgress: ({ processedGeoms: nextProcessedGeoms }) => {
+                processedGeoms = nextProcessedGeoms;
+            },
+            yieldIfNeeded: async () => {
+                if (processedGeoms >= 1) {
+                    abortSignal.aborted = true;
+                }
+            },
+        }),
+        (error) => error instanceof MJCFLoadAbortedError,
+    );
+
+    assert.equal(processedGeoms, 1);
 });
 
 test('does not let inherited geom rgba override material asset colors', async () => {

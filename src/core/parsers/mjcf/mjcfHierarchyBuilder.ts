@@ -3,6 +3,7 @@ import { stackCoincidentVisualRoots } from '@/core/loaders/visualMeshStacking';
 import { findAssetByPath } from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
+import { applyVisualMeshShadowPolicy } from '@/core/utils/visualMeshShadowPolicy';
 import { COLLISION_OVERLAY_RENDER_ORDER, createCollisionOverlayMaterial } from '@/shared/utils/three/collisionOverlayMaterial';
 import { URDFCollider, URDFVisual } from '../urdf/loader/URDFClasses';
 import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
@@ -10,6 +11,12 @@ import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
 import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial, MJCFTexture } from './mjcfUtils';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
+import {
+    disposeTemporaryTexturePromiseCache,
+    disposeTransientObject3D,
+    type MJCFLoadAbortSignal,
+    throwIfMJCFLoadAborted,
+} from './mjcfLoadLifecycle';
 
 export interface MJCFHierarchyGeom {
     name?: string;
@@ -53,6 +60,7 @@ interface BuildMJCFHierarchyOptions {
     rootGroup: THREE.Group;
     meshMap: Map<string, MJCFMesh>;
     assets: Record<string, string>;
+    abortSignal?: MJCFLoadAbortSignal;
     meshCache: MJCFMeshCache;
     compilerSettings: MJCFCompilerSettings;
     materialMap: Map<string, MJCFMaterial>;
@@ -157,10 +165,13 @@ function resolveInitialRuntimeJointValue(joint: MJCFHierarchyJoint): number | nu
 }
 
 const textureLoader = new THREE.TextureLoader();
-const texturePromiseCache = new Map<string, Promise<THREE.Texture | null>>();
+type MJCFTextureLoadCache = Map<string, Promise<THREE.Texture | null>>;
 
-function getTexturePromise(assetUrl: string): Promise<THREE.Texture | null> {
-    const cached = texturePromiseCache.get(assetUrl);
+function getTexturePromise(
+    assetUrl: string,
+    textureLoadCache: MJCFTextureLoadCache,
+): Promise<THREE.Texture | null> {
+    const cached = textureLoadCache.get(assetUrl);
     if (cached) {
         return cached;
     }
@@ -178,7 +189,7 @@ function getTexturePromise(assetUrl: string): Promise<THREE.Texture | null> {
             return null;
         });
 
-    texturePromiseCache.set(assetUrl, promise);
+    textureLoadCache.set(assetUrl, promise);
     return promise;
 }
 
@@ -207,7 +218,10 @@ async function loadMaterialTexture(
     textureMap: Map<string, MJCFTexture>,
     assets: Record<string, string>,
     sourceFileDir: string,
+    textureLoadCache: MJCFTextureLoadCache,
+    abortSignal?: MJCFLoadAbortSignal,
 ): Promise<THREE.Texture | null> {
+    throwIfMJCFLoadAborted(abortSignal);
     if (!materialDef.texture) {
         return null;
     }
@@ -223,11 +237,12 @@ async function loadMaterialTexture(
         return null;
     }
 
-    const texture = await getTexturePromise(assetUrl);
+    const texture = await getTexturePromise(assetUrl, textureLoadCache);
     if (!texture) {
         return null;
     }
 
+    throwIfMJCFLoadAborted(abortSignal);
     return cloneTextureWithMaterialSettings(texture, materialDef);
 }
 
@@ -237,6 +252,8 @@ async function applyMaterialAssetToMesh(
     textureMap: Map<string, MJCFTexture>,
     assets: Record<string, string>,
     sourceFileDir: string,
+    textureLoadCache: MJCFTextureLoadCache,
+    abortSignal?: MJCFLoadAbortSignal,
     materialName?: string,
     inheritedGeomRgba?: [number, number, number, number],
     hasExplicitGeomRgba: boolean = false,
@@ -254,7 +271,18 @@ async function applyMaterialAssetToMesh(
         ? inheritedGeomRgba[3]
         : null;
     const alpha = Math.max(0, Math.min(1, inheritedAlphaOverride ?? (rgba[3] ?? 1)));
-    const texture = await loadMaterialTexture(materialDef, textureMap, assets, sourceFileDir);
+    const texture = await loadMaterialTexture(
+        materialDef,
+        textureMap,
+        assets,
+        sourceFileDir,
+        textureLoadCache,
+        abortSignal,
+    );
+    if (abortSignal?.aborted) {
+        texture?.dispose?.();
+        throwIfMJCFLoadAborted(abortSignal);
+    }
     const roughness = materialDef.shininess != null
         ? Math.max(0, Math.min(1, 1 - materialDef.shininess))
         : undefined;
@@ -288,8 +316,7 @@ async function applyMaterialAssetToMesh(
             child.material.emissiveIntensity = emission;
         }
         child.material.needsUpdate = true;
-        child.castShadow = true;
-        child.receiveShadow = true;
+        applyVisualMeshShadowPolicy(child as THREE.Mesh);
     });
 }
 
@@ -323,15 +350,21 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         sourceFileDir = '',
         onProgress,
         yieldIfNeeded = createMainThreadYieldController(),
+        abortSignal,
     } = options;
     const linksMap: Record<string, THREE.Object3D> = {};
     const jointsMap: Record<string, THREE.Object3D> = {};
+    const textureLoadCache: MJCFTextureLoadCache = new Map();
     const totalGeoms = bodies.reduce((sum, body) => sum + countBodyGeoms(body), 0);
     let processedGeoms = 0;
 
     if (totalGeoms > 0) {
         onProgress?.({ processedGeoms, totalGeoms });
     }
+
+    const throwIfAborted = () => {
+        throwIfMJCFLoadAborted(abortSignal);
+    };
 
     async function addGeomsToGroup(
         geoms: MJCFHierarchyGeom[],
@@ -340,9 +373,15 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         const geomRoles = assignMJCFBodyGeomRoles(geoms);
 
         for (const [geomIndex, { geom, renderVisual: isVisualGeom, renderCollision: isCollisionGeom }] of geomRoles.entries()) {
+            throwIfAborted();
+            let mesh: THREE.Object3D | null = null;
             try {
-                const mesh = await createGeometryMesh(geom, meshMap, assets, meshCache, sourceFileDir);
-                if (!mesh) continue;
+                mesh = await createGeometryMesh(geom, meshMap, assets, meshCache, sourceFileDir, abortSignal);
+                if (!mesh) {
+                    continue;
+                }
+
+                throwIfAborted();
 
                 const materialDef = geom.material
                     ? materialMap.get(geom.material)
@@ -354,10 +393,13 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                         textureMap,
                         assets,
                         sourceFileDir,
+                        textureLoadCache,
+                        abortSignal,
                         geom.material,
                         geom.rgba,
                         Boolean(geom.hasExplicitRgba),
                     );
+                    throwIfAborted();
                 }
 
                 const shouldApplyGeomRgba = Boolean(
@@ -389,7 +431,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     visualGroup.userData.visualOrder = geomIndex;
                     applyGeomTransformToContainer(visualGroup);
 
-                    // Mark all meshes in this object as visual
                     mesh.userData.isVisual = true;
                     mesh.userData.isVisualMesh = true;
                     mesh.traverse((child: any) => {
@@ -403,7 +444,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                 }
 
                 if (isCollisionGeom) {
-                    // Clone if already added to visual, otherwise use directly
                     const collisionMesh = isVisualGeom ? mesh.clone(true) : mesh;
                     const collisionGroup = new URDFCollider();
                     collisionGroup.name = geom.name || `collision_${geom.type || 'geom'}`;
@@ -417,7 +457,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     collisionMesh.userData.isVisual = false;
                     collisionMesh.userData.isVisualMesh = false;
 
-                    // Apply semi-transparent material for collision visualization
                     collisionMesh.traverse((child: any) => {
                         if (child.isMesh) {
                             child.userData.isCollisionMesh = true;
@@ -433,7 +472,6 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     targetGroup.add(collisionGroup);
                 }
 
-                // If neither visual nor collision classification matches, default to visual
                 if (!isVisualGeom && !isCollisionGeom) {
                     const visualGroup = new URDFVisual();
                     visualGroup.name = geom.name || `visual_${geom.type || 'geom'}`;
@@ -444,6 +482,11 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
                     visualGroup.add(mesh);
                     targetGroup.add(visualGroup);
                 }
+            } catch (error) {
+                if (mesh && !mesh.parent) {
+                    disposeTransientObject3D(mesh);
+                }
+                throw error;
             } finally {
                 processedGeoms += 1;
                 onProgress?.({ processedGeoms, totalGeoms });
@@ -561,7 +604,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         const debugAxes = new THREE.AxesHelper(0.1);
         debugAxes.name = '__debug_joint_axes__';
         debugAxes.visible = false;
-        (debugAxes as any).userData = { isGizmo: true, isDebugAxes: true };
+        (debugAxes as any).userData = { isGizmo: true, isSelectableHelper: true, isDebugAxes: true };
         jointNode.add(debugAxes);
 
         jointsMap[jointNode.name] = jointNode;
@@ -580,6 +623,7 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
     }
 
     async function buildBody(body: MJCFHierarchyBody, parentGroup: THREE.Group): Promise<void> {
+        throwIfAborted();
         const bodyOffsetGroup = new THREE.Group();
         bodyOffsetGroup.name = `body_offset_${body.name}`;
         applyBodyTransform(bodyOffsetGroup, body);
@@ -600,18 +644,25 @@ export async function buildMJCFHierarchy(options: BuildMJCFHierarchyOptions): Pr
         attachmentGroup.add(linkGroup);
 
         for (const childBody of body.children) {
+            throwIfAborted();
             await buildBody(childBody, linkGroup);
             await yieldIfNeeded();
         }
     }
 
-    // Build all top-level bodies
-    for (const body of bodies) {
-        await buildBody(body, rootGroup);
-        await yieldIfNeeded();
+    try {
+        // Build all top-level bodies
+        for (const body of bodies) {
+            throwIfAborted();
+            await buildBody(body, rootGroup);
+            await yieldIfNeeded();
+        }
+
+        throwIfAborted();
+        restackRobotVisualRoots(rootGroup);
+
+        return { linksMap, jointsMap };
+    } finally {
+        disposeTemporaryTexturePromiseCache(textureLoadCache);
     }
-
-    restackRobotVisualRoots(rootGroup);
-
-    return { linksMap, jointsMap };
 }

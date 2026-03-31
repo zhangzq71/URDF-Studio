@@ -1,6 +1,5 @@
 import React, { useCallback } from 'react';
 import { Move, ArrowUpRight, Crosshair } from 'lucide-react';
-import { useUIStore } from '@/store';
 import {
     CheckboxOption,
     GroundPlaneControls,
@@ -8,7 +7,6 @@ import {
     OptionsPanelContainer,
     OptionsPanelHeader,
     OptionsPanelContent,
-    SegmentedControl,
     ToggleSliderOption
 } from '@/shared/components/Panel/OptionsPanel';
 
@@ -18,18 +16,16 @@ interface ViewerOptionsPanelProps {
     optionsPanelPos: { x: number; y: number } | null;
     defaultPosition?: { top?: string; right?: string; left?: string; bottom?: string; transform?: string };
     onMouseDown: (e: React.MouseEvent) => void;
-    mode: 'detail' | 'hardware';
     t: any;
     isOptionsCollapsed: boolean;
     toggleOptionsCollapsed: () => void;
     setShowOptionsPanel?: (show: boolean) => void;
-    lang: string;
-    highlightMode: 'link' | 'collision';
-    setHighlightMode: (mode: 'link' | 'collision') => void;
     showVisual: boolean;
     setShowVisual: (show: boolean) => void;
     showCollision: boolean;
     setShowCollision: (show: boolean) => void;
+    showCollisionAlwaysOnTop: boolean;
+    setShowCollisionAlwaysOnTop: (show: boolean) => void;
     modelOpacity: number;
     setModelOpacity: (opacity: number) => void;
     showOrigins: boolean;
@@ -55,6 +51,9 @@ interface ViewerOptionsPanelProps {
     showInertiaOverlay: boolean;
     setShowInertiaOverlay: (show: boolean) => void;
     onAutoFitGround?: () => void;
+    groundPlaneOffset: number;
+    groundPlaneOffsetReadOnly?: boolean;
+    setGroundPlaneOffset: (value: number) => void;
 }
 
 interface OverlayToggleButtonProps {
@@ -149,17 +148,16 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     optionsPanelPos,
     defaultPosition,
     onMouseDown,
-    mode,
     t,
     isOptionsCollapsed,
     toggleOptionsCollapsed,
     setShowOptionsPanel,
-    highlightMode,
-    setHighlightMode,
     showVisual,
     setShowVisual,
     showCollision,
     setShowCollision,
+    showCollisionAlwaysOnTop,
+    setShowCollisionAlwaysOnTop,
     modelOpacity,
     setModelOpacity,
     showOrigins,
@@ -185,10 +183,10 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
     showInertiaOverlay,
     setShowInertiaOverlay,
     onAutoFitGround,
+    groundPlaneOffset,
+    groundPlaneOffsetReadOnly = false,
+    setGroundPlaneOffset,
 }) => {
-    const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
-    const setGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
-
     const handleResetGround = useCallback(() => {
         setGroundPlaneOffset(0);
     }, [setGroundPlaneOffset]);
@@ -221,7 +219,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 resizeTitle={t.resize}
             >
                 <OptionsPanelHeader
-                    title={mode === 'hardware' ? t.hardwareOptions : t.detailOptions}
+                    title={t.viewOptions}
                     isCollapsed={isOptionsCollapsed}
                     onToggleCollapse={toggleOptionsCollapsed}
                     onClose={() => setShowOptionsPanel && setShowOptionsPanel(false)}
@@ -229,35 +227,21 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                 />
 
                 <OptionsPanelContent isCollapsed={isOptionsCollapsed}>
-                        <div className="px-2 py-2 pb-1">
-                            <SegmentedControl
-                                options={[
-                                    { value: 'link', label: t.linkMode },
-                                    { value: 'collision', label: t.collisionMode },
-                                ]}
-                                value={highlightMode}
-                                onChange={setHighlightMode}
-                                size="xs"
-                            />
-                        </div>
-
                         <div className="px-2 py-2 space-y-2">
                             <CheckboxOption checked={showVisual} onChange={setShowVisual} label={t.showVisual} />
-                            <CheckboxOption checked={showCollision} onChange={setShowCollision} label={t.showCollision} />
-                            
-                            {/* Model Transparency */}
-                            <div className="pt-1">
-                                <SliderOption
-                                    label={t.modelOpacity}
-                                    value={modelOpacity}
-                                    onChange={setModelOpacity}
-                                    min={0.1}
-                                    max={1.0}
-                                    step={0.01}
-                                    showPercentage
-                                    compact
-                                />
-                            </div>
+                            <ToggleSliderOption
+                                checked={showCollision}
+                                onChange={setShowCollision}
+                                label={t.showCollision}
+                                rowClassName="pr-1"
+                                trailingControl={showCollision ? (
+                                    <OverlayToggleButton
+                                        active={showCollisionAlwaysOnTop}
+                                        label={t.alwaysOnTop}
+                                        onClick={() => setShowCollisionAlwaysOnTop(!showCollisionAlwaysOnTop)}
+                                    />
+                                ) : undefined}
+                            />
 
                             <OverlayToggleOption
                                 checked={showOrigins}
@@ -326,9 +310,24 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                                 overlayLabel={t.alwaysOnTop}
                             />
 
+                            <div className="pt-1">
+                                <SliderOption
+                                    label={t.modelOpacity}
+                                    value={modelOpacity}
+                                    onChange={setModelOpacity}
+                                    min={0.1}
+                                    max={1.0}
+                                    step={0.01}
+                                    showPercentage
+                                    compact
+                                    indent={false}
+                                />
+                            </div>
+
                             <GroundPlaneControls
                                 autoFitIcon={<Crosshair size={11} />}
                                 autoFitLabel={t.autoFitGround}
+                                disabled={groundPlaneOffsetReadOnly}
                                 offsetLabel={t.groundPlaneOffset}
                                 offsetValue={groundPlaneOffset}
                                 onAutoFit={onAutoFitGround}

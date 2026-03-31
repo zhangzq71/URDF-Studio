@@ -22,6 +22,8 @@ interface TransformFieldsProps {
   onRotationChange: (value: EulerRadiansValue) => void;
   compact?: boolean;
   axisLabelPlacement?: 'stacked' | 'inline';
+  rotationQuickStepDegrees?: number;
+  rotationQuickStepAxes?: Array<keyof EulerRadiansValue>;
 }
 
 export const TransformFields: React.FC<TransformFieldsProps> = ({
@@ -32,6 +34,8 @@ export const TransformFields: React.FC<TransformFieldsProps> = ({
   onRotationChange,
   compact = true,
   axisLabelPlacement = 'inline',
+  rotationQuickStepDegrees,
+  rotationQuickStepAxes,
 }) => {
   const t = translations[lang];
 
@@ -59,6 +63,8 @@ export const TransformFields: React.FC<TransformFieldsProps> = ({
         axisLabelPlacement={axisLabelPlacement}
         holdRepeatIntervalMs={PROPERTY_EDITOR_TRANSFORM_STEPPER_REPEAT_INTERVAL_MS}
         showFrameHint={false}
+        quickStepDegrees={rotationQuickStepDegrees}
+        quickStepAxes={rotationQuickStepAxes}
       />
     </div>
   );

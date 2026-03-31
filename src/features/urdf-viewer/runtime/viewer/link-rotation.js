@@ -1,9 +1,9 @@
 import { MathUtils, Matrix4, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { getRenderRobotMetadataSnapshot, warmupRenderRobotMetadataSnapshot, } from "./robot-metadata.js";
+import { disposeUsdStageHandle } from "./usd-stage-handle.js";
 import { axisTokenFromAxisVector, buildRuntimeLinkPathIndex, clampJointAnglePreservingNeutralZero, cloneJointCatalogEntry, extractPhysicsPayloadAssetPathsFromLayerText, getInteractiveJointLimits, getJointPathCandidatesForLinkPath, getLinkPathFromMeshId, getRootPathFromLinkPath, getRootPathsFromRenderInterface, isControllableRevoluteJointTypeName, isPhysicsJointTypeName, jointCatalogCacheByStagePath, maxJointCatalogCacheEntries, normalizeAxisToken, normalizeAxisVector, normalizeLimits, pickRuntimeParentLinkPath, resolveRuntimeLinkPathsFromSourcePath, resolveUsdAssetPath, rotateAxisByQuaternion, roundAngleDegrees, safeGetPrimAtPath, safeGetPrimAttribute, safeGetPrimTypeName, toFiniteNumber, toQuaternionFromValue, toUsdPathListFromValue, toVector3FromValue, } from "./link-rotation/shared.js";
 import { ingestJointCatalogFromStage, } from "./link-rotation/catalog-ingestion.js";
 import { resolveRevoluteDragDelta } from "./link-rotation/drag-delta.js";
-import { parseBooleanFlag } from "./path-utils.js";
 import { resolveLinkRotationCursor } from "./link-rotation-cursor.js";
 export class LinkRotationController {
     constructor() {
@@ -271,10 +271,6 @@ export class LinkRotationController {
         return this.getCurrentLinkFrameMatrixForLinkPath(linkPath);
     }
     async getAllJointInfos() {
-        const profileJointCatalog = /(?:\?|&)profileJointCatalog=(?:1|true|yes|on)(?:&|$)/i.test(String(window.location?.search || ""));
-        const profileStartMs = (typeof performance !== "undefined" && typeof performance.now === "function")
-            ? performance.now()
-            : Date.now();
         this.ensureJointCatalogBuildScheduled();
         await this.ensureJointCatalogReady({ maxWaitMs: this.jointCatalogUiWaitBudgetMs });
         const linkPaths = new Set();
@@ -284,8 +280,7 @@ export class LinkRotationController {
         for (const linkPath of this.linkJointStateByLinkPath.keys()) {
             linkPaths.add(linkPath);
         }
-        const query = new URLSearchParams(String(window?.location?.search || ""));
-        const scanMeshLinksForJoints = parseBooleanFlag(query.get("scanMeshLinksForJoints"), false);
+        const scanMeshLinksForJoints = false;
         if (scanMeshLinksForJoints && this.renderInterface?.meshes) {
             for (const meshId of Object.keys(this.renderInterface.meshes)) {
                 const linkPath = getLinkPathFromMeshId(meshId);
@@ -1281,15 +1276,10 @@ export class LinkRotationController {
         return null;
     }
     getDurationParamMsFromQuery(paramName, fallbackMs, minMs, maxMs) {
-        const search = String(window?.location?.search || "");
-        const params = new URLSearchParams(search);
-        const requestedRaw = params.get(paramName);
-        if (requestedRaw === null || requestedRaw === "")
-            return fallbackMs;
-        const requested = Number(requestedRaw);
-        if (!Number.isFinite(requested))
-            return fallbackMs;
-        return Math.max(minMs, Math.min(maxMs, Math.floor(requested)));
+        void paramName;
+        void minMs;
+        void maxMs;
+        return fallbackMs;
     }
     async waitForBrowserIdleSlice(timeoutMs) {
         const normalizedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
@@ -1373,7 +1363,6 @@ export class LinkRotationController {
         }
     }
     async buildJointCatalog(initialStage) {
-        const profileJointCatalog = /(?:\?|&)profileJointCatalog=(?:1|true|yes|on)(?:&|$)/i.test(String(window.location?.search || ""));
         const runtimeLinkPathIndex = buildRuntimeLinkPathIndex(this.renderInterface);
         const importedFromRenderSnapshot = this.ingestJointCatalogFromRenderSnapshot(await warmupRenderRobotMetadataSnapshot(this.renderInterface, {
             stageSourcePath: this.stageSourcePath,
@@ -1390,30 +1379,42 @@ export class LinkRotationController {
         const rootPaths = Array.from(rootPathSet);
         let stage = initialStage;
         const usdModule = window.USD;
+        let ownedRootStage = null;
         if (!stage && this.stageSourcePath && usdModule?.UsdStage?.Open) {
-            stage = await this.safeOpenUsdStage(usdModule, this.stageSourcePath);
+            ownedRootStage = await this.safeOpenUsdStage(usdModule, this.stageSourcePath);
+            stage = ownedRootStage;
         }
         if (!stage)
             return;
-        const fallbackDelayMs = Math.max(0, Math.floor(this.jointCatalogStageFallbackDelayMs));
-        if (fallbackDelayMs > 0) {
-            await new Promise((resolve) => window.setTimeout(resolve, fallbackDelayMs));
-        }
-        await this.waitForBrowserIdleSlice(this.jointCatalogStageFallbackIdleTimeoutMs);
-        const rootLayerText = this.safeExportRootLayerText(stage);
-        this.ingestJointCatalogFromStage(stage, rootLayerText, rootPaths, runtimeLinkPathIndex);
-        const physicsPayloadAssets = extractPhysicsPayloadAssetPathsFromLayerText(rootLayerText);
-        if (physicsPayloadAssets.length > 0 && usdModule?.UsdStage?.Open) {
-            for (const payloadAssetPath of physicsPayloadAssets) {
-                const resolvedPath = resolveUsdAssetPath(this.stageSourcePath, payloadAssetPath);
-                if (!resolvedPath)
-                    continue;
-                const payloadStage = await this.safeOpenUsdStage(usdModule, resolvedPath);
-                if (!payloadStage)
-                    continue;
-                const payloadText = this.safeExportRootLayerText(payloadStage);
-                this.ingestJointCatalogFromStage(payloadStage, payloadText, rootPaths, runtimeLinkPathIndex);
+        try {
+            const fallbackDelayMs = Math.max(0, Math.floor(this.jointCatalogStageFallbackDelayMs));
+            if (fallbackDelayMs > 0) {
+                await new Promise((resolve) => window.setTimeout(resolve, fallbackDelayMs));
             }
+            await this.waitForBrowserIdleSlice(this.jointCatalogStageFallbackIdleTimeoutMs);
+            const rootLayerText = this.safeExportRootLayerText(stage);
+            this.ingestJointCatalogFromStage(stage, rootLayerText, rootPaths, runtimeLinkPathIndex);
+            const physicsPayloadAssets = extractPhysicsPayloadAssetPathsFromLayerText(rootLayerText);
+            if (physicsPayloadAssets.length > 0 && usdModule?.UsdStage?.Open) {
+                for (const payloadAssetPath of physicsPayloadAssets) {
+                    const resolvedPath = resolveUsdAssetPath(this.stageSourcePath, payloadAssetPath);
+                    if (!resolvedPath)
+                        continue;
+                    const payloadStage = await this.safeOpenUsdStage(usdModule, resolvedPath);
+                    if (!payloadStage)
+                        continue;
+                    try {
+                        const payloadText = this.safeExportRootLayerText(payloadStage);
+                        this.ingestJointCatalogFromStage(payloadStage, payloadText, rootPaths, runtimeLinkPathIndex);
+                    }
+                    finally {
+                        disposeUsdStageHandle(usdModule, payloadStage);
+                    }
+                }
+            }
+        }
+        finally {
+            disposeUsdStageHandle(usdModule, ownedRootStage);
         }
     }
     safeExportRootLayerText(stage) {

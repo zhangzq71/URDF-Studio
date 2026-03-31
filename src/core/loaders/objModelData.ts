@@ -15,6 +15,8 @@ import {
 } from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
+export const GENERATED_OBJ_MATERIAL_USER_DATA_KEY = '__urdfStudioGeneratedObjMaterial';
+
 export interface SerializedObjAttributeData {
     array: ArrayBuffer;
     itemSize: number;
@@ -199,6 +201,10 @@ function createMaterialFromSerializedObjMaterial(
         const material = new LineBasicMaterial({ color: data.color });
         material.name = data.name;
         material.vertexColors = vertexColors;
+        material.userData = {
+            ...(material.userData ?? {}),
+            [GENERATED_OBJ_MATERIAL_USER_DATA_KEY]: true,
+        };
         return material;
     }
 
@@ -210,6 +216,10 @@ function createMaterialFromSerializedObjMaterial(
         });
         material.name = data.name;
         material.vertexColors = vertexColors;
+        material.userData = {
+            ...(material.userData ?? {}),
+            [GENERATED_OBJ_MATERIAL_USER_DATA_KEY]: true,
+        };
         return material;
     }
 
@@ -219,6 +229,10 @@ function createMaterialFromSerializedObjMaterial(
     });
     material.name = data.name;
     material.vertexColors = vertexColors;
+    material.userData = {
+        ...(material.userData ?? {}),
+        [GENERATED_OBJ_MATERIAL_USER_DATA_KEY]: true,
+    };
     return material;
 }
 

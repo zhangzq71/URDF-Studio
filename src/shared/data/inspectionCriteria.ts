@@ -19,10 +19,68 @@ export type IssueType = 'error' | 'warning' | 'suggestion' | 'pass'
 
 export const INSPECTION_CRITERIA: InspectionCategory[] = [
   {
+    id: 'spec',
+    name: 'URDF Spec Compliance',
+    nameZh: 'URDF 规范合规',
+    weight: 0.20,
+    items: [
+      {
+        id: 'robot_root_contract',
+        name: 'Robot Root Contract',
+        nameZh: '机器人根节点契约',
+        description:
+          'Check that the document has a valid <robot> root with a stable name and only uses top-level elements compatible with the intended URDF consumer.',
+        descriptionZh:
+          '检查文档是否具有合法的 <robot> 根节点、稳定的 name，并且顶层元素与目标 URDF 消费方兼容。',
+        maxScore: 10
+      },
+      {
+        id: 'link_joint_required_fields',
+        name: 'Link/Joint Required Fields',
+        nameZh: 'Link/Joint 必填字段',
+        description:
+          'Check that every link and joint has required names, and every joint defines valid parent/child link references.',
+        descriptionZh:
+          '检查每个 link 和 joint 是否具备必需名称，以及每个 joint 是否定义了有效的 parent/child link 引用。',
+        maxScore: 10
+      },
+      {
+        id: 'topology_tree_constraint',
+        name: 'Tree Topology Constraint',
+        nameZh: '树拓扑约束',
+        description:
+          'Check that the robot remains a single-root tree with no orphan links, duplicate child ownership, or closed-loop structures in core URDF.',
+        descriptionZh:
+          '检查机器人是否保持单根树结构，不存在孤立 link、重复 child 归属或核心 URDF 不支持的闭环结构。',
+        maxScore: 10
+      },
+      {
+        id: 'joint_semantics',
+        name: 'Joint Semantic Rules',
+        nameZh: '关节语义规则',
+        description:
+          'Check type-specific rules for axis, limits, mimic, calibration, and other joint tags so they match URDF semantics instead of relying on consumer-specific guesswork.',
+        descriptionZh:
+          '检查 axis、limit、mimic、calibration 等关节标签是否符合对应关节类型的 URDF 语义，而不是依赖消费方猜测。',
+        maxScore: 10
+      },
+      {
+        id: 'extension_compatibility',
+        name: 'Extension Compatibility',
+        nameZh: '扩展兼容性',
+        description:
+          'Review transmission, gazebo, sensor, and custom tags, and flag when extension usage is undocumented, consumer-specific, or likely unsupported downstream.',
+        descriptionZh:
+          '审查 transmission、gazebo、sensor 以及自定义标签；若扩展用法未文档化、强依赖特定消费方或下游大概率不支持，则给出提示。',
+        maxScore: 10
+      }
+    ]
+  },
+  {
     id: 'physical',
     name: 'Physical Plausibility',
     nameZh: '物理合理性',
-    weight: 0.30,
+    weight: 0.25,
     items: [
       {
         id: 'mass_check',
@@ -62,7 +120,7 @@ export const INSPECTION_CRITERIA: InspectionCategory[] = [
     id: 'kinematics',
     name: 'Kinematics',
     nameZh: '运动学',
-    weight: 0.30,
+    weight: 0.25,
     items: [
       {
         id: 'axis_zero',
@@ -89,6 +147,16 @@ export const INSPECTION_CRITERIA: InspectionCategory[] = [
         maxScore: 10
       },
       {
+        id: 'frame_alignment',
+        name: 'Frame Alignment',
+        nameZh: '坐标系对齐',
+        description:
+          'Check whether joint origins and local frames stay coherent along the kinematic chain. For MJCF-derived robots, use resolved joint transforms together with site/tendon evidence instead of expecting standalone frame links.',
+        descriptionZh:
+          '检查关节原点和局部坐标系是否沿运动链保持一致。对于 MJCF 派生机器人，应结合解析后的 joint 变换与 site/tendon 证据判断，而不是要求存在独立的 frame 链接。',
+        maxScore: 10
+      },
+      {
         id: 'joint_limits',
         name: 'Joint Limits',
         nameZh: '关节限位',
@@ -102,7 +170,7 @@ export const INSPECTION_CRITERIA: InspectionCategory[] = [
     id: 'naming',
     name: 'Naming Conventions',
     nameZh: '命名规范',
-    weight: 0.15,
+    weight: 0.10,
     items: [
       {
         id: 'duplicate_names',
@@ -134,7 +202,7 @@ export const INSPECTION_CRITERIA: InspectionCategory[] = [
     id: 'symmetry',
     name: 'Symmetry',
     nameZh: '对称性',
-    weight: 0.15,
+    weight: 0.10,
     items: [
       {
         id: 'left_right_pairs',

@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
     parseCompilerSettings,
     parseMJCFDefaults,
+    parseHfieldAssets,
     parseMaterialAssets,
     parseMeshAssets,
     parseOrientationAsQuat,
@@ -203,5 +204,103 @@ test('parses mesh asset refquat and refpos metadata', () => {
         scale: undefined,
         refpos: [1, 2, 3],
         refquat: [0, 0, 0, 1],
+        inertia: undefined,
     });
+});
+
+test('parses hfield asset metadata including size and elevation', () => {
+    const doc = parseXmlDocument(`
+        <mujoco model="hfield-assets">
+          <asset>
+            <hfield
+              name="terrain_patch"
+              file="terrain.png"
+              content_type="image/png"
+              size="2 3 0.4 0.1"
+              elevation="0 0.1 0.2 0.3"
+            />
+          </asset>
+        </mujoco>
+    `);
+
+    const hfields = parseHfieldAssets(doc);
+
+    assert.deepEqual(hfields.get('terrain_patch'), {
+        name: 'terrain_patch',
+        file: 'terrain.png',
+        contentType: 'image/png',
+        nrow: undefined,
+        ncol: undefined,
+        size: [2, 3, 0.4, 0.1],
+        elevation: [0, 0.1, 0.2, 0.3],
+    });
+});
+
+test('applies compiler assetdir to mesh and texture assets when meshdir/texturedir are omitted', () => {
+    const doc = parseXmlDocument(`
+        <mujoco model="assetdir-assets">
+          <compiler assetdir="assets/common" />
+          <asset>
+            <mesh name="finger" file="meshes/finger.stl" />
+            <texture name="albedo" type="2d" file="textures/finger.png" />
+          </asset>
+        </mujoco>
+    `);
+
+    const settings = parseCompilerSettings(doc);
+    const meshes = parseMeshAssets(doc, settings);
+    const textures = parseTextureAssets(doc, settings);
+
+    assert.equal(meshes.get('finger')?.file, 'assets/common/meshes/finger.stl');
+    assert.equal(textures.get('albedo')?.file, 'assets/common/textures/finger.png');
+});
+
+test('parses extended compiler settings used by mjcf import semantics', () => {
+    const doc = parseXmlDocument(`
+        <mujoco model="compiler-flags">
+          <compiler
+            assetdir="assets/common"
+            autolimits="true"
+            inertiafromgeom="true"
+            inertiagrouprange="1 4"
+          />
+          <compiler texturedir="textures/override" />
+        </mujoco>
+    `);
+
+    const settings = parseCompilerSettings(doc);
+
+    assert.equal(settings.angleUnit, 'degree');
+    assert.equal(settings.assetdir, 'assets/common');
+    assert.equal(settings.meshdir, 'assets/common');
+    assert.equal(settings.texturedir, 'textures/override');
+    assert.equal(settings.autolimits, true);
+    assert.equal(settings.inertiafromgeom, 'true');
+    assert.deepEqual(settings.inertiagrouprange, [1, 4]);
+});
+
+test('inherits actuator defaults for position-class actuators', () => {
+    const doc = parseXmlDocument(`
+        <mujoco model="actuator-defaults">
+          <default class="main">
+            <position kp="100" ctrlrange="-2 2" />
+            <default class="servo">
+              <position forcerange="-5 5" />
+            </default>
+          </default>
+          <actuator>
+            <position name="servo_a" joint="joint_a" class="servo" />
+          </actuator>
+        </mujoco>
+    `);
+
+    const defaults = parseMJCFDefaults(doc);
+    const actuatorElement = doc.querySelector('actuator position');
+
+    assert.ok(actuatorElement);
+    const resolved = resolveElementAttributes(defaults, 'position', actuatorElement);
+
+    assert.equal(resolved.kp, '100');
+    assert.equal(resolved.ctrlrange, '-2 2');
+    assert.equal(resolved.forcerange, '-5 5');
 });

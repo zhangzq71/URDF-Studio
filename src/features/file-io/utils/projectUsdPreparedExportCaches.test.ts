@@ -5,6 +5,7 @@ import JSZip from 'jszip';
 import { GeometryType, type UsdPreparedExportCache } from '@/types';
 import { PROJECT_USD_PREPARED_EXPORT_CACHES_FILE } from './projectArchive';
 import {
+  buildUsdPreparedExportCacheEntries,
   readUsdPreparedExportCaches,
   writeUsdPreparedExportCaches,
 } from './projectUsdPreparedExportCaches';
@@ -91,4 +92,21 @@ test('writeUsdPreparedExportCaches skips manifest creation when no caches exist'
 
   assert.equal(zip.file(PROJECT_USD_PREPARED_EXPORT_CACHES_FILE), null);
   assert.deepEqual(await readUsdPreparedExportCaches(zip), {});
+});
+
+test('buildUsdPreparedExportCacheEntries preserves mesh blobs for deferred archive compression', async () => {
+  const caches = {
+    'robots/demo/demo.usd': createPreparedCache('/robots/demo/demo.usd'),
+  };
+
+  const archiveEntries = await buildUsdPreparedExportCacheEntries(caches);
+  const meshEntry = archiveEntries.get(
+    'workspace/usd-prepared-export-caches/cache-1/meshes/base_link_visual_0.obj',
+  );
+
+  assert.ok(meshEntry instanceof Blob, 'expected prepared export mesh entry to remain a Blob');
+  assert.equal(
+    await meshEntry.text(),
+    await caches['robots/demo/demo.usd'].meshFiles['base_link_visual_0.obj'].text(),
+  );
 });

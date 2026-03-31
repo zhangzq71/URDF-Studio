@@ -2,6 +2,6 @@
  * UI related types
  */
 
-export type AppMode = 'skeleton' | 'detail' | 'hardware';
+export type AppMode = 'detail';
 export type Theme = 'light' | 'dark' | 'system';
-export type DetailLinkTab = 'visual' | 'collision' | 'joint';
+export type DetailLinkTab = 'visual' | 'collision' | 'physics';

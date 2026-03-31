@@ -1,4 +1,4 @@
-import { parseStlGeometryData, type SerializedStlGeometryData } from './stlGeometryData';
+import type { SerializedStlGeometryData } from './stlGeometryData';
 import type { ParseStlWorkerRequest, StlParseWorkerResponse } from './stlParseWorkerProtocol';
 
 interface WorkerLike {
@@ -27,20 +27,12 @@ interface CreateStlParseWorkerPoolClientOptions {
 }
 
 interface StlParseWorkerPoolClient {
+    clearCache: () => void;
     dispose: (rejectPendingWith?: unknown) => void;
     load: (assetUrl: string) => Promise<SerializedStlGeometryData>;
 }
 
 const DEFAULT_CACHE_LIMIT = 48;
-
-async function fetchAssetBuffer(assetUrl: string): Promise<ArrayBuffer> {
-    const response = await fetch(assetUrl);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch STL asset: ${response.status} ${response.statusText}`);
-    }
-
-    return await response.arrayBuffer();
-}
 
 function createWorkerError(event: ErrorEvent | { error?: unknown; message?: string }): Error {
     if (event.error instanceof Error) {
@@ -50,102 +42,13 @@ function createWorkerError(event: ErrorEvent | { error?: unknown; message?: stri
     return new Error(event.message || 'STL parse worker failed');
 }
 
-function invokeWorkerListener(
-    listener: EventListenerOrEventListenerObject,
-    event: Event,
-): void {
-    if (typeof listener === 'function') {
-        listener(event);
-        return;
-    }
-
-    listener.handleEvent(event);
-}
-
-function createInlineStlParseWorker(): WorkerLike {
-    const messageListeners = new Set<EventListenerOrEventListenerObject>();
-    const errorListeners = new Set<EventListenerOrEventListenerObject>();
-    let terminated = false;
-
-    const emitMessage = (payload: StlParseWorkerResponse): void => {
-        const event = { data: payload } as MessageEvent<StlParseWorkerResponse>;
-        messageListeners.forEach((listener) => {
-            invokeWorkerListener(listener, event as unknown as Event);
-        });
-    };
-
-    const emitError = (requestId: number, error: unknown): void => {
-        const workerError = createWorkerError({
-            error,
-            message: error instanceof Error ? error.message : 'STL parse worker failed',
-        });
-        emitMessage({
-            type: 'parse-stl-error',
-            requestId,
-            error: workerError.message,
-        });
-    };
-
-    return {
-        addEventListener(type, listener) {
-            if (type === 'message') {
-                messageListeners.add(listener);
-                return;
-            }
-
-            errorListeners.add(listener);
-        },
-        removeEventListener(type, listener) {
-            if (type === 'message') {
-                messageListeners.delete(listener);
-                return;
-            }
-
-            errorListeners.delete(listener);
-        },
-        postMessage(message) {
-            queueMicrotask(() => {
-                void (async () => {
-                    if (terminated || message.type !== 'parse-stl') {
-                        return;
-                    }
-
-                    try {
-                        const assetBuffer = await fetchAssetBuffer(message.assetUrl);
-                        if (terminated) {
-                            return;
-                        }
-
-                        emitMessage({
-                            type: 'parse-stl-result',
-                            requestId: message.requestId,
-                            result: parseStlGeometryData(assetBuffer),
-                        });
-                    } catch (error) {
-                        if (terminated) {
-                            return;
-                        }
-
-                        emitError(message.requestId, error);
-                    }
-                })();
-            });
-        },
-        terminate() {
-            terminated = true;
-            messageListeners.clear();
-            errorListeners.clear();
-        },
-    };
-}
-
 function resolveDefaultWorkerCount(): number {
     if (typeof navigator === 'undefined') {
         return 1;
     }
 
     const hardwareConcurrency = Number(navigator.hardwareConcurrency || 2);
-    return Math.max(1, Math.min(4, hardwareConcurrency - 1));
+    return Math.max(1, Math.min(10, Math.floor(hardwareConcurrency / 2)));
 }
 
 function cloneSerializedStlGeometryData(result: SerializedStlGeometryData): SerializedStlGeometryData {
@@ -158,15 +61,11 @@ function cloneSerializedStlGeometryData(result: SerializedStlGeometryData): Seri
 
 export function createStlParseWorkerPoolClient(
     {
-        canUseWorker = () => typeof Worker !== 'undefined' || typeof window === 'undefined',
+        canUseWorker = () => typeof Worker !== 'undefined',
         cacheLimit = DEFAULT_CACHE_LIMIT,
-        createWorker = () => (
-            typeof Worker !== 'undefined'
-                ? new Worker(
-                    new URL('./workers/stlParse.worker.ts', import.meta.url),
-                    { type: 'module' },
-                )
-                : createInlineStlParseWorker()
+        createWorker = () => new Worker(
+            new URL('./workers/stlParse.worker.ts', import.meta.url),
+            { type: 'module' },
         ),
         getWorkerCount = resolveDefaultWorkerCount,
     }: CreateStlParseWorkerPoolClientOptions = {},
@@ -219,6 +118,10 @@ export function createStlParseWorkerPoolClient(
                 request.reject(rejectPendingWith);
             });
         }
+    };
+
+    const clearCache = (): void => {
+        resolvedCache.clear();
     };
 
     const handleWorkerMessage = (event: MessageEvent<StlParseWorkerResponse>): void => {
@@ -328,6 +231,7 @@ export function createStlParseWorkerPoolClient(
     };
 
     return {
+        clearCache,
         dispose: disposeWorkerPool,
         load,
     };
@@ -337,6 +241,10 @@ const sharedStlParseWorkerPoolClient = createStlParseWorkerPoolClient();
 
 export async function loadSerializedStlGeometryData(assetUrl: string): Promise<SerializedStlGeometryData> {
     return await sharedStlParseWorkerPoolClient.load(assetUrl);
+}
+
+export function clearStlParseWorkerPoolClientCache(): void {
+    sharedStlParseWorkerPoolClient.clearCache();
 }
 
 export function disposeStlParseWorkerPoolClient(rejectPendingWith?: unknown): void {

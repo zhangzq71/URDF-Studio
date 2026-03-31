@@ -1,26 +1,34 @@
 // @ts-nocheck
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import * as Shared from './shared.js';
+import { disposeMaterial } from '../../../../../shared/utils/three/dispose.ts';
+import { getDefaultMaterial } from './default-material-state.js';
 import { TextureRegistry } from './TextureRegistry.js';
-const { buildProtoPrimPathCandidates, clamp01, createMatrixFromXformOp, debugInstancer, debugMaterials, debugMeshes, debugPrims, debugTextures, defaultGrayComponent, disableMaterials, disableTextures, extractJointRecordsFromLayerText, extractPrimPathFromMaterialBindingWarning, extractReferencePrimTargets, extractScopeBodyText, extractUsdAssetReferencesFromLayerText, getActiveMaterialBindingWarningOwner, getAngleInRadians, getCollisionGeometryTypeFromUrdfElement, getExpectedPrimTypesForCollisionProto, getExpectedPrimTypesForProtoType, getMatrixMaxElementDelta, getPathBasename, getPathWithoutRoot, getRawConsoleMethod, getRootPathFromPrimPath, getSafePrimTypeName, hasNonZeroTranslation, hydraCallbackErrorCounts, installMaterialBindingApiWarningInterceptor, isIdentityQuaternion, isLikelyDefaultGrayMaterial, isLikelyInverseTransform, isMaterialBindingApiWarningMessage, isMatrixApproximatelyIdentity, isNonZero, isPotentiallyLargeBaseAssetPath, logHydraCallbackError, materialBindingRepairMaxLayerTextLength, materialBindingWarningHandlers, maxHydraCallbackErrorLogsPerMethod, nearlyEqual, normalizeHydraPath, normalizeUsdPathToken, parseColliderEntriesFromLayerText, parseGuideCollisionReferencesFromLayerText, parseLinkDynamicsPatchesFromLayerText, parseProtoMeshIdentifier, parseUrdfTruthFromText, parseVector3Text, parseVisualSemanticChildNamesFromLayerText, parseXformOpFallbacksFromLayerText, rawConsoleError, rawConsoleWarn, registerMaterialBindingApiWarningHandler, remapRootPathIfNeeded, resolveSemanticChildLinkTargetFromResolvedPrimPath, resolveUrdfTruthFileNameForStagePath, resolveUsdAssetPath, setActiveMaterialBindingWarningOwner, shouldAllowLargeBaseAssetScan, stringifyConsoleArgs, toArrayLike, toColorArray, toFiniteNumber, toFiniteQuaternionWxyzTuple, toFiniteVector2Tuple, toFiniteVector3Tuple, toMatrixFromUrdfOrigin, toQuaternionWxyzFromRpy, transformEpsilon, wrapHydraCallbackObject } = Shared;
-const HYDRA_PHASE_PROFILE_FROM_QUERY = (() => {
-    try {
-        const search = typeof window !== 'undefined' ? String(window.location?.search || '') : '';
-        if (!search)
-            return false;
-        const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-        const raw = params.get('profileHydraPhases');
-        if (raw === null)
-            return false;
-        const normalized = String(raw || '').trim().toLowerCase();
-        if (normalized === '')
-            return true;
-        return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+const { buildProtoPrimPathCandidates, clamp01, createMatrixFromXformOp, debugInstancer, debugMaterials, debugMeshes, debugPrims, debugTextures, defaultGrayComponent, disableMaterials, disableTextures, disposeUsdHandle, extractJointRecordsFromLayerText, extractPrimPathFromMaterialBindingWarning, extractReferencePrimTargets, extractScopeBodyText, extractUsdAssetReferencesFromLayerText, getActiveMaterialBindingWarningOwner, getAngleInRadians, getCollisionGeometryTypeFromUrdfElement, getExpectedPrimTypesForCollisionProto, getExpectedPrimTypesForProtoType, getMatrixMaxElementDelta, getPathBasename, getPathWithoutRoot, getRawConsoleMethod, getRootPathFromPrimPath, getSafePrimTypeName, hasNonZeroTranslation, hydraCallbackErrorCounts, installMaterialBindingApiWarningInterceptor, isIdentityQuaternion, isLikelyDefaultGrayMaterial, isLikelyInverseTransform, isMaterialBindingApiWarningMessage, isMatrixApproximatelyIdentity, isNonZero, isPotentiallyLargeBaseAssetPath, logHydraCallbackError, materialBindingRepairMaxLayerTextLength, materialBindingWarningHandlers, maxHydraCallbackErrorLogsPerMethod, nearlyEqual, normalizeHydraPath, normalizeUsdPathToken, parseColliderEntriesFromLayerText, parseGuideCollisionReferencesFromLayerText, parseLinkDynamicsPatchesFromLayerText, parseProtoMeshIdentifier, parseUrdfTruthFromText, parseVector3Text, parseVisualSemanticChildNamesFromLayerText, parseXformOpFallbacksFromLayerText, rawConsoleError, rawConsoleWarn, registerMaterialBindingApiWarningHandler, remapRootPathIfNeeded, resolveSemanticChildLinkTargetFromResolvedPrimPath, resolveUrdfTruthFileNameForStagePath, resolveUsdAssetPath, setActiveMaterialBindingWarningOwner, shouldAllowLargeBaseAssetScan, stringifyConsoleArgs, toArrayLike, toColorArray, toFiniteNumber, toFiniteQuaternionWxyzTuple, toFiniteVector2Tuple, toFiniteVector3Tuple, toMatrixFromUrdfOrigin, toQuaternionWxyzFromRpy, transformEpsilon, unregisterMaterialBindingApiWarningHandler, wrapHydraCallbackObject } = Shared;
+const HYDRA_PHASE_PROFILE_FROM_QUERY = false;
+
+function collectAssignedUsdRootMaterials(usdRoot) {
+    const assignedMaterials = new Set();
+    if (!usdRoot || typeof usdRoot.traverse !== 'function') {
+        return assignedMaterials;
     }
-    catch {
-        return false;
-    }
-})();
+    usdRoot.traverse((node) => {
+        const material = node?.material;
+        if (Array.isArray(material)) {
+            material.forEach((entry) => {
+                if (entry) {
+                    assignedMaterials.add(entry);
+                }
+            });
+            return;
+        }
+        if (material) {
+            assignedMaterials.add(material);
+        }
+    });
+    return assignedMaterials;
+}
+
 export class ThreeRenderDelegateCore {
     /**
      * @param {import('..').threeJsRenderDelegateConfig} config
@@ -141,6 +149,7 @@ export class ThreeRenderDelegateCore {
         this._materialBindingWarningHandler = ({ message, level }) => this.handleMaterialBindingApiWarning({ message, level });
         setActiveMaterialBindingWarningOwner(this);
         registerMaterialBindingApiWarningHandler(this._materialBindingWarningHandler);
+        this._disposed = false;
         // Bind hot transform helpers defensively so detached callback invocations
         // from external runtimes cannot lose `this`.
         if (typeof this.getWorldTransformForPrimPath === 'function') {
@@ -154,6 +163,122 @@ export class ThreeRenderDelegateCore {
                 getSnapshot: () => this.getHydraPhasePerfSnapshot(),
             };
         }
+    }
+    disposeOpenedGuideStages() {
+        if (!(this._openedGuideStages instanceof Map) || this._openedGuideStages.size <= 0) {
+            return;
+        }
+        const globalScope = typeof window !== 'undefined' ? window : globalThis;
+        const usdModule = globalScope?.USD || null;
+        for (const stage of this._openedGuideStages.values()) {
+            disposeUsdHandle(usdModule, stage);
+        }
+        this._openedGuideStages.clear();
+    }
+    disposeUnboundHydraMaterials() {
+        const assignedMaterials = collectAssignedUsdRootMaterials(this.config?.usdRoot);
+        const defaultMaterial = getDefaultMaterial();
+        const disposedMaterials = new Set();
+        const wrappedMaterials = [
+            ...Object.values(this.materials || {}),
+            ...((this._stageFallbackMaterialCache instanceof Map) ? Array.from(this._stageFallbackMaterialCache.values()) : []),
+            ...((this._snapshotFallbackMaterialCache instanceof Map) ? Array.from(this._snapshotFallbackMaterialCache.values()) : []),
+        ];
+        for (const wrappedMaterial of wrappedMaterials) {
+            const candidateMaterials = [
+                wrappedMaterial?._material,
+                wrappedMaterial?._ownedMaterial,
+                wrappedMaterial,
+            ].filter(Boolean);
+            const materials = candidateMaterials
+                .flatMap((rawMaterial) => Array.isArray(rawMaterial) ? rawMaterial : [rawMaterial])
+                .filter((material) => !!material && typeof material.dispose === 'function');
+            for (const material of materials) {
+                if (!material || material === defaultMaterial || assignedMaterials.has(material) || disposedMaterials.has(material)) {
+                    continue;
+                }
+                disposeMaterial(material, true);
+                disposedMaterials.add(material);
+            }
+        }
+    }
+    dispose() {
+        if (this._disposed === true)
+            return;
+        this._disposed = true;
+        if (this._materialBindingWarningSummaryTimer) {
+            clearTimeout(this._materialBindingWarningSummaryTimer);
+            this._materialBindingWarningSummaryTimer = null;
+        }
+        if (this._materialBindingWarningHandler) {
+            unregisterMaterialBindingApiWarningHandler(this._materialBindingWarningHandler);
+        }
+        if (getActiveMaterialBindingWarningOwner() === this) {
+            setActiveMaterialBindingWarningOwner(null);
+        }
+        this.registry?.dispose?.();
+        this.disposeUnboundHydraMaterials();
+        const globalMetricsTarget = typeof window !== 'undefined' ? window : globalThis;
+        if (this.enableHydraPhaseInstrumentation && globalMetricsTarget?.__HYDRA_PHASE_METRICS__) {
+            globalMetricsTarget.__HYDRA_PHASE_METRICS__ = undefined;
+        }
+        this.disposeOpenedGuideStages();
+        const clearableCaches = [
+            this._localXformCache,
+            this._localXformResetsStackCache,
+            this._localXformAuthoredOpsCache,
+            this._worldXformCache,
+            this._worldXformCacheSourceByPath,
+            this._primPathExistenceCache,
+            this._meshFallbackCache,
+            this._resolvedProtoPrimPathCache,
+            this._resolvedVisualPrimPathCache,
+            this._xformOpFallbackMapByStageSource,
+            this._rootLayerXformOpFallbackMapByStageSource,
+            this._stageFallbackMaterialCache,
+            this._snapshotMaterialRecordById,
+            this._snapshotMaterialIdsByStageSource,
+            this._snapshotFallbackMaterialCache,
+            this._linkVisualTransformCache,
+            this._visualLinkWorldTransformCache,
+            this._jointPrimPathCache,
+            this._jointCatalogSnapshotByStageSource,
+            this._jointCatalogBuildPromisesByStageSource,
+            this._linkDynamicsSnapshotByStageSource,
+            this._linkDynamicsBuildPromisesByStageSource,
+            this._protoMeshMetadataByMeshId,
+            this._protoVisualMetadataByStageSource,
+            this._protoCollisionMetadataByStageSource,
+            this._protoMeshTransformCache,
+            this._protoCollisionWorldTransformCache,
+            this._protoVisualWorldTransformCache,
+            this._primTransformBatchByStageSource,
+            this._primTransformBatchPromisesByStageSource,
+            this._stageOverrideBatchByStageSource,
+            this._stageOverrideBatchPromisesByStageSource,
+            this._stageCollisionProtoOverridesByStageSource,
+            this._stageCollisionProtoOverridePromisesByStageSource,
+            this._stageVisualProtoOverridesByStageSource,
+            this._stageVisualProtoOverridePromisesByStageSource,
+            this._guideCollisionReferenceCache,
+            this._urdfTruthByStageSource,
+            this._urdfTruthLoadPromisesByStageSource,
+            this._urdfLinkWorldTransformCacheByStageSource,
+            this._urdfVisualFallbackDecisionCache,
+            this._urdfVisualFallbackLinkDecisionCache,
+            this._robotMetadataSnapshotByStageSource,
+            this._robotSceneSnapshotByStageSource,
+            this._robotMetadataBuildPromisesByStageSource,
+            this._preferredVisualMaterialByLinkCache,
+        ];
+        clearableCaches.forEach((entry) => entry?.clear?.());
+        this.materials = {};
+        this.meshes = {};
+        this.instancers = {};
+        this.skeletons = {};
+        this._knownPrimPathSet = null;
+        this._resolvedDriverStage = null;
+        this._pendingDriverStagePromise = null;
     }
     enterHydraSyncHotPath() {
         const nextDepth = Number(this._hydraSyncHotPathDepth || 0) + 1;
@@ -358,30 +483,8 @@ export class ThreeRenderDelegateCore {
         const path = String(this.getStageSourcePath() || '').trim();
         return path ? path.split('?')[0] : null;
     }
-    isQueryFlagEnabled(paramName, fallback = false) {
-        try {
-            const search = String(window?.location?.search || '');
-            if (!search)
-                return fallback;
-            const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-            const rawValue = params.get(paramName);
-            if (rawValue === null)
-                return fallback;
-            const normalized = String(rawValue || '').trim().toLowerCase();
-            if (!normalized)
-                return true;
-            if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on')
-                return true;
-            if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off')
-                return false;
-            return fallback;
-        }
-        catch {
-            return fallback;
-        }
-    }
     shouldAllowUrdfHttpFallback() {
-        return this.isQueryFlagEnabled('allowUrdfHttpFallback', false);
+        return false;
     }
     getStageMetadataLayerTexts(stage) {
         const layerTexts = [];
@@ -673,12 +776,79 @@ export class ThreeRenderDelegateCore {
         let metadataLayerTexts = [];
         const meshCountsByLinkPath = {};
         const linkPathSet = new Set();
+        const syntheticSemanticChildParentPathByChildLinkPath = new Map();
         const addKnownLinkPath = (value) => {
             const normalizedPath = normalizeUsdPathToken(String(value || ''));
             if (!normalizedPath || !normalizedPath.startsWith('/'))
                 return null;
             linkPathSet.add(normalizedPath);
             return normalizedPath;
+        };
+        const addTruthLinkNames = (targetSet, source) => {
+            if (!(targetSet instanceof Set) || !source)
+                return;
+            if (source instanceof Map) {
+                for (const key of source.keys()) {
+                    const normalizedKey = String(key || '').trim();
+                    if (normalizedKey)
+                        targetSet.add(normalizedKey);
+                }
+                return;
+            }
+            if (Array.isArray(source)) {
+                for (const value of source) {
+                    const normalizedValue = String(value || '').trim();
+                    if (normalizedValue)
+                        targetSet.add(normalizedValue);
+                }
+                return;
+            }
+            if (typeof source === 'object') {
+                for (const key of Object.keys(source)) {
+                    const normalizedKey = String(key || '').trim();
+                    if (normalizedKey)
+                        targetSet.add(normalizedKey);
+                }
+            }
+        };
+        const mergeSemanticChildNameMaps = (targetMap, nextMap) => {
+            if (!(targetMap instanceof Map) || !(nextMap instanceof Map))
+                return;
+            for (const [linkName, childNames] of nextMap.entries()) {
+                const normalizedLinkName = String(linkName || '').trim();
+                if (!normalizedLinkName || !Array.isArray(childNames) || childNames.length <= 0)
+                    continue;
+                const existingNames = targetMap.get(normalizedLinkName) || [];
+                for (const childName of childNames) {
+                    const normalizedChildName = String(childName || '').trim();
+                    if (!normalizedChildName || existingNames.includes(normalizedChildName))
+                        continue;
+                    existingNames.push(normalizedChildName);
+                }
+                targetMap.set(normalizedLinkName, existingNames);
+            }
+        };
+        const incrementMeshCountsForLinkPath = (linkPath, sectionName, protoType) => {
+            if (!linkPath)
+                return;
+            if (!meshCountsByLinkPath[linkPath]) {
+                meshCountsByLinkPath[linkPath] = {
+                    visualMeshCount: 0,
+                    collisionMeshCount: 0,
+                    collisionPrimitiveCounts: {},
+                };
+            }
+            const counts = meshCountsByLinkPath[linkPath];
+            if (sectionName === 'collisions') {
+                counts.collisionMeshCount += 1;
+                const primitiveType = collisionPrimitiveTypeFromProto(protoType);
+                if (primitiveType) {
+                    counts.collisionPrimitiveCounts[primitiveType] = Number(counts.collisionPrimitiveCounts[primitiveType] || 0) + 1;
+                }
+            }
+            else if (sectionName === 'visuals') {
+                counts.visualMeshCount += 1;
+            }
         };
         const normalizeVector3 = (value, fallback = [0, 0, 0]) => {
             const source = Array.isArray(value)
@@ -892,31 +1062,6 @@ export class ThreeRenderDelegateCore {
                 return parsedProto;
             return parseLegacyRuntimeMeshDescriptor(meshId);
         };
-        for (const meshId of Object.keys(this.meshes || {})) {
-            const proto = parseRuntimeMeshDescriptor(meshId);
-            if (!proto?.linkPath)
-                continue;
-            this._protoMeshMetadataByMeshId.set(meshId, proto);
-            addKnownLinkPath(proto.linkPath);
-            if (!meshCountsByLinkPath[proto.linkPath]) {
-                meshCountsByLinkPath[proto.linkPath] = {
-                    visualMeshCount: 0,
-                    collisionMeshCount: 0,
-                    collisionPrimitiveCounts: {},
-                };
-            }
-            const counts = meshCountsByLinkPath[proto.linkPath];
-            if (proto.sectionName === 'collisions') {
-                counts.collisionMeshCount += 1;
-                const primitiveType = collisionPrimitiveTypeFromProto(proto.protoType);
-                if (primitiveType) {
-                    counts.collisionPrimitiveCounts[primitiveType] = Number(counts.collisionPrimitiveCounts[primitiveType] || 0) + 1;
-                }
-            }
-            else if (proto.sectionName === 'visuals') {
-                counts.visualMeshCount += 1;
-            }
-        }
         const activeDriver = typeof window !== 'undefined' ? window?.driver : null;
         if (activeDriver && typeof activeDriver.GetPhysicsJointRecords === 'function') {
             let rawJointRecords = [];
@@ -961,7 +1106,116 @@ export class ThreeRenderDelegateCore {
                 }
             }
         }
+        const truthLinkNameSet = new Set();
+        addTruthLinkNames(truthLinkNameSet, truth?.visualsByLinkName);
+        addTruthLinkNames(truthLinkNameSet, truth?.collisionsByLinkName);
+        addTruthLinkNames(truthLinkNameSet, truth?.jointByChildLinkName);
+        addTruthLinkNames(truthLinkNameSet, truth?.inertialByLinkName);
+        const visualSemanticChildNameMapByLinkName = new Map();
+        const collisionSemanticLinkNameSet = new Set();
+        for (const layerText of metadataLayerTexts) {
+            mergeSemanticChildNameMaps(visualSemanticChildNameMapByLinkName, parseVisualSemanticChildNamesFromLayerText(layerText));
+            for (const collisionMap of [
+                parseGuideCollisionReferencesFromLayerText(layerText),
+                parseColliderEntriesFromLayerText(layerText),
+            ]) {
+                if (!(collisionMap instanceof Map))
+                    continue;
+                for (const linkName of collisionMap.keys()) {
+                    const normalizedLinkName = String(linkName || '').trim();
+                    if (normalizedLinkName) {
+                        collisionSemanticLinkNameSet.add(normalizedLinkName);
+                    }
+                }
+            }
+        }
+        const shouldAdoptSemanticChildTarget = ({ owningLinkPath, sectionName, semanticTarget }) => {
+            if (!owningLinkPath || !semanticTarget?.linkName || !semanticTarget?.linkPath)
+                return false;
+            if (semanticTarget.linkPath === owningLinkPath)
+                return false;
+            if (linkPathSet.has(semanticTarget.linkPath))
+                return true;
+            if (truthLinkNameSet.has(semanticTarget.linkName))
+                return true;
+            if (sectionName === 'visuals') {
+                const owningLinkName = getPathBasename(owningLinkPath);
+                const allowedChildNames = visualSemanticChildNameMapByLinkName.get(owningLinkName) || [];
+                return allowedChildNames.includes(semanticTarget.linkName);
+            }
+            if (sectionName === 'collisions') {
+                return collisionSemanticLinkNameSet.has(semanticTarget.linkName);
+            }
+            return false;
+        };
+        for (const meshId of Object.keys(this.meshes || {})) {
+            const proto = parseRuntimeMeshDescriptor(meshId);
+            if (!proto?.linkPath)
+                continue;
+            this._protoMeshMetadataByMeshId.set(meshId, proto);
+            let targetLinkPath = proto.linkPath;
+            if (proto.sectionName === 'visuals' || proto.sectionName === 'collisions') {
+                const resolvedPrimPath = proto.sectionName === 'visuals'
+                    ? this.getResolvedVisualTransformPrimPathForMeshId?.(meshId)
+                    : this.getResolvedPrimPathForMeshId?.(meshId);
+                const semanticTarget = resolveSemanticChildLinkTargetFromResolvedPrimPath({
+                    owningLinkPath: proto.linkPath,
+                    resolvedPrimPath,
+                    sectionName: proto.sectionName,
+                });
+                if (shouldAdoptSemanticChildTarget({
+                    owningLinkPath: proto.linkPath,
+                    sectionName: proto.sectionName,
+                    semanticTarget,
+                })) {
+                    targetLinkPath = semanticTarget.linkPath;
+                    if (!syntheticSemanticChildParentPathByChildLinkPath.has(targetLinkPath)) {
+                        syntheticSemanticChildParentPathByChildLinkPath.set(targetLinkPath, proto.linkPath);
+                    }
+                }
+            }
+            addKnownLinkPath(targetLinkPath);
+            incrementMeshCountsForLinkPath(targetLinkPath, proto.sectionName, proto.protoType);
+        }
         const sortedLinkPaths = Array.from(linkPathSet).sort((left, right) => left.localeCompare(right));
+        const mergeSyntheticSemanticChildLinkMetadata = (snapshot) => {
+            if (!snapshot || typeof snapshot !== 'object')
+                return snapshot;
+            if (!(syntheticSemanticChildParentPathByChildLinkPath instanceof Map) || syntheticSemanticChildParentPathByChildLinkPath.size <= 0) {
+                return snapshot;
+            }
+            const nextLinkParentPairs = Array.isArray(snapshot.linkParentPairs)
+                ? snapshot.linkParentPairs.slice()
+                : [];
+            const pairKeys = new Set();
+            for (const pair of nextLinkParentPairs) {
+                if (!Array.isArray(pair) || pair.length <= 0)
+                    continue;
+                const childLinkPath = normalizeUsdPathToken(String(pair[0] || '')) || null;
+                if (!childLinkPath)
+                    continue;
+                const parentLinkPath = normalizeUsdPathToken(String(pair[1] || '')) || null;
+                pairKeys.add(`${childLinkPath}|${parentLinkPath || ''}`);
+            }
+            let mutated = false;
+            for (const [childLinkPath, parentLinkPath] of syntheticSemanticChildParentPathByChildLinkPath.entries()) {
+                if (!meshCountsByLinkPath[childLinkPath])
+                    continue;
+                const pairKey = `${childLinkPath}|${parentLinkPath || ''}`;
+                if (pairKeys.has(pairKey))
+                    continue;
+                pairKeys.add(pairKey);
+                nextLinkParentPairs.push([childLinkPath, parentLinkPath || null]);
+                mutated = true;
+            }
+            if (!mutated)
+                return snapshot;
+            nextLinkParentPairs.sort((left, right) => String(left?.[0] || '').localeCompare(String(right?.[0] || '')));
+            return {
+                ...snapshot,
+                linkParentPairs: nextLinkParentPairs,
+            };
+        };
         const mergeMissingJointCatalogEntriesFromDriver = (snapshot) => {
             if (!snapshot || typeof snapshot !== 'object')
                 return snapshot;
@@ -1217,6 +1471,7 @@ export class ThreeRenderDelegateCore {
         if (!truth) {
             let cxxSnapshot = this.tryBuildRobotMetadataSnapshotFromDriver(normalizedStagePath, sortedLinkPaths, meshCountsByLinkPath);
             cxxSnapshot = mergeMissingJointCatalogEntriesFromDriver(cxxSnapshot);
+            cxxSnapshot = mergeSyntheticSemanticChildLinkMetadata(cxxSnapshot);
             if (cxxSnapshot) {
                 const cxxLinkParentCount = Array.isArray(cxxSnapshot.linkParentPairs)
                     ? cxxSnapshot.linkParentPairs.length
@@ -1630,10 +1885,15 @@ export class ThreeRenderDelegateCore {
         if (truth) {
             metadataSource = 'urdf-truth';
         }
-        else if (jointCatalogEntries.length > 0 || linkDynamicsEntries.length > 0 || linkParentPairs.length > 0) {
+        else if (
+            jointCatalogEntries.length > 0
+            || linkDynamicsEntries.length > 0
+            || linkParentPairs.length > 0
+            || syntheticSemanticChildParentPathByChildLinkPath.size > 0
+        ) {
             metadataSource = 'usd-stage';
         }
-        return {
+        return mergeSyntheticSemanticChildLinkMetadata({
             stageSourcePath: normalizedStagePath,
             generatedAtMs: this._nowPerfMs(),
             source: metadataSource,
@@ -1641,7 +1901,7 @@ export class ThreeRenderDelegateCore {
             jointCatalogEntries,
             linkDynamicsEntries,
             meshCountsByLinkPath,
-        };
+        });
     }
     startRobotMetadataWarmupForStage(stageSourcePathOrOptions = null, maybeOptions = null) {
         let stageSourcePath = null;
@@ -1736,7 +1996,10 @@ export class ThreeRenderDelegateCore {
                         && (!Array.isArray(snapshot.linkDynamicsEntries) || snapshot.linkDynamicsEntries.length <= 0))));
             if (needsUrdfTruth) {
                 const truthPromise = this.startUrdfTruthLoadForStage(normalizedStagePath);
-                const truth = truthPromise ? await truthPromise.catch(() => null) : null;
+                const truth = truthPromise ? await truthPromise.catch((error) => {
+                    rawConsoleWarn?.('[HydraDelegate] Failed to load URDF truth snapshot; continuing without URDF fallback context.', error);
+                    return null;
+                }) : null;
                 if (!skipIdleWait) {
                     await waitForIdleSlice({ minBudgetMs: 4, maxPasses: 6, timeoutMs: 420 });
                 }
@@ -1792,7 +2055,8 @@ export class ThreeRenderDelegateCore {
         try {
             return await loadPromise;
         }
-        catch {
+        catch (error) {
+            rawConsoleWarn?.('[HydraDelegate] URDF truth prefetch failed; continuing without prefetched truth data.', error);
             return null;
         }
     }
@@ -1822,7 +2086,10 @@ export class ThreeRenderDelegateCore {
             const text = await response.text();
             return parseUrdfTruthFromText(text);
         })
-            .catch(() => null)
+            .catch((error) => {
+            rawConsoleWarn?.(`[HydraDelegate] Failed to fetch URDF truth file "${urdfFileName}" for stage "${normalizedStagePath}".`, error);
+            return null;
+        })
             .then((truth) => {
             this._urdfTruthByStageSource.set(normalizedStagePath, truth || null);
             return truth || null;

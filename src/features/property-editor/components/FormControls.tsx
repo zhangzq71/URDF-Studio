@@ -16,17 +16,17 @@ import {
 } from '../constants';
 
 export const PROPERTY_EDITOR_PANEL_EYEBROW_CLASS =
-  'text-[9px] font-bold uppercase tracking-[0.14em] text-text-tertiary';
+  'ui-static-copy-guard text-[9px] font-bold uppercase tracking-[0.14em] text-text-tertiary';
 export const PROPERTY_EDITOR_PANEL_TITLE_CLASS =
-  'text-[11px] font-semibold leading-4 text-text-primary';
+  'ui-static-copy-guard text-[11px] font-semibold leading-4 text-text-primary';
 export const PROPERTY_EDITOR_SECTION_TITLE_CLASS =
-  'text-[10px] font-semibold leading-4 text-text-primary';
+  'ui-static-copy-guard text-[10px] font-semibold leading-4 text-text-primary';
 export const PROPERTY_EDITOR_FIELD_LABEL_CLASS =
-  'block text-[9px] font-semibold uppercase tracking-[0.1em] leading-4 text-text-tertiary';
+  'ui-static-copy-guard block text-[9px] font-semibold uppercase tracking-[0.1em] leading-4 text-text-tertiary';
 export const PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS =
-  'shrink-0 text-[9px] font-semibold leading-4 text-text-tertiary';
+  'ui-static-copy-guard shrink-0 text-[9px] font-semibold leading-4 text-text-tertiary';
 export const PROPERTY_EDITOR_SUBLABEL_CLASS =
-  'text-[9px] font-semibold leading-4 text-text-tertiary';
+  'ui-static-copy-guard text-[9px] font-semibold leading-4 text-text-tertiary';
 export const PROPERTY_EDITOR_HELPER_TEXT_CLASS =
   'text-[9px] leading-4 text-text-tertiary';
 export const PROPERTY_EDITOR_INPUT_CLASS =
@@ -37,7 +37,7 @@ export const PROPERTY_EDITOR_SELECT_CLASS = `${PROPERTY_EDITOR_INPUT_CLASS} pr-7
 export const PROPERTY_EDITOR_COMPACT_INPUT_CLASS =
   'h-6 w-full rounded-md border border-border-strong bg-input-bg px-1.5 text-[10px] leading-4 text-text-primary focus:outline-none focus:border-system-blue focus:ring-2 focus:ring-system-blue/25';
 export const PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS =
-  'inline-flex h-6 shrink-0 items-center justify-center text-[9px] font-semibold leading-none text-text-tertiary';
+  'ui-static-copy-guard inline-flex h-6 shrink-0 items-center justify-center text-[9px] font-semibold leading-none text-text-tertiary';
 export const PROPERTY_EDITOR_NUMBER_FIELD_SHELL_CLASS =
   'flex h-[22px] w-full items-stretch overflow-hidden rounded-md border border-border-strong bg-input-bg text-text-primary transition-colors focus-within:border-system-blue focus-within:ring-2 focus-within:ring-system-blue/25';
 export const PROPERTY_EDITOR_COMPACT_NUMBER_FIELD_SHELL_CLASS =
@@ -49,7 +49,7 @@ export const PROPERTY_EDITOR_STEPPER_BUTTON_CLASS =
 export const PROPERTY_EDITOR_SECTION_TRIGGER_CLASS =
   'w-full flex items-center justify-between px-2 py-1 bg-element-bg hover:bg-element-hover transition-colors text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary';
 export const PROPERTY_EDITOR_SECTION_HEADER_CLASS =
-  'px-2 py-1 bg-element-bg text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary';
+  'ui-static-copy-guard px-2 py-1 bg-element-bg text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary';
 export const PROPERTY_EDITOR_LINK_CLASS =
   'inline-flex items-center gap-1 text-[10px] font-medium text-system-blue hover:text-system-blue-hover transition-colors';
 export const PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS =
@@ -365,24 +365,19 @@ const clampNumberToBounds = (
   return nextValue;
 };
 
-const isTransientNumericDraft = (value: string): boolean => {
-  const trimmed = value.trim();
-  return (
-    trimmed === ''
-    || trimmed === '-'
-    || trimmed === '+'
-    || trimmed === '.'
-    || trimmed === '-.'
-    || trimmed === '+.'
-  );
-};
+type NumberInputDisplayFormatter = (value: number) => string;
+type NumberInputDisplayParser = (value: string) => number | null;
 
 const useNumberInputController = ({
   value,
   onChange,
   step,
   precision,
+  commitPrecision = precision,
   trimTrailingZeros,
+  minimumIntegerDigits = 1,
+  formatDisplayValue,
+  parseDisplayValue,
   min,
   max,
   inputRef,
@@ -392,7 +387,11 @@ const useNumberInputController = ({
   onChange: (val: number) => void;
   step: number;
   precision: number;
+  commitPrecision?: number;
   trimTrailingZeros: boolean;
+  minimumIntegerDigits?: number;
+  formatDisplayValue?: NumberInputDisplayFormatter;
+  parseDisplayValue?: NumberInputDisplayParser;
   min?: number;
   max?: number;
   inputRef: React.RefObject<HTMLInputElement | null>;
@@ -403,13 +402,30 @@ const useNumberInputController = ({
       return '';
     }
 
+    if (formatDisplayValue) {
+      return formatDisplayValue(nextValue ?? 0);
+    }
+
     const roundedValue = roundToMaxDecimals(nextValue ?? 0, precision);
+
     if (trimTrailingZeros) {
       return formatNumberWithMaxDecimals(roundedValue, precision) || '0';
     }
 
-    return roundedValue.toFixed(precision);
-  }, [precision, trimTrailingZeros]);
+    const fixedValue = roundedValue.toFixed(precision);
+    const isNegative = fixedValue.startsWith('-');
+    const unsignedValue = isNegative ? fixedValue.slice(1) : fixedValue;
+    const [integerPart, decimalPart] = unsignedValue.split('.');
+    const paddedIntegerPart = integerPart.padStart(minimumIntegerDigits, '0');
+    return `${isNegative ? '-' : ''}${paddedIntegerPart}${decimalPart !== undefined ? `.${decimalPart}` : ''}`;
+  }, [formatDisplayValue, minimumIntegerDigits, precision, trimTrailingZeros]);
+  const parseValue = useCallback((nextDraftValue: string) => {
+    const parsedValue = parseDisplayValue
+      ? parseDisplayValue(nextDraftValue)
+      : Number.parseFloat(nextDraftValue);
+
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  }, [parseDisplayValue]);
   const [localValue, setLocalValue] = useState<string>(() => formatValue(value ?? 0));
   const valueRef = useRef<number>(value ?? 0);
   const latestCommittedValueRef = useRef<number>(value ?? 0);
@@ -432,10 +448,10 @@ const useNumberInputController = ({
     nextValue: number,
     options?: { preserveDraftDisplay?: boolean },
   ) => {
-    const roundedInput = roundToMaxDecimals(nextValue, precision);
+    const roundedInput = roundToMaxDecimals(nextValue, commitPrecision);
     const normalizedValue = roundToMaxDecimals(
       clampNumberToBounds(roundedInput, min, max),
-      precision,
+      commitPrecision,
     );
     const formattedValue = formatValue(normalizedValue);
 
@@ -456,7 +472,7 @@ const useNumberInputController = ({
       normalizedValue,
       wasClamped: normalizedValue !== roundedInput,
     };
-  }, [formatValue, max, min, onChange, precision]);
+  }, [commitPrecision, formatValue, max, min, onChange]);
 
   const revertToCommittedValue = useCallback(() => {
     const formattedValue = formatValue(valueRef.current);
@@ -465,23 +481,23 @@ const useNumberInputController = ({
   }, [formatValue]);
 
   const handleBlur = useCallback(() => {
-    const parsed = parseFloat(draftValueRef.current);
-    if (Number.isFinite(parsed)) {
+    const parsed = parseValue(draftValueRef.current);
+    if (parsed !== null) {
       commitValue(parsed);
       return;
     }
 
     revertToCommittedValue();
-  }, [commitValue, revertToCommittedValue]);
+  }, [commitValue, parseValue, revertToCommittedValue]);
 
   const applyStep = useCallback((direction: 1 | -1) => {
     collapseInputSelection();
-    const parsed = parseFloat(draftValueRef.current);
-    const baseValue = Number.isFinite(parsed)
+    const parsed = parseValue(draftValueRef.current);
+    const baseValue = parsed !== null
       ? clampNumberToBounds(parsed, min, max)
       : latestCommittedValueRef.current;
     commitValue(baseValue + direction * step);
-  }, [collapseInputSelection, commitValue, max, min, step]);
+  }, [collapseInputSelection, commitValue, max, min, parseValue, step]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -506,12 +522,8 @@ const useNumberInputController = ({
     draftValueRef.current = nextDraftValue;
     setLocalValue(nextDraftValue);
 
-    if (isTransientNumericDraft(nextDraftValue)) {
-      return;
-    }
-
-    const parsed = parseFloat(nextDraftValue);
-    if (!Number.isFinite(parsed)) {
+    const parsed = parseValue(nextDraftValue);
+    if (parsed === null) {
       return;
     }
 
@@ -523,7 +535,7 @@ const useNumberInputController = ({
       draftValueRef.current = formattedValue;
       setLocalValue(formattedValue);
     }
-  }, [commitValue]);
+  }, [commitValue, parseValue]);
 
   return {
     applyStep,
@@ -542,7 +554,11 @@ export const NumberInput = ({
   step = 0.1,
   compact = false,
   precision = MAX_PROPERTY_DECIMALS,
+  commitPrecision,
   trimTrailingZeros = true,
+  minimumIntegerDigits,
+  formatDisplayValue,
+  parseDisplayValue,
   min,
   max,
   repeatIntervalMs,
@@ -554,7 +570,11 @@ export const NumberInput = ({
   step?: number,
   compact?: boolean,
   precision?: number,
+  commitPrecision?: number,
   trimTrailingZeros?: boolean,
+  minimumIntegerDigits?: number,
+  formatDisplayValue?: NumberInputDisplayFormatter,
+  parseDisplayValue?: NumberInputDisplayParser,
   min?: number,
   max?: number,
   repeatIntervalMs?: number,
@@ -577,7 +597,11 @@ export const NumberInput = ({
     onChange,
     step,
     precision,
+    commitPrecision,
     trimTrailingZeros,
+    minimumIntegerDigits,
+    formatDisplayValue,
+    parseDisplayValue,
     min,
     max,
     inputRef,
@@ -605,7 +629,7 @@ export const NumberInput = ({
           onPointerDown={handleInputPointerDown}
           onPointerUp={clearPointerFocusIntent}
           onPointerCancel={clearPointerFocusIntent}
-          className={`min-w-0 flex-1 bg-transparent leading-4 text-text-primary outline-none ${
+          className={`min-w-0 flex-1 bg-transparent leading-4 text-text-primary tabular-nums outline-none ${
             compact ? 'px-1.5 text-[10px]' : 'px-1.5 text-[10px]'
           }`}
         />
@@ -641,14 +665,18 @@ export interface Vec3Value {
   p?: number;
 }
 
-const InlineNumberInput = ({
+export const InlineNumberInput = ({
   value,
   onChange,
   label,
   step = 0.1,
   compact = false,
   precision = MAX_PROPERTY_DECIMALS,
+  commitPrecision,
   trimTrailingZeros = true,
+  minimumIntegerDigits,
+  formatDisplayValue,
+  parseDisplayValue,
   min,
   max,
   repeatIntervalMs,
@@ -659,7 +687,11 @@ const InlineNumberInput = ({
   step?: number,
   compact?: boolean,
   precision?: number,
+  commitPrecision?: number,
   trimTrailingZeros?: boolean,
+  minimumIntegerDigits?: number,
+  formatDisplayValue?: NumberInputDisplayFormatter,
+  parseDisplayValue?: NumberInputDisplayParser,
   min?: number,
   max?: number,
   repeatIntervalMs?: number,
@@ -682,7 +714,11 @@ const InlineNumberInput = ({
     onChange,
     step,
     precision,
+    commitPrecision,
     trimTrailingZeros,
+    minimumIntegerDigits,
+    formatDisplayValue,
+    parseDisplayValue,
     min,
     max,
     inputRef,
@@ -710,7 +746,7 @@ const InlineNumberInput = ({
           onPointerUp={clearPointerFocusIntent}
           onPointerCancel={clearPointerFocusIntent}
           aria-label={label}
-          className={`min-w-0 flex-1 bg-transparent leading-4 text-text-primary outline-none ${
+          className={`min-w-0 flex-1 bg-transparent leading-4 text-text-primary tabular-nums outline-none ${
             compact ? 'px-1.5 text-[10px]' : 'px-1.5 text-[10px]'
           }`}
         />
@@ -742,7 +778,11 @@ export const AxisNumberGridInput = <T extends string>({
   labelPlacement = 'stacked',
   step,
   precision = MAX_PROPERTY_DECIMALS,
+  commitPrecision,
   trimTrailingZeros = true,
+  minimumIntegerDigits,
+  formatDisplayValue,
+  parseDisplayValue,
   repeatIntervalMs,
 }: {
   value: Partial<Record<T, number>>;
@@ -753,7 +793,11 @@ export const AxisNumberGridInput = <T extends string>({
   labelPlacement?: 'stacked' | 'inline';
   step?: number;
   precision?: number;
+  commitPrecision?: number;
   trimTrailingZeros?: boolean;
+  minimumIntegerDigits?: number;
+  formatDisplayValue?: NumberInputDisplayFormatter;
+  parseDisplayValue?: NumberInputDisplayParser;
   repeatIntervalMs?: number;
 }) => {
   if (labelPlacement === 'inline') {
@@ -775,7 +819,11 @@ export const AxisNumberGridInput = <T extends string>({
                 compact={compact}
                 step={step}
                 precision={precision}
+                commitPrecision={commitPrecision}
                 trimTrailingZeros={trimTrailingZeros}
+                minimumIntegerDigits={minimumIntegerDigits}
+                formatDisplayValue={formatDisplayValue}
+                parseDisplayValue={parseDisplayValue}
                 repeatIntervalMs={repeatIntervalMs}
               />
             </div>
@@ -810,7 +858,11 @@ export const AxisNumberGridInput = <T extends string>({
             compact={compact}
             step={step}
             precision={precision}
+            commitPrecision={commitPrecision}
             trimTrailingZeros={trimTrailingZeros}
+            minimumIntegerDigits={minimumIntegerDigits}
+            formatDisplayValue={formatDisplayValue}
+            parseDisplayValue={parseDisplayValue}
             repeatIntervalMs={repeatIntervalMs}
           />
         ))}

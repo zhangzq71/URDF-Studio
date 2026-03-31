@@ -98,3 +98,66 @@ test('importProject fails fast when robot history is missing', async () => {
     /missing required history snapshot/i,
   );
 });
+
+test('importProject preserves blob-backed USD library files even when their inline source is empty', async () => {
+  const robot = createDemoRobot();
+  const sourcePath = 'robots/demo/demo.urdf';
+  const sourceContent = '<robot name="demo"><link name="base_link" /></robot>';
+  const usdPath = 'unitree_model/Go2/usd/configuration/go2_description_sensor.usd';
+
+  const exportResult = await exportProject({
+    name: 'demo_project_with_usd_dependency',
+    uiState: {
+      appMode: 'detail',
+      lang: 'en',
+    },
+    assetsState: {
+      availableFiles: [
+        {
+          name: sourcePath,
+          format: 'urdf',
+          content: sourceContent,
+        },
+        {
+          name: usdPath,
+          format: 'usd',
+          content: '',
+        },
+      ],
+      assets: {
+        [usdPath]: 'data:application/octet-stream;base64,U0VOU09S',
+      },
+      allFileContents: {
+        [sourcePath]: sourceContent,
+      },
+      motorLibrary: {},
+      selectedFileName: sourcePath,
+      originalUrdfContent: sourceContent,
+      originalFileFormat: 'urdf',
+      usdPreparedExportCaches: {},
+    },
+    robotState: {
+      present: robot,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    assemblyState: {
+      present: null,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    getMergedRobotData: () => robot,
+  });
+
+  assert.equal(exportResult.partial, false);
+
+  const imported = await importProject(
+    new Uint8Array(await exportResult.blob.arrayBuffer()) as unknown as File,
+    'en',
+  );
+
+  const importedUsdFile = imported.availableFiles.find((file) => file.name === usdPath);
+  assert.ok(importedUsdFile, 'expected blob-backed USD dependency to roundtrip through project import');
+  assert.equal(importedUsdFile.content, '');
+  assert.match(importedUsdFile.blobUrl ?? '', /^blob:/);
+});

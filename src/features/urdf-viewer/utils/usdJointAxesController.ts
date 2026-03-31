@@ -104,6 +104,12 @@ export class UsdJointAxesController {
         new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z),
         jointAxisSize,
       );
+      axisVisual.userData = {
+        ...axisVisual.userData,
+        viewerHelperKind: 'joint-axis',
+        usdJointId: jointId,
+        usdLinkPath: childLinkPath,
+      };
       applyOverlayMaterialState(axisVisual, overlay);
 
       const jointLocalMatrix = new THREE.Matrix4().compose(

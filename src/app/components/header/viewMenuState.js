@@ -1,6 +1,6 @@
 /**
  * @typedef {import('./types').HeaderViewConfig} HeaderViewConfig
- * @typedef {'showToolbar' | 'showOptionsPanel' | 'showSkeletonOptionsPanel' | 'showJointPanel'} ViewConfigKey
+ * @typedef {'showToolbar' | 'showOptionsPanel' | 'showVisualizerOptionsPanel' | 'showJointPanel'} ViewConfigKey
  */
 
 /**
@@ -20,5 +20,26 @@ export function ensureViewPanelVisible(current, key) {
   return {
     ...current,
     [key]: true,
+  };
+}
+
+/**
+ * In the merged-mode workspace, view options are no longer scene-specific.
+ * Opening the options entry should expose both the viewer and visualizer
+ * option panels so the user never needs to think about which runtime owns
+ * the current canvas.
+ *
+ * @param {HeaderViewConfig} current
+ * @returns {HeaderViewConfig}
+ */
+export function ensureOptionsPanelsVisible(current) {
+  if (current.showOptionsPanel && current.showVisualizerOptionsPanel) {
+    return current;
+  }
+
+  return {
+    ...current,
+    showOptionsPanel: true,
+    showVisualizerOptionsPanel: true,
   };
 }

@@ -9,6 +9,7 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
   const joints: RobotData['joints'] = {};
   const materials: RobotData['materials'] = {};
   const closedLoopConstraints: RobotClosedLoopConstraint[] = [];
+  const componentVersions = new Set<string>();
   let rootLinkId = '';
 
   const comps = Object.values(assembly.components).filter(c => c.visible !== false);
@@ -24,6 +25,10 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
 
   // 1. Merge all component links/joints (already prefixed)
   for (const comp of comps) {
+    const version = comp.robot.version?.trim();
+    if (version) {
+      componentVersions.add(version);
+    }
     for (const [id, link] of Object.entries(comp.robot.links)) {
       links[id] = { ...link };
     }
@@ -69,6 +74,7 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
 
   return {
     name: assembly.name,
+    ...(componentVersions.size === 1 ? { version: Array.from(componentVersions)[0] } : {}),
     links,
     joints,
     rootLinkId,

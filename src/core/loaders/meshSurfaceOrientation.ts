@@ -3,7 +3,8 @@ import * as THREE from 'three';
 const ORIENTATION_EPSILON = 1e-9;
 const THIN_SHEET_RATIO = 0.02;
 const BOUNDS_EPSILON = 1e-6;
-const MAX_AUTO_REPAIR_INWARD_RATIO = 0.2;
+const WELD_POSITION_PRECISION = 1e-8;
+const SIGNED_VOLUME_EPSILON = 1e-12;
 
 function swapAttributeElements(
   attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
@@ -50,167 +51,241 @@ function swapTriangleVerticesInIndexedGeometry(
   index.needsUpdate = true;
 }
 
-function computeGeometryCentroid(geometry: THREE.BufferGeometry): THREE.Vector3 | null {
-  const position = geometry.getAttribute('position');
-  if (!(position instanceof THREE.BufferAttribute) && !(position instanceof THREE.InterleavedBufferAttribute)) {
-    return null;
-  }
+interface TopologyFaceRecord {
+  adjacentFaces: Array<{
+    sameDirection: boolean;
+    targetFaceIndex: number;
+  }>;
+  originalTriangleOffset: number;
+  signedVolumeContribution: number;
+  valid: boolean;
+}
 
-  if (position.count <= 0) {
-    return null;
-  }
-
-  const centroid = new THREE.Vector3();
+function buildWeldedVertexIndices(
+  position: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+): { vertexIndices: number[]; weldedVertices: THREE.Vector3[] } {
+  const weldedVertices: THREE.Vector3[] = [];
+  const weldedIndexByKey = new Map<string, number>();
+  const vertexIndices = new Array<number>(position.count);
   const vertex = new THREE.Vector3();
 
-  for (let index = 0; index < position.count; index += 1) {
-    vertex.fromBufferAttribute(position, index);
-    centroid.add(vertex);
-  }
+  for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex += 1) {
+    vertex.fromBufferAttribute(position, vertexIndex);
+    const key = [
+      Math.round(vertex.x / WELD_POSITION_PRECISION),
+      Math.round(vertex.y / WELD_POSITION_PRECISION),
+      Math.round(vertex.z / WELD_POSITION_PRECISION),
+    ].join('|');
 
-  return centroid.multiplyScalar(1 / position.count);
-}
-
-interface GeometrySurfaceOrientationAnalysis {
-  inwardTriangleCount: number;
-  validTriangleCount: number;
-}
-
-function analyzeGeometrySurfaceOrientation(
-  geometry: THREE.BufferGeometry,
-): GeometrySurfaceOrientationAnalysis | null {
-  const position = geometry.getAttribute('position');
-  if (!(position instanceof THREE.BufferAttribute) && !(position instanceof THREE.InterleavedBufferAttribute)) {
-    return null;
-  }
-
-  const centroid = computeGeometryCentroid(geometry);
-  if (!centroid) {
-    return null;
-  }
-
-  const index = geometry.getIndex();
-  const triangleVertexCount = index ? index.count : position.count;
-  if (!Number.isFinite(triangleVertexCount) || triangleVertexCount < 3) {
-    return null;
-  }
-
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
-  const ab = new THREE.Vector3();
-  const ac = new THREE.Vector3();
-  const normal = new THREE.Vector3();
-  const faceCenter = new THREE.Vector3();
-  let inwardTriangleCount = 0;
-  let validTriangleCount = 0;
-
-  for (let triangleOffset = 0; triangleOffset <= triangleVertexCount - 3; triangleOffset += 3) {
-    const ia = index ? index.getX(triangleOffset) : triangleOffset;
-    const ib = index ? index.getX(triangleOffset + 1) : triangleOffset + 1;
-    const ic = index ? index.getX(triangleOffset + 2) : triangleOffset + 2;
-
-    a.fromBufferAttribute(position, ia);
-    b.fromBufferAttribute(position, ib);
-    c.fromBufferAttribute(position, ic);
-
-    ab.subVectors(b, a);
-    ac.subVectors(c, a);
-    normal.crossVectors(ab, ac);
-    if (normal.lengthSq() <= ORIENTATION_EPSILON) {
-      continue;
+    let weldedIndex = weldedIndexByKey.get(key);
+    if (weldedIndex == null) {
+      weldedIndex = weldedVertices.length;
+      weldedVertices.push(vertex.clone());
+      weldedIndexByKey.set(key, weldedIndex);
     }
 
-    faceCenter.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-    const outwardHint = faceCenter.sub(centroid);
-    if (outwardHint.lengthSq() <= ORIENTATION_EPSILON) {
-      continue;
-    }
-
-    validTriangleCount += 1;
-    if (normal.dot(outwardHint) < -ORIENTATION_EPSILON) {
-      inwardTriangleCount += 1;
-    }
+    vertexIndices[vertexIndex] = weldedIndex;
   }
 
   return {
-    inwardTriangleCount,
-    validTriangleCount,
+    vertexIndices,
+    weldedVertices,
   };
 }
 
-function fixGeometryTriangleWinding(geometry: THREE.BufferGeometry): number {
-  const analysis = analyzeGeometrySurfaceOrientation(geometry);
-  if (!analysis || analysis.inwardTriangleCount <= 0 || analysis.validTriangleCount <= 0) {
-    return 0;
-  }
+function computeSignedTriangleVolume(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  c: THREE.Vector3,
+): number {
+  return a.dot(new THREE.Vector3().crossVectors(b, c)) / 6;
+}
 
-  const inwardTriangleRatio = analysis.inwardTriangleCount / analysis.validTriangleCount;
-  // Open shell meshes can legitimately place a large share of faces "behind" the
-  // geometry centroid. In that case the centroid heuristic becomes unreliable and
-  // causes false culling on single-sided materials, so only repair small pockets
-  // of obviously inverted triangles.
-  if (inwardTriangleRatio > MAX_AUTO_REPAIR_INWARD_RATIO) {
-    return 0;
-  }
+function createFaceEdgeKey(left: number, right: number): string {
+  return left < right ? `${left}:${right}` : `${right}:${left}`;
+}
 
+function buildTopologyFaceRecords(geometry: THREE.BufferGeometry): TopologyFaceRecord[] | null {
   const position = geometry.getAttribute('position');
   if (!(position instanceof THREE.BufferAttribute) && !(position instanceof THREE.InterleavedBufferAttribute)) {
-    return 0;
-  }
-
-  const centroid = computeGeometryCentroid(geometry);
-  if (!centroid) {
-    return 0;
+    return null;
   }
 
   const index = geometry.getIndex();
   const triangleVertexCount = index ? index.count : position.count;
   if (!Number.isFinite(triangleVertexCount) || triangleVertexCount < 3) {
-    return 0;
+    return null;
   }
 
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
+  const { vertexIndices, weldedVertices } = buildWeldedVertexIndices(position);
+  const faceRecords: TopologyFaceRecord[] = [];
+  const edgeUsages = new Map<string, Array<{ edge: [number, number]; faceIndex: number }>>();
   const ab = new THREE.Vector3();
   const ac = new THREE.Vector3();
   const normal = new THREE.Vector3();
-  const faceCenter = new THREE.Vector3();
-  let flippedTriangleCount = 0;
 
   for (let triangleOffset = 0; triangleOffset <= triangleVertexCount - 3; triangleOffset += 3) {
     const ia = index ? index.getX(triangleOffset) : triangleOffset;
     const ib = index ? index.getX(triangleOffset + 1) : triangleOffset + 1;
     const ic = index ? index.getX(triangleOffset + 2) : triangleOffset + 2;
+    const weldedA = vertexIndices[ia]!;
+    const weldedB = vertexIndices[ib]!;
+    const weldedC = vertexIndices[ic]!;
+    const a = weldedVertices[weldedA]!;
+    const b = weldedVertices[weldedB]!;
+    const c = weldedVertices[weldedC]!;
 
-    a.fromBufferAttribute(position, ia);
-    b.fromBufferAttribute(position, ib);
-    c.fromBufferAttribute(position, ic);
+    let valid = weldedA !== weldedB && weldedB !== weldedC && weldedC !== weldedA;
+    if (valid) {
+      ab.subVectors(b, a);
+      ac.subVectors(c, a);
+      normal.crossVectors(ab, ac);
+      valid = normal.lengthSq() > ORIENTATION_EPSILON;
+    }
 
-    ab.subVectors(b, a);
-    ac.subVectors(c, a);
-    normal.crossVectors(ab, ac);
-    if (normal.lengthSq() <= ORIENTATION_EPSILON) {
+    const faceIndex = faceRecords.length;
+    faceRecords.push({
+      adjacentFaces: [],
+      originalTriangleOffset: triangleOffset,
+      signedVolumeContribution: valid ? computeSignedTriangleVolume(a, b, c) : 0,
+      valid,
+    });
+
+    if (!valid) {
       continue;
     }
 
-    faceCenter.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-    const outwardHint = faceCenter.sub(centroid);
-    if (outwardHint.lengthSq() <= ORIENTATION_EPSILON) {
+    const orientedEdges: Array<[number, number]> = [
+      [weldedA, weldedB],
+      [weldedB, weldedC],
+      [weldedC, weldedA],
+    ];
+
+    orientedEdges.forEach((edge) => {
+      const key = createFaceEdgeKey(edge[0], edge[1]);
+      const existing = edgeUsages.get(key);
+      if (existing) {
+        existing.push({ edge, faceIndex });
+      } else {
+        edgeUsages.set(key, [{ edge, faceIndex }]);
+      }
+    });
+  }
+
+  edgeUsages.forEach((usages) => {
+    if (usages.length !== 2) {
+      usages.forEach(({ faceIndex }) => {
+        faceRecords[faceIndex]!.valid = false;
+      });
+      return;
+    }
+
+    const [leftUsage, rightUsage] = usages;
+    const sameDirection = leftUsage.edge[0] === rightUsage.edge[0]
+      && leftUsage.edge[1] === rightUsage.edge[1];
+
+    faceRecords[leftUsage.faceIndex]!.adjacentFaces.push({
+      sameDirection,
+      targetFaceIndex: rightUsage.faceIndex,
+    });
+    faceRecords[rightUsage.faceIndex]!.adjacentFaces.push({
+      sameDirection,
+      targetFaceIndex: leftUsage.faceIndex,
+    });
+  });
+
+  return faceRecords;
+}
+
+function fixGeometryTriangleWinding(geometry: THREE.BufferGeometry): number {
+  const faceRecords = buildTopologyFaceRecords(geometry);
+  if (!faceRecords || faceRecords.length === 0) {
+    return 0;
+  }
+
+  const triangleFlipStates = new Array<boolean | null>(faceRecords.length).fill(null);
+  const visited = new Array<boolean>(faceRecords.length).fill(false);
+  let flippedTriangleCount = 0;
+
+  for (let startFaceIndex = 0; startFaceIndex < faceRecords.length; startFaceIndex += 1) {
+    if (visited[startFaceIndex] || !faceRecords[startFaceIndex]!.valid) {
       continue;
     }
 
-    if (normal.dot(outwardHint) >= -ORIENTATION_EPSILON) {
+    const componentFaceIndices: number[] = [];
+    const pending = [startFaceIndex];
+    triangleFlipStates[startFaceIndex] = false;
+    let componentSignedVolume = 0;
+    let componentValid = true;
+
+    while (pending.length > 0) {
+      const faceIndex = pending.pop()!;
+      if (visited[faceIndex]) {
+        continue;
+      }
+
+      const faceRecord = faceRecords[faceIndex]!;
+      if (!faceRecord.valid) {
+        componentValid = false;
+        continue;
+      }
+
+      visited[faceIndex] = true;
+      componentFaceIndices.push(faceIndex);
+      const currentFlipState = triangleFlipStates[faceIndex] ?? false;
+      componentSignedVolume += currentFlipState
+        ? -faceRecord.signedVolumeContribution
+        : faceRecord.signedVolumeContribution;
+
+      for (const adjacentFace of faceRecord.adjacentFaces) {
+        const nextFlipState = adjacentFace.sameDirection
+          ? !currentFlipState
+          : currentFlipState;
+
+        if (visited[adjacentFace.targetFaceIndex]) {
+          if (triangleFlipStates[adjacentFace.targetFaceIndex] !== nextFlipState) {
+            componentValid = false;
+          }
+          continue;
+        }
+
+        if (triangleFlipStates[adjacentFace.targetFaceIndex] != null) {
+          if (triangleFlipStates[adjacentFace.targetFaceIndex] !== nextFlipState) {
+            componentValid = false;
+          }
+        } else {
+          triangleFlipStates[adjacentFace.targetFaceIndex] = nextFlipState;
+          pending.push(adjacentFace.targetFaceIndex);
+        }
+      }
+    }
+
+    if (!componentValid) {
+      componentFaceIndices.forEach((faceIndex) => {
+        triangleFlipStates[faceIndex] = null;
+      });
       continue;
     }
 
-    if (index) {
-      swapTriangleVerticesInIndexedGeometry(geometry, triangleOffset);
-    } else {
-      swapTriangleVerticesInNonIndexedGeometry(geometry, triangleOffset + 1, triangleOffset + 2);
-    }
-    flippedTriangleCount += 1;
+    const invertComponent = componentSignedVolume < -SIGNED_VOLUME_EPSILON;
+    componentFaceIndices.forEach((faceIndex) => {
+      const currentFlipState = triangleFlipStates[faceIndex] ?? false;
+      const shouldFlip = invertComponent
+        ? !currentFlipState
+        : currentFlipState;
+      triangleFlipStates[faceIndex] = shouldFlip;
+      if (!shouldFlip) {
+        return;
+      }
+
+      const triangleOffset = faceRecords[faceIndex]!.originalTriangleOffset;
+      if (geometry.getIndex()) {
+        swapTriangleVerticesInIndexedGeometry(geometry, triangleOffset);
+      } else {
+        swapTriangleVerticesInNonIndexedGeometry(geometry, triangleOffset + 1, triangleOffset + 2);
+      }
+      flippedTriangleCount += 1;
+    });
   }
 
   if (flippedTriangleCount > 0) {

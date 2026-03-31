@@ -5,9 +5,15 @@ import {
   createLoadingManager,
   createMeshLoader,
   buildColladaRootNormalizationHints,
+  findAssetByPath,
   isCoplanarOffsetMaterial,
+  postProcessColladaScene,
 } from '@/core/loaders';
 import { collectExplicitlyScaledMeshPaths } from '@/core/loaders/meshScaleHints';
+import {
+  createSceneFromSerializedColladaData,
+  parseColladaSceneData,
+} from '@/core/loaders/colladaWorkerSceneData';
 import { normalizeMeshPathForExport } from '@/core/parsers/meshPathUtils';
 import { getVisualGeometryEntries } from '@/core/robot';
 import { GeometryType, type RobotState } from '@/types';
@@ -989,6 +995,43 @@ function getInlineMeshBlob(
   return null;
 }
 
+function shouldParseColladaInProcessForMjcfExport(meshPath: string): boolean {
+  return /\.dae$/i.test(meshPath)
+    && typeof Worker === 'undefined'
+    && typeof window === 'undefined';
+}
+
+async function loadColladaMeshInProcessForMjcfExport(
+  meshPath: string,
+  assets: Record<string, string>,
+  manager: THREE.LoadingManager,
+  explicitScaleMeshPaths: ReadonlySet<string>,
+): Promise<THREE.Object3D> {
+  const assetUrl = findAssetByPath(meshPath, assets, '');
+  if (!assetUrl) {
+    throw new Error(`Mesh asset could not be resolved for ${meshPath}`);
+  }
+
+  const response = await fetch(assetUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Collada asset: ${response.status} ${response.statusText}`);
+  }
+
+  const colladaText = await response.text();
+  const serializedScene = parseColladaSceneData(colladaText, assetUrl);
+  const scene = createSceneFromSerializedColladaData(serializedScene, { manager });
+  const maxDimension = postProcessColladaScene(scene);
+  const normalizedMeshPath = normalizeMeshPathForExport(meshPath);
+  const hasExplicitScale = explicitScaleMeshPaths.has(meshPath)
+    || Boolean(normalizedMeshPath && explicitScaleMeshPaths.has(normalizedMeshPath));
+
+  if (!hasExplicitScale && maxDimension > 10) {
+    scene.scale.setScalar(0.001);
+  }
+
+  return scene;
+}
+
 async function hashMeshBytes(bytes: Uint8Array): Promise<string> {
   if (globalThis.crypto?.subtle) {
     const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
@@ -1119,16 +1162,23 @@ export async function prepareMjcfMeshExportAssets(
       }
 
       try {
-        const meshObject = await new Promise<any>((resolve, reject) => {
-          loadMesh(meshPath, loadingManager, (result, err) => {
-            if (err) {
-              reject(err);
-              return;
-            }
+        const meshObject = shouldParseColladaInProcessForMjcfExport(meshPath)
+          ? await loadColladaMeshInProcessForMjcfExport(
+              meshPath,
+              resolvedAssets,
+              loadingManager,
+              explicitScaleMeshPaths,
+            )
+          : await new Promise<any>((resolve, reject) => {
+              loadMesh(meshPath, loadingManager, (result, err) => {
+                if (err) {
+                  reject(err);
+                  return;
+                }
 
-            resolve(result);
-          });
-        });
+                resolve(result);
+              });
+            });
 
         if (containsPlaceholderMesh(meshObject)) {
           console.error(`[MJCF export] Skipping mesh override for "${meshPath}" because the source asset resolved to a placeholder.`);

@@ -1,9 +1,8 @@
 /**
  * LinkProperties - Property editing panel for Link elements.
- * Renders different content based on the current editor mode:
- * - Skeleton: Name input
- * - Detail: Visual/Collision/Joint tabs
- * - Hardware: Joint editing for the selected link's related joints
+ * Renders the link-only editing layout shared by all editor modes:
+ * - Name input
+ * - Visual/Collision/Physics tabs
  */
 import React, { useMemo } from 'react';
 import { Eye, Box, Waypoints } from 'lucide-react';
@@ -20,17 +19,17 @@ import {
   computeLinkDensity,
 } from '@/shared/utils/inertialDerived';
 import {
+  CollapsibleSection,
   InputGroup,
   InlineInputGroup,
   NumberInput,
+  PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
   ReadonlyVectorStatHeader,
   ReadonlyVectorStatRow,
   ReadonlyValueField,
-  StaticSection,
 } from './FormControls';
 import { GeometryEditor } from './GeometryEditor';
-import { LinkJointEditor } from './LinkJointEditor';
 import { TransformFields } from './TransformFields';
 
 const DEFAULT_INERTIAL = {
@@ -109,7 +108,7 @@ interface LinkPropertiesProps {
 }
 
 export const LinkProperties: React.FC<LinkPropertiesProps> = ({
-  data, robot, mode, selection, onUpdate, motorLibrary, assets, onUploadAsset, t, lang
+  data, robot, selection, onUpdate, assets, onUploadAsset, t, lang
 }) => {
   const linkTab = useUIStore((state) => state.detailLinkTab);
   const setDetailLinkTab = useUIStore((state) => state.setDetailLinkTab);
@@ -123,6 +122,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
   };
   const inertiaTensorFields = ['ixx', 'ixy', 'ixz', 'iyy', 'iyz', 'izz'] as const;
   const diagonalInertiaLabels = ['I1', 'I2', 'I3'] as const;
+  const principalAxisLabels = ['A1', 'A2', 'A3'] as const;
   const diagonalInertiaValues = derivedInertial?.diagonalInertia ?? [
     inertial.inertia.ixx,
     inertial.inertia.iyy,
@@ -161,8 +161,12 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     </InlineInputGroup>
   );
 
-  const inertialSection = (
-    <StaticSection title={t.inertial} className="mb-2.5">
+  const inertialParametersSection = (
+    <CollapsibleSection
+      title={t.inertial}
+      className="mb-2.5"
+      storageKey="property_editor_link_inertial"
+    >
       <InlineInputGroup label={t.mass} labelWidthClassName="w-16">
         <NumberInput
           value={inertial.mass}
@@ -224,149 +228,135 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
           ))}
         </div>
       </div>
+    </CollapsibleSection>
+  );
 
-      <div className="mt-3 overflow-hidden rounded-md border border-border-black/60">
-        <div className="bg-element-bg/70 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary">
-          {t.derivedValues}
-        </div>
-        <div className="space-y-2 border-t border-border-black/60 bg-panel-bg px-1.5 py-1.5">
-          <InlineInputGroup label={densityLabel} labelWidthClassName="w-16" align="start">
-            <ReadonlyValueField>
-              {formatReadonlyNumber(densityResult.value)}
-            </ReadonlyValueField>
-          </InlineInputGroup>
+  const derivedValuesSection = (
+    <CollapsibleSection
+      title={t.derivedValues}
+      className="mb-2.5"
+      storageKey="property_editor_link_derived_values"
+    >
+      <InlineInputGroup label={densityLabel} labelWidthClassName="w-16" align="start">
+        <ReadonlyValueField>
+          {formatReadonlyNumber(densityResult.value)}
+        </ReadonlyValueField>
+      </InlineInputGroup>
 
-          <InputGroup label={t.diagonalInertia}>
-            <div className="grid grid-cols-3 gap-1">
-              {diagonalInertiaLabels.map((label, index) => (
+      <InlineInputGroup label={t.diagonalInertia} labelWidthClassName="w-16" align="start">
+        <div className="grid grid-cols-3 gap-1.5">
+          {diagonalInertiaLabels.map((label, index) => (
+            <div key={label} className="flex min-w-0 items-center gap-1.5">
+              <span className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-4 justify-center`}>
+                {label}
+              </span>
+              <div className="min-w-0 flex-1">
                 <NumberInput
-                  key={label}
-                  label={label}
                   value={diagonalInertiaValues[index]}
                   min={0}
                   step={0.01}
                   precision={MAX_PROPERTY_DECIMALS}
+                  compact
                   onChange={(value) => handleDiagonalInertiaChange(index as 0 | 1 | 2, value)}
                 />
-              ))}
+              </div>
             </div>
-          </InputGroup>
-
-          <InputGroup label={t.principalAxes} className="mb-0">
-            <div className="space-y-1.5">
-              <ReadonlyVectorStatHeader />
-              {['A1', 'A2', 'A3'].map((label, index) => {
-                const axis = derivedInertial?.principalAxes[index];
-                return (
-                  <ReadonlyVectorStatRow
-                    key={label}
-                    label={label}
-                    values={[
-                      formatReadonlyNumber(axis?.x),
-                      formatReadonlyNumber(axis?.y),
-                      formatReadonlyNumber(axis?.z),
-                    ]}
-                  />
-                );
-              })}
-            </div>
-          </InputGroup>
+          ))}
         </div>
-      </div>
-    </StaticSection>
+      </InlineInputGroup>
+
+      <InlineInputGroup label={t.principalAxes} labelWidthClassName="w-16" align="start" className="mb-0">
+        <div className="space-y-1.5">
+          <ReadonlyVectorStatHeader />
+          {principalAxisLabels.map((label, index) => {
+            const axis = principalAxes[index];
+            return (
+              <ReadonlyVectorStatRow
+                key={label}
+                label={label}
+                values={[
+                  formatReadonlyNumber(axis?.x),
+                  formatReadonlyNumber(axis?.y),
+                  formatReadonlyNumber(axis?.z),
+                ]}
+              />
+            );
+          })}
+        </div>
+      </InlineInputGroup>
+    </CollapsibleSection>
+  );
+
+  const inertialSection = (
+    <>
+      {inertialParametersSection}
+      {derivedValuesSection}
+    </>
   );
 
   return (
     <>
-      {/* Name (Skeleton Mode) */}
-      {mode === 'skeleton' && (
-        nameField
-      )}
+      {nameField}
 
-      {/* Detail Mode: Visual / Collision / Joint Tabs */}
-      {mode === 'detail' && (
-        <div>
-          {/* Tab Navigation - Folder Style */}
-          <div className="mb-0 flex items-stretch gap-0.5 rounded-t-lg border border-border-black bg-element-bg px-0.5 pt-0.5">
-            <div className="w-px"></div>
-            <DetailGeometryTabButton
-              icon={Eye}
-              isActive={linkTab === 'visual'}
-              label={t.visualGeometry}
-              onClick={() => handleTabChange('visual')}
-            />
-            <DetailGeometryTabButton
-              icon={Box}
-              isActive={linkTab === 'collision'}
-              label={t.collisionGeometry}
-              onClick={() => handleTabChange('collision')}
-            />
-            <DetailGeometryTabButton
-              icon={Waypoints}
-              isActive={linkTab === 'joint'}
-              label={t.joints}
-              onClick={() => handleTabChange('joint')}
-            />
-          </div>
-
-          {/* Visual Tab Content - always mounted to preserve snapshot cache */}
-          <DetailGeometryTabPanel activeTab={linkTab} tab="visual">
-            {nameField}
-
-            <GeometryEditor
-              data={data}
-              robot={robot}
-              category="visual"
-              onUpdate={(d) => onUpdate('link', selection.id!, d)}
-              assets={assets}
-              onUploadAsset={onUploadAsset}
-              t={t}
-              lang={lang}
-              isTabbed={true}
-            />
-          </DetailGeometryTabPanel>
-
-          {/* Collision Tab Content - always mounted to preserve snapshot cache */}
-          <DetailGeometryTabPanel activeTab={linkTab} tab="collision">
-            <GeometryEditor
-              data={data}
-              robot={robot}
-              category="collision"
-              onUpdate={(d) => onUpdate('link', selection.id!, d)}
-              assets={assets}
-              onUploadAsset={onUploadAsset}
-              t={t}
-              lang={lang}
-              isTabbed={true}
-            />
-          </DetailGeometryTabPanel>
-
-          <DetailGeometryTabPanel activeTab={linkTab} tab="joint">
-            <LinkJointEditor
-              linkId={data.id}
-              robot={robot}
-              mode={mode}
-              motorLibrary={motorLibrary}
-              onUpdate={onUpdate}
-              t={t}
-              lang={lang}
-            />
-          </DetailGeometryTabPanel>
+      {/* Viewer-side visual / collision / physics tabs */}
+      <div>
+        {/* Tab Navigation - Folder Style */}
+        <div className="mb-0 flex items-stretch gap-0.5 rounded-t-lg border border-border-black bg-element-bg px-0.5 pt-0.5">
+          <div className="w-px"></div>
+          <DetailGeometryTabButton
+            icon={Eye}
+            isActive={linkTab === 'visual'}
+            label={t.visualGeometry}
+            onClick={() => handleTabChange('visual')}
+          />
+          <DetailGeometryTabButton
+            icon={Box}
+            isActive={linkTab === 'collision'}
+            label={t.collisionGeometry}
+            onClick={() => handleTabChange('collision')}
+          />
+          <DetailGeometryTabButton
+            icon={Waypoints}
+            isActive={linkTab === 'physics'}
+            label={t.physics}
+            onClick={() => handleTabChange('physics')}
+          />
         </div>
-      )}
-      {mode === 'detail' && linkTab === 'visual' && inertialSection}
 
-      {mode === 'hardware' && (
-        <LinkJointEditor
-          linkId={data.id}
-          robot={robot}
-          mode={mode}
-          motorLibrary={motorLibrary}
-          onUpdate={onUpdate}
-          t={t}
-          lang={lang}
-        />
-      )}
+        {/* Visual Tab Content - always mounted to preserve snapshot cache */}
+        <DetailGeometryTabPanel activeTab={linkTab} tab="visual">
+          <GeometryEditor
+            data={data}
+            robot={robot}
+            category="visual"
+            onUpdate={(d) => onUpdate('link', selection.id!, d)}
+            assets={assets}
+            onUploadAsset={onUploadAsset}
+            t={t}
+            lang={lang}
+            isTabbed={true}
+          />
+        </DetailGeometryTabPanel>
+
+        {/* Collision Tab Content - always mounted to preserve snapshot cache */}
+        <DetailGeometryTabPanel activeTab={linkTab} tab="collision">
+          <GeometryEditor
+            data={data}
+            robot={robot}
+            category="collision"
+            onUpdate={(d) => onUpdate('link', selection.id!, d)}
+            assets={assets}
+            onUploadAsset={onUploadAsset}
+            t={t}
+            lang={lang}
+            isTabbed={true}
+          />
+        </DetailGeometryTabPanel>
+
+        <DetailGeometryTabPanel activeTab={linkTab} tab="physics">
+          {inertialSection}
+        </DetailGeometryTabPanel>
+      </div>
     </>
   );
 };

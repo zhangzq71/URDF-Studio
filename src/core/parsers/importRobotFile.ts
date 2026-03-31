@@ -210,6 +210,20 @@ export function isSourceOnlyXacroDocument(urdfContent: string): boolean {
   return /<robot\b/i.test(urdfContent) && !/<link\b/i.test(urdfContent);
 }
 
+function isSourceOnlyMJCFDocument(xmlContent: string): boolean {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlContent, 'text/xml');
+    if (doc.querySelector('parsererror')) {
+      return false;
+    }
+
+    return Boolean(doc.querySelector('mujoco')) && !doc.querySelector('worldbody');
+  } catch {
+    return false;
+  }
+}
+
 export function resolveRobotFileData(
   file: RobotFile,
   options: ResolveRobotFileDataOptions = {},
@@ -234,7 +248,10 @@ export function resolveRobotFileData(
         const parsed = parseMJCF(resolved.content);
         return parsed
           ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed');
+          : createErrorImportResult(
+            file,
+            isSourceOnlyMJCFDocument(resolved.content) ? 'source_only_fragment' : 'parse_failed',
+          );
       }
       case 'sdf': {
         const parsed = parseSDF(file.content, {

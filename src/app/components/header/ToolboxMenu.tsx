@@ -192,7 +192,7 @@ export function ToolboxMenu({
           ))}
         </div>
         <div className="mt-1.5 min-h-8 border-t border-border-black/70 px-1 pt-1.5">
-          <div className="text-[10px] leading-4 text-text-tertiary transition-all duration-75">
+          <div className="ui-static-copy-guard text-[10px] leading-4 text-text-tertiary transition-all duration-75">
             {hoveredItem ? hoveredItem.description : t.toolboxHoverHint}
           </div>
         </div>

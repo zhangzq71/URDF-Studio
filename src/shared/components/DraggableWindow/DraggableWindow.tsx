@@ -177,7 +177,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
         onDoubleClick={onHeaderDoubleClick}
       >
         <div className={headerLeftClassName}>{title}</div>
-        <div className={headerRightClassName} onMouseDown={(e) => e.stopPropagation()}>
+        <div className={headerRightClassName}>
           {headerActions}
           <div className={controlsClassName}>
             {showMinimizeButton && (

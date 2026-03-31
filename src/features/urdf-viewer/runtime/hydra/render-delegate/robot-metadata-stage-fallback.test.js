@@ -476,6 +476,87 @@ test('buildRobotMetadataSnapshotForStage seeds helper links from driver joint re
     }
 });
 
+test('buildRobotMetadataSnapshotForStage promotes folded collision-only semantic child links when stage collider metadata names them explicitly', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { driver: null };
+
+    try {
+        const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+        delegate.meshes = {
+            '/Robot/FL_calf/collisions.proto_mesh_id0': {},
+            '/Robot/FL_calf/collisions.proto_mesh_id1': {},
+        };
+        delegate._protoMeshMetadataByMeshId = new Map();
+        delegate._robotMetadataSnapshotByStageSource = new Map();
+        delegate._robotMetadataBuildPromisesByStageSource = new Map();
+        delegate._nowPerfMs = () => 1234;
+        delegate.getNormalizedStageSourcePath = () => '/robots/go2_folded_collision.usd';
+        delegate.getResolvedPrimPathForMeshId = (meshId) => (
+            meshId === '/Robot/FL_calf/collisions.proto_mesh_id0'
+                ? '/Robot/FL_calf/collisions/FL_calf/mesh'
+                : '/Robot/FL_calf/collisions/FL_calflower/mesh'
+        );
+        delegate.getStage = () => ({
+            GetRootLayer() {
+                return createLayer(`#usda 1.0
+(
+    defaultPrim = "Robot"
+)
+
+def Scope "colliders"
+{
+    def Xform "FL_calf"
+    {
+        def Xform "collision_0"
+        {
+            def Mesh "mesh"
+            {
+            }
+        }
+    }
+
+    def Xform "FL_calflower"
+    {
+        def Xform "collision_0"
+        {
+            def Mesh "mesh"
+            {
+            }
+        }
+    }
+}
+`);
+            },
+            GetUsedLayers() {
+                return [];
+            },
+        });
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/go2_folded_collision.usd', null);
+
+        assert.ok(snapshot);
+        assert.equal(snapshot.source, 'usd-stage');
+        assert.deepEqual(snapshot.linkParentPairs, [
+            ['/Robot/FL_calflower', '/Robot/FL_calf'],
+        ]);
+        assert.deepEqual(snapshot.meshCountsByLinkPath, {
+            '/Robot/FL_calf': {
+                visualMeshCount: 0,
+                collisionMeshCount: 1,
+                collisionPrimitiveCounts: { mesh: 1 },
+            },
+            '/Robot/FL_calflower': {
+                visualMeshCount: 0,
+                collisionMeshCount: 1,
+                collisionPrimitiveCounts: { mesh: 1 },
+            },
+        });
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
 test('startRobotMetadataWarmupForStage refreshes cached scene snapshots with resolved metadata', async () => {
     const delegate = Object.create(ThreeRenderDelegateCore.prototype);
     delegate._robotMetadataSnapshotByStageSource = new Map();

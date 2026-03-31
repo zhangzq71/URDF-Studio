@@ -5,7 +5,7 @@
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { translations, type Language } from '@/shared/i18n'
-import type { InspectionReport } from '@/types'
+import type { InspectionReport, RobotInspectionContext } from '@/types'
 import { InspectionReportTemplate } from '@/features/file-io/components/InspectionReportTemplate'
 import { printElementAsPdf } from '@/features/file-io/utils/generatePdfFromHtml'
 
@@ -13,12 +13,14 @@ interface ExportInspectionReportPdfParams {
   inspectionReport: InspectionReport | null
   robotName: string
   lang: Language
+  inspectionContext?: RobotInspectionContext
 }
 
 export function exportInspectionReportPdf({
   inspectionReport,
   robotName,
-  lang
+  lang,
+  inspectionContext
 }: ExportInspectionReportPdfParams): void {
   if (!inspectionReport) return
   const t = translations[lang]
@@ -40,7 +42,8 @@ export function exportInspectionReportPdf({
     createElement(InspectionReportTemplate, {
       inspectionReport,
       robotName,
-      lang: lang as 'zh' | 'en'
+      lang: lang as 'zh' | 'en',
+      inspectionContext
     })
   )
 

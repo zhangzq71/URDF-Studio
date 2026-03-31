@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const INTERACTION_RECOVERY_DELAY_MS = 180;
 export const RESTING_DPR_CAP = 1.75;
+// Keep the interaction DPR aligned with the resting cap so helper primitives
+// like the ground grid do not visibly change thickness when orbiting stops.
+// Callers can still opt into a lower interaction cap explicitly.
 export const INTERACTION_DPR_CAP = RESTING_DPR_CAP;
 
 interface ResolveCanvasDprOptions {

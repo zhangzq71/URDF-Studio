@@ -2,3 +2,9 @@ export function shouldMountRobotBeforeAssetsComplete(sourceFormat: 'urdf' | 'mjc
   void sourceFormat;
   return false;
 }
+
+export function shouldForceViewerRuntimeRemount(
+  sourceFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh' | null | undefined,
+): boolean {
+  return sourceFormat === 'usd';
+}

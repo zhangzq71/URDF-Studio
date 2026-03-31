@@ -1,9 +1,13 @@
-import { use, useEffect, useLayoutEffect, useMemo } from 'react';
+import { use, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import {
+  GENERATED_OBJ_MATERIAL_USER_DATA_KEY,
+} from '@/core/loaders/objModelData';
 import {
   createObjectFromSerializedObjData,
   loadSerializedObjModelData,
 } from '@/core/loaders/objParseWorkerBridge';
+import { disposeMaterial, disposeObject3D } from '@/shared/utils/three/dispose';
 
 interface ScaleProps {
   x: number;
@@ -47,12 +51,44 @@ function enableVertexColorMaterials(mesh: THREE.Mesh): void {
   mesh.material = Array.isArray(mesh.material) ? nextMaterials : nextMaterials[0];
 }
 
+function disposeGeneratedObjMaterials(materialOrMaterials: THREE.Material | THREE.Material[]): void {
+  const materials = Array.isArray(materialOrMaterials) ? materialOrMaterials : [materialOrMaterials];
+  materials.forEach((entry) => {
+    if (entry?.userData?.[GENERATED_OBJ_MATERIAL_USER_DATA_KEY] === true) {
+      disposeMaterial(entry, true);
+    }
+  });
+}
+
+export function replaceObjPreviewMeshMaterials(
+  meshes: THREE.Mesh[],
+  sharedMaterial: THREE.Material,
+): void {
+  meshes.forEach((mesh) => {
+    const previousMaterial = mesh.material;
+    if (previousMaterial === sharedMaterial) {
+      return;
+    }
+
+    mesh.material = sharedMaterial;
+    disposeGeneratedObjMaterials(previousMaterial);
+  });
+}
+
+export function disposeObjPreviewClone(
+  clone: THREE.Object3D,
+  sharedMaterial: THREE.Material,
+): void {
+  disposeObject3D(clone, true, new Set([sharedMaterial]));
+}
+
 export function OBJRendererImpl({
   url,
   material,
   scale,
   onResolved,
 }: OBJRendererImplProps) {
+  const sharedMaterialRef = useRef(material);
   const serializedObject = use(useMemo(
     () => loadSerializedObjModelData(url),
     [url],
@@ -81,14 +117,17 @@ export function OBJRendererImpl({
   }, [serializedObject]);
 
   useLayoutEffect(() => {
-    overrideMeshes.forEach((mesh) => {
-      mesh.material = material;
-    });
+    sharedMaterialRef.current = material;
+    replaceObjPreviewMeshMaterials(overrideMeshes, material);
   }, [material, overrideMeshes]);
 
   useEffect(() => {
     onResolved?.();
   }, [clone, onResolved]);
+
+  useEffect(() => () => {
+    disposeObjPreviewClone(clone, sharedMaterialRef.current);
+  }, [clone]);
 
   const scaleArr: [number, number, number] = scale ? [scale.x, scale.y, scale.z] : [1, 1, 1];
 

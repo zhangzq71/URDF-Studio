@@ -4,20 +4,34 @@ import * as THREE from 'three';
 import { highlightFaceMaterial } from '../utils/materials';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import { resolvePreferredHoverMatch } from '../utils/hoverLinkBounds';
-import { collectPickTargets, findPickIntersections, type PickTargetMode } from '../utils/pickTargets';
-import { resolveSelectionHit } from '../utils/selectionTargets';
-import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
-import type { ToolMode, URDFViewerProps } from '../types';
+import { resolveHoverSelectionState } from '../utils/hoverSelectionState';
+import {
+    collectPickTargets,
+    findPickIntersections,
+    isCollisionPickObject,
+    type PickTargetMode
+} from '../utils/pickTargets';
+import { resolveInteractionSelectionHit } from '../utils/selectionTargets';
+import {
+    resolveHoverInteractionResolution,
+    type ResolvedHoverInteractionCandidate,
+} from '../utils/hoverInteractionResolution';
+import {
+    resolveTopLayerInteractionSubType,
+    resolveTopLayerInteractionSubTypeFromHits
+} from '../utils/interactionMode';
+import type { ToolMode, URDFViewerProps, ViewerInteractiveLayer, ViewerSceneMode } from '../types';
 
 export interface UseHoverDetectionOptions {
     robot: THREE.Object3D | null;
     robotVersion: number;
     toolMode: ToolMode;
     hoverSelectionEnabled?: boolean;
-    mode?: 'detail' | 'hardware';
-    highlightMode: 'link' | 'collision';
+    mode?: ViewerSceneMode;
     showCollision: boolean;
     showVisual: boolean;
+    showCollisionAlwaysOnTop: boolean;
+    interactionLayerPriority?: ViewerInteractiveLayer[];
     selection?: URDFViewerProps['selection'];
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
     linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
@@ -50,9 +64,10 @@ export function useHoverDetection({
     toolMode,
     hoverSelectionEnabled = true,
     mode,
-    highlightMode,
     showCollision,
     showVisual,
+    showCollisionAlwaysOnTop,
+    interactionLayerPriority = [],
     selection,
     onHover,
     linkMeshMapRef,
@@ -105,6 +120,27 @@ export function useHoverDetection({
     const hoverSuppressedByDragRef = useRef(false);
     const useExternalHover = typeof onHover === 'function';
 
+    const clearRaycastTargetCaches = useCallback(() => {
+        gizmoTargetsRef.current = [];
+        gizmoTargetsCacheKeyRef.current = '';
+        gizmoTargetsUpdatedAtRef.current = 0;
+
+        pickTargetCachesRef.current.all.key = '';
+        pickTargetCachesRef.current.all.updatedAt = 0;
+        pickTargetCachesRef.current.all.targets = [];
+        pickTargetCachesRef.current.all.hoverBoundsCandidates = [];
+
+        pickTargetCachesRef.current.visual.key = '';
+        pickTargetCachesRef.current.visual.updatedAt = 0;
+        pickTargetCachesRef.current.visual.targets = [];
+        pickTargetCachesRef.current.visual.hoverBoundsCandidates = [];
+
+        pickTargetCachesRef.current.collision.key = '';
+        pickTargetCachesRef.current.collision.updatedAt = 0;
+        pickTargetCachesRef.current.collision.targets = [];
+        pickTargetCachesRef.current.collision.hoverBoundsCandidates = [];
+    }, []);
+
     const getGizmoTargets = () => {
         const nextCacheKey = `${scene.children.length}:${toolMode}:${selection?.type ?? 'none'}:${selection?.id ?? ''}`;
         const now = performance.now();
@@ -148,9 +184,9 @@ export function useHoverDetection({
         const nextCacheKey = [
             robotVersion,
             targetMode,
-            highlightMode,
             showCollision ? 'col:1' : 'col:0',
             showVisual ? 'vis:1' : 'vis:0',
+            showCollisionAlwaysOnTop ? 'col-top:1' : 'col-top:0',
             linkMeshMapRef.current.size
         ].join(':');
         const now = performance.now();
@@ -166,17 +202,23 @@ export function useHoverDetection({
                 }
 
                 const mesh = target as THREE.Mesh;
-                const linkId = typeof mesh.userData?.parentLinkName === 'string'
-                    ? mesh.userData.parentLinkName
-                    : null;
-
-                if (!linkId) {
+                const resolvedHoverHit = resolveInteractionSelectionHit(robot, mesh);
+                if (
+                    !resolvedHoverHit
+                    || resolvedHoverHit.type !== 'link'
+                    || resolvedHoverHit.targetKind !== 'geometry'
+                    || !resolvedHoverHit.linkId
+                ) {
                     return [];
                 }
 
                 return [{
                     mesh,
-                    meta: { linkId },
+                    meta: {
+                        linkId: resolvedHoverHit.linkId,
+                        highlightTarget: resolvedHoverHit.highlightTarget,
+                        objectIndex: resolvedHoverHit.objectIndex,
+                    },
                 }];
             });
             cache.key = nextCacheKey;
@@ -192,14 +234,14 @@ export function useHoverDetection({
     };
 
     const getSelectionHighlightSubType = useCallback(() => {
-        const { subType: activeInteractionSubType } = resolveEffectiveInteractionSubType(
-            highlightMode,
+        const activeInteractionSubType = resolveTopLayerInteractionSubType({
             showVisual,
-            showCollision
-        );
+            showCollision,
+            collisionAlwaysOnTop: showCollisionAlwaysOnTop,
+        });
 
         return selection?.subType ?? activeInteractionSubType ?? undefined;
-    }, [highlightMode, selection?.subType, showCollision, showVisual]);
+    }, [selection?.subType, showCollision, showCollisionAlwaysOnTop, showVisual]);
 
     const restoreSelectionHighlight = useCallback(() => {
         if (useExternalHover) return;
@@ -230,18 +272,37 @@ export function useHoverDetection({
     const resetHoverState = useCallback(() => {
         if (hoveredLinkRef.current) {
             clearHoverHighlight();
-            return;
+        } else {
+            emitHoverSelection(null, null);
         }
 
-        emitHoverSelection(null, null);
     }, [clearHoverHighlight, emitHoverSelection, hoveredLinkRef]);
 
     const clearTransientHoverState = useCallback(() => {
         resetHoverState();
-        if (highlightedFace) {
-            setHighlightedFace(null);
-        }
-    }, [highlightedFace, resetHoverState]);
+        setHighlightedFace((current) => (current ? null : current));
+    }, [resetHoverState]);
+
+    useEffect(() => {
+        emittedHoverSelectionRef.current = { type: null, id: null };
+        clearTransientHoverState();
+        clearRaycastTargetCaches();
+        needsRaycastRef.current = true;
+    }, [clearRaycastTargetCaches, clearTransientHoverState, needsRaycastRef, robot, robotVersion]);
+
+    useEffect(() => {
+        clearTransientHoverState();
+        clearRaycastTargetCaches();
+        needsRaycastRef.current = true;
+    }, [
+        clearRaycastTargetCaches,
+        clearTransientHoverState,
+        interactionLayerPriority,
+        needsRaycastRef,
+        showCollision,
+        showCollisionAlwaysOnTop,
+        showVisual,
+    ]);
 
     // Update face highlight mesh
     useEffect(() => {
@@ -307,9 +368,6 @@ export function useHoverDetection({
 
     // Sync face highlight transform
     useFrame(() => {
-        // Skip in hardware mode to improve performance
-        if (mode === 'hardware') return;
-
         if (highlightedFace && highlightedFaceMeshRef.current) {
             const mesh = highlightedFace.mesh;
             const highlight = highlightedFaceMeshRef.current;
@@ -328,14 +386,9 @@ export function useHoverDetection({
                 highlightedFaceMeshRef.current.geometry.dispose();
                 highlightedFaceMeshRef.current = null;
             }
-            pickTargetCachesRef.current.all.targets = [];
-            pickTargetCachesRef.current.all.hoverBoundsCandidates = [];
-            pickTargetCachesRef.current.visual.targets = [];
-            pickTargetCachesRef.current.visual.hoverBoundsCandidates = [];
-            pickTargetCachesRef.current.collision.targets = [];
-            pickTargetCachesRef.current.collision.hoverBoundsCandidates = [];
+            clearRaycastTargetCaches();
         };
-    }, [scene]);
+    }, [clearRaycastTargetCaches, emitHoverSelection, scene]);
 
     // Clean up face highlight when leaving face mode
     useEffect(() => {
@@ -362,9 +415,6 @@ export function useHoverDetection({
 
         hoverSuppressedByDragRef.current = false;
 
-        // Skip hover detection in hardware mode to improve performance
-        if (mode === 'hardware') return;
-
         if (!hoverSelectionEnabled) {
             clearTransientHoverState();
             needsRaycastRef.current = false;
@@ -390,11 +440,11 @@ export function useHoverDetection({
         if (!needsRaycastRef.current) return;
 
         const isStandardMode = ['view', 'select', 'translate', 'rotate', 'universal', 'measure'].includes(toolMode || 'select');
-        const { subType: activeInteractionSubType } = resolveEffectiveInteractionSubType(
-            highlightMode,
+        const fallbackInteractionSubType = resolveTopLayerInteractionSubType({
             showVisual,
-            showCollision
-        );
+            showCollision,
+            collisionAlwaysOnTop: showCollisionAlwaysOnTop,
+        });
 
         if (isSelectionLockedRef?.current) {
             resetHoverState();
@@ -410,7 +460,7 @@ export function useHoverDetection({
 
         // Handle Face Selection Mode
         if (toolMode === 'face') {
-            if (!activeInteractionSubType) {
+            if (!fallbackInteractionSubType) {
                 if (highlightedFace) setHighlightedFace(null);
                 resetHoverState();
                 return;
@@ -418,7 +468,7 @@ export function useHoverDetection({
 
             raycasterRef.current.setFromCamera(mouseRef.current, camera);
             const gizmoTargets = getGizmoTargets();
-            const pickTargets = getPickTargets(activeInteractionSubType);
+            const pickTargets = getPickTargets('all');
             const nearestSceneHit = gizmoTargets.length > 0
                 ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
                 : undefined;
@@ -439,21 +489,36 @@ export function useHoverDetection({
                 robot,
                 raycasterRef.current,
                 pickTargets,
-                activeInteractionSubType,
-                false
+                'all',
+                false,
+                interactionLayerPriority,
             );
+            const activeInteractionSubType = resolveTopLayerInteractionSubTypeFromHits({
+                showVisual,
+                showCollision,
+                collisionAlwaysOnTop: showCollisionAlwaysOnTop,
+                hits: intersects.map((hit) => ({
+                    isCollision: isCollisionPickObject(hit.object),
+                })),
+            });
+            if (!activeInteractionSubType) {
+                if (highlightedFace) setHighlightedFace(null);
+                resetHoverState();
+                return;
+            }
+            const isCollisionInteraction = activeInteractionSubType === 'collision';
 
-            if (intersects.length > 0) {
-                const hit = intersects[0];
-                if (hit.faceIndex !== undefined && hit.faceIndex !== null && hit.object instanceof THREE.Mesh) {
-                    if (highlightedFace?.faceIndex !== hit.faceIndex || highlightedFace?.mesh !== hit.object) {
-                        setHighlightedFace({ mesh: hit.object, faceIndex: hit.faceIndex as number });
-                    }
-                    if (hoveredLinkRef.current) {
-                        clearHoverHighlight();
-                    }
-                    return;
+            const hit = intersects.find((entry) => (
+                isCollisionPickObject(entry.object) === isCollisionInteraction
+            ));
+            if (hit && hit.faceIndex !== undefined && hit.faceIndex !== null && hit.object instanceof THREE.Mesh) {
+                if (highlightedFace?.faceIndex !== hit.faceIndex || highlightedFace?.mesh !== hit.object) {
+                    setHighlightedFace({ mesh: hit.object, faceIndex: hit.faceIndex as number });
                 }
+                if (hoveredLinkRef.current) {
+                    clearHoverHighlight();
+                }
+                return;
             }
             if (highlightedFace) setHighlightedFace(null);
             resetHoverState();
@@ -470,16 +535,9 @@ export function useHoverDetection({
             return;
         }
 
-        // CRITICAL: Skip hover detection if the corresponding display option is not enabled
-        if (!activeInteractionSubType) {
-            // Clear any current hover since display is disabled
-            resetHoverState();
-            return;
-        }
-
         raycasterRef.current.setFromCamera(mouseRef.current, camera);
         const gizmoTargets = getGizmoTargets();
-        const pickTargets = getPickTargets(activeInteractionSubType);
+        const pickTargets = getPickTargets('all');
         const nearestSceneHit = gizmoTargets.length > 0
             ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
             : undefined;
@@ -499,9 +557,46 @@ export function useHoverDetection({
             robot,
             raycasterRef.current,
             pickTargets,
-            activeInteractionSubType,
-            false
+            'all',
+            false,
+            interactionLayerPriority,
         );
+        const resolvedCandidates = (() => {
+            const candidates: ResolvedHoverInteractionCandidate[] = [];
+            for (const intersection of intersections) {
+                const resolved = resolveInteractionSelectionHit(robot, intersection.object);
+                if (resolved) {
+                    candidates.push({
+                        ...resolved,
+                        distance: intersection.distance,
+                    });
+                }
+            }
+
+            return candidates;
+        })();
+        const {
+            primaryInteraction: resolvedInteraction,
+        } = resolveHoverInteractionResolution(resolvedCandidates);
+
+        if (resolvedInteraction?.targetKind === 'helper') {
+            if (hoveredLinkRef.current) {
+                clearHoverHighlight();
+            }
+
+            hoveredLinkRef.current = null;
+            (hoveredLinkRef as any).currentMesh = null;
+            (hoveredLinkRef as any).currentObjectIndex = null;
+            (hoveredLinkRef as any).currentSubType = null;
+            emitHoverSelection(resolvedInteraction.type, resolvedInteraction.id);
+            return;
+        }
+
+        const activeInteractionSubType = resolvedInteraction?.subType ?? fallbackInteractionSubType;
+        if (!activeInteractionSubType) {
+            resetHoverState();
+            return;
+        }
 
         const exactHoverMatch: {
             meta: {
@@ -511,27 +606,17 @@ export function useHoverDetection({
             };
             distance: number;
         } | null = (() => {
-            if (intersections.length === 0) {
-                return null;
-            }
-
-            const firstValidHit = intersections[0];
-            if (!firstValidHit) {
-                return null;
-            }
-
-            const resolvedHit = resolveSelectionHit(robot, firstValidHit.object);
-            if (!resolvedHit) {
+            if (!resolvedInteraction) {
                 return null;
             }
 
             return {
                 meta: {
-                    linkId: resolvedHit.linkId,
-                    highlightTarget: resolvedHit.highlightTarget,
-                    objectIndex: resolvedHit.objectIndex,
+                    linkId: resolvedInteraction.id,
+                    highlightTarget: resolvedInteraction.highlightTarget,
+                    objectIndex: resolvedInteraction.objectIndex,
                 },
-                distance: firstValidHit.distance,
+                distance: resolvedInteraction.distance,
             };
         })();
 
@@ -549,18 +634,16 @@ export function useHoverDetection({
             },
         });
 
-        let newHoveredLink: string | null = null;
-        let newHoveredMesh: THREE.Object3D | null = null;
-        let newHoveredObjectIndex: number | undefined = undefined;
-
-        if (preferredHoverMatch) {
-            newHoveredLink = preferredHoverMatch.match.meta.linkId;
-
-            if (preferredHoverMatch.source === 'exact') {
-                newHoveredMesh = preferredHoverMatch.match.meta.highlightTarget;
-                newHoveredObjectIndex = preferredHoverMatch.match.meta.objectIndex;
-            }
+        if (!preferredHoverMatch) {
+            resetHoverState();
+            return;
         }
+
+        const {
+            linkId: newHoveredLink,
+            highlightTarget: newHoveredMesh,
+            objectIndex: newHoveredObjectIndex,
+        } = resolveHoverSelectionState(preferredHoverMatch);
 
         const previousHoveredMesh = (hoveredLinkRef as any).currentMesh ?? null;
         const previousHoveredObjectIndex = (hoveredLinkRef as any).currentObjectIndex ?? null;

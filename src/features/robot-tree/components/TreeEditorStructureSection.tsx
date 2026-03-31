@@ -116,7 +116,7 @@ export function TreeEditorStructureSection({
             <Shield size={11} />
           </button>
 
-                {mode === 'skeleton' && sidebarTab === 'structure' && (
+                {sidebarTab === 'structure' && (
                   <button
                     className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
                     onClick={(event) => {

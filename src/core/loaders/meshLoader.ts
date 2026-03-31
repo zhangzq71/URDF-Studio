@@ -26,6 +26,7 @@ import {
     normalizeRuntimeError,
     scheduleFailFastInDev,
 } from '@/core/utils/runtimeDiagnostics';
+import { MATERIAL_CONFIG } from '@/core/utils/materialFactory';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import { createObjectFromSerializedObjData, loadSerializedObjModelData } from './objParseWorkerBridge';
 import { createGeometryFromSerializedStlData } from './stlGeometryData';
@@ -36,9 +37,9 @@ import { loadSerializedStlGeometryData } from './stlParseWorkerBridge';
 // ============================================================
 const DEFAULT_MESH_MATERIAL = new THREE.MeshStandardMaterial({
     color: 0x707070,      // Medium-dark grey for proper exposure in bright studio lighting
-    roughness: 0.45,      // Lower roughness for visible surface gloss and sharper edges
-    metalness: 0.15,      // Low metalness for industrial plastic/painted metal look
-    envMapIntensity: 1.0  // Full environment reflection for realistic highlights
+    roughness: MATERIAL_CONFIG.roughness,
+    metalness: MATERIAL_CONFIG.metalness,
+    envMapIntensity: MATERIAL_CONFIG.envMapIntensity,
 });
 const PLACEHOLDER_MATERIAL = new THREE.MeshPhongMaterial({
     color: 0xff6b6b,

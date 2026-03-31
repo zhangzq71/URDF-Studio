@@ -40,10 +40,10 @@ export function SceneLighting({
     : 1;
   const rimDirectionalScale = cameraFollowPrimary ? 0.38 : staticDirectionalScale;
   const ambientIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.4 : 0.36)
+    ? (effectiveTheme === 'light' ? 0.37 : 0.34)
     : (effectiveTheme === 'light' ? 0.74 : LIGHTING_CONFIG.ambientIntensity);
   const hemisphereIntensity = cameraFollowPrimary
-    ? (effectiveTheme === 'light' ? 0.46 : 0.42)
+    ? (effectiveTheme === 'light' ? 0.43 : 0.4)
     : (effectiveTheme === 'light' ? 0.56 : LIGHTING_CONFIG.hemisphereIntensity);
   const cameraKeyIntensity = cameraFollowPrimary
     ? (
@@ -83,7 +83,7 @@ export function SceneLighting({
     scene.receiveShadow = true;
     gl.toneMapping = cameraFollowPrimary ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
     gl.toneMappingExposure = cameraFollowPrimary
-      ? (effectiveTheme === 'light' ? 1.02 : 1.04)
+      ? (effectiveTheme === 'light' ? 0.98 : 1.0)
       : (effectiveTheme === 'light' ? 1.08 : 1.1);
     gl.outputColorSpace = THREE.SRGBColorSpace;
   }, [cameraFollowPrimary, effectiveTheme, gl, scene, shouldUseShadows]);

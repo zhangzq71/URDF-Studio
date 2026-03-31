@@ -1,31 +1,20 @@
 import { loader } from '@monaco-editor/react';
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js';
-import 'monaco-editor/esm/vs/basic-languages/xml/xml.contribution';
-import { conf as xmlConf, language as xmlLanguage } from 'monaco-editor/esm/vs/basic-languages/xml/xml.js';
-import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import type * as Monaco from 'monaco-editor';
 
-type MonacoWorkerFactory = (workerId: string, label: string) => Worker;
+const DEFAULT_MONACO_VS_PATH = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs';
 
-interface MonacoEnvironmentShape {
-  getWorker?: MonacoWorkerFactory;
-}
-
-const globalWithMonacoEnvironment = globalThis as typeof globalThis & {
-  MonacoEnvironment?: MonacoEnvironmentShape;
+const resolveMonacoVsPath = (): string => {
+  const configured = String(import.meta.env.VITE_MONACO_VS_PATH || '').trim();
+  const path = configured.length > 0 ? configured : DEFAULT_MONACO_VS_PATH;
+  return path.replace(/\/+$/, '');
 };
 
-const createWorker = (): Worker => new editorWorker();
-
-if (!globalWithMonacoEnvironment.MonacoEnvironment?.getWorker) {
-  globalWithMonacoEnvironment.MonacoEnvironment = {
-    ...globalWithMonacoEnvironment.MonacoEnvironment,
-    // SourceCodeEditor only opens XML/plaintext documents, so the core editor worker is enough.
-    getWorker: () => createWorker(),
-  };
-}
+const monacoVsPath = resolveMonacoVsPath();
 
 loader.config({
-  monaco,
+  paths: {
+    vs: monacoVsPath,
+  },
   'vs/nls': {
     availableLanguages: {
       '*': 'en',
@@ -33,26 +22,23 @@ loader.config({
   },
 });
 
-export type MonacoInstance = typeof monaco;
+export type MonacoInstance = typeof Monaco;
 
 let monacoLoaderPromise: Promise<MonacoInstance> | null = null;
+let monacoWorkerWarmupPromise: Promise<void> | null = null;
 
 const ensureXmlDerivedLanguage = (
   monacoInstance: MonacoInstance,
-  id: string,
-  aliases: string[],
+  _id: string,
+  _aliases: string[],
 ) => {
-  if (monacoInstance.languages.getLanguages().some((language) => language.id === id)) {
-    return;
-  }
-
-  monacoInstance.languages.register({ id, aliases });
-  monacoInstance.languages.setLanguageConfiguration(id, xmlConf);
-  monacoInstance.languages.setMonarchTokensProvider(id, xmlLanguage);
+  // CDN runtime uses Monaco's built-in XML language directly.
+  // URDF/Xacro behavior is provided via editor-side completion/validation logic.
+  void monacoInstance;
 };
 
 export const ensureSourceCodeEditorLanguages = (
-  monacoInstance: MonacoInstance = monaco,
+  monacoInstance: MonacoInstance,
 ): MonacoInstance => {
   ensureXmlDerivedLanguage(monacoInstance, 'urdf', ['URDF']);
   ensureXmlDerivedLanguage(monacoInstance, 'xacro', ['Xacro']);
@@ -71,3 +57,16 @@ export const preloadMonacoEditor = (): Promise<MonacoInstance> => {
 
   return monacoLoaderPromise;
 };
+
+export const preloadMonacoEditorWorker = (): Promise<void> => {
+  if (!monacoWorkerWarmupPromise) {
+    monacoWorkerWarmupPromise = preloadMonacoEditor().then(() => undefined).catch((error) => {
+      monacoWorkerWarmupPromise = null;
+      throw error;
+    });
+  }
+
+  return monacoWorkerWarmupPromise;
+};
+
+export const getMonacoVsPath = (): string => monacoVsPath;

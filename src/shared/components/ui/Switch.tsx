@@ -60,7 +60,7 @@ export const Switch: React.FC<SwitchProps> = ({
       >
         <span
           className={`
-            pointer-events-none inline-block transform rounded-full border border-border-black/10 bg-panel-bg shadow-sm ring-0
+            pointer-events-none inline-block transform rounded-full border border-border-black/10 bg-switch-thumb shadow-sm ring-0
             transition duration-200 ease-in-out
             ${checked ? desktopSizes[size].translate : 'translate-x-0'}
             ${desktopSizes[size].dot}

@@ -26,6 +26,12 @@ class FakeWorker {
 
   terminate(): void {}
 
+  emitMessage(data: unknown): void {
+    this.listeners.get('message')?.forEach((handler) => {
+      handler({ data });
+    });
+  }
+
   emitError(error: Error): void {
     this.listeners.get('error')?.forEach((handler) => {
       handler({ error, message: error.message });
@@ -66,4 +72,113 @@ test('STL parse worker failures reject instead of silently reparsing on the main
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('STL parse worker bridge fails fast when Worker is unavailable instead of using an inline fallback', async () => {
+  const originalWorker = globalThis.Worker;
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  Object.defineProperty(globalThis, 'Worker', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+  globalThis.fetch = (async () => {
+    fetchCount += 1;
+    throw new Error('fetch should not run');
+  }) as typeof fetch;
+
+  try {
+    const client = createStlParseWorkerPoolClient();
+    await assert.rejects(client.load('/demo.stl'), /STL parse worker is unavailable in this environment/i);
+    assert.equal(fetchCount, 0);
+  } finally {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: originalWorker,
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('STL parse worker cache can be cleared explicitly', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createStlParseWorkerPoolClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const serializedResult = {
+    positions: new Float32Array([0, 0, 0]).buffer,
+    normals: new Float32Array([0, 0, 1]).buffer,
+    maxDimension: 1,
+  };
+
+  const firstLoad = client.load('/demo.stl');
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  fakeWorker.emitMessage({
+    type: 'parse-stl-result',
+    requestId: 1,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(firstLoad);
+
+  await assert.doesNotReject(client.load('/demo.stl'));
+  assert.equal(fakeWorker.postedMessages.length, 1);
+
+  client.clearCache();
+
+  const secondLoad = client.load('/demo.stl');
+  assert.equal(fakeWorker.postedMessages.length, 2);
+  fakeWorker.emitMessage({
+    type: 'parse-stl-result',
+    requestId: 2,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(secondLoad);
+});
+
+test('STL parse worker pool can be disposed and recreated on demand', async () => {
+  const workers: FakeWorker[] = [];
+  const client = createStlParseWorkerPoolClient({
+    canUseWorker: () => true,
+    createWorker: () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker as unknown as Worker;
+    },
+    getWorkerCount: () => 1,
+  });
+
+  const serializedResult = {
+    positions: new Float32Array([0, 0, 0]).buffer,
+    normals: new Float32Array([0, 0, 1]).buffer,
+    maxDimension: 1,
+  };
+
+  const firstLoad = client.load('/demo.stl');
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0]?.postedMessages.length, 1);
+  workers[0]?.emitMessage({
+    type: 'parse-stl-result',
+    requestId: 1,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(firstLoad);
+
+  client.dispose();
+
+  const secondLoad = client.load('/second.stl');
+  assert.equal(workers.length, 2);
+  assert.equal(workers[0]?.postedMessages.length, 1);
+  assert.equal(workers[1]?.postedMessages.length, 1);
+  workers[1]?.emitMessage({
+    type: 'parse-stl-result',
+    requestId: 2,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(secondLoad);
 });

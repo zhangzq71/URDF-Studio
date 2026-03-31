@@ -94,3 +94,23 @@ export function computeCameraFrame(
     cameraPosition: sphere.center.clone().add(direction.multiplyScalar(distance * 1.34)),
   };
 }
+
+export function isBoundsVisibleToCamera(
+  bounds: THREE.Box3 | null,
+  camera: THREE.Camera | null | undefined,
+): boolean {
+  if (!bounds || !camera || bounds.isEmpty()) {
+    return false;
+  }
+
+  camera.updateMatrixWorld(true);
+  const frustum = new THREE.Frustum();
+  frustum.setFromProjectionMatrix(
+    new THREE.Matrix4().multiplyMatrices(
+      camera.projectionMatrix,
+      camera.matrixWorldInverse,
+    ),
+  );
+
+  return frustum.intersectsBox(bounds);
+}

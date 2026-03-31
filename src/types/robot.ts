@@ -3,7 +3,7 @@
  */
 
 import type { UsdSceneMaterialRecord } from './usd';
-import type { Vector3, Euler, UrdfVisual } from './geometry';
+import type { QuaternionXYZW, UrdfOrigin, UrdfVisual, Vector3 } from './geometry';
 
 export enum JointType {
   FIXED = 'fixed',
@@ -15,16 +15,11 @@ export enum JointType {
   FLOATING = 'floating',
 }
 
-export interface JointQuaternion {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-}
+export type JointQuaternion = QuaternionXYZW;
 
 export interface UrdfInertial {
   mass: number;
-  origin?: { xyz: Vector3; rpy: Euler }; // Center of mass position and orientation
+  origin?: UrdfOrigin; // Center of mass position and orientation
   inertia: {
     ixx: number;
     ixy: number;
@@ -38,6 +33,7 @@ export interface UrdfInertial {
 export interface UrdfLink {
   id: string;
   name: string;
+  type?: string;
   visual: UrdfVisual;
   /**
    * Additional visual geometries on the same link.
@@ -73,18 +69,33 @@ export interface UrdfJointMimic {
   offset?: number;
 }
 
+export interface UrdfJointCalibration {
+  referencePosition?: number;
+  rising?: number;
+  falling?: number;
+}
+
+export interface UrdfJointSafetyController {
+  softLowerLimit?: number;
+  softUpperLimit?: number;
+  kPosition?: number;
+  kVelocity?: number;
+}
+
 export interface UrdfJoint {
   id: string;
   name: string;
   type: JointType;
   parentLinkId: string;
   childLinkId: string;
-  origin: { xyz: Vector3; rpy: Euler };
+  origin: UrdfOrigin;
   axis?: Vector3;
   limit?: { lower: number; upper: number; effort: number; velocity: number };
   dynamics: UrdfJointDynamics;
   hardware: UrdfJointHardware;
   mimic?: UrdfJointMimic;
+  calibration?: UrdfJointCalibration;
+  safetyController?: UrdfJointSafetyController;
   referencePosition?: number;
   angle?: number;
   quaternion?: JointQuaternion;
@@ -113,24 +124,54 @@ export interface RobotMaterialState {
   usdMaterial?: UsdSceneMaterialRecord | null;
 }
 
+export interface RobotMjcfInspectionBodySites {
+  bodyId: string;
+  siteCount: number;
+  siteNames: string[];
+}
+
+export interface RobotMjcfInspectionTendonSummary {
+  name: string;
+  type: 'fixed' | 'spatial';
+  limited?: boolean;
+  range?: [number, number];
+  attachmentRefs: string[];
+  actuatorNames: string[];
+}
+
+export interface RobotInspectionContext {
+  sourceFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh';
+  mjcf?: {
+    siteCount: number;
+    tendonCount: number;
+    tendonActuatorCount: number;
+    bodiesWithSites: RobotMjcfInspectionBodySites[];
+    tendons: RobotMjcfInspectionTendonSummary[];
+  };
+}
+
 export interface RobotState {
   name: string;
+  version?: string;
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
   materials?: Record<string, RobotMaterialState>;
   closedLoopConstraints?: RobotClosedLoopConstraint[];
+  inspectionContext?: RobotInspectionContext;
   selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
 }
 
 /** Robot data without selection (selection is in selectionStore) */
 export interface RobotData {
   name: string;
+  version?: string;
   links: Record<string, UrdfLink>;
   joints: Record<string, UrdfJoint>;
   rootLinkId: string;
   materials?: Record<string, RobotMaterialState>;
   closedLoopConstraints?: RobotClosedLoopConstraint[];
+  inspectionContext?: RobotInspectionContext;
 }
 
 /** Assembly component: a URDF parsed into RobotData with namespace */

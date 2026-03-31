@@ -1,11 +1,11 @@
 import { findAssetByPath } from '@/core/loaders/meshLoader';
 import { getCollisionGeometryEntries, getVisualGeometryEntries } from '@/core/robot';
-import { GeometryType, type RobotState, type UrdfLink, type UrdfVisual } from '@/types';
+import { GeometryType, type AppMode, type RobotState, type UrdfLink, type UrdfVisual } from '@/types';
 import { resolveGeometryVisibilityState } from '../components/nodes/geometryVisibility';
 
 const SUPPORTED_MESH_EXTENSIONS = new Set(['stl', 'obj', 'dae', 'gltf', 'glb']);
 
-type VisualizerMode = 'skeleton' | 'detail' | 'hardware';
+type VisualizerMode = AppMode;
 
 interface BuildVisualizerMeshLoadKeyOptions {
   linkId: string;
@@ -53,7 +53,7 @@ function shouldTrackMeshGeometry({
     return false;
   }
 
-  if (mode === 'detail' && !isCollision && link.visible === false) {
+  if (!isCollision && link.visible === false) {
     return false;
   }
 

@@ -22,6 +22,7 @@ test('createUnifiedHydraPhysicalMaterial uses shared viewer defaults', () => {
     assert.equal(material.roughness, HYDRA_UNIFIED_MATERIAL_DEFAULTS.roughness);
     assert.equal(material.metalness, HYDRA_UNIFIED_MATERIAL_DEFAULTS.metalness);
     assert.equal(material.envMapIntensity, HYDRA_UNIFIED_MATERIAL_DEFAULTS.envMapIntensity);
+    assert.equal(material.toneMapped, false);
     assertColorClose(material.color, HYDRA_DEFAULT_GRAY_HEX);
 });
 
@@ -37,4 +38,5 @@ test('applyUnifiedHydraMaterialDefaults normalizes existing material settings', 
     assert.equal(material.roughness, HYDRA_UNIFIED_MATERIAL_DEFAULTS.roughness);
     assert.equal(material.metalness, HYDRA_UNIFIED_MATERIAL_DEFAULTS.metalness);
     assert.equal(material.envMapIntensity, HYDRA_UNIFIED_MATERIAL_DEFAULTS.envMapIntensity);
+    assert.equal(material.toneMapped, false);
 });

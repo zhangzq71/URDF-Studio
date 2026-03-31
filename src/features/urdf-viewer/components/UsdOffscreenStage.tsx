@@ -1,0 +1,482 @@
+import { Html } from '@react-three/drei';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { ViewerLoadingHud } from './ViewerLoadingHud';
+import type { RobotFile } from '@/types';
+import type {
+  ViewerDocumentLoadEvent,
+  ViewerRuntimeStageBridge,
+  UsdLoadingPhaseLabels,
+} from '../types';
+import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
+import type {
+  UsdOffscreenViewerInitRequest,
+  UsdOffscreenViewerLoadDebugEntry,
+  UsdOffscreenViewerWorkerRequest,
+  UsdOffscreenViewerWorkerResponse,
+} from '../utils/usdOffscreenViewerProtocol';
+import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
+import { supportsUsdWorkerRenderer } from '../utils/usdWorkerRendererSupport';
+
+interface UsdOffscreenStageProps {
+  active?: boolean;
+  sourceFile: RobotFile;
+  availableFiles: RobotFile[];
+  assets: Record<string, string>;
+  groundPlaneOffset?: number;
+  showVisual: boolean;
+  showCollision: boolean;
+  showCollisionAlwaysOnTop: boolean;
+  loadingLabel: string;
+  loadingDetailLabel: string;
+  loadingPhaseLabels: UsdLoadingPhaseLabels;
+  onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
+  onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
+  runtimeBridge?: ViewerRuntimeStageBridge;
+}
+
+const USD_STAGE_LOAD_DEBUG_HISTORY_LIMIT = 24;
+
+type RuntimeWindowWithDebug = Window & {
+  __usdStageLoadDebug?: UsdOffscreenViewerLoadDebugEntry;
+  __usdStageLoadDebugHistory?: UsdOffscreenViewerLoadDebugEntry[];
+};
+
+function recordUsdOffscreenLoadDebug(entry: UsdOffscreenViewerLoadDebugEntry): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const runtimeWindow = window as RuntimeWindowWithDebug;
+  runtimeWindow.__usdStageLoadDebug = entry;
+  const history = Array.isArray(runtimeWindow.__usdStageLoadDebugHistory)
+    ? runtimeWindow.__usdStageLoadDebugHistory.slice(-(USD_STAGE_LOAD_DEBUG_HISTORY_LIMIT - 1))
+    : [];
+  history.push(entry);
+  runtimeWindow.__usdStageLoadDebugHistory = history;
+}
+
+export function UsdOffscreenStage({
+  active = true,
+  sourceFile,
+  availableFiles,
+  assets,
+  groundPlaneOffset = 0,
+  showVisual,
+  showCollision,
+  showCollisionAlwaysOnTop,
+  loadingLabel,
+  loadingDetailLabel,
+  loadingPhaseLabels,
+  onRobotDataResolved,
+  onDocumentLoadEvent,
+  runtimeBridge,
+}: UsdOffscreenStageProps) {
+  const workerRef = useRef<Worker | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
+  const initCompleteRef = useRef(false);
+  const onDocumentLoadEventRef = useRef(onDocumentLoadEvent);
+  const onRobotDataResolvedRef = useRef(onRobotDataResolved);
+  const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
+  const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState<ViewerDocumentLoadEvent | null>({
+    status: 'loading',
+    phase: 'checking-path',
+    message: null,
+    progressPercent: 0,
+    loadedCount: null,
+    totalCount: null,
+  });
+
+  const postWorkerMessage = useCallback((message: UsdOffscreenViewerWorkerRequest) => {
+    workerRef.current?.postMessage(message);
+  }, []);
+
+  const handleContainerRef = useCallback((node: HTMLDivElement | null) => {
+    setContainerElement(node);
+  }, []);
+
+  const handleCanvasRef = useCallback((node: HTMLCanvasElement | null) => {
+    setCanvasElement(node);
+  }, []);
+
+  useEffect(() => {
+    onDocumentLoadEventRef.current = onDocumentLoadEvent;
+  }, [onDocumentLoadEvent]);
+
+  useEffect(() => {
+    onRobotDataResolvedRef.current = onRobotDataResolved;
+  }, [onRobotDataResolved]);
+
+  useEffect(() => {
+    runtimeBridge?.onRobotResolved?.(null);
+    runtimeBridge?.onActiveJointChange?.(null);
+    runtimeBridge?.onJointAnglesChange?.({});
+
+    return () => {
+      runtimeBridge?.onRobotResolved?.(null);
+      runtimeBridge?.onActiveJointChange?.(null);
+      runtimeBridge?.onJointAnglesChange?.({});
+    };
+  }, [runtimeBridge]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!supportsUsdWorkerRenderer()) {
+      const nextError = 'USD offscreen worker renderer is unavailable in this browser context.';
+      setErrorMessage(nextError);
+      setIsLoading(false);
+      onDocumentLoadEventRef.current?.({
+        status: 'error',
+        phase: null,
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+        error: nextError,
+      });
+      return;
+    }
+
+    if (!canvasElement || !containerElement || initCompleteRef.current) {
+      return;
+    }
+
+    let resizeObserver: ResizeObserver | null = null;
+    let worker: Worker | null = null;
+
+    const handleWorkerMessage = (event: MessageEvent<UsdOffscreenViewerWorkerResponse>) => {
+      const message = event.data;
+      if (!message) {
+        return;
+      }
+
+      switch (message.type) {
+        case 'progress': {
+            setLoadingProgress({
+              status: 'loading',
+              phase: message.progress.phase,
+              message: message.progress.message ?? null,
+            progressPercent: message.progress.progressPercent ?? null,
+            loadedCount: message.progress.loadedCount ?? null,
+            totalCount: message.progress.totalCount ?? null,
+          });
+          return;
+        }
+        case 'document-load': {
+          if (message.event.status === 'loading') {
+            setIsLoading(true);
+            setLoadingProgress(message.event);
+          } else if (message.event.status === 'ready') {
+            setIsLoading(false);
+            setErrorMessage(null);
+            setLoadingProgress(message.event);
+          } else if (message.event.status === 'error') {
+            setIsLoading(false);
+            setErrorMessage(message.event.error || 'Failed to load USD stage in offscreen worker');
+            setLoadingProgress(message.event);
+          }
+          onDocumentLoadEventRef.current?.(message.event);
+          return;
+        }
+        case 'robot-data': {
+          onRobotDataResolvedRef.current?.(message.resolution);
+          return;
+        }
+        case 'load-debug': {
+          recordUsdOffscreenLoadDebug(message.entry);
+          return;
+        }
+        case 'fatal-error': {
+          setIsLoading(false);
+          setErrorMessage(message.error);
+          return;
+        }
+        default: {
+          return;
+        }
+      }
+    };
+
+    const handleWorkerError = (event: ErrorEvent) => {
+      const nextError = event.error instanceof Error
+        ? event.error.message
+        : event.message || 'USD offscreen worker crashed';
+      setIsLoading(false);
+      setErrorMessage(nextError);
+      onDocumentLoadEventRef.current?.({
+        status: 'error',
+        phase: null,
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+        error: nextError,
+      });
+    };
+
+    const handleWorkerMessageError = () => {
+      const nextError = 'USD offscreen worker message deserialization failed';
+      setIsLoading(false);
+      setErrorMessage(nextError);
+      onDocumentLoadEventRef.current?.({
+        status: 'error',
+        phase: null,
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+        error: nextError,
+      });
+    };
+
+    try {
+      setIsLoading(true);
+      setErrorMessage(null);
+      onDocumentLoadEventRef.current?.({
+        status: 'loading',
+        phase: 'checking-path',
+        message: null,
+        progressPercent: 0,
+        loadedCount: null,
+        totalCount: null,
+      });
+
+      worker = new Worker(
+        new URL('../workers/usdOffscreenViewer.worker.ts', import.meta.url),
+        { type: 'module' },
+      );
+      workerRef.current = worker;
+
+      worker.addEventListener('message', handleWorkerMessage);
+      worker.addEventListener('error', handleWorkerError);
+      worker.addEventListener('messageerror', handleWorkerMessageError);
+
+      const rect = containerElement.getBoundingClientRect();
+      const offscreenCanvas = canvasElement.transferControlToOffscreen();
+      const initRequest: UsdOffscreenViewerInitRequest = {
+        type: 'init',
+        canvas: offscreenCanvas,
+        width: Math.max(1, Math.round(rect.width)),
+        height: Math.max(1, Math.round(rect.height)),
+        devicePixelRatio: window.devicePixelRatio || 1,
+        active,
+        groundPlaneOffset,
+        showVisual,
+        showCollision,
+        showCollisionAlwaysOnTop,
+        sourceFile,
+        availableFiles,
+        assets,
+      };
+
+      worker.postMessage(initRequest, [offscreenCanvas]);
+      initCompleteRef.current = true;
+
+      resizeObserver = new ResizeObserver((entries) => {
+        const nextEntry = entries[0];
+        if (!nextEntry) {
+          return;
+        }
+
+        const nextRect = nextEntry.contentRect;
+        postWorkerMessage({
+          type: 'resize',
+          width: Math.max(1, Math.round(nextRect.width)),
+          height: Math.max(1, Math.round(nextRect.height)),
+          devicePixelRatio: window.devicePixelRatio || 1,
+        });
+      });
+
+      resizeObserver.observe(containerElement);
+    } catch (error) {
+      const nextError = error instanceof Error
+        ? error.message
+        : 'Failed to start USD offscreen worker';
+      try {
+        worker?.terminate();
+      } catch {}
+      workerRef.current = null;
+      setIsLoading(false);
+      setErrorMessage(nextError);
+      onDocumentLoadEventRef.current?.({
+        status: 'error',
+        phase: null,
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+        error: nextError,
+      });
+      return;
+    }
+
+    return () => {
+      initCompleteRef.current = false;
+      resizeObserver?.disconnect();
+      if (!worker) {
+        return;
+      }
+      worker.removeEventListener('message', handleWorkerMessage);
+      worker.removeEventListener('error', handleWorkerError);
+      worker.removeEventListener('messageerror', handleWorkerMessageError);
+      try {
+        worker.postMessage({ type: 'dispose' });
+      } catch {}
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, [canvasElement, containerElement]);
+
+  useEffect(() => {
+    postWorkerMessage({
+      type: 'set-visibility',
+      showVisual,
+      showCollision,
+      showCollisionAlwaysOnTop,
+    });
+  }, [postWorkerMessage, showCollision, showCollisionAlwaysOnTop, showVisual]);
+
+  useEffect(() => {
+    postWorkerMessage({
+      type: 'set-ground-offset',
+      groundPlaneOffset,
+    });
+  }, [groundPlaneOffset, postWorkerMessage]);
+
+  useEffect(() => {
+    postWorkerMessage({
+      type: 'set-active',
+      active,
+    });
+  }, [active, postWorkerMessage]);
+
+  const loadingHudState = useMemo(() => buildViewerLoadingHudState({
+    detailLabel: loadingDetailLabel,
+    loadedCount: loadingProgress?.loadedCount,
+    progressPercent: loadingProgress?.progressPercent,
+    totalCount: loadingProgress?.totalCount,
+  }), [
+    loadingDetailLabel,
+    loadingProgress?.loadedCount,
+    loadingProgress?.progressPercent,
+    loadingProgress?.totalCount,
+  ]);
+
+  const loadingDetail = loadingProgress?.message || loadingDetailLabel;
+  const loadingStageLabel = loadingProgress?.phase
+    && loadingProgress.phase !== 'ready'
+    && loadingProgress.phase in loadingPhaseLabels
+    ? loadingPhaseLabels[loadingProgress.phase as keyof typeof loadingPhaseLabels]
+    : undefined;
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!active) {
+      return;
+    }
+
+    activePointerIdRef.current = event.pointerId;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    postWorkerMessage({
+      type: 'pointer-down',
+      pointerId: event.pointerId,
+      button: event.button,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  }, [active, postWorkerMessage]);
+
+  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!active || activePointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    postWorkerMessage({
+      type: 'pointer-move',
+      pointerId: event.pointerId,
+      buttons: event.buttons,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  }, [active, postWorkerMessage]);
+
+  const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (activePointerIdRef.current !== event.pointerId) {
+      return;
+    }
+
+    activePointerIdRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    postWorkerMessage({
+      type: 'pointer-up',
+      pointerId: event.pointerId,
+      buttons: event.buttons,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  }, [postWorkerMessage]);
+
+  const handleWheel = useCallback((event: ReactWheelEvent<HTMLCanvasElement>) => {
+    if (!active) {
+      return;
+    }
+
+    event.preventDefault();
+    postWorkerMessage({
+      type: 'wheel',
+      deltaY: event.deltaY,
+    });
+  }, [active, postWorkerMessage]);
+
+  return (
+    <Html fullscreen>
+      <div ref={handleContainerRef} className="absolute inset-0">
+        <canvas
+          ref={handleCanvasRef}
+          className="block h-full w-full"
+          style={{
+            height: '100%',
+            opacity: active ? 1 : 0,
+            pointerEvents: active ? 'auto' : 'none',
+            touchAction: 'none',
+            userSelect: 'none',
+            width: '100%',
+          }}
+          onContextMenuCapture={(event) => event.preventDefault()}
+          onPointerCancel={handlePointerUp}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onWheel={handleWheel}
+        />
+
+        {isLoading && !onDocumentLoadEvent ? (
+          <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
+            <ViewerLoadingHud
+              title={loadingLabel}
+              detail={loadingDetail}
+              progress={loadingHudState.progress}
+              statusLabel={loadingHudState.statusLabel}
+              stageLabel={loadingStageLabel}
+              delayMs={0}
+            />
+          </div>
+        ) : null}
+
+        {errorMessage && !isLoading ? (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div className="rounded bg-red-900/80 px-4 py-2 text-sm text-red-200">
+              {errorMessage}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </Html>
+  );
+}

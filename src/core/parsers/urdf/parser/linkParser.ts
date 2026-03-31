@@ -1,6 +1,6 @@
 import { UrdfLink, GeometryType, type UrdfVisualMaterial } from '@/types';
 import { DEFAULT_LINK } from '@/types/constants';
-import { parseVec3, parseRPY, parseColor, parseTexture } from './utils';
+import { parseVec3, parseOrigin, parseColor, parseTexture } from './utils';
 import { parseGeometry } from './geometry';
 
 interface ParsedMaterialDefinition {
@@ -52,7 +52,7 @@ function parseVisualElement(
     linkGazeboMaterial?: string,
 ): ParsedVisualGeometry {
     const visualOriginEl = getDirectChildElements(visualEl, 'origin')[0];
-    let visualGeo = parseGeometry(visualEl.querySelector("geometry"), DEFAULT_LINK.visual);
+    let visualGeo = parseGeometry(getDirectChildElements(visualEl, "geometry")[0], DEFAULT_LINK.visual);
     if (!visualGeo) {
         visualGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
     }
@@ -94,11 +94,9 @@ function parseVisualElement(
     return {
         geometry: {
             ...DEFAULT_LINK.visual,
+            name: visualEl.getAttribute("name")?.trim() || undefined,
             ...visualGeo,
-            origin: {
-                xyz: parseVec3(visualOriginEl?.getAttribute("xyz")),
-                rpy: parseRPY(visualOriginEl?.getAttribute("rpy"))
-            },
+            origin: parseOrigin(visualOriginEl),
             color: visualColor,
             ...(authoredMaterials ? { authoredMaterials } : {}),
             materialSource,
@@ -127,6 +125,7 @@ export const parseLinks = (
         const linkName = linkEl.getAttribute("name");
         if (!linkName) return;
         const id = linkName; // Use name as ID for imported structure
+        const linkType = linkEl.getAttribute("type")?.trim() || undefined;
 
         const visualEls = getDirectChildElements(linkEl, 'visual');
         const parsedVisuals = visualEls.map((visualEl) => (
@@ -138,7 +137,7 @@ export const parseLinks = (
             dimensions: { x: 0, y: 0, z: 0 },
             origin: {
                 xyz: parseVec3(undefined),
-                rpy: parseRPY(undefined),
+                rpy: { r: 0, p: 0, y: 0 },
             },
             color: undefined,
             materialSource: undefined,
@@ -150,18 +149,20 @@ export const parseLinks = (
         const collisionEls = getDirectChildElements(linkEl, 'collision');
         let mainCollisionGeo: any = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
         let mainCollisionOrigin = { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } };
+        let primaryCollisionName: string | undefined;
+        let primaryCollisionVerbose: string | undefined;
 
         if (collisionEls.length > 0) {
             // Process primary collision (index 0)
             const firstCol = collisionEls[0];
-            const parsedGeo = parseGeometry(firstCol.querySelector("geometry"), DEFAULT_LINK.collision);
+            const parsedGeo = parseGeometry(getDirectChildElements(firstCol, "geometry")[0], DEFAULT_LINK.collision);
             if (parsedGeo) mainCollisionGeo = parsedGeo;
             
-            const originEl = firstCol.querySelector("origin");
-            mainCollisionOrigin = {
-                xyz: parseVec3(originEl?.getAttribute("xyz")),
-                rpy: parseRPY(originEl?.getAttribute("rpy"))
-            };
+            const originEl = getDirectChildElements(firstCol, "origin")[0];
+            const verboseEl = getDirectChildElements(firstCol, "verbose")[0];
+            mainCollisionOrigin = parseOrigin(originEl);
+            primaryCollisionName = firstCol.getAttribute("name")?.trim() || undefined;
+            primaryCollisionVerbose = verboseEl?.getAttribute("value")?.trim() || undefined;
         }
 
         // Inertial
@@ -173,10 +174,7 @@ export const parseLinks = (
         const inertial = inertialEl
             ? {
                 mass: parseFloat(massEl?.getAttribute("value") || "0"),
-                origin: inertialOriginEl ? {
-                    xyz: parseVec3(inertialOriginEl.getAttribute("xyz")),
-                    rpy: parseRPY(inertialOriginEl.getAttribute("rpy"))
-                } : undefined,
+                origin: inertialOriginEl ? parseOrigin(inertialOriginEl) : undefined,
                 inertia: {
                     ixx: parseFloat(inertiaEl?.getAttribute("ixx") || "0"),
                     ixy: parseFloat(inertiaEl?.getAttribute("ixy") || "0"),
@@ -191,10 +189,13 @@ export const parseLinks = (
         links[id] = {
             id,
             name: linkName,
+            type: linkType,
             visual: primaryVisual,
             visualBodies,
             collision: {
                 ...DEFAULT_LINK.collision,
+                name: primaryCollisionName,
+                verbose: primaryCollisionVerbose,
                 ...mainCollisionGeo,
                 origin: mainCollisionOrigin
             },
@@ -214,15 +215,15 @@ export const parseLinks = (
             let colGeo = parseGeometry(colEl.querySelector("geometry"), DEFAULT_LINK.collision);
             if (!colGeo) colGeo = { type: GeometryType.NONE, dimensions: { x: 0, y: 0, z: 0 } };
             
-            const originEl = colEl.querySelector("origin");
-            const colOrigin = {
-                xyz: parseVec3(originEl?.getAttribute("xyz")),
-                rpy: parseRPY(originEl?.getAttribute("rpy"))
-            };
+            const originEl = getDirectChildElements(colEl, "origin")[0];
+            const verboseEl = getDirectChildElements(colEl, "verbose")[0];
+            const colOrigin = parseOrigin(originEl);
 
             links[id].collisionBodies = links[id].collisionBodies || [];
             links[id].collisionBodies.push({
                 ...DEFAULT_LINK.collision,
+                name: colEl.getAttribute("name")?.trim() || undefined,
+                verbose: verboseEl?.getAttribute("value")?.trim() || undefined,
                 ...colGeo,
                 origin: colOrigin
             });

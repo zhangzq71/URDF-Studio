@@ -24,7 +24,6 @@ interface TreeNodeLinkRowProps {
   geometryCount: number;
   isGeometryExpanded: boolean;
   isVisible: boolean;
-  isSkeleton: boolean;
   isSelected: boolean;
   isHovered: boolean;
   isAttentionHighlighted: boolean;
@@ -62,7 +61,6 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
   geometryCount,
   isGeometryExpanded,
   isVisible,
-  isSkeleton,
   isSelected,
   isHovered,
   isAttentionHighlighted,
@@ -218,7 +216,7 @@ export const TreeNodeLinkRow = memo(function TreeNodeLinkRow({
           </button>
         )}
 
-        {isSkeleton && !readOnly && (
+        {!readOnly && (
           <button
             type="button"
             onClick={onAddChild}

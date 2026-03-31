@@ -279,3 +279,51 @@ test('renameRobotFolder rejects conflicting target folders', () => {
     ['robots/demo/robot.urdf', 'robots/existing/other.urdf'],
   );
 });
+
+test('setMotorLibrary preserves default motor brands when incoming library is empty', () => {
+  resetAssetsStore();
+
+  const state = useAssetsStore.getState();
+  const defaultBrands = Object.keys(state.motorLibrary).sort();
+  state.setMotorLibrary({});
+
+  const nextLibrary = useAssetsStore.getState().motorLibrary;
+  const actualBrands = Object.keys(nextLibrary).sort();
+  assert.deepEqual(actualBrands, defaultBrands);
+});
+
+test('setMotorLibrary merges custom brands without losing built-in motors', () => {
+  resetAssetsStore();
+
+  const state = useAssetsStore.getState();
+  state.setMotorLibrary({
+    Unitree: [
+      {
+        name: 'Go1-M8010-6',
+        armature: 0.000111842,
+        velocity: 30.1,
+        effort: 23.7,
+      },
+      {
+        name: 'Unitree-Custom-X',
+        armature: 0.001,
+        velocity: 20,
+        effort: 40,
+      },
+    ],
+    'My Lab': [
+      {
+        name: 'LAB-MOTOR-01',
+        armature: 0.002,
+        velocity: 18,
+        effort: 32,
+      },
+    ],
+  });
+
+  const nextLibrary = useAssetsStore.getState().motorLibrary;
+
+  assert.ok(nextLibrary.Unitree.some((motor) => motor.name === 'Go1-M8010-6'));
+  assert.ok(nextLibrary.Unitree.some((motor) => motor.name === 'Unitree-Custom-X'));
+  assert.ok(nextLibrary['My Lab']?.some((motor) => motor.name === 'LAB-MOTOR-01'));
+});

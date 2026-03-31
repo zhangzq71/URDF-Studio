@@ -3,22 +3,7 @@ import test from 'node:test';
 
 import { resolveGeometryVisibilityState } from './geometryVisibility.ts';
 
-test('skeleton mode keeps hidden visual geometry mounted for ground alignment', () => {
-  const state = resolveGeometryVisibilityState({
-    mode: 'skeleton',
-    isCollision: false,
-    showGeometry: false,
-    showCollision: false,
-  });
-
-  assert.deepEqual(state, {
-    shouldRender: true,
-    visible: false,
-    interactive: false,
-  });
-});
-
-test('detail mode still renders visible interactive visual geometry', () => {
+test('appMode `detail` keeps visual geometry visible and interactive', () => {
   const state = resolveGeometryVisibilityState({
     mode: 'detail',
     isCollision: false,
@@ -33,12 +18,42 @@ test('detail mode still renders visible interactive visual geometry', () => {
   });
 });
 
-test('non-detail collision geometry remains unmounted', () => {
+test('detail mode ignores the legacy geometry toggle for visual bodies', () => {
   const state = resolveGeometryVisibilityState({
-    mode: 'hardware',
+    mode: 'detail',
+    isCollision: false,
+    showGeometry: false,
+    showCollision: false,
+  });
+
+  assert.deepEqual(state, {
+    shouldRender: true,
+    visible: true,
+    interactive: true,
+  });
+});
+
+test('collision geometry renders when enabled', () => {
+  const state = resolveGeometryVisibilityState({
+    mode: 'detail',
     isCollision: true,
     showGeometry: true,
     showCollision: true,
+  });
+
+  assert.deepEqual(state, {
+    shouldRender: true,
+    visible: true,
+    interactive: true,
+  });
+});
+
+test('collision geometry stays hidden when the unified collision toggle is off', () => {
+  const state = resolveGeometryVisibilityState({
+    mode: 'detail',
+    isCollision: true,
+    showGeometry: true,
+    showCollision: false,
   });
 
   assert.deepEqual(state, {

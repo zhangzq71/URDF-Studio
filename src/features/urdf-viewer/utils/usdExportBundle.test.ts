@@ -238,7 +238,7 @@ test('buildUsdExportBundleFromSnapshot preserves current robot edits and emits e
 
   const baseVisualText = await baseVisualBlob!.text();
   assert.match(baseVisualText, /^o base_link_visual_0/m);
-  assert.match(baseVisualText, /^v 0 0 0$/m);
+  assert.match(baseVisualText, /^v 0 0 0 1 0 0$/m);
   assert.match(baseVisualText, /^f 1 2 3$/m);
 });
 
@@ -349,7 +349,7 @@ test('buildUsdExportBundleFromSnapshot keeps descriptor transforms in origins in
   assert.ok(meshBlob);
 
   const meshText = await meshBlob!.text();
-  assert.match(meshText, /^v 0 0 0$/m);
+  assert.match(meshText, /^v 0 0 0 1 1 1$/m);
   assert.doesNotMatch(meshText, /^v 5 6 7$/m);
 });
 

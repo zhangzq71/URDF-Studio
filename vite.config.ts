@@ -128,12 +128,28 @@ function isCodeEditorRuntimeChunkModule(normalizedId: string): boolean {
   return normalizedId.includes('/src/features/code-editor/utils/monacoLoader.ts');
 }
 
-const GENERATED_ARTIFACT_WATCH_IGNORES = [
-  '**/tmp/**',
-  '**/.tmp/**',
-  '**/output/**',
-  '**/dist/**',
+const GENERATED_ARTIFACT_WATCH_IGNORE_ROOTS = [
+  path.resolve(__dirname, 'tmp'),
+  path.resolve(__dirname, '.tmp'),
+  path.resolve(__dirname, 'output'),
+  path.resolve(__dirname, 'dist'),
+  path.resolve(__dirname, 'log'),
+  path.resolve(__dirname, 'test'),
+].map((entryPath) => entryPath.replace(/\\/g, '/'));
+
+const GENERATED_ARTIFACT_WATCH_IGNORE_SEGMENTS = [
+  '/.git/',
+  '/.svn/',
+  '/.hg/',
 ];
+
+function shouldIgnoreWatchPath(watchPath: string): boolean {
+  const normalizedPath = watchPath.replace(/\\/g, '/');
+
+  return GENERATED_ARTIFACT_WATCH_IGNORE_ROOTS.some((rootPath) => (
+    normalizedPath === rootPath || normalizedPath.startsWith(`${rootPath}/`)
+  )) || GENERATED_ARTIFACT_WATCH_IGNORE_SEGMENTS.some((segment) => normalizedPath.includes(segment));
+}
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
@@ -144,8 +160,10 @@ export default defineConfig(({ mode }) => {
         // Verification artifacts are intentionally written into tmp/ by repo policy.
         // Ignore generated directories so exports, screenshots, logs, and pid files
         // do not trigger full-page reloads and wipe imported workspace state.
+        // Root-level test fixtures contain vendored repositories large enough to
+        // exhaust OS watcher limits, so filter them explicitly by absolute path.
         watch: {
-          ignored: GENERATED_ARTIFACT_WATCH_IGNORES,
+          ignored: shouldIgnoreWatchPath,
         },
         headers: {
           'Cross-Origin-Embedder-Policy': 'require-corp',

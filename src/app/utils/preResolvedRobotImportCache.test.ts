@@ -5,6 +5,7 @@ import { GeometryType, type RobotFile } from '@/types';
 import {
   clearPreResolvedRobotImportCache,
   consumePreResolvedRobotImport,
+  peekPreResolvedRobotImport,
   primePreResolvedRobotImports,
 } from './preResolvedRobotImportCache';
 import { buildPreResolvedImportContentSignature } from './preResolvedImportSignature.ts';
@@ -67,6 +68,23 @@ test('consumePreResolvedRobotImport returns a primed match once', () => {
   const secondConsume = consumePreResolvedRobotImport(demoFile);
 
   assert.deepEqual(firstConsume, demoResult);
+  assert.equal(secondConsume, null);
+});
+
+test('peekPreResolvedRobotImport keeps a primed match available for a later consume', () => {
+  primePreResolvedRobotImports([{
+    fileName: demoFile.name,
+    format: demoFile.format,
+    contentSignature: buildPreResolvedImportContentSignature(demoFile.content),
+    result: demoResult,
+  }]);
+
+  const peekResult = peekPreResolvedRobotImport(demoFile);
+  const consumeResult = consumePreResolvedRobotImport(demoFile);
+  const secondConsume = consumePreResolvedRobotImport(demoFile);
+
+  assert.deepEqual(peekResult, demoResult);
+  assert.deepEqual(consumeResult, demoResult);
   assert.equal(secondConsume, null);
 });
 

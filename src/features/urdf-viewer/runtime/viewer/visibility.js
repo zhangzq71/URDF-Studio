@@ -1,4 +1,8 @@
-import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial } from "../../utils/materials.ts";
+import {
+    collisionBaseMaterial,
+    resolveCollisionRenderOrder,
+    syncCollisionBaseMaterialPriority,
+} from "../../utils/materials.ts";
 
 const VISUAL_SEGMENT_PATTERN = /(?:^|\/)visuals?(?:$|[/.])/i;
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
@@ -21,7 +25,7 @@ function getMeshMaterials(mesh) {
         return [];
     return Array.isArray(mesh.material) ? mesh.material : [mesh.material];
 }
-function setCollisionMeshStyle(mesh, enabled, showVisualMeshes) {
+function setCollisionMeshStyle(mesh, enabled, alwaysOnTop) {
     const stateKey = "usdViewerCollisionMeshState";
     if (!mesh.userData[stateKey]) {
         mesh.userData[stateKey] = {
@@ -31,8 +35,9 @@ function setCollisionMeshStyle(mesh, enabled, showVisualMeshes) {
     }
 
     if (enabled) {
+        syncCollisionBaseMaterialPriority(alwaysOnTop);
         mesh.material = collisionBaseMaterial;
-        mesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
+        mesh.renderOrder = resolveCollisionRenderOrder(alwaysOnTop);
         return;
     }
 
@@ -41,7 +46,12 @@ function setCollisionMeshStyle(mesh, enabled, showVisualMeshes) {
     }
     mesh.renderOrder = mesh.userData[stateKey].renderOrder;
 }
-export function applyMeshVisibilityFilters(renderInterface, showVisualMeshes, showCollisionMeshes) {
+export function applyMeshVisibilityFilters(
+    renderInterface,
+    showVisualMeshes,
+    showCollisionMeshes,
+    collisionAlwaysOnTop = true,
+) {
     if (!renderInterface?.meshes)
         return;
     for (const [meshId, hydraMesh] of Object.entries(renderInterface.meshes)) {
@@ -63,7 +73,7 @@ export function applyMeshVisibilityFilters(renderInterface, showVisualMeshes, sh
                     // Keep visibility toggles resilient even if a single proto mesh fails.
                 }
             }
-            setCollisionMeshStyle(mesh, showCollisionMeshes, showVisualMeshes);
+            setCollisionMeshStyle(mesh, showCollisionMeshes, collisionAlwaysOnTop);
             continue;
         }
         if (isVisualMeshId(meshId, meshName)) {

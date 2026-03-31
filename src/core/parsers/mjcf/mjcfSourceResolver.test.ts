@@ -173,3 +173,43 @@ test('resolveMJCFSource does not resolve includes through ambiguous basename mat
   assert.doesNotMatch(resolved.content, /left_root/);
   assert.doesNotMatch(resolved.content, /right_root/);
 });
+
+test('resolveMJCFSource resolves attached model assets through compiler assetdir', () => {
+  installDomGlobals();
+
+  const files: RobotFile[] = [
+    {
+      name: '/tmp/mjcf-assetdir/scene.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="scene">
+          <compiler assetdir="assets" />
+          <asset>
+            <model name="child_model" file="attached.xml" />
+          </asset>
+          <worldbody>
+            <attach model="child_model" body="child_root" prefix="child/" />
+          </worldbody>
+        </mujoco>
+      `,
+    },
+    {
+      name: '/tmp/mjcf-assetdir/assets/attached.xml',
+      format: 'mjcf',
+      content: `
+        <mujoco model="attached">
+          <worldbody>
+            <body name="child_root">
+              <geom name="child_geom" type="box" size="0.1 0.1 0.1" />
+            </body>
+          </worldbody>
+        </mujoco>
+      `,
+    },
+  ];
+
+  const resolved = resolveMJCFSource(files[0]!, files);
+
+  assert.match(resolved.content, /name="child\/child_root"/);
+  assert.match(resolved.content, /name="child\/child_geom"/);
+});

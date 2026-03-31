@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import * as THREE from 'three';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
 import {
   isLikelyThinSheetGeometry,
@@ -101,6 +104,125 @@ function createParallelOpenShellGeometry(): THREE.BufferGeometry {
   return geometry;
 }
 
+function weldGeometryVertices(geometry: THREE.BufferGeometry): {
+  vertices: Array<[number, number, number]>;
+  faces: Array<[number, number, number]>;
+} {
+  const position = geometry.getAttribute('position');
+  assert.ok(position);
+
+  const index = geometry.getIndex();
+  const weldedVertices: Array<[number, number, number]> = [];
+  const remappedVertexIndices = new Array<number>(position.count);
+  const vertexLookup = new Map<string, number>();
+  const triangleVertexCount = index ? index.count : position.count;
+  const faces: Array<[number, number, number]> = [];
+
+  const vertex = new THREE.Vector3();
+  const makeKey = (input: THREE.Vector3) => (
+    `${input.x.toFixed(8)}|${input.y.toFixed(8)}|${input.z.toFixed(8)}`
+  );
+
+  for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex += 1) {
+    vertex.fromBufferAttribute(position, vertexIndex);
+    const key = makeKey(vertex);
+    let weldedIndex = vertexLookup.get(key);
+    if (weldedIndex == null) {
+      weldedIndex = weldedVertices.length;
+      weldedVertices.push([vertex.x, vertex.y, vertex.z]);
+      vertexLookup.set(key, weldedIndex);
+    }
+    remappedVertexIndices[vertexIndex] = weldedIndex;
+  }
+
+  for (let triangleOffset = 0; triangleOffset <= triangleVertexCount - 3; triangleOffset += 3) {
+    const ia = index ? index.getX(triangleOffset) : triangleOffset;
+    const ib = index ? index.getX(triangleOffset + 1) : triangleOffset + 1;
+    const ic = index ? index.getX(triangleOffset + 2) : triangleOffset + 2;
+    faces.push([
+      remappedVertexIndices[ia]!,
+      remappedVertexIndices[ib]!,
+      remappedVertexIndices[ic]!,
+    ]);
+  }
+
+  return {
+    vertices: weldedVertices,
+    faces,
+  };
+}
+
+function hasConsistentWatertightOrientation(geometry: THREE.BufferGeometry): boolean {
+  const { faces } = weldGeometryVertices(geometry);
+  const edgeToFaces = new Map<string, Array<{ faceIndex: number; edge: [number, number] }>>();
+
+  faces.forEach((face, faceIndex) => {
+    const orientedEdges: Array<[number, number]> = [
+      [face[0], face[1]],
+      [face[1], face[2]],
+      [face[2], face[0]],
+    ];
+
+    orientedEdges.forEach((edge) => {
+      const key = edge[0] < edge[1] ? `${edge[0]}:${edge[1]}` : `${edge[1]}:${edge[0]}`;
+      const existing = edgeToFaces.get(key);
+      if (existing) {
+        existing.push({ faceIndex, edge });
+      } else {
+        edgeToFaces.set(key, [{ faceIndex, edge }]);
+      }
+    });
+  });
+
+  const adjacency = new Map<number, Array<{ neighborFaceIndex: number; sameDirection: boolean }>>();
+  for (let faceIndex = 0; faceIndex < faces.length; faceIndex += 1) {
+    adjacency.set(faceIndex, []);
+  }
+
+  for (const usages of edgeToFaces.values()) {
+    if (usages.length !== 2) {
+      return false;
+    }
+
+    const [left, right] = usages;
+    const sameDirection = left.edge[0] === right.edge[0] && left.edge[1] === right.edge[1];
+    adjacency.get(left.faceIndex)!.push({
+      neighborFaceIndex: right.faceIndex,
+      sameDirection,
+    });
+    adjacency.get(right.faceIndex)!.push({
+      neighborFaceIndex: left.faceIndex,
+      sameDirection,
+    });
+  }
+
+  const orientationState = new Array<number | null>(faces.length).fill(null);
+  const queue: number[] = [0];
+  orientationState[0] = 1;
+
+  while (queue.length > 0) {
+    const faceIndex = queue.shift()!;
+    const neighbors = adjacency.get(faceIndex) ?? [];
+    for (const neighbor of neighbors) {
+      const expectedOrientation = neighbor.sameDirection
+        ? -orientationState[faceIndex]!
+        : orientationState[faceIndex]!;
+
+      if (orientationState[neighbor.neighborFaceIndex] == null) {
+        orientationState[neighbor.neighborFaceIndex] = expectedOrientation;
+        queue.push(neighbor.neighborFaceIndex);
+        continue;
+      }
+
+      if (orientationState[neighbor.neighborFaceIndex] !== expectedOrientation) {
+        return false;
+      }
+    }
+  }
+
+  return orientationState.every((value) => value != null);
+}
+
 test('prepareMeshSurfaceForSingleSidedRendering repairs mixed winding in indexed geometry', () => {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   swapIndexedTriangleWinding(geometry, 0);
@@ -167,4 +289,25 @@ test('prepareMeshSurfaceForSingleSidedRendering skips ambiguous open shells', ()
   assert.equal(summary.flippedTriangleCount, 0);
   assert.equal(summary.repairedMeshCount, 0);
   assert.equal(outwardFacingTriangleRatio(geometry), 0.5);
+});
+
+test('prepareMeshSurfaceForSingleSidedRendering does not rewrite already consistent concave MJCF mesh fixtures', () => {
+  const fixturePath = path.resolve('test/mujoco_menagerie-main/flybody/assets/femur_T1_left_body.obj');
+  const object = new OBJLoader().parse(fs.readFileSync(fixturePath, 'utf8'));
+  let mesh: THREE.Mesh | null = null;
+
+  object.traverse((child: any) => {
+    if (!mesh && child?.isMesh) {
+      mesh = child;
+    }
+  });
+
+  assert.ok(mesh, 'expected the flybody fixture to produce a mesh');
+  assert.equal(hasConsistentWatertightOrientation(mesh.geometry), true);
+
+  const summary = prepareMeshSurfaceForSingleSidedRendering(object);
+
+  assert.equal(summary.flippedTriangleCount, 0);
+  assert.equal(summary.repairedMeshCount, 0);
+  assert.equal(Boolean(mesh.userData.mjcfPreferDoubleSide), false);
 });

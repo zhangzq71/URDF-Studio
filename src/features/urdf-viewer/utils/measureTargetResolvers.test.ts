@@ -139,6 +139,44 @@ test('resolves robot measure targets from the geometry center when anchor mode i
   assert.deepEqual(target.point.toArray(), [15, 2, -1]);
 });
 
+test('resolves robot measure targets for folded MJCF synthetic links through the runtime parent link', () => {
+  const robot = new THREE.Group();
+  const runtimeParentLink = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  runtimeParentLink.isURDFLink = true;
+  runtimeParentLink.name = 'base_link';
+  runtimeParentLink.position.set(10, 2, -1);
+
+  const mainVisual = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  mainVisual.position.set(-3, 0, 0);
+  const attachmentVisual = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
+  attachmentVisual.position.set(5, 0, 0);
+  runtimeParentLink.add(mainVisual, attachmentVisual);
+  robot.add(runtimeParentLink);
+  robot.updateMatrixWorld(true);
+
+  const target = resolveRobotMeasureTargetFromSelection(
+    robot,
+    {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+      base_link_geom_1: {
+        ...DEFAULT_LINK,
+        id: 'base_link_geom_1',
+        name: 'base_link_geom_1',
+      },
+    },
+    { type: 'link', id: 'base_link_geom_1', subType: 'visual', objectIndex: 1 },
+    'geometry',
+  );
+
+  assert.ok(target);
+  assert.equal(target.linkName, 'base_link_geom_1');
+  assert.deepEqual(target.point.toArray(), [15, 2, -1]);
+});
+
 test('resolves usd measure targets through the shared selection contract', () => {
   const firstMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
   firstMesh.position.set(1, 0, 0);

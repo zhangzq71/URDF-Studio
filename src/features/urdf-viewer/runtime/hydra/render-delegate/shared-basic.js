@@ -8,21 +8,8 @@ export const debugMaterials = false;
 export const debugMeshes = false;
 export const debugPrims = false;
 export const debugInstancer = false;
-const urlParams = (typeof window !== "undefined" && window?.location?.search)
-    ? new URLSearchParams(window.location.search)
-    : null;
-const parseQueryBoolean = (value, fallback = false) => {
-    if (value === null || value === undefined)
-        return fallback;
-    const normalized = String(value).toLowerCase();
-    if (normalized === "1" || normalized === "true")
-        return true;
-    if (normalized === "0" || normalized === "false")
-        return false;
-    return fallback;
-};
-export const disableTextures = parseQueryBoolean(urlParams?.get("disableTextures"), false);
-export const disableMaterials = parseQueryBoolean(urlParams?.get("disableMaterials"), false);
+export const disableTextures = false;
+export const disableMaterials = false;
 export const transformEpsilon = 1e-5;
 export const defaultGrayComponent = new Color(0x888888).r;
 export const hydraCallbackErrorCounts = new Map();
@@ -33,6 +20,36 @@ let materialBindingWarningInterceptorInstalled = false;
 let activeMaterialBindingWarningOwner = null;
 export const rawConsoleWarn = console.warn.bind(console);
 export const rawConsoleError = console.error.bind(console);
+export function disposeUsdHandle(usdModule, handle) {
+    if (!handle)
+        return;
+    try {
+        if (typeof handle.isDeleted === 'function' && handle.isDeleted()) {
+            return;
+        }
+    }
+    catch {
+        // Ignore deleted-state probe failures and attempt direct disposal.
+    }
+    let deleted = false;
+    try {
+        if (typeof handle.delete === 'function') {
+            handle.delete();
+            deleted = true;
+        }
+    }
+    catch (error) {
+        rawConsoleWarn('[HydraDelegate] Failed to dispose USD handle.', error);
+    }
+    if (!deleted)
+        return;
+    try {
+        usdModule?.flushPendingDeletes?.();
+    }
+    catch {
+        // Flush is best-effort.
+    }
+}
 export function logHydraCallbackError(label, error) {
     const key = String(label || "unknown");
     const previousCount = hydraCallbackErrorCounts.get(key) || 0;
@@ -882,6 +899,11 @@ export function registerMaterialBindingApiWarningHandler(handler) {
         return;
     installMaterialBindingApiWarningInterceptor();
     materialBindingWarningHandlers.add(handler);
+}
+export function unregisterMaterialBindingApiWarningHandler(handler) {
+    if (typeof handler !== 'function')
+        return;
+    materialBindingWarningHandlers.delete(handler);
 }
 export function isLikelyDefaultGrayMaterial(material, epsilon = 2 / 255) {
     if (!material || !material.color)

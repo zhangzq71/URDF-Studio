@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { unstable_batchedUpdates } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { getPrimaryTreeRenderRootLinkId, getTreeRenderRootLinkIds } from '@/core/robot';
-import type { AppMode, AssemblyState, RobotData, RobotFile, RobotState, Theme } from '@/types';
+import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import { Button, Dialog } from '@/shared/components/ui';
 import { useAssemblyStore, useUIStore, type Language } from '@/store';
@@ -54,6 +54,7 @@ export interface TreeEditorProps {
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
   onPreviewFile?: (file: RobotFile) => void;
+  onSwitchToProMode?: () => void;
   previewFileName?: string;
   isReadOnly?: boolean;
 }
@@ -90,6 +91,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onRemoveBridge,
   onRenameComponent,
   onPreviewFile,
+  onSwitchToProMode,
   previewFileName,
   isReadOnly = false,
 }) => {
@@ -131,12 +133,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
   const handleSwitchToProMode = useCallback(() => {
     unstable_batchedUpdates(() => {
+      onSwitchToProMode?.();
       if (!assemblyState) {
         initAssembly(robot.name || 'assembly');
       }
       setSidebarTab('workspace');
     });
-  }, [assemblyState, initAssembly, robot.name, setSidebarTab]);
+  }, [assemblyState, initAssembly, onSwitchToProMode, robot.name, setSidebarTab]);
 
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [isEditingName, setIsEditingName] = useState(false);
@@ -159,33 +162,19 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const robotSelection = robot.selection ?? { type: null as const, id: null as const };
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
-  const treeRobot = useMemo<RobotData>(() => {
+  const treeRobot = useMemo<RobotState>(() => {
     if (isAssemblyView) {
       return {
         name: '',
         links: {},
         joints: {},
         rootLinkId: '',
+        selection: { type: null, id: null },
       };
     }
 
-    return {
-      name: robot.name,
-      links: robot.links,
-      joints: robot.joints,
-      rootLinkId: robot.rootLinkId,
-      materials: robot.materials,
-      closedLoopConstraints: robot.closedLoopConstraints,
-    };
-  }, [
-    isAssemblyView,
-    robot.closedLoopConstraints,
-    robot.joints,
-    robot.links,
-    robot.materials,
-    robot.name,
-    robot.rootLinkId,
-  ]);
+    return robot;
+  }, [isAssemblyView, robot]);
   const topLevelLibraryFoldersKey = useMemo(() => {
     const firstLevel = new Set<string>();
 
@@ -207,6 +196,33 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     () => (isAssemblyView ? {} : buildParentLinkByChild(robot.joints)),
     [isAssemblyView, robot.joints],
   );
+  const selectionBranchLinkIds = useMemo(() => {
+    if (isAssemblyView) {
+      return new Set<string>();
+    }
+
+    const branch = new Set<string>();
+    let currentLinkId: string | null = null;
+
+    if (robotSelection.type === 'link' && robotSelection.id) {
+      currentLinkId = robotSelection.id;
+    } else if (robotSelection.type === 'joint' && robotSelection.id) {
+      currentLinkId = robot.joints[robotSelection.id]?.parentLinkId ?? null;
+    }
+
+    while (currentLinkId) {
+      branch.add(currentLinkId);
+      currentLinkId = parentLinkByChild[currentLinkId] ?? null;
+    }
+
+    return branch;
+  }, [
+    isAssemblyView,
+    parentLinkByChild,
+    robot.joints,
+    robotSelection.id,
+    robotSelection.type,
+  ]);
   const treeRootLinkIds = useMemo(
     () => (isAssemblyView ? [] : getTreeRenderRootLinkIds(robot)),
     [isAssemblyView, robot.joints, robot.links, robot.rootLinkId],
@@ -557,7 +573,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             robot={treeRobot}
             treeRootLinkIds={treeRootLinkIds}
             childJointsByParent={childJointsByParent}
-            parentLinkByChild={parentLinkByChild}
+            selectionBranchLinkIds={selectionBranchLinkIds}
             t={t}
             onToggleOpen={() => setIsStructureOpen(!isStructureOpen)}
             onToggleGeometryDetails={() => setStructureTreeShowGeometryDetails(!structureTreeShowGeometryDetails)}

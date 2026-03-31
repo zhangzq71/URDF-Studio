@@ -15,7 +15,6 @@ interface UseTreeNodeActionsParams {
   linkId: string;
   link: RobotState['links'][string];
   robot: RobotState;
-  isSkeleton: boolean;
   isVisualVisible: boolean;
   isPrimaryCollisionVisible: boolean;
   editingTarget: TreeNodeEditingTarget | null;
@@ -37,7 +36,6 @@ export function useTreeNodeActions({
   linkId,
   link,
   robot,
-  isSkeleton,
   isVisualVisible,
   isPrimaryCollisionVisible,
   editingTarget,
@@ -180,8 +178,8 @@ export function useTreeNodeActions({
     const menuHeight = target.type === 'geometry'
       ? 44
       : target.type === 'link'
-        ? (isSkeleton ? 260 : 236)
-        : (isSkeleton ? 176 : 144);
+        ? 260
+        : 176;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
 

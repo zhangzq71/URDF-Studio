@@ -1,24 +1,7 @@
 import { PerspectiveCamera, Scene, Group, WebGLRenderer, AmbientLight, DirectionalLight, SRGBColorSpace, NeutralToneMapping, VSMShadowMap, PMREMGenerator, EquirectangularReflectionMapping, } from "three";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-const HYDRA_PHASE_PROFILE_FROM_QUERY = (() => {
-    try {
-        const search = typeof window !== "undefined" ? String(window.location?.search || "") : "";
-        if (!search)
-            return false;
-        const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-        const raw = params.get("profileHydraPhases");
-        if (raw === null)
-            return false;
-        const normalized = String(raw || "").trim().toLowerCase();
-        if (normalized === "")
-            return true;
-        return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-    }
-    catch {
-        return false;
-    }
-})();
+const HYDRA_PHASE_PROFILE_FROM_QUERY = false;
 export async function initializeViewerScene(options) {
     const { params, onDrop, onTogglePause, onResize } = options;
     const parseQueryBoolean = (value, fallback) => {
@@ -78,15 +61,15 @@ export async function initializeViewerScene(options) {
     renderer.toneMapping = NeutralToneMapping;
     renderer.shadowMap.enabled = false;
     renderer.shadowMap.type = VSMShadowMap;
-    renderer.toneMappingExposure = 1.06;
+    renderer.toneMappingExposure = 1.0;
     renderer.setClearColor(0xd7dde8, 1);
     // Keep a deterministic direct-light baseline so dark materials do not collapse
     // into black silhouettes when environment lighting is weak or delayed.
     if (parseQueryBoolean(params.get("fallbackLights"), true)) {
-        const ambient = new AmbientLight(0xffffff, parseNonNegativeNumber(params.get("ambientIntensity"), 0.46));
+        const ambient = new AmbientLight(0xffffff, parseNonNegativeNumber(params.get("ambientIntensity"), 0.42));
         ambient.name = "ViewerAmbientLight";
         scene.add(ambient);
-        const keyLight = new DirectionalLight(0xffffff, parseNonNegativeNumber(params.get("keyLightIntensity"), 1.25));
+        const keyLight = new DirectionalLight(0xffffff, parseNonNegativeNumber(params.get("keyLightIntensity"), 1.18));
         keyLight.name = "ViewerKeyLight";
         keyLight.position.set(6, 8, 6);
         scene.add(keyLight);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelectionStore } from '@/store/selectionStore';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
 import { createJointPanelStore } from '@/shared/utils/jointPanelStore';
@@ -12,10 +12,22 @@ import {
   type RegressionViewerFlags,
 } from '@/shared/debug/regressionBridge';
 import { isSingleDofJoint } from '../utils/jointTypes';
-import type { MeasureAnchorMode, MeasureState, ToolMode, URDFViewerProps, ViewerJointMotionStateValue } from '../types';
+import { resolveActiveViewerJointKeyFromSelection } from '../utils/activeJointSelection';
+import type {
+  MeasureAnchorMode,
+  MeasureState,
+  ToolMode,
+  URDFViewerProps,
+  ViewerHelperKind,
+  ViewerJointMotionStateValue
+} from '../types';
 import { resolveInitialJointControlState } from '../utils/jointControlState';
 import { createEmptyMeasureState } from '../utils/measurements';
 import { beginInitialGroundAlignment } from '../utils/robotPositioning';
+import {
+  createScopedToolModeState,
+  resolveScopedToolModeState,
+} from '../utils/scopedToolMode';
 import { usePanelDrag } from './usePanelDrag';
 import { useViewerSettings } from './useViewerSettings';
 
@@ -35,8 +47,12 @@ interface UseURDFViewerControllerProps {
   setShowVisual?: URDFViewerProps['setShowVisual'];
   onTransformPendingChange?: URDFViewerProps['onTransformPendingChange'];
   groundPlaneOffset?: number;
+  setGroundPlaneOffset?: (offset: number) => void;
+  groundPlaneOffsetReadOnly?: boolean;
   active?: boolean;
   jointStateScopeKey?: string | null;
+  defaultToolMode?: ToolMode;
+  toolModeScopeKey?: string | null;
 }
 
 export const useURDFViewerController = ({
@@ -52,8 +68,12 @@ export const useURDFViewerController = ({
   setShowVisual: propSetShowVisual,
   onTransformPendingChange,
   groundPlaneOffset = 0,
+  setGroundPlaneOffset,
+  groundPlaneOffsetReadOnly = false,
   active = true,
   jointStateScopeKey = null,
+  defaultToolMode = 'select',
+  toolModeScopeKey = null,
 }: UseURDFViewerControllerProps) => {
   const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const isOrbitDragging = useRef(false);
@@ -62,6 +82,8 @@ export const useURDFViewerController = ({
   const {
     showCollision,
     setShowCollision,
+    showCollisionAlwaysOnTop,
+    setShowCollisionAlwaysOnTop,
     localShowVisual,
     setLocalShowVisual,
     showCenterOfMass,
@@ -86,6 +108,8 @@ export const useURDFViewerController = ({
     setShowJointAxesOverlay,
     jointAxisSize,
     setJointAxisSize,
+    interactionLayerPriority,
+    recordInteractionLayerActivation,
     modelOpacity,
     setModelOpacity,
     highlightMode,
@@ -97,9 +121,27 @@ export const useURDFViewerController = ({
   } = useViewerSettings();
 
   const showVisual = propShowVisual !== undefined ? propShowVisual : localShowVisual;
-  const setShowVisual = propSetShowVisual || setLocalShowVisual;
+  const setShowVisual = useCallback<React.Dispatch<React.SetStateAction<boolean>>>((nextValue) => {
+    const resolvedValue = typeof nextValue === 'function'
+      ? nextValue(showVisual)
+      : nextValue;
+    (propSetShowVisual || setLocalShowVisual)(resolvedValue);
+    if (resolvedValue) {
+      recordInteractionLayerActivation('visual');
+    }
+  }, [propSetShowVisual, recordInteractionLayerActivation, setLocalShowVisual, showVisual]);
 
-  const [toolMode, setToolMode] = useState<ToolMode>('select');
+  const normalizedToolModeScopeKey = toolModeScopeKey ?? null;
+  const [toolModeState, setToolModeState] = useState(() => createScopedToolModeState(
+    normalizedToolModeScopeKey,
+    defaultToolMode,
+  ));
+  const resolvedToolModeState = useMemo(() => resolveScopedToolModeState(
+    toolModeState,
+    normalizedToolModeScopeKey,
+    defaultToolMode,
+  ), [defaultToolMode, normalizedToolModeScopeKey, toolModeState]);
+  const toolMode = resolvedToolModeState.mode;
   const [measureState, setMeasureState] = useState<MeasureState>(createEmptyMeasureState);
   const [measureAnchorMode, setMeasureAnchorMode] = useState<MeasureAnchorMode>('frame');
   const [showMeasureDecomposition, setShowMeasureDecomposition] = useState(false);
@@ -113,6 +155,17 @@ export const useURDFViewerController = ({
   const transformMode = (['translate', 'rotate', 'universal'].includes(toolMode)
     ? toolMode
     : 'select') as 'select' | 'translate' | 'rotate' | 'universal';
+  const updateGroundPlaneOffset = useCallback((nextOffset: number) => {
+    setGroundPlaneOffset?.(nextOffset);
+  }, [setGroundPlaneOffset]);
+
+  useEffect(() => {
+    if (resolvedToolModeState === toolModeState) {
+      return;
+    }
+
+    setToolModeState(resolvedToolModeState);
+  }, [resolvedToolModeState, toolModeState]);
 
   useEffect(() => {
     if (selection?.subType === 'collision') {
@@ -132,6 +185,7 @@ export const useURDFViewerController = ({
   const [isDragging, setIsDragging] = useState(false);
   const sceneRefreshRef = useRef<(() => void) | null>(null);
   const pendingSceneRefreshFrameRef = useRef<number | null>(null);
+  const previousGroundPlaneOffsetRef = useRef(groundPlaneOffset);
 
   const justSelectedRef = useRef(false);
   const transformPendingRef = useRef(false);
@@ -254,7 +308,10 @@ export const useURDFViewerController = ({
   }, []);
 
   useEffect(() => {
-    if (!import.meta.env.DEV) {
+    const regressionDebugEnabled = import.meta.env.DEV
+      || (typeof window !== 'undefined'
+        && new URLSearchParams(window.location.search).get('regressionDebug') === '1');
+    if (!regressionDebugEnabled) {
       return;
     }
 
@@ -270,6 +327,7 @@ export const useURDFViewerController = ({
 
     const applyFlags = (flags: RegressionViewerFlags) => {
       if (flags.showCollision !== undefined) setShowCollision(flags.showCollision);
+      if (flags.showCollisionAlwaysOnTop !== undefined) setShowCollisionAlwaysOnTop(flags.showCollisionAlwaysOnTop);
       if (flags.showVisual !== undefined) setShowVisual(flags.showVisual);
       if (flags.showCenterOfMass !== undefined) setShowCenterOfMass(flags.showCenterOfMass);
       if (flags.showCoMOverlay !== undefined) setShowCoMOverlay(flags.showCoMOverlay);
@@ -290,9 +348,11 @@ export const useURDFViewerController = ({
       getSnapshot: () => ({
         jointAngles: { ...jointAnglesRef.current },
         activeJoint: activeJointRef.current,
+        toolMode,
         highlightMode,
         flags: {
           showCollision,
+          showCollisionAlwaysOnTop,
           showVisual,
           showCenterOfMass,
           showCoMOverlay,
@@ -310,6 +370,42 @@ export const useURDFViewerController = ({
         },
       }),
       setFlags: applyFlags,
+      setToolMode: (nextMode) => {
+        const normalizedMode = String(nextMode || '').trim();
+        const allowedModes: ToolMode[] = [
+          'select',
+          'translate',
+          'rotate',
+          'universal',
+          'view',
+          'face',
+          'measure',
+        ];
+        const resolvedMode = allowedModes.includes(normalizedMode as ToolMode)
+          ? normalizedMode as ToolMode
+          : toolMode;
+        const changed = resolvedMode !== toolMode;
+
+        if (changed) {
+          setToolModeState({
+            scopeKey: normalizedToolModeScopeKey,
+            explicit: true,
+            mode: resolvedMode,
+          });
+          if (resolvedMode !== 'measure') {
+            setMeasureState((prev) => (
+              !prev.hoverTarget
+                ? prev
+                : { ...prev, hoverTarget: null }
+            ));
+          }
+        }
+
+        return {
+          changed,
+          activeMode: resolvedMode,
+        };
+      },
       setJointAngles: (nextJointAngles) => {
         if (!nextJointAngles || typeof nextJointAngles !== 'object') {
           return { changed: false };
@@ -361,10 +457,12 @@ export const useURDFViewerController = ({
     setHighlightMode,
     setJointAxisSize,
     setModelOpacity,
-    setOriginSize,
-    setShowCoMOverlay,
-    setShowCenterOfMass,
+      normalizedToolModeScopeKey,
+      setOriginSize,
+      setShowCoMOverlay,
+      setShowCenterOfMass,
     setShowCollision,
+    setShowCollisionAlwaysOnTop,
     setShowInertia,
     setShowInertiaOverlay,
     setShowJointAxes,
@@ -375,6 +473,7 @@ export const useURDFViewerController = ({
     showCenterOfMass,
     showCoMOverlay,
     showCollision,
+    showCollisionAlwaysOnTop,
     showInertia,
     showInertiaOverlay,
     showJointAxes,
@@ -382,6 +481,8 @@ export const useURDFViewerController = ({
     showOrigins,
     showOriginsOverlay,
     showVisual,
+    setMeasureState,
+    toolMode,
   ]);
 
   const initializeJointControlState = useCallback((loadedRobot: any) => {
@@ -609,35 +710,27 @@ export const useURDFViewerController = ({
   }, [handleJointAngleChange, handleJointChangeCommit, jointControlRobot]);
 
   const handleSelectWrapper = useCallback(
-    (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => {
+    (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => {
       if (transformPendingRef.current) return;
 
-      onSelect?.(type, id, subType);
-
-      if (type === 'link' && jointControlRobot) {
-        const jointName = Object.keys(jointControlRobot.joints).find((name) => {
-          const joint = jointControlRobot.joints[name];
-          return joint?.child?.name === id && isSingleDofJoint(joint);
-        });
-        setPanelActiveJoint(jointName ?? null);
-        return;
-      }
-
-      if (type === 'joint') {
-        const jointKey = resolveViewerJointKey(jointControlJoints, id);
-        const joint = jointKey ? jointControlRobot?.joints?.[jointKey] : undefined;
-        setPanelActiveJoint(isSingleDofJoint(joint) ? jointKey : null);
-        return;
-      }
-
-      setPanelActiveJoint(null);
+      onSelect?.(type, id, subType, helperKind);
+      const activeJointKey = resolveActiveViewerJointKeyFromSelection(
+        jointControlJoints,
+        type && id ? { type, id } : null,
+      );
+      setPanelActiveJoint(activeJointKey);
     },
     [jointControlJoints, jointControlRobot, onSelect, setPanelActiveJoint]
   );
 
   const handleHoverWrapper = useCallback(
-    (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => {
-      onHover?.(type, id, subType);
+    (
+      type: 'link' | 'joint' | null,
+      id: string | null,
+      subType?: 'visual' | 'collision',
+      objectIndex?: number,
+    ) => {
+      onHover?.(type, id, subType, objectIndex);
     },
     [onHover]
   );
@@ -657,10 +750,15 @@ export const useURDFViewerController = ({
         includeCollision: false,
       });
     }
-  }, [groundPlaneOffset, robot]);
+    requestSceneRefresh();
+  }, [groundPlaneOffset, requestSceneRefresh, robot]);
 
   const handleToolModeChange = useCallback((nextMode: ToolMode) => {
-    setToolMode(nextMode);
+    setToolModeState({
+      scopeKey: normalizedToolModeScopeKey,
+      explicit: true,
+      mode: nextMode,
+    });
 
     if (nextMode !== 'measure') {
       setMeasureState((prev) =>
@@ -669,13 +767,17 @@ export const useURDFViewerController = ({
           : { ...prev, hoverTarget: null }
       );
     }
-  }, []);
+  }, [normalizedToolModeScopeKey]);
 
   const handleCloseMeasureTool = useCallback(() => {
     setMeasureState(createEmptyMeasureState());
-    setToolMode('select');
+    setToolModeState({
+      scopeKey: normalizedToolModeScopeKey,
+      explicit: true,
+      mode: 'select',
+    });
     onHover?.(null, null);
-  }, [onHover]);
+  }, [normalizedToolModeScopeKey, onHover]);
 
   const handlePointerMissed = useCallback(() => {
     if (justSelectedRef.current) return;
@@ -696,25 +798,27 @@ export const useURDFViewerController = ({
   }, [active, groundPlaneOffset, handleAutoFitGround, robot]);
 
   useEffect(() => {
+    const previousGroundPlaneOffset = previousGroundPlaneOffsetRef.current;
+    previousGroundPlaneOffsetRef.current = groundPlaneOffset;
+
+    if (!active || !robot) {
+      return;
+    }
+
+    if (Object.is(previousGroundPlaneOffset, groundPlaneOffset)) {
+      return;
+    }
+
+    handleAutoFitGround();
+  }, [active, groundPlaneOffset, handleAutoFitGround, robot]);
+
+  useEffect(() => {
     if (!jointControlRobot) return;
-
-    if (selection?.type === 'joint' && selection.id) {
-      const jointKey = resolveViewerJointKey(jointControlJoints, selection.id);
-      const joint = jointKey ? jointControlRobot.joints[jointKey] : undefined;
-      setPanelActiveJoint(isSingleDofJoint(joint) ? jointKey : null);
-      return;
-    }
-
-    if (selection?.type === 'link' && selection.id) {
-      const jointName = Object.keys(jointControlRobot.joints).find((name) => {
-        const joint = jointControlRobot.joints[name];
-        return joint?.child?.name === selection.id && isSingleDofJoint(joint);
-      });
-      setPanelActiveJoint(jointName ?? null);
-      return;
-    }
-
-    setPanelActiveJoint(null);
+    const activeJointKey = resolveActiveViewerJointKeyFromSelection(
+      jointControlJoints,
+      selection,
+    );
+    setPanelActiveJoint(activeJointKey);
   }, [jointControlJoints, jointControlRobot, selection, setPanelActiveJoint]);
 
   return {
@@ -723,6 +827,8 @@ export const useURDFViewerController = ({
     jointPanelRobot,
     setJointPanelRobot,
     showCollision,
+    showCollisionAlwaysOnTop,
+    setShowCollisionAlwaysOnTop,
     setShowCollision,
     showVisual,
     setShowVisual,
@@ -748,6 +854,7 @@ export const useURDFViewerController = ({
     setShowJointAxesOverlay,
     jointAxisSize,
     setJointAxisSize,
+    interactionLayerPriority,
     modelOpacity,
     setModelOpacity,
     highlightMode,
@@ -798,6 +905,9 @@ export const useURDFViewerController = ({
     handleSelectWrapper,
     handleHoverWrapper,
     handleAutoFitGround,
+    groundPlaneOffset,
+    setGroundPlaneOffset: updateGroundPlaneOffset,
+    groundPlaneOffsetReadOnly,
     handleToolModeChange,
     handleCloseMeasureTool,
     handlePointerMissed,

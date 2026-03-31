@@ -7,7 +7,7 @@
 [![Vite](https://img.shields.io/badge/Vite-6.2-purple?logo=vite)](https://vitejs.dev/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**Next-Generation Visual Robot Design Platform**
+Professional robot design, assembly, visualization, and export workstation for `URDF`, `MJCF`, `USD`, `Xacro`, `SDF`, and `.usp` project workflows.
 
 **Live demo:** [urdf.d-robotics.cc](https://urdf.d-robotics.cc/)
 
@@ -17,115 +17,249 @@
 
 ---
 
-## 📖 Project Overview
+## Overview
 
-**URDF Studio** is a powerful, web-based visual environment designed for creating, editing, and exporting Unified Robot Description Format (URDF) models. It abstracts complex XML authoring into an intuitive graphical interface, allowing roboticists to focus on kinematic design, geometric detailing, and hardware specification.
+URDF Studio is a browser-based robot authoring environment built for editing robot topology, visual/collision geometry, hardware parameters, and multi-file workspaces without dropping down to raw XML for every operation.
 
-The platform integrates **Generative AI** for rapid prototyping and automated model auditing, ensuring your designs are physically plausible and simulation-ready for environments like MuJoCo.
+The current app combines:
 
-## ✨ Key Features
+- `Skeleton`, `Detail`, and `Hardware` editing modes
+- multi-robot assembly with bridge joints and workspace file management
+- worker-assisted import/export pipelines
+- USD runtime hydration, prepared export caches, and roundtrip archive flows
+- AI-assisted generation, inspection, and report export
+- a reusable `@urdf-studio/react-robot-canvas` package workspace
 
-### 🦴 Advanced Design Modalities
-*   **Skeleton Mode**: Build kinematic chains (Links & Joints) and define topological relationships.
-*   **Detail Mode**: Fine-tune visual and collision geometries using primitives or high-resolution mesh imports (STL/OBJ/DAE).
-*   **Hardware Mode**: Specify electromechanical parameters, motor selection, and transmission ratios.
-*   **Multi-Robot Assembly**: Merge multiple URDFs into a single model (e.g., attaching a robotic hand to an arm) with automatic joint re-parenting.
-*   **Precision Collision Editor**: Edit collision bodies independently from visual geometry for accurate physics simulation.
+Package identity:
 
-### 🎨 Immersive 3D Workspace
-*   **High-Fidelity Rendering**: PBR materials and photorealistic rendering via Three.js.
-*   **Intuitive Controls**: Industry-standard transformation gizmos for precise manipulation.
-*   **Visual Analytics**: Real-time visualization of joint axes, center of mass (CoM), and inertia tensors.
-*   **Optimized Performance**: Features specialized partial reloading for collision body updates, ensuring instant feedback during fine-tuning.
+- root app: `urdf-studio@2.0.0` (private workspace app)
+- published package: `@urdf-studio/react-robot-canvas@0.1.0`
 
-### 🤖 AI-Augmented Engineering
-*   **Generative AI**: Create robot structures using natural language prompts.
-*   **AI Inspector**: Automated 6-category quality assessment (Physical Plausibility, Kinematics, Naming, etc.) with detailed scoring and PDF reports.
+Versioning policy:
 
-### 📥 Interoperability & Export
-*   **Import**: Load existing projects via ZIP (URDF + meshes).
-*   **Export**: Production-ready packages including URDF, consolidated meshes, BOM (CSV), and MuJoCo XML.
+- the private app and the published package use independent semantic versions
+- the app version is injected into the frontend build and shown in the About dialog
+- bump versions through `npm run version:bump` instead of editing manifests by hand
 
-## 📚 Documentation
+## Core Capabilities
 
-Key project references:
+### Editing
 
-1.  **[Architecture Boundaries](./docs/architecture-boundaries.md)**: Layering, dependency direction, and module ownership.
-2.  **[Robot Canvas Library](./docs/robot-canvas-lib.md)**: Notes for the reusable `react-robot-canvas` workspace.
-3.  **[Contributor Prompt Context](./docs/prompts/CLAUDE.md)**: The single prompt source of truth for contributors and coding agents.
+- Build and edit kinematic trees with link/joint topology tools
+- Author visual meshes, collision meshes, measurements, and helper overlays
+- Configure motors and hardware metadata
+- Switch between authoring modes through a unified viewer shell
 
----
+### Workspace and Assembly
 
-## 🚀 Installation Guide
+- Import single files, folders, ZIP bundles, and `.usp` project archives
+- Maintain workspace file trees, source text, and selection sync
+- Assemble multiple robots into one workspace with bridge joints
+- Preserve history, pending edits, and prepared robot resolution caches
+
+### Visualization
+
+- React Three Fiber workspace canvas shared by the visualizer and URDF/USD viewer
+- Runtime URDF/MJCF viewer plus vendored USD viewer runtime
+- USD stage preparation, hydration, metadata extraction, and offscreen worker rendering paths
+- Snapshot capture, helper overlays, transform controls, and collision editing workflows
+
+### Export and Interop
+
+- Export `URDF`, `MJCF`, `USD`, `SDF`, `Xacro`, CSV/BOM, PDF, ZIP, and `.usp`
+- Workerized project archive, USD export, and USD binary archive conversion
+- Roundtrip-oriented USD archive generation and prepared export caches
+- Reusable `react-robot-canvas` package for external consumers
+
+## Tech Stack
+
+- **Frontend**: React 19.2, TypeScript 5.8, Vite 6.2
+- **3D**: Three.js 0.181, React Three Fiber 9, Drei 10
+- **State**: Zustand 5
+- **Styling**: Tailwind CSS 4
+- **Parsing / Export**: custom URDF, MJCF, USD, Xacro, SDF, and mesh pipelines under `src/core`
+- **Packaging**: JSZip, jsPDF
+- **Package workspace**: `packages/react-robot-canvas`
+
+## Repository Layout
+
+```text
+src/
+  app/                  App shell, orchestration, overlays, shared viewer handoff
+  features/             Domain features (visualizer, urdf-viewer, file-io, code-editor, ...)
+  store/                Zustand stores
+  shared/               Shared UI, 3D infrastructure, i18n, debug helpers, data
+  core/                 Parsers, generators, loaders, robot logic
+  lib/                  Reusable in-repo library surface
+  styles/               Global styles and semantic tokens
+  types/                Cross-module types
+packages/react-robot-canvas/
+  Reusable package build and publish workspace
+docs/
+  Architecture notes, runtime audits, contributor prompt context
+scripts/
+  Regression, schema generation, comparison, and local tooling scripts
+log/
+  Local runtime logs and retained troubleshooting output
+.tmp/
+  Temporary build/runtime scratch artifacts used by some scripts
+.worktrees/
+  Local git worktree area when using isolated workspaces
+public/
+  Static assets, Monaco, USD bindings, sample robots
+tmp/
+  Screenshots, traces, temporary validation artifacts
+output/
+  User-facing exports and retained verification artifacts
+test/
+  Fixture corpora, browser regression samples, and external mirrored projects
+```
+
+Architecture notes:
+
+- `src/app` is not a thin shell. It is the orchestration layer split into `components/`, `hooks/`, `utils/`, and `workers/`, and owns document loading, viewer handoff, import/export coordination, pending history, and binary/archive worker bridges.
+- `src/features/urdf-viewer` is currently the heaviest feature area. It combines React UI, a vendored USD runtime, adapter/util layers, prepared-open/export helpers, and worker-backed offscreen rendering.
+
+## Getting Started
 
 ### Prerequisites
-*   [Node.js](https://nodejs.org/) (v18 or higher)
-*   npm or yarn
 
-### Setup
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/OpenLegged/URDF-Studio.git
-    cd URDF-Studio
-    ```
-2.  **Install Dependencies**
-    ```bash
-    npm install
-    ```
-3.  **Configure Environment (Optional for AI)**
-    Create a `.env.local` file:
-    ```env
-    VITE_OPENAI_API_KEY=your_api_key
-    VITE_OPENAI_BASE_URL=https://api.openai.com/v1
-    VITE_OPENAI_MODEL=deepseek-v3
-    ```
-4.  **Start Development Server**
-    ```bash
-    npm run dev
-    ```
-    Visit `http://localhost:5173` in your browser.
+- Node.js 18 or newer
+- npm
+- A modern Chromium-based browser for local USD validation
 
-### USD Runtime Note
-USD loading uses the bundled USD WASM runtime, which requires a cross-origin isolated page because it depends on `SharedArrayBuffer`.
+### Install
 
-- Use `npm run dev` for local development, and open the app from `http://localhost:<port>` or `http://127.0.0.1:<port>`.
-- Use `npm run preview` when validating the production build locally.
-- If you open the app from a LAN IP address, a remote HTTP URL, or another non-secure origin, the browser will ignore `COOP/COEP`, `SharedArrayBuffer` will stay unavailable, and USD imports will still fail. Use HTTPS for those setups.
-- Do not serve `dist/` with a plain static server such as `python -m http.server`, VS Code Live Server, or any other server that does not send:
+```bash
+git clone https://github.com/OpenLegged/URDF-Studio.git
+cd URDF-Studio
+npm install
+```
+
+### Optional Environment Variables
+
+The app can run without AI credentials. If you want AI generation / inspection enabled, set the environment variables that `vite.config.ts` injects into the frontend runtime:
+
+```bash
+OPENAI_API_KEY=your_api_key
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4.1-mini
+
+# Optional alternative source used by the current Vite define shim
+GEMINI_API_KEY=
+
+# Optional Monaco override
+VITE_MONACO_VS_PATH=
+```
+
+You can place them in `.env.local`.
+
+### Run the App
+
+```bash
+npm run dev
+```
+
+Open:
+
+- `http://127.0.0.1:3000`
+
+The Vite dev server is intentionally bound to `127.0.0.1` and serves the cross-origin isolation headers required by the USD WASM runtime.
+
+## USD Runtime Requirements
+
+USD loading depends on `SharedArrayBuffer`, so the page must be cross-origin isolated.
+
+- Use `npm run dev` for development
+- Use `npm run preview` to validate the production build locally
+- Prefer `127.0.0.1` / `localhost` or HTTPS
+- Do not serve `dist/` with a plain static server that omits these headers:
 
 ```http
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Resource-Policy: same-site
 ```
 
-If those headers are missing, USD imports will fail even though the rest of the app still loads.
+If those headers are missing, the app shell may load but USD import / stage open will fail.
 
-## 📝 Usage Instructions
+## Useful Commands
 
-1.  **Kinematic Setup**: Use the **Skeleton Mode** to add links and joints. Use the tree view to manage the robot hierarchy.
-2.  **Geometry & Physics**: Switch to **Detail Mode** to assign STL/OBJ meshes or primitive shapes to your links. You can adjust mass and inertia properties in the Property Editor.
-3.  **Actuator Selection**: In **Hardware Mode**, select joints to assign motors from the built-in library (Unitree, RobStride, etc.).
-4.  **Verification**: Use the **AI Inspector** to run a comprehensive check on your model. Review the scores and suggestions before exporting.
-5.  **Exporting**: Use the **Export** button to download a complete ZIP package compatible with ROS and MuJoCo.
+```bash
+# App
+npm run dev
+npm run build
+npm run preview
 
-## 🤝 Contribution Guidelines
+# Versioning
+npm run version:show
+npm run version:bump -- --app minor
+npm run version:bump -- --package patch
 
-We welcome contributions! To contribute:
-1.  **Fork** the repository.
-2.  **Create a Feature Branch** (`git checkout -b feature/amazing-feature`).
-3.  **Commit Your Changes** (`git commit -m 'Add some amazing feature'`).
-4.  **Push to the Branch** (`git push origin feature/amazing-feature`).
-5.  **Open a Pull Request**.
+# Reusable package workspace
+npm run build:package:react-robot-canvas
+npm run pack:package:react-robot-canvas
 
-Please ensure your code adheres to the project's TypeScript and React conventions.
+# Schema / comparison helpers
+npm run code-editor:generate-urdf-schema
+npm run mjcf:compare
+npm run sdf:compare
 
-## 📄 License
+# Regression helpers
+npm run regression:shadow-hand-hover
+npx tsx scripts/regression/validate_unitree_model_roundtrip_archive.ts
 
-This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for details.
+# Codex resilience / key-router helpers
+npm run codex:retry
+npm run codex:gui
+npm run codex:key-router:deploy:dry
+```
 
----
+Additional script families under `scripts/` include URDF inspection helpers, robot preview generation, MuJoCo/MJCF comparison utilities, regression runners, and local Codex support tooling.
+
+## Testing and Verification
+
+This repository currently does **not** expose a single root `npm test` or `npm run lint` command.
+
+Validation is typically done through:
+
+- targeted `node --test` / `npx tsx --test` runs next to the changed module
+- focused regression scripts under `scripts/regression/`
+- `npm run build`
+- package workspace builds when touching `src/lib` or `packages/react-robot-canvas`
+- fixture-driven checks against large corpora under `test/`, especially `test/unitree_model`, `test/gazebo_models`, `test/awesome_robot_descriptions_repos`, and `test/usd-viewer`
+
+## Documentation
+
+- [Changelog](./CHANGELOG.md)
+- [Release Process](./RELEASING.md)
+- [Architecture Boundaries](./docs/architecture-boundaries.md)
+- [Robot Canvas Library](./docs/robot-canvas-lib.md)
+- [Runtime Fallback Audit](./docs/runtime-fallback-audit.md)
+- [Contributor Prompt Context](./docs/prompts/CLAUDE.md)
+- [Agent Instructions](./AGENTS.md)
+
+## Package Workspace
+
+The repository also contains the publishable package workspace:
+
+- [`packages/react-robot-canvas`](./packages/react-robot-canvas)
+
+This package currently provides a reusable `RobotCanvas` surface for external React apps that need URDF/MJCF viewing without the full URDF Studio shell.
+
+## Contribution Notes
+
+- Keep dependency direction aligned with `app -> features -> store -> shared -> core -> types`
+- Prefer existing hooks / utilities over duplicating viewer or export logic
+- Follow the runtime and style constraints documented in [AGENTS.md](./AGENTS.md)
+- Put temporary screenshots, traces, and browser artifacts under `tmp/`
+
+## License
+
+This project is licensed under the **Apache License 2.0**. See [LICENSE](./LICENSE).
 
 ## Acknowledgments
+
 Supported by [D-Robotics](https://developer.d-robotics.cc/).
 
 [![Star History Chart](https://api.star-history.com/svg?repos=OpenLegged/URDF-Studio&type=date&legend=top-left)](https://www.star-history.com/#OpenLegged/URDF-Studio&type=date&legend=top-left)

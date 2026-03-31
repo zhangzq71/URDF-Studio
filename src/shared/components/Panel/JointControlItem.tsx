@@ -43,6 +43,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     isAdvanced = false,
     onUpdate,
 }) => {
+    const displayName = joint?.name?.trim() || name;
     const jointType = getJointType(joint);
     const limit = joint.limit || { ...getDefaultJointLimit(jointType), effort: 0, velocity: 0 };
     const usesAngularUnits = isAngularJointType(jointType);
@@ -123,7 +124,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                 itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         }
-    }, [isActive, name]);
+    }, [displayName, isActive]);
 
     const [continuousSliderAnchor, setContinuousSliderAnchor] = useState(value);
     const continuousSliderAnchorRef = useRef(value);
@@ -560,9 +561,9 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                             ? 'text-system-blue' 
                             : 'text-text-secondary'
                     } flex-1`}
-                    title={name}
+                    title={displayName}
                 >
-                    {name}
+                    {displayName}
                 </span>
 
                 {!isAdvanced && renderValueDisplay()}

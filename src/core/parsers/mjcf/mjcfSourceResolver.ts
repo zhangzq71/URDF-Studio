@@ -126,19 +126,26 @@ function parseXml(content: string): Document | null {
 
 function getCombinedCompilerAttributes(doc: Document): {
   angle: string;
+  assetdir: string;
   meshdir: string;
   texturedir: string;
   eulerseq: string;
 } {
   let angle = '';
-  let meshdir = '';
-  let texturedir = '';
+  let assetdir = '';
+  let meshdir: string | null = null;
+  let texturedir: string | null = null;
   let eulerseq = '';
 
   doc.querySelectorAll('compiler').forEach((compilerEl) => {
     const nextAngle = compilerEl.getAttribute('angle');
     if (nextAngle) {
       angle = nextAngle;
+    }
+
+    const nextAssetdir = compilerEl.getAttribute('assetdir');
+    if (nextAssetdir !== null) {
+      assetdir = nextAssetdir;
     }
 
     const nextMeshdir = compilerEl.getAttribute('meshdir');
@@ -157,7 +164,13 @@ function getCombinedCompilerAttributes(doc: Document): {
     }
   });
 
-  return { angle, meshdir, texturedir, eulerseq };
+  return {
+    angle,
+    assetdir,
+    meshdir: meshdir ?? assetdir,
+    texturedir: texturedir ?? assetdir,
+    eulerseq,
+  };
 }
 
 function prefixIdentifier(value: string, prefix: string): string {
@@ -343,12 +356,13 @@ function expandAttachedModelsRecursive(
     return new XMLSerializer().serializeToString(doc);
   }
 
+  const compilerAttrs = getCombinedCompilerAttributes(doc);
   const modelAssetByName = new Map<string, string>();
   doc.querySelectorAll('asset > model[name][file]').forEach((modelEl) => {
     const name = modelEl.getAttribute('name')?.trim();
     const file = modelEl.getAttribute('file')?.trim();
     if (name && file) {
-      modelAssetByName.set(name, file);
+      modelAssetByName.set(name, applyAssetDirectory(file, compilerAttrs.assetdir));
     }
   });
 

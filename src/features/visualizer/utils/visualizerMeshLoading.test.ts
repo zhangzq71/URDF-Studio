@@ -47,7 +47,7 @@ function createRobotState(link: Partial<UrdfLink>): RobotState {
   };
 }
 
-test('collectVisualizerMeshLoadKeys keeps skeleton mesh loads even when geometry is hidden', () => {
+test('collectVisualizerMeshLoadKeys keeps mesh loads even when geometry is hidden', () => {
   const robot = createRobotState({
     visual: createMeshGeometry('meshes/base.stl'),
     visualBodies: [createMeshGeometry('meshes/extra.obj')],
@@ -55,7 +55,7 @@ test('collectVisualizerMeshLoadKeys keeps skeleton mesh loads even when geometry
 
   const keys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'skeleton',
+    mode: 'detail',
     showGeometry: false,
     showCollision: false,
     assets: {
@@ -68,6 +68,25 @@ test('collectVisualizerMeshLoadKeys keeps skeleton mesh loads even when geometry
     'base|visual|primary|0|meshes/base.stl',
     'base|visual|extra-1|1|meshes/extra.obj',
   ]);
+});
+
+test('collectVisualizerMeshLoadKeys skips invisible visual links', () => {
+  const robot = createRobotState({
+    visible: false,
+    visual: createMeshGeometry('meshes/base.stl'),
+  });
+
+  const keys = collectVisualizerMeshLoadKeys({
+    robot,
+    mode: 'detail',
+    showGeometry: true,
+    showCollision: false,
+    assets: {
+      'meshes/base.stl': 'blob:base',
+    },
+  });
+
+  assert.deepEqual(keys, []);
 });
 
 test('collectVisualizerMeshLoadKeys skips hidden detail collisions until collision display is enabled', () => {

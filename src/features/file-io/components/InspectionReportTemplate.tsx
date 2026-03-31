@@ -3,21 +3,29 @@
  * Used for generating PDF reports with proper Chinese/English support
  */
 
-import type { InspectionReport } from '@/types';
+import type { InspectionReport, RobotInspectionContext } from '@/types';
 import { translations } from '@/shared/i18n';
 import { INSPECTION_CRITERIA } from '@/shared/data/inspectionCriteria';
+import { buildInspectionEvidenceSummary } from '@/shared/utils/inspectionEvidenceSummary';
 
 interface ReportTemplateProps {
   inspectionReport: InspectionReport;
   robotName: string;
   lang: 'zh' | 'en';
+  inspectionContext?: RobotInspectionContext;
 }
 
-export function InspectionReportTemplate({ inspectionReport, robotName, lang }: ReportTemplateProps) {
+export function InspectionReportTemplate({
+  inspectionReport,
+  robotName,
+  lang,
+  inspectionContext,
+}: ReportTemplateProps) {
   const t = translations[lang];
   const overallScore = inspectionReport.overallScore ?? 0;
   const maxScore = inspectionReport.maxScore ?? 100;
   const scorePercentage = (overallScore / maxScore) * 100;
+  const evidenceSummary = buildInspectionEvidenceSummary(inspectionContext, lang);
 
   // Color based on score
   const getScoreColor = (score: number, max: number) => {
@@ -85,6 +93,20 @@ export function InspectionReportTemplate({ inspectionReport, robotName, lang }: 
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>{t.inspectionSummary}</h2>
         <p style={styles.summaryText}>{inspectionReport.summary}</p>
+
+        {evidenceSummary ? (
+          <div style={styles.evidenceSection}>
+            <div style={styles.evidenceTitle}>{evidenceSummary.title}</div>
+            <div style={styles.evidenceMetrics}>
+              {evidenceSummary.metrics.map((metric) => (
+                <div key={`${metric.label}:${metric.value}`} style={styles.evidenceMetric}>
+                  <span style={styles.evidenceMetricLabel}>{metric.label}</span>
+                  <span style={styles.evidenceMetricValue}>{metric.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Categories */}
@@ -261,6 +283,51 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '14px',
     margin: '0',
     whiteSpace: 'pre-wrap' as const,
+  },
+
+  evidenceSection: {
+    marginTop: '16px',
+    padding: '14px',
+    borderRadius: '8px',
+    border: '1px solid #d1d5db',
+    backgroundColor: '#f9fafb',
+  },
+
+  evidenceTitle: {
+    fontSize: '11px',
+    fontWeight: '700',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.08em',
+    color: '#6b7280',
+    marginBottom: '10px',
+  },
+
+  evidenceMetrics: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '8px',
+  },
+
+  evidenceMetric: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 10px',
+    borderRadius: '999px',
+    border: '1px solid #d1d5db',
+    backgroundColor: '#ffffff',
+  },
+
+  evidenceMetricLabel: {
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+
+  evidenceMetricValue: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#111827',
   },
 
   passedMessage: {

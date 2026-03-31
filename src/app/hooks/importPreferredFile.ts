@@ -2,6 +2,7 @@ import { GeometryType, type RobotFile } from '@/types';
 import { type RobotImportResult, resolveRobotFileData } from '@/core/parsers';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 import { getVisualGeometryEntries } from '@/core/robot';
+import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
 
 const PACKAGE_REFERENCE_PATTERN = /package:\/\/([^/\s"'<>]+)/g;
 
@@ -65,7 +66,14 @@ function parseMjcfDocument(content: string): Document | null {
     const parser = new DOMParser();
     const doc = parser.parseFromString(content, 'text/xml');
     return doc.querySelector('parsererror') ? null : doc;
-  } catch {
+  } catch (error) {
+    scheduleFailFastInDev(
+      'importPreferredFile:parseMjcfDocument',
+      new Error('Failed to parse MJCF candidate document while ranking import preference.', {
+        cause: error,
+      }),
+      'warn',
+    );
     return null;
   }
 }
@@ -84,6 +92,13 @@ type ResolvedRobotRichness = {
   visualGeometryCount: number;
   collisionGeometryCount: number;
   meshGeometryCount: number;
+};
+
+type RankedUrdfCandidate = {
+  file: RobotFile;
+  selfContained: boolean;
+  identityAffinity: number;
+  variantPenalty: number;
 };
 
 type RobotImportResolver = (file: RobotFile) => RobotImportResult;
@@ -254,12 +269,58 @@ function compareImportFileNamePreference(leftName: string, rightName: string): n
   return leftName.localeCompare(rightName);
 }
 
+const URDF_VARIANT_PENALTY_BY_TOKEN = new Map<string, number>([
+  ['with', 2],
+  ['hand', 8],
+  ['gripper', 8],
+  ['ftp', 10],
+  ['dfq', 10],
+  ['dual', 8],
+  ['arm', 4],
+  ['mode', 7],
+  ['lock', 6],
+  ['waist', 4],
+  ['sensor', 3],
+  ['camera', 3],
+  ['comp', 5],
+  ['debug', 6],
+  ['test', 6],
+]);
+
 function tokenizeImportIdentity(value: string): string[] {
   return value
     .toLowerCase()
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
+}
+
+function scoreUrdfVariantPenalty(fileName: string): number {
+  const tokens = tokenizeImportIdentity(getImportFileStem(fileName));
+  const tokenSet = new Set(tokens);
+
+  let penalty = 0;
+  tokens.forEach((token) => {
+    penalty += URDF_VARIANT_PENALTY_BY_TOKEN.get(token) ?? 0;
+  });
+
+  if (tokenSet.has('with') && (tokenSet.has('hand') || tokenSet.has('gripper'))) {
+    penalty += 6;
+  }
+
+  if (tokenSet.has('dual') && tokenSet.has('arm')) {
+    penalty += 6;
+  }
+
+  if (tokenSet.has('lock') && tokenSet.has('waist')) {
+    penalty += 4;
+  }
+
+  if (tokenSet.has('ftp') || tokenSet.has('dfq')) {
+    penalty += 8;
+  }
+
+  return penalty;
 }
 
 function getImportFileStem(fileName: string): string {
@@ -302,6 +363,72 @@ function isDerivedVariantUrdfForMjcf(urdfFile: RobotFile, mjcfFile: RobotFile): 
   return urdfStem.startsWith(`${mjcfStem}_`) || urdfStem.startsWith(`${mjcfStem}-`);
 }
 
+function compareRankedUrdfCandidates(left: RankedUrdfCandidate, right: RankedUrdfCandidate): number {
+  if (left.selfContained !== right.selfContained) {
+    return Number(right.selfContained) - Number(left.selfContained);
+  }
+
+  if (left.variantPenalty !== right.variantPenalty) {
+    return left.variantPenalty - right.variantPenalty;
+  }
+
+  if (left.identityAffinity !== right.identityAffinity) {
+    return right.identityAffinity - left.identityAffinity;
+  }
+
+  return compareImportFileNamePreference(left.file.name, right.file.name);
+}
+
+function createRankedUrdfCandidateTierKey(candidate: RankedUrdfCandidate): string {
+  return `${Number(candidate.selfContained)}:${candidate.variantPenalty}:${candidate.identityAffinity}`;
+}
+
+function resolveBestReadyUrdfCandidateFromTier(
+  tierCandidates: RankedUrdfCandidate[],
+  resolveRobotImport: RobotImportResolver,
+): RobotFile | null {
+  let bestFile: RobotFile | null = null;
+  let bestRichness: ResolvedRobotRichness | null = null;
+
+  for (const candidate of tierCandidates) {
+    try {
+      const richness = summarizeResolvedRobotRichness(candidate.file, resolveRobotImport);
+      if (!richness) {
+        continue;
+      }
+
+      if (!bestFile) {
+        bestFile = candidate.file;
+        bestRichness = richness;
+        continue;
+      }
+
+      const richnessComparison = compareResolvedRobotRichness(richness, bestRichness);
+      if (richnessComparison > 0) {
+        continue;
+      }
+
+      if (
+        richnessComparison < 0
+        || compareImportFileNamePreference(candidate.file.name, bestFile.name) < 0
+      ) {
+        bestFile = candidate.file;
+        bestRichness = richness;
+      }
+    } catch {
+      scheduleFailFastInDev(
+        'importPreferredFile:resolveBestReadyUrdfCandidateFromTier',
+        new Error(
+          `Failed to evaluate URDF import candidate "${candidate.file.name}" while ranking ready candidates.`,
+        ),
+        'warn',
+      );
+    }
+  }
+
+  return bestFile;
+}
+
 function pickPreferredUrdfImportFile(
   files: RobotFile[],
   filePool: RobotFile[] = files,
@@ -313,38 +440,47 @@ function pickPreferredUrdfImportFile(
     return null;
   }
 
-  const rankedCandidates = urdfFiles.map((file) => ({
+  const rankedCandidates: RankedUrdfCandidate[] = urdfFiles.map((file) => ({
     file,
     selfContained: isUrdfSelfContainedInImportBundle(file, filePool),
-    richness: summarizeResolvedRobotRichness(file, cachedResolveRobotImport),
     identityAffinity: scoreUrdfIdentityAffinity(file, filePool),
+    variantPenalty: scoreUrdfVariantPenalty(file.name),
   }));
 
-  rankedCandidates.sort((left, right) => {
-    if (left.selfContained !== right.selfContained) {
-      return Number(right.selfContained) - Number(left.selfContained);
+  rankedCandidates.sort(compareRankedUrdfCandidates);
+
+  let currentTierKey: string | null = null;
+  let currentTierCandidates: RankedUrdfCandidate[] = [];
+
+  const flushCurrentTier = (): RobotFile | null => {
+    if (currentTierCandidates.length === 0) {
+      return null;
     }
 
-    const richnessComparison = compareResolvedRobotRichness(left.richness, right.richness);
-    if (richnessComparison !== 0) {
-      return richnessComparison;
-    }
-
-    if (left.identityAffinity !== right.identityAffinity) {
-      return right.identityAffinity - left.identityAffinity;
-    }
-
-    return compareImportFileNamePreference(left.file.name, right.file.name);
-  });
+    const bestCandidate = resolveBestReadyUrdfCandidateFromTier(
+      currentTierCandidates,
+      cachedResolveRobotImport,
+    );
+    currentTierCandidates = [];
+    return bestCandidate;
+  };
 
   for (const candidate of rankedCandidates) {
-    try {
-      if (cachedResolveRobotImport(candidate.file).status === 'ready') {
-        return candidate.file;
+    const nextTierKey = createRankedUrdfCandidateTierKey(candidate);
+    if (currentTierKey !== null && nextTierKey !== currentTierKey) {
+      const bestTierCandidate = flushCurrentTier();
+      if (bestTierCandidate) {
+        return bestTierCandidate;
       }
-    } catch {
-      // Ignore invalid candidates and keep searching in rank order.
     }
+
+    currentTierKey = nextTierKey;
+    currentTierCandidates.push(candidate);
+  }
+
+  const trailingTierCandidate = flushCurrentTier();
+  if (trailingTierCandidate) {
+    return trailingTierCandidate;
   }
 
   return rankedCandidates[0]?.file ?? urdfFiles[0] ?? null;
@@ -410,7 +546,13 @@ export function pickPreferredMjcfImportFile(
         return candidate.file;
       }
     } catch {
-      // Ignore invalid candidates and keep searching in rank order.
+      scheduleFailFastInDev(
+        'importPreferredFile:pickPreferredMjcfImportFile',
+        new Error(
+          `Failed to evaluate MJCF import candidate "${candidate.file.name}" while ranking ready candidates.`,
+        ),
+        'warn',
+      );
     }
   }
 

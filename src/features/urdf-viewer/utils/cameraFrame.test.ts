@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { computeCameraFrame, createCameraFrameStabilityKey } from './cameraFrame.ts';
+import { computeCameraFrame, createCameraFrameStabilityKey, isBoundsVisibleToCamera } from './cameraFrame.ts';
 
 function assertVectorClose(actual: THREE.Vector3, expected: THREE.Vector3, epsilon = 1e-6): void {
   assert.ok(actual.distanceTo(expected) <= epsilon, `expected ${actual.toArray()} to be close to ${expected.toArray()}`);
@@ -54,4 +54,24 @@ test('createCameraFrameStabilityKey is stable for identical bounds', () => {
     createCameraFrameStabilityKey(bounds.clone()),
   );
   assert.equal(createCameraFrameStabilityKey(null), null);
+});
+
+test('isBoundsVisibleToCamera reports whether the framed bounds intersect the current frustum', () => {
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.position.set(0, 0, 5);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+
+  const visibleBounds = new THREE.Box3(
+    new THREE.Vector3(-1, -1, -1),
+    new THREE.Vector3(1, 1, 1),
+  );
+  const hiddenBounds = new THREE.Box3(
+    new THREE.Vector3(50, 50, 50),
+    new THREE.Vector3(52, 52, 52),
+  );
+
+  assert.equal(isBoundsVisibleToCamera(visibleBounds, camera), true);
+  assert.equal(isBoundsVisibleToCamera(hiddenBounds, camera), false);
 });

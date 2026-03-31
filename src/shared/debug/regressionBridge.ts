@@ -5,6 +5,7 @@ type HighlightMode = 'link' | 'collision';
 
 export interface RegressionViewerFlags {
   showCollision?: boolean;
+  showCollisionAlwaysOnTop?: boolean;
   showVisual?: boolean;
   showCenterOfMass?: boolean;
   showCoMOverlay?: boolean;
@@ -25,12 +26,27 @@ interface AppRegressionHandlers {
   getAvailableFiles: () => RobotFile[];
   getSelectedFile: () => RobotFile | null;
   getRobotState: () => RobotState;
+  getInteractionState: () => {
+    selection: {
+      type: 'link' | 'joint' | null;
+      id: string | null;
+      subType?: 'visual' | 'collision';
+      objectIndex?: number;
+    };
+    hoveredSelection: {
+      type: 'link' | 'joint' | null;
+      id: string | null;
+      subType?: 'visual' | 'collision';
+      objectIndex?: number;
+    };
+  };
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; selectedFile: string | null }>;
 }
 
 interface ViewerControllerSnapshot {
   jointAngles: Record<string, number>;
   activeJoint: string | null;
+  toolMode: string | null;
   highlightMode: HighlightMode;
   flags: Required<RegressionViewerFlags>;
 }
@@ -38,6 +54,7 @@ interface ViewerControllerSnapshot {
 interface ViewerRegressionHandlers {
   getSnapshot: () => ViewerControllerSnapshot;
   setFlags: (flags: RegressionViewerFlags) => void;
+  setToolMode: (toolMode: string) => { changed: boolean; activeMode: string | null };
   setJointAngles: (jointAngles: Record<string, number>) => { changed: boolean };
 }
 
@@ -92,6 +109,20 @@ interface RegressionSnapshot {
   availableFiles: Array<{ name: string; format: string }>;
   selectedFile: { name: string; format: string } | null;
   store: ReturnType<typeof summarizeRobotState> | null;
+  interaction: {
+    selection: {
+      type: 'link' | 'joint' | null;
+      id: string | null;
+      subType: 'visual' | 'collision' | null;
+      objectIndex: number | null;
+    };
+    hoveredSelection: {
+      type: 'link' | 'joint' | null;
+      id: string | null;
+      subType: 'visual' | 'collision' | null;
+      objectIndex: number | null;
+    };
+  } | null;
   viewer: ViewerControllerSnapshot | null;
   runtime: ReturnType<typeof summarizeRuntimeRobot> | null;
 }
@@ -102,6 +133,7 @@ export interface RegressionDebugApi {
   getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
   setViewerFlags: (flags: RegressionViewerFlags) => { ok: boolean };
+  setViewerToolMode: (toolMode: string) => { ok: boolean; changed: boolean; activeMode: string | null };
   setViewerJointAngles: (jointAngles: Record<string, number>) => { ok: boolean; changed: boolean };
 }
 
@@ -113,6 +145,7 @@ declare global {
 
 const DEFAULT_FLAGS: Required<RegressionViewerFlags> = {
   showCollision: false,
+  showCollisionAlwaysOnTop: true,
   showVisual: true,
   showCenterOfMass: false,
   showCoMOverlay: true,
@@ -271,6 +304,20 @@ function summarizeRobotState(robotState: RobotState) {
     totalMass: links.reduce((sum, link) => sum + Number(link.inertial?.mass ?? 0), 0),
     links: links.map(summarizeLink),
     joints: joints.map(summarizeJoint),
+  };
+}
+
+function summarizeInteractionSelection(selection: {
+  type: 'link' | 'joint' | null;
+  id: string | null;
+  subType?: 'visual' | 'collision';
+  objectIndex?: number;
+} | null | undefined) {
+  return {
+    type: selection?.type ?? null,
+    id: selection?.id ?? null,
+    subType: selection?.subType ?? null,
+    objectIndex: selection?.objectIndex ?? null,
   };
 }
 
@@ -584,12 +631,17 @@ export function setRegressionRuntimeRobot(robot: any | null): void {
 export function getRegressionSnapshot(): RegressionSnapshot {
   const selectedFile = appHandlers?.getSelectedFile() ?? null;
   const robotState = appHandlers?.getRobotState();
+  const interactionState = appHandlers?.getInteractionState() ?? null;
   return {
     timestamp: Date.now(),
     runtimeRevision,
     availableFiles: getAvailableFilesSummary(),
     selectedFile: selectedFile ? { name: selectedFile.name, format: selectedFile.format } : null,
     store: robotState ? summarizeRobotState(robotState) : null,
+    interaction: interactionState ? {
+      selection: summarizeInteractionSelection(interactionState.selection),
+      hoveredSelection: summarizeInteractionSelection(interactionState.hoveredSelection),
+    } : null,
     viewer: viewerHandlers?.getSnapshot() ?? null,
     runtime: summarizeRuntimeRobot(runtimeRobot),
   };
@@ -637,6 +689,18 @@ export function installRegressionDebugApi(targetWindow: Window): void {
 
       viewerHandlers.setFlags(flags);
       return { ok: true };
+    },
+    setViewerToolMode: (toolMode: string) => {
+      if (!viewerHandlers) {
+        return { ok: false, changed: false, activeMode: null };
+      }
+
+      const result = viewerHandlers.setToolMode(toolMode);
+      return {
+        ok: true,
+        changed: result.changed,
+        activeMode: result.activeMode,
+      };
     },
     setViewerJointAngles: (jointAngles: Record<string, number>) => {
       if (!viewerHandlers) {

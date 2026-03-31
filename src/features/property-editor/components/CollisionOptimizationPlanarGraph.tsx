@@ -215,11 +215,26 @@ function getGeometryMetrics(candidate: CollisionOptimizationCandidate): Array<{ 
     return [{ label: 'R', value: formatCompactNumber(dimensions.x) }];
   }
 
+  if (geometry.type === GeometryType.ELLIPSOID) {
+    return [
+      { label: 'RX', value: formatCompactNumber(dimensions.x) },
+      { label: 'RY', value: formatCompactNumber(dimensions.y) },
+      { label: 'RZ', value: formatCompactNumber(dimensions.z) },
+    ];
+  }
+
   if (geometry.type === GeometryType.BOX) {
     return [
       { label: 'X', value: formatCompactNumber(dimensions.x) },
       { label: 'Y', value: formatCompactNumber(dimensions.y) },
       { label: 'Z', value: formatCompactNumber(dimensions.z) },
+    ];
+  }
+
+  if (geometry.type === GeometryType.PLANE) {
+    return [
+      { label: 'W', value: formatCompactNumber(dimensions.x) },
+      { label: 'D', value: formatCompactNumber(dimensions.y) },
     ];
   }
 
@@ -240,8 +255,16 @@ function getPrimitiveMonogram(type: GeometryType | null | undefined): string {
       return 'CAP';
     case GeometryType.BOX:
       return 'BOX';
+    case GeometryType.PLANE:
+      return 'PLN';
     case GeometryType.SPHERE:
       return 'SPH';
+    case GeometryType.ELLIPSOID:
+      return 'ELP';
+    case GeometryType.HFIELD:
+      return 'HFD';
+    case GeometryType.SDF:
+      return 'SDF';
     case GeometryType.MESH:
       return 'MSH';
     default:

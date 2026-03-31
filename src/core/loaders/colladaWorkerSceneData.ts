@@ -82,7 +82,7 @@ export function parseColladaSceneData(
   const { capturedImageUrls, result: scene } = captureTextureSourceUrls(
     () => loader.parse(normalizedContent, baseUrl).scene,
   );
-  const sceneJson = scene.toJSON() as Record<string, unknown>;
+  const sceneJson = scene.toJSON() as unknown as Record<string, unknown>;
   applyCapturedColladaImageUrls(sceneJson, capturedImageUrls);
 
   return {
@@ -95,6 +95,7 @@ export function createSceneFromSerializedColladaData(
   data: SerializedColladaSceneData,
   options: { manager?: THREE.LoadingManager } = {},
 ): THREE.Object3D {
+  ensureWorkerXmlDomApis();
   const objectLoader = new THREE.ObjectLoader(options.manager);
   objectLoader.setResourcePath(data.resourcePath);
   return objectLoader.parse(data.sceneJson);

@@ -42,16 +42,16 @@ test('skips auto-frame when a specific focus target is active', () => {
   );
 });
 
-test('skips auto-frame in hardware mode', () => {
+test('keeps auto-frame enabled in detail mode when no focus target is active', () => {
   assert.equal(
     shouldAutoFrameRobotChange({
       autoFrameOnRobotChange: true,
       currentScopeKey: 'robots/example.urdf',
       lastAutoFramedScopeKey: null,
       focusTarget: null,
-      mode: 'hardware',
+      mode: 'detail',
     }),
-    false,
+    true,
   );
 });
 

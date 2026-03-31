@@ -10,6 +10,74 @@ Theoretical Maximum Score: $Score_{max} = n \times 10$ (where n is the number of
 
 Final Achievement Rate: $Rate = (Score_{total} / Score_{max}) \times 100\%$
 
+0. URDF Spec Compliance
+
+Category ID: spec
+
+0.1 Robot Root Contract
+
+Item ID: robot_root_contract
+
+Criteria:
+
+The document must have a single `<robot>` root with a stable `name`.
+
+Top-level children should be compatible with the intended consumer: core URDF (`link`, `joint`, `material`) plus clearly documented extensions (`transmission`, `gazebo`, `sensor`, custom tags).
+
+Scoring Reference: Missing/invalid root scores 0 points; undocumented extension mixing scores 4-6 points.
+
+0.2 Link / Joint Required Fields
+
+Item ID: link_joint_required_fields
+
+Criteria:
+
+Every `link` must have a unique `name`.
+
+Every `joint` must have `name`, `type`, `<parent link="...">`, and `<child link="...">`.
+
+Parent/child references must point to existing links.
+
+Scoring Reference: Missing required fields or broken references score 0-3 points.
+
+0.3 Tree Topology Constraint
+
+Item ID: topology_tree_constraint
+
+Criteria:
+
+Core URDF models are trees, not general graphs.
+
+There should be exactly one logical root, no orphan links, and no closed loops unless a downstream tool adds extra constraints outside core URDF semantics.
+
+Scoring Reference: Multiple roots, disconnected subgraphs, or closed-loop encoding in plain URDF score 0-2 points.
+
+0.4 Joint Semantic Rules
+
+Item ID: joint_semantics
+
+Criteria:
+
+Axis, limits, mimic, calibration, and safety-related tags must match the joint type semantics.
+
+`continuous` joints should not rely on position bounds.
+
+`mimic` targets must exist and the relationship should be intentional/documented.
+
+Scoring Reference: Type-incompatible tags or contradictory joint semantics score 2-5 points.
+
+0.5 Extension Compatibility
+
+Item ID: extension_compatibility
+
+Criteria:
+
+`transmission`, `gazebo`, `sensor`, and custom tags are extension surfaces, not universally supported core URDF.
+
+Review whether the file documents its intended consumers and whether unsupported extensions are safely ignorable or required for correctness.
+
+Scoring Reference: Hidden consumer-specific dependencies or undocumented required extensions score 3-6 points.
+
 1. Physical Plausibility
 
 Category ID: physical
@@ -185,4 +253,3 @@ Names must be globally unique and semantic (e.g., L_hip_pitch_link).
 Follow snake_case style.
 
 Scoring Reference: Duplicate names score 0 points; inconsistent style scores 8 points.
-

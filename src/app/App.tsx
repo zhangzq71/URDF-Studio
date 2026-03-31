@@ -9,17 +9,23 @@ import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
+import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
 import { prepareImportPayloadWithWorker } from './hooks/importPreparationWorkerBridge';
 import { resolveRobotFileDataWithWorker } from './hooks/robotImportWorkerBridge';
 import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
-import { consumePreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
+import { shouldCommitResolvedRobotSelection } from './utils/documentLoadFlow';
+import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
+import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
 import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
+import { ExportProgressDialog, type ExportProgressState } from '@/features/file-io';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer';
+import { prewarmUsdWasmRuntimeInBackground } from '@/features/urdf-viewer/utils/usdWasmRuntime';
+import type { ImportPreparationOverlayState } from './hooks/useFileImport';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
@@ -164,7 +170,7 @@ function ExportDialogConnector({
   lang: Language;
   isExporting: boolean;
   onClose: () => void;
-  onExport: (config: unknown, options?: { onProgress?: (progress: number, message?: string) => void }) => Promise<void>;
+  onExport: (config: unknown, options?: { onProgress?: (progress: ExportProgressState) => void }) => Promise<void>;
 }) {
   const { sidebarTab } = useUIStore(useShallow((state) => ({
     sidebarTab: state.sidebarTab,
@@ -238,6 +244,7 @@ function AppContent() {
   const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
   const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({ type: 'current' });
   const [viewerReloadKey, setViewerReloadKey] = useState(0);
+  const [importPreparationOverlay, setImportPreparationOverlay] = useState<ImportPreparationOverlayState | null>(null);
 
   // UI Store
   const { lang, setAppMode, openSettings } = useUIStore(useShallow((state) => ({
@@ -280,6 +287,8 @@ function AppContent() {
     setIsExportDialogOpen,
     isExporting,
     setIsExporting,
+    projectExportProgress,
+    setProjectExportProgress,
     viewConfig,
     setViewConfig,
   } = useAppShellState();
@@ -289,9 +298,10 @@ function AppContent() {
       if (importResult.status === 'ready') {
         setRobot(
           importResult.robotData,
-          file.format === 'usd'
-            ? { resetHistory: true, label: 'Load USD stage' }
-            : undefined,
+          {
+            resetHistory: true,
+            label: file.format === 'usd' ? 'Load USD stage' : 'Load imported robot',
+          },
         );
 
         if (file.format === 'xacro' && importResult.resolvedUrdfContent) {
@@ -348,6 +358,25 @@ function AppContent() {
     t,
   ]);
 
+  const commitResolvedFileSelection = useCallback((file: RobotFile) => {
+    setViewerReloadKey((value) => value + 1);
+    setSelectedFile(file);
+    setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
+    setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+    setSelection({ type: null, id: null });
+    const currentAppMode = useUIStore.getState().appMode;
+    const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
+    if (nextAppMode !== currentAppMode) {
+      setAppMode(nextAppMode);
+    }
+  }, [
+    setAppMode,
+    setOriginalFileFormat,
+    setOriginalUrdfContent,
+    setSelectedFile,
+    setSelection,
+  ]);
+
   // Keep one internal loader so debug automation can force a reload of the
   // currently selected file without changing normal click behavior.
   const loadRobotFile = useCallback(async (file: RobotFile, options?: { forceReload?: boolean }) => {
@@ -361,7 +390,11 @@ function AppContent() {
       && currentSelectedFile.content === file.content
       && currentSelectedFile.blobUrl === file.blobUrl
     ) {
-      setAppMode('detail');
+      const currentAppMode = useUIStore.getState().appMode;
+      const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
+      if (nextAppMode !== currentAppMode) {
+        setAppMode(nextAppMode);
+      }
       return;
     }
 
@@ -376,23 +409,19 @@ function AppContent() {
       loadedCount: null,
       totalCount: null,
     });
-
-    setViewerReloadKey((value) => value + 1);
-    setSelectedFile(file);
-    setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-    setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
-    setSelection({ type: null, id: null });
-    setAppMode('detail');
     const requestId = ++loadRequestIdRef.current;
 
     prewarmUsdSelectionInBackground(file, liveAssetsState.availableFiles, liveAssetsState.assets);
 
-    const preResolvedImportResult = consumePreResolvedRobotImport(file);
+    const preResolvedImportResult = peekPreResolvedRobotImport(file);
     if (preResolvedImportResult) {
       if (requestId !== loadRequestIdRef.current) {
         return;
       }
 
+      if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
+        commitResolvedFileSelection(file);
+      }
       applyResolvedRobotImport(file, preResolvedImportResult);
       return;
     }
@@ -430,13 +459,14 @@ function AppContent() {
       return;
     }
 
+    if (shouldCommitResolvedRobotSelection(importResult)) {
+      commitResolvedFileSelection(file);
+    }
     applyResolvedRobotImport(file, importResult);
   }, [
     applyResolvedRobotImport,
+    commitResolvedFileSelection,
     setDocumentLoadState,
-    setSelection,
-    setSelectedFile,
-    setOriginalFileFormat,
     setAppMode,
     showToast,
     t,
@@ -459,6 +489,7 @@ function AppContent() {
         return;
       }
 
+      prewarmUsdWasmRuntimeInBackground();
       void Promise.allSettled([
         prepareImportPayloadWithWorker({ files: [], existingPaths: [] }),
         resolveRobotFileDataWithWorker({
@@ -476,7 +507,13 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (!import.meta.env.DEV || typeof window === 'undefined') {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const regressionDebugEnabled = import.meta.env.DEV
+      || new URLSearchParams(window.location.search).get('regressionDebug') === '1';
+    if (!regressionDebugEnabled) {
       return;
     }
 
@@ -491,6 +528,10 @@ function AppContent() {
         joints: useRobotStore.getState().joints,
         rootLinkId: useRobotStore.getState().rootLinkId,
         selection: useSelectionStore.getState().selection,
+      }),
+      getInteractionState: () => ({
+        selection: useSelectionStore.getState().selection,
+        hoveredSelection: useSelectionStore.getState().hoveredSelection,
       }),
       loadRobotByName: async (fileName: string) => {
         const file = useAssetsStore.getState().availableFiles.find((entry) => entry.name === fileName) ?? null;
@@ -516,13 +557,29 @@ function AppContent() {
   }, []);
 
   // File import/export hooks
-  const { handleImport } = useFileImport({ onLoadRobot: handleLoadRobot, onShowToast: showToast });
+  const { handleImport } = useFileImport({
+    onLoadRobot: handleLoadRobot,
+    onShowToast: showToast,
+    onImportPreparationStateChange: setImportPreparationOverlay,
+  });
   const { handleExportProject: runProjectExport, handleExportWithConfig } = useFileExport();
 
   const handleExportProject = useCallback(() => {
     void (async () => {
+      setIsExporting(true);
+      setProjectExportProgress({
+        stepLabel: t.exportProgressPreparing,
+        detail: t.exportProgressPreparingDetail,
+        progress: 0.05,
+        currentStep: 1,
+        totalSteps: 6,
+        indeterminate: true,
+      });
+      await waitForNextPaint();
       try {
-        const result = await runProjectExport();
+        const result = await runProjectExport({
+          onProgress: setProjectExportProgress,
+        });
         if (result.partial && result.warnings.length > 0) {
           showToast(result.warnings[0], 'info');
         }
@@ -531,11 +588,22 @@ function AppContent() {
           error instanceof Error && error.message
             ? error.message
             : t.exportFailedParse,
-          'info',
+          'error',
         );
+      } finally {
+        setProjectExportProgress(null);
+        setIsExporting(false);
       }
     })();
-  }, [runProjectExport, showToast, t.exportFailedParse]);
+  }, [
+    runProjectExport,
+    setIsExporting,
+    setProjectExportProgress,
+    showToast,
+    t.exportFailedParse,
+    t.exportProgressPreparing,
+    t.exportProgressPreparingDetail,
+  ]);
 
   // AI changes handler
   const handleApplyAIChanges = useCallback((data: AIApplyChangesPayload) => {
@@ -552,7 +620,7 @@ function AppContent() {
       joints: validated.value.joints,
       rootLinkId: validated.value.rootLinkId,
     });
-    setAppMode('skeleton');
+    setAppMode(resolveAppModeAfterRobotContentChange(useUIStore.getState().appMode));
   }, [setAppMode, setRobot, showToast, t]);
 
   useImportInputBinding({
@@ -591,6 +659,20 @@ function AppContent() {
   }, [setIsExportDialogOpen]);
 
   const loadingLabel = t.loadingPanel;
+  const toastPresentation = toast.type === 'success'
+    ? {
+        badgeClassName: 'border border-success-border bg-success-soft text-success',
+        iconPath: 'M5 13l4 4L19 7',
+      }
+    : toast.type === 'error'
+      ? {
+          badgeClassName: 'border border-danger-border bg-danger-soft text-danger',
+          iconPath: 'M12 8v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z',
+        }
+      : {
+          badgeClassName: 'border border-system-blue/20 bg-system-blue/10 text-system-blue',
+          iconPath: 'M12 8h.01M11 12h1v4h1m-1-13a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
+        };
 
   return (
     <>
@@ -660,7 +742,7 @@ function AppContent() {
                   error instanceof Error && error.message
                     ? error.message
                     : t.exportFailedParse,
-                  'info',
+                  'error',
                 );
               } finally {
                 setIsExporting(false);
@@ -670,19 +752,35 @@ function AppContent() {
         </Suspense>
       )}
 
+      {projectExportProgress && !isExportDialogOpen && (
+        <ExportProgressDialog
+          lang={lang}
+          progress={projectExportProgress}
+        />
+      )}
+
+      {importPreparationOverlay && (
+        <ImportPreparationOverlay
+          label={importPreparationOverlay.label}
+          detail={importPreparationOverlay.detail}
+        />
+      )}
+
       {/* Toast */}
       {toast.show && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="bg-white dark:bg-[#2C2C2E] shadow-2xl dark:shadow-black/50 rounded-xl border border-slate-200 dark:border-[#000000] px-4 py-3 flex items-center gap-3 max-w-md">
-            <div className="bg-green-100 dark:bg-green-600 p-1.5 rounded-full shrink-0">
-              <svg className="w-4 h-4 text-green-600 dark:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          <div className="flex max-w-[min(44rem,calc(100vw-2rem))] items-start gap-3 rounded-2xl border border-border-black bg-panel-bg px-4 py-3 shadow-2xl dark:shadow-black/40">
+            <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${toastPresentation.badgeClassName}`}>
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={toastPresentation.iconPath} />
               </svg>
             </div>
-            <div className="text-sm text-slate-700 dark:text-white font-medium">{toast.message}</div>
+            <div className="min-w-0 flex-1 whitespace-pre-line break-words text-sm font-medium leading-5 text-text-primary">
+              {toast.message}
+            </div>
             <button
               onClick={closeToast}
-              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 ml-2"
+              className="ml-1 rounded p-1 text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

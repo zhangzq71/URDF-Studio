@@ -4,9 +4,11 @@ import * as THREE from 'three';
 
 import {
   syncInertiaVisualizationForLinks,
+  syncJointHelperInteractionStateForJoints,
   syncJointAxesVisualizationForJoints,
+  syncLinkHelperInteractionStateForLinks,
   syncOriginAxesVisualizationForLinks,
-} from './visualizationObjectSync';
+} from './visualizationObjectSync.ts';
 
 test('syncOriginAxesVisualizationForLinks is a no-op on the second identical pass', () => {
   const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
@@ -108,4 +110,90 @@ test('syncInertiaVisualizationForLinks is a no-op on the second identical pass',
   assert.equal(firstChanged, true);
   assert.equal(secondChanged, false);
   assert.equal(link.userData.__inertiaVisualGroup.visible, true);
+});
+
+test('syncJointHelperInteractionStateForJoints promotes hovered joint-axis helpers', () => {
+  const joint = new THREE.Group() as THREE.Group & {
+    isURDFJoint?: boolean;
+    jointType?: string;
+    axis?: THREE.Vector3;
+  };
+  joint.isURDFJoint = true;
+  joint.name = 'hip_joint';
+  joint.jointType = 'revolute';
+  joint.axis = new THREE.Vector3(0, 0, 1);
+
+  syncJointAxesVisualizationForJoints({
+    joints: [joint],
+    showJointAxes: true,
+    showJointAxesOverlay: true,
+    jointAxisSize: 0.5,
+  });
+
+  const helper = joint.userData.__jointAxisViz as THREE.Object3D;
+  const mesh = helper.children.find((child: any) => child.isMesh) as THREE.Mesh;
+  const baseRenderOrder = mesh.renderOrder;
+
+  const changed = syncJointHelperInteractionStateForJoints({
+    joints: [joint],
+    hoveredJointId: 'hip_joint',
+  });
+
+  assert.equal(changed, true);
+  assert.ok(helper.scale.x > 1);
+  assert.ok(mesh.renderOrder > baseRenderOrder);
+  assert.equal((mesh.material as THREE.MeshBasicMaterial).color.getHex(), 0xfbbf24);
+});
+
+test('syncLinkHelperInteractionStateForLinks boosts hovered inertia helpers', () => {
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'base_link';
+  link.userData.__cachedMaxLinkSize = 1;
+  link.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()));
+
+  const robotLinks = {
+    base_link: {
+      inertial: {
+        mass: 1,
+        inertia: {
+          ixx: 1,
+          ixy: 0,
+          ixz: 0,
+          iyy: 1,
+          iyz: 0,
+          izz: 1,
+        },
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+    },
+  } as any;
+
+  syncInertiaVisualizationForLinks({
+    links: [link],
+    robotLinks,
+    showInertia: true,
+    showInertiaOverlay: true,
+    showCenterOfMass: true,
+    showCoMOverlay: true,
+    centerOfMassSize: 0.01,
+  });
+
+  const comVisual = link.userData.__comVisual as THREE.Object3D;
+  const comMesh = comVisual.children[0] as THREE.Mesh;
+  const baseOpacity = (comMesh.material as THREE.MeshBasicMaterial).opacity;
+  const baseRenderOrder = comMesh.renderOrder;
+
+  const changed = syncLinkHelperInteractionStateForLinks({
+    links: [link],
+    hoveredLinkId: 'base_link',
+  });
+
+  assert.equal(changed, true);
+  assert.ok(comVisual.scale.x > 1);
+  assert.ok((comMesh.material as THREE.MeshBasicMaterial).opacity >= baseOpacity);
+  assert.ok(comMesh.renderOrder > baseRenderOrder);
 });

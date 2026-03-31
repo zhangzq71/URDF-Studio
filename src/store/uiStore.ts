@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppMode, DetailLinkTab, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
+import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 
 // Language type
 export type Language = 'en' | 'zh';
@@ -14,8 +15,8 @@ export type RotationDisplayMode = 'euler_deg' | 'euler_rad' | 'quaternion';
 // View configuration for different modes
 export interface ViewConfig {
   showToolbar: boolean;
-  showOptionsPanel: boolean;      // For detail mode (URDFViewer)
-  showSkeletonOptionsPanel: boolean;  // For skeleton/hardware mode (Visualizer)
+  showOptionsPanel: boolean;      // For viewer scene options
+  showVisualizerOptionsPanel: boolean;  // For visualizer scene options
   showJointPanel: boolean;
 }
 
@@ -28,6 +29,7 @@ export interface ViewOptions {
   showInertia: boolean;
   showCenterOfMass: boolean;
   showCollision: boolean;
+  modelOpacity: number;
 }
 
 // Panel visibility state
@@ -49,9 +51,9 @@ export interface PanelLayoutState {
 }
 
 interface UIState {
-  // App mode (skeleton/detail/hardware)
+  // App mode (legacy values normalize into the merged edit mode)
   appMode: AppMode;
-  setAppMode: (mode: AppMode) => void;
+  setAppMode: (mode: AppMode | 'skeleton' | 'hardware') => void;
 
   // Theme (light/dark/system)
   theme: Theme;
@@ -131,7 +133,7 @@ interface UIState {
 const defaultViewConfig: ViewConfig = {
   showToolbar: true,
   showOptionsPanel: true,
-  showSkeletonOptionsPanel: true,
+  showVisualizerOptionsPanel: true,
   showJointPanel: true,
 };
 
@@ -143,6 +145,7 @@ const defaultViewOptions: ViewOptions = {
   showInertia: false,
   showCenterOfMass: false,
   showCollision: false,
+  modelOpacity: 1,
 };
 
 const defaultPanels: PanelsState = {
@@ -160,6 +163,14 @@ const defaultPanelLayout: PanelLayoutState = {
   treeFileBrowserHeight: 216,
   treeSidebarWidth: 264,
 };
+
+const normalizeDetailLinkTab = (value: unknown): DetailLinkTab => (
+  value === 'collision' || value === 'physics'
+    ? value
+    : value === 'joint'
+      ? 'physics'
+      : 'visual'
+);
 
 // Detect system language
 const getSystemLang = (): Language => {
@@ -246,8 +257,8 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       // App mode
-      appMode: 'skeleton',
-      setAppMode: (mode) => set({ appMode: mode }),
+      appMode: normalizeMergedAppMode('detail'),
+      setAppMode: (mode) => set({ appMode: normalizeMergedAppMode(mode) }),
 
       // Theme
       theme: getSavedTheme(),
@@ -386,7 +397,7 @@ export const useUIStore = create<UIState>()(
 
       // Detail-mode link property tab
       detailLinkTab: 'visual',
-      setDetailLinkTab: (detailLinkTab) => set({ detailLinkTab }),
+      setDetailLinkTab: (detailLinkTab) => set({ detailLinkTab: normalizeDetailLinkTab(detailLinkTab) }),
 
       // Structure tree geometry detail disclosure
       structureTreeShowGeometryDetails: false,
@@ -395,7 +406,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 6,
+      version: 8,
       migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
@@ -404,6 +415,7 @@ export const useUIStore = create<UIState>()(
         const state = persistedState as {
           panelLayout?: Partial<PanelLayoutState>;
           viewOptions?: Partial<ViewOptions>;
+          detailLinkTab?: unknown;
         };
 
         return {
@@ -416,6 +428,7 @@ export const useUIStore = create<UIState>()(
             ...defaultPanelLayout,
             ...state.panelLayout,
           },
+          detailLinkTab: normalizeDetailLinkTab(state.detailLinkTab),
         };
       },
       partialize: (state) => ({
@@ -438,6 +451,10 @@ export const useUIStore = create<UIState>()(
           document.documentElement.style.fontSize = '100%';
           // Re-apply font size
           applyFontSize(state.fontSize || 'medium');
+          const normalizedDetailLinkTab = normalizeDetailLinkTab(state.detailLinkTab);
+          if (state.detailLinkTab !== normalizedDetailLinkTab) {
+            state.setDetailLinkTab(normalizedDetailLinkTab);
+          }
         }
       },
     }

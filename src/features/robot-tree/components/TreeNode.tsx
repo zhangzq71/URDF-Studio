@@ -151,7 +151,6 @@ export const TreeNode = memo(({
   const hasChildren = childJoints.length > 0;
   const hasExpandableContent = hasChildren;
   const isTransparentLink = isTransparentDisplayLink(robot, linkId);
-  const isSkeleton = mode === 'skeleton';
   const isVisible = link.visible !== false;
   const isVisualVisible = link.visual.visible !== false;
   const isPrimaryCollisionVisible = link.collision.visible !== false;
@@ -275,7 +274,6 @@ export const TreeNode = memo(({
     linkId,
     link,
     robot,
-    isSkeleton,
     isVisualVisible,
     isPrimaryCollisionVisible,
     editingTarget,
@@ -309,7 +307,6 @@ export const TreeNode = memo(({
         renameInputRef={renameInputRef}
         jointRowRefs={jointRowRefs}
         jointRowIndentPx={jointRowIndentPx}
-        isSkeleton={isSkeleton}
         t={t}
         readOnly={readOnly}
         onSelect={onSelect}
@@ -364,7 +361,6 @@ export const TreeNode = memo(({
           geometryCount={Number(Boolean(hasVisual)) + collisionBodyCount}
           isGeometryExpanded={isGeometryExpanded}
           isVisible={isVisible}
-          isSkeleton={isSkeleton}
           isSelected={isLinkSelected}
           isHovered={isLinkHovered}
           isAttentionHighlighted={isLinkAttentionHighlighted}
@@ -440,7 +436,6 @@ export const TreeNode = memo(({
               renameInputRef={renameInputRef}
               jointRowRefs={jointRowRefs}
               jointRowIndentPx={jointRowIndentPx}
-              isSkeleton={isSkeleton}
               t={t}
               onSelect={onSelect}
               onDelete={onDelete}
@@ -482,7 +477,6 @@ export const TreeNode = memo(({
         contextMenuHasVisual={contextMenuHasVisual}
         contextMenuHasCollision={contextMenuHasCollision}
         contextMenuGeometryType={contextMenuGeometryType}
-        isSkeleton={isSkeleton}
         t={t}
         readOnly={readOnly}
         onRenameMenuAction={handleRenameMenuAction}

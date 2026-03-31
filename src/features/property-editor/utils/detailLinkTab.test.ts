@@ -6,13 +6,21 @@ import {
   resolveDetailLinkTabAfterViewerMeshSelect,
 } from './detailLinkTab.ts';
 
-test('viewer visual mesh selection preserves the current detail tab', () => {
-  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('collision', 'visual'), 'collision');
-  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('joint', 'visual'), 'joint');
+test('viewer visual mesh selection switches to the visual tab', () => {
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('detail', 'collision', 'visual'), 'visual');
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('detail', 'visual', 'visual'), 'visual');
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('detail', 'physics', 'visual'), 'visual');
 });
 
 test('viewer collision mesh selection switches to the collision tab', () => {
-  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('visual', 'collision'), 'collision');
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('detail', 'visual', 'collision'), 'collision');
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('detail', 'physics', 'collision'), 'collision');
+});
+
+test('hardware mesh selection now follows the same tab-switch policy as detail', () => {
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('hardware', 'collision', 'visual'), 'visual');
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('hardware', 'physics', 'collision'), 'collision');
+  assert.equal(resolveDetailLinkTabAfterViewerMeshSelect('hardware', 'physics', 'visual'), 'visual');
 });
 
 test('explicit geometry selection follows the chosen geometry subtype', () => {

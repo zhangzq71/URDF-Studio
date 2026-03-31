@@ -1,12 +1,14 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { useCallback, useEffect, useRef } from 'react';
+import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { computeVisibleMeshBounds } from '@/shared/utils/threeBounds';
 import {
   DEFAULT_WORKSPACE_ORBIT_CLIPPING,
   syncWorkspacePerspectiveClipPlanes,
 } from './workspaceOrbitClipping';
+import { resolveWorkspaceOrbitPanSpeed } from './workspaceOrbitPan';
 
 const WORKSPACE_ORBIT_CONTROL_TUNING = {
   dampingFactor: 0.08,
@@ -48,10 +50,12 @@ export function WorkspaceOrbitControls({
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
-  const sceneBoundsRef = useRef<THREE.Box3 | null>(null);
+  const clipSceneBoundsRef = useRef<THREE.Box3 | null | undefined>(undefined);
+  const panSceneBoundsRef = useRef<THREE.Box3 | null | undefined>(undefined);
 
   const refreshSceneBounds = useCallback(() => {
-    sceneBoundsRef.current = computeVisibleMeshBounds(scene, { includeGroundPlaneHelpers: true });
+    clipSceneBoundsRef.current = computeVisibleMeshBounds(scene, { includeGroundPlaneHelpers: true });
+    panSceneBoundsRef.current = computeVisibleMeshBounds(scene);
   }, [scene]);
 
   useEffect(() => {
@@ -63,7 +67,7 @@ export function WorkspaceOrbitControls({
       return;
     }
 
-    if (!sceneBoundsRef.current) {
+    if (clipSceneBoundsRef.current === undefined || panSceneBoundsRef.current === undefined) {
       refreshSceneBounds();
     }
 
@@ -72,8 +76,19 @@ export function WorkspaceOrbitControls({
     // conservative so dense robot geometry does not clip away while zooming.
     syncWorkspacePerspectiveClipPlanes(camera, controlsRef.current, {
       minDistance,
-      sceneBounds: sceneBoundsRef.current,
+      sceneBounds: clipSceneBoundsRef.current,
     });
+
+    const resolvedPanSpeed = resolveWorkspaceOrbitPanSpeed({
+      basePanSpeed: panSpeed,
+      camera,
+      target: controlsRef.current.target,
+      sceneBounds: panSceneBoundsRef.current,
+      minDistance,
+    });
+    if (Math.abs(controlsRef.current.panSpeed - resolvedPanSpeed) > 1e-4) {
+      controlsRef.current.panSpeed = resolvedPanSpeed;
+    }
   });
 
   return (

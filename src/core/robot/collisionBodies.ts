@@ -167,6 +167,7 @@ function createCollisionBodyFromLink(link: UrdfLink): UrdfLink['collision'] {
         z: origin.xyz.z,
       },
       rpy: { ...origin.rpy },
+      ...(origin.quatXyzw ? { quatXyzw: { ...origin.quatXyzw } } : {}),
     },
   };
 }

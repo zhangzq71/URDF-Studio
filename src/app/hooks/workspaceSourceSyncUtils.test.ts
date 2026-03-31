@@ -5,15 +5,20 @@ import { JSDOM } from 'jsdom';
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
 import { disposeRobotImportWorker } from '@/app/hooks/robotImportWorkerBridge';
 import { DEFAULT_LINK } from '@/types/constants';
-import { GeometryType, JointType, type RobotFile, type RobotState } from '@/types';
+import { GeometryType, JointType, type AssemblyState, type RobotData, type RobotFile, type RobotState } from '@/types';
 import {
+  buildPreviewSceneSourceFromImportResult,
+  buildWorkspaceViewerRobotData,
   createPreviewRobotState,
   createPreviewRobotStateFromImportResult,
   createRobotSourceSnapshot,
   createRobotSourceSnapshotFromUrdfContent,
+  getViewerSourceFile,
   getPreferredMjcfContent,
+  getPreferredSdfContent,
   getPreferredUrdfContent,
   getPreferredXacroContent,
+  shouldReseedSingleComponentAssemblyFromActiveFile,
   shouldUseEmptyRobotForUsdHydration,
 } from './workspaceSourceSyncUtils.ts';
 
@@ -21,6 +26,10 @@ const { window } = new JSDOM();
 
 if (!globalThis.DOMParser) {
   globalThis.DOMParser = window.DOMParser;
+}
+
+if (!globalThis.XMLSerializer) {
+  globalThis.XMLSerializer = window.XMLSerializer;
 }
 
 type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
@@ -195,6 +204,47 @@ function createXacroFile(name = 'robots/demo/demo.urdf.xacro'): RobotFile {
   };
 }
 
+function createMjcfFile(name = 'robots/demo/demo.xml'): RobotFile {
+  return {
+    name,
+    format: 'mjcf',
+    content: `
+      <mujoco model="demo">
+        <worldbody>
+          <body name="base_link" />
+        </worldbody>
+      </mujoco>
+    `,
+  };
+}
+
+function createAssemblyState(sourceFile = 'robots/demo/demo.xml'): AssemblyState {
+  return {
+    name: 'demo_project',
+    components: {
+      comp_demo: {
+        id: 'comp_demo',
+        name: 'demo',
+        sourceFile,
+        robot: {
+          name: 'demo',
+          rootLinkId: 'base_link',
+          links: {
+            base_link: {
+              ...DEFAULT_LINK,
+              id: 'base_link',
+              name: 'base_link',
+            },
+          },
+          joints: {},
+        },
+        visible: true,
+      },
+    },
+    bridges: {},
+  };
+}
+
 test('createRobotSourceSnapshot ignores transient selection state', () => {
   const left = createRobotState();
   const right = createRobotState();
@@ -325,6 +375,169 @@ test('shouldUseEmptyRobotForUsdHydration does not affect non-USD files', () => {
   );
 });
 
+test('getViewerSourceFile clears the source file while rendering an assembly view', () => {
+  assert.equal(
+    getViewerSourceFile({
+      selectedFile: createMjcfFile(),
+      shouldRenderAssembly: true,
+    }),
+    null,
+  );
+});
+
+test('getViewerSourceFile keeps the selected file outside assembly rendering', () => {
+  const selectedFile = createMjcfFile();
+
+  assert.equal(
+    getViewerSourceFile({
+      selectedFile,
+      shouldRenderAssembly: false,
+    }),
+    selectedFile,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile detects a stale single-component assembly seed', () => {
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: createAssemblyState('robots/demo/left_hand.xml'),
+      activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    true,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile ignores matching sources and non-editable files', () => {
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: createAssemblyState('robots/demo/scene_left.xml'),
+      activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: createAssemblyState('robots/demo/scene_left.xml'),
+      activeFile: {
+        name: 'robots/demo/hand_mesh.obj',
+        format: 'mesh',
+        content: '',
+      },
+    }),
+    false,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile preserves real assemblies', () => {
+  const assemblyState = createAssemblyState('robots/demo/left_hand.xml');
+  assemblyState.bridges.bridge_1 = {
+    id: 'bridge_1',
+    name: 'bridge_1',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_demo',
+    childLinkId: 'base_link',
+    joint: {
+      id: 'joint_1',
+      name: 'joint_1',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'base_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState,
+      activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    false,
+  );
+});
+
+test('buildWorkspaceViewerRobotData keeps single-root robots unchanged', () => {
+  const robot: RobotData = {
+    name: 'single-root',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+    },
+    joints: {},
+  };
+
+  assert.equal(buildWorkspaceViewerRobotData(robot), robot);
+});
+
+test('buildWorkspaceViewerRobotData adds a synthetic world root for disconnected models', () => {
+  const robot: RobotData = {
+    name: 'merged',
+    rootLinkId: 'left_base',
+    links: {
+      left_base: {
+        ...DEFAULT_LINK,
+        id: 'left_base',
+        name: 'left_base',
+      },
+      left_tool: {
+        ...DEFAULT_LINK,
+        id: 'left_tool',
+        name: 'left_tool',
+      },
+      right_base: {
+        ...DEFAULT_LINK,
+        id: 'right_base',
+        name: 'right_base',
+      },
+    },
+    joints: {
+      left_fixed: {
+        id: 'left_fixed',
+        name: 'left_fixed',
+        type: JointType.FIXED,
+        parentLinkId: 'left_base',
+        childLinkId: 'left_tool',
+        origin: { xyz: { x: 0.25, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  };
+
+  const viewerRobot = buildWorkspaceViewerRobotData(robot);
+
+  assert.equal(viewerRobot.rootLinkId, '__workspace_world__');
+  assert.equal(viewerRobot.links.__workspace_world__?.name, 'world');
+  assert.equal(viewerRobot.links.__workspace_world__?.visual.type, GeometryType.NONE);
+  assert.equal(viewerRobot.links.__workspace_world__?.collision.type, GeometryType.NONE);
+
+  const syntheticJoints = Object.values(viewerRobot.joints)
+    .filter((joint) => joint.parentLinkId === '__workspace_world__');
+
+  assert.equal(syntheticJoints.length, 2);
+  assert.deepEqual(
+    syntheticJoints.map((joint) => joint.childLinkId).sort(),
+    ['left_base', 'right_base'],
+  );
+
+  const rootOffsets = syntheticJoints
+    .map((joint) => joint.origin.xyz.x)
+    .sort((left, right) => left - right);
+
+  assert.ok(rootOffsets[0] < 0);
+  assert.ok(rootOffsets[1] > 0);
+  assert.ok(Math.abs(rootOffsets[0] + 0.675) < 0.001);
+  assert.ok(Math.abs(rootOffsets[1] - 0.75) < 0.001);
+  assert.ok(rootOffsets[1] - rootOffsets[0] < 1.6);
+});
+
 test('createPreviewRobotState resolves editable files into a selection-free preview robot', () => {
   const previewRobot = createPreviewRobotState(createUrdfFile(), {
     availableFiles: [],
@@ -386,6 +599,70 @@ test('createPreviewRobotStateFromImportResult converts ready worker results into
   assert.equal(previewRobot?.name, 'demo');
 });
 
+test('buildPreviewSceneSourceFromImportResult keeps MJCF source only after a successful import result', () => {
+  const mjcfFile = createMjcfFile();
+  const previewSource = buildPreviewSceneSourceFromImportResult(mjcfFile, {
+    availableFiles: [mjcfFile],
+    previewRobot: null,
+    importResult: {
+      status: 'ready',
+      format: 'mjcf',
+      robotData: {
+        name: 'demo',
+        rootLinkId: 'base_link',
+        links: {
+          base_link: {
+            ...DEFAULT_LINK,
+            id: 'base_link',
+            name: 'base_link',
+          },
+        },
+        joints: {},
+      },
+      resolvedUrdfContent: null,
+      resolvedUrdfSourceFilePath: null,
+    },
+  });
+
+  assert.ok(previewSource);
+  assert.match(previewSource, /<mujoco model="demo">/);
+  assert.match(previewSource, /<body name="base_link"\s*\/>/);
+});
+
+test('buildPreviewSceneSourceFromImportResult returns an empty preview for MJCF parse failures', () => {
+  const mjcfFile = createMjcfFile();
+
+  assert.equal(
+    buildPreviewSceneSourceFromImportResult(mjcfFile, {
+      availableFiles: [mjcfFile],
+      previewRobot: null,
+      importResult: {
+        status: 'error',
+        format: 'mjcf',
+        reason: 'parse_failed',
+      },
+    }),
+    '',
+  );
+});
+
+test('buildPreviewSceneSourceFromImportResult suppresses viewer preview for source-only MJCF fragments', () => {
+  const mjcfFile = createMjcfFile('robots/demo/keyframes.xml');
+
+  assert.equal(
+    buildPreviewSceneSourceFromImportResult(mjcfFile, {
+      availableFiles: [mjcfFile],
+      previewRobot: null,
+      importResult: {
+        status: 'error',
+        format: 'mjcf',
+        reason: 'source_only_fragment',
+      },
+    }),
+    null,
+  );
+});
+
 test('getPreferredMjcfContent keeps the imported MJCF before viewer edits', () => {
   assert.equal(
     getPreferredMjcfContent({
@@ -405,6 +682,28 @@ test('getPreferredMjcfContent switches to generated MJCF after viewer edits', ()
       hasViewerEdits: true,
     }),
     '<mujoco model="cassie-generated"/>',
+  );
+});
+
+test('getPreferredSdfContent keeps the imported SDF before store edits', () => {
+  assert.equal(
+    getPreferredSdfContent({
+      fileContent: '<sdf version="1.7"><model name="source"/></sdf>',
+      generatedContent: '<sdf version="1.7"><model name="generated"/></sdf>',
+      hasStoreEdits: false,
+    }),
+    '<sdf version="1.7"><model name="source"/></sdf>',
+  );
+});
+
+test('getPreferredSdfContent switches to generated SDF after store edits', () => {
+  assert.equal(
+    getPreferredSdfContent({
+      fileContent: '<sdf version="1.7"><model name="source"/></sdf>',
+      generatedContent: '<sdf version="1.7"><model name="generated"/></sdf>',
+      hasStoreEdits: true,
+    }),
+    '<sdf version="1.7"><model name="generated"/></sdf>',
   );
 });
 

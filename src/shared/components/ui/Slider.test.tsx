@@ -124,3 +124,82 @@ test('pointer dragging emits continuous slider updates before release', async ()
   });
   dom.window.close();
 });
+
+test('snapToMarks locks dragging to the nearest mark', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const changes: number[] = [];
+
+  await renderSlider(root, {
+    min: 0,
+    max: 2,
+    step: 1,
+    snapToMarks: true,
+    marks: [
+      { value: 0, label: '1x' },
+      { value: 1, label: '2x' },
+      { value: 2, label: '4x' },
+    ],
+    onChange: (nextValue) => changes.push(nextValue),
+  });
+
+  const track = container.querySelector('[data-testid="ui-slider-track"]') as HTMLDivElement | null;
+  assert.ok(track, 'slider track should render');
+
+  Object.defineProperty(track, 'getBoundingClientRect', {
+    value: () => ({
+      bottom: 24,
+      height: 24,
+      left: 0,
+      right: 200,
+      toJSON: () => ({}),
+      top: 0,
+      width: 200,
+      x: 0,
+      y: 0,
+    }),
+    configurable: true,
+  });
+
+  await act(async () => {
+    track.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      clientX: 130,
+      clientY: 12,
+    }));
+  });
+
+  assert.deepEqual(changes, [1], 'dragging should snap to the nearest discrete mark');
+  assert.ok(container.querySelector('[data-testid="ui-slider-marks"]'), 'marks should render');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('solidThumb adds an opaque panel halo without changing the default slider thumb styling', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderSlider(root, {
+    solidThumb: true,
+  });
+
+  const emphasizedThumb = container.querySelector('[data-testid="ui-slider-thumb"]') as HTMLDivElement | null;
+  assert.ok(emphasizedThumb, 'slider thumb should render');
+  const emphasizedStyle = emphasizedThumb.getAttribute('style') ?? '';
+  assert.match(emphasizedStyle, /0 0 0 2px var\(--ui-panel-bg\)/, 'solid thumb should render an opaque halo');
+
+  await renderSlider(root, {
+    solidThumb: false,
+  });
+
+  const defaultThumb = container.querySelector('[data-testid="ui-slider-thumb"]') as HTMLDivElement | null;
+  assert.ok(defaultThumb, 'default slider thumb should still render');
+  const defaultStyle = defaultThumb.getAttribute('style') ?? '';
+  assert.doesNotMatch(defaultStyle, /0 0 0 2px var\(--ui-panel-bg\)/, 'default slider thumb should keep the shared styling');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});

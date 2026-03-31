@@ -1,5 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, type RootState } from '@react-three/fiber';
+import { Canvas, type RootState, useThree } from '@react-three/fiber';
 import { Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Theme } from '@/types';
@@ -10,6 +10,7 @@ import {
   NeutralStudioEnvironment,
   SceneLighting,
   SnapshotManager,
+  type SnapshotCaptureAction,
   useAdaptiveInteractionQuality,
   UsageGuide,
   WorkspaceOrbitControls,
@@ -20,8 +21,12 @@ import {
   WorldOriginAxes,
 } from '@/shared/components/3d';
 import type { WorkspaceOrbitControlsProps } from '@/shared/components/3d/scene/WorkspaceOrbitControls';
-import { useEffectiveTheme } from '@/shared/hooks';
 import { attachContextMenuBlocker } from '@/shared/utils';
+import {
+  resolveWorkspaceCanvasEnvironmentIntensity,
+  type WorkspaceCanvasEnvironmentIntensityByTheme,
+  useWorkspaceCanvasTheme,
+} from './workspaceCanvasConfig';
 
 interface WorkspaceCanvasProps {
   theme: Theme;
@@ -30,7 +35,7 @@ interface WorkspaceCanvasProps {
   className?: string;
   containerRef?: React.RefObject<HTMLDivElement>;
   sceneRef?: React.RefObject<THREE.Scene | null>;
-  snapshotAction?: React.RefObject<(() => void) | null>;
+  snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
   children: React.ReactNode;
   overlays?: React.ReactNode;
   onPointerMissed?: () => void;
@@ -41,6 +46,10 @@ interface WorkspaceCanvasProps {
   onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
   environment?: 'hdr' | 'studio' | 'none';
   environmentIntensity?: number;
+  environmentIntensityByTheme?: WorkspaceCanvasEnvironmentIntensityByTheme;
+  groundOffset?: number;
+  toneMapping?: THREE.ToneMapping;
+  toneMappingExposure?: number;
   cameraFollowPrimary?: boolean;
   orbitControlsProps?: Partial<WorkspaceOrbitControlsProps>;
   controlLayerKey?: string;
@@ -51,9 +60,21 @@ interface WorkspaceCanvasProps {
   contextLostMessage?: string;
   showWorldOriginAxes?: boolean;
   showUsageGuide?: boolean;
+  renderKey?: string;
+}
+
+function CanvasRenderKeyInvalidator({ renderKey }: { renderKey: string }) {
+  const invalidate = useThree((state) => state.invalidate);
+
+  useEffect(() => {
+    invalidate();
+  }, [invalidate, renderKey]);
+
+  return null;
 }
 
 export const WorkspaceCanvas = ({
+  theme,
   lang,
   robotName = 'robot',
   className = 'relative w-full h-full',
@@ -70,6 +91,10 @@ export const WorkspaceCanvas = ({
   onMouseLeave,
   environment = 'none',
   environmentIntensity = 0.36,
+  environmentIntensityByTheme,
+  groundOffset = 0,
+  toneMapping = THREE.ACESFilmicToneMapping,
+  toneMappingExposure,
   cameraFollowPrimary = false,
   orbitControlsProps,
   controlLayerKey = 'default',
@@ -77,8 +102,9 @@ export const WorkspaceCanvas = ({
   contextLostMessage,
   showWorldOriginAxes = true,
   showUsageGuide = true,
+  renderKey = 'default',
 }: WorkspaceCanvasProps) => {
-  const effectiveTheme = useEffectiveTheme();
+  const effectiveTheme = useWorkspaceCanvasTheme(theme);
   const [contextLost, setContextLost] = useState(false);
   const contextMenuCleanupRef = useRef<(() => void) | null>(null);
   const {
@@ -88,6 +114,14 @@ export const WorkspaceCanvas = ({
     endInteraction,
     pulseInteraction,
   } = useAdaptiveInteractionQuality();
+  const resolvedEnvironmentIntensity = useMemo(
+    () => resolveWorkspaceCanvasEnvironmentIntensity({
+      effectiveTheme,
+      environmentIntensity,
+      environmentIntensityByTheme,
+    }),
+    [effectiveTheme, environmentIntensity, environmentIntensityByTheme],
+  );
 
   const finalOrbitControlsProps = useMemo<Partial<WorkspaceOrbitControlsProps>>(
     () => ({
@@ -225,8 +259,9 @@ export const WorkspaceCanvas = ({
         }}
         gl={{
           antialias: true,
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: environment === 'hdr' ? 1.0 : 1.1,
+          alpha: true,
+          toneMapping,
+          toneMappingExposure: toneMappingExposure ?? (environment === 'hdr' ? 1.0 : 1.1),
           powerPreference: 'high-performance',
           failIfMajorPerformanceCaveat: false,
         }}
@@ -234,34 +269,44 @@ export const WorkspaceCanvas = ({
         onPointerMissed={onPointerMissed}
         translate="no"
       >
+        <CanvasRenderKeyInvalidator renderKey={renderKey} />
         <CanvasResizeSync />
         <color attach="background" args={[effectiveTheme === 'light' ? background.light : background.dark]} />
+        {/* Keep async environment assets isolated so static canvas scaffolding never blanks out. */}
         <Suspense fallback={null}>
           {environment === 'hdr' && (
             <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0} />
           )}
-          {environment === 'studio' && <NeutralStudioEnvironment intensity={environmentIntensity} />}
-          <SceneLighting
-            theme={effectiveTheme}
-            cameraFollowPrimary={cameraFollowPrimary}
-            // Viewer orbiting should not toggle shadows on/off. The delayed
-            // re-enable causes a visible flash on dense models like Unitree B2.
-            enableShadows={cameraFollowPrimary ? true : !isInteracting}
-          />
-          <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
-          {children}
-          <AdaptiveGroundPlane theme={effectiveTheme} />
-          {showWorldOriginAxes && <WorldOriginAxes />}
-          <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
-          <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
-            <GizmoViewport
-              axisColors={['#ef4444', '#22c55e', '#3b82f6']}
-              labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
-              axisHeadScale={0.9}
-              scale={34}
-            />
-          </GizmoHelper>
+          {environment === 'studio' && <NeutralStudioEnvironment intensity={resolvedEnvironmentIntensity} />}
         </Suspense>
+        <SceneLighting
+          theme={effectiveTheme}
+          cameraFollowPrimary={cameraFollowPrimary}
+          // Viewer orbiting should not toggle shadows on/off. The delayed
+          // re-enable causes a visible flash on dense models like Unitree B2.
+          enableShadows={cameraFollowPrimary ? true : !isInteracting}
+        />
+        <SnapshotManager
+          actionRef={snapshotAction}
+          robotName={robotName}
+          theme={effectiveTheme}
+          groundOffset={groundOffset}
+        />
+        {/* Model/scene loaders can suspend during imports, but the horizon/grid/controls must stay visible. */}
+        <Suspense fallback={null}>
+          {children}
+        </Suspense>
+        <AdaptiveGroundPlane theme={effectiveTheme} groundOffset={groundOffset} showShadow />
+        {showWorldOriginAxes && <WorldOriginAxes />}
+        <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
+        <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
+          <GizmoViewport
+            axisColors={['#ef4444', '#22c55e', '#3b82f6']}
+            labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+            axisHeadScale={0.9}
+            scale={34}
+          />
+        </GizmoHelper>
       </Canvas>
 
       {lang && showUsageGuide ? <UsageGuide lang={lang} /> : null}

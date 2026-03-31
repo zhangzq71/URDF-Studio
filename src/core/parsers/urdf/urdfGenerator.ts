@@ -7,6 +7,7 @@ import {
   RobotState,
   UrdfLink,
   UrdfJoint,
+  type UrdfOrigin,
   GeometryType,
   AssemblyState,
   type UrdfVisualMaterial,
@@ -124,10 +125,86 @@ const generateLimitTag = (joint: UrdfJoint, formatScalar: (n: number) => string)
   return null;
 };
 
+const generateCalibrationTag = (
+  joint: UrdfJoint,
+  formatScalar: (n: number) => string,
+): string | null => {
+  const referencePosition = Number.isFinite(joint.calibration?.referencePosition)
+    ? joint.calibration!.referencePosition
+    : Number.isFinite(joint.referencePosition)
+      ? joint.referencePosition
+      : undefined;
+  const rising = Number.isFinite(joint.calibration?.rising) ? joint.calibration!.rising : undefined;
+  const falling = Number.isFinite(joint.calibration?.falling) ? joint.calibration!.falling : undefined;
+  const attributes = [
+    ...(referencePosition !== undefined ? [`reference_position="${formatScalar(referencePosition)}"`] : []),
+    ...(rising !== undefined ? [`rising="${formatScalar(rising)}"`] : []),
+    ...(falling !== undefined ? [`falling="${formatScalar(falling)}"`] : []),
+  ];
+
+  if (attributes.length === 0) {
+    return null;
+  }
+
+  return `    <calibration ${attributes.join(' ')} />`;
+};
+
+const generateSafetyControllerTag = (
+  joint: UrdfJoint,
+  formatScalar: (n: number) => string,
+): string | null => {
+  const attributes = [
+    ...(Number.isFinite(joint.safetyController?.softLowerLimit)
+      ? [`soft_lower_limit="${formatScalar(joint.safetyController!.softLowerLimit!)}"`]
+      : []),
+    ...(Number.isFinite(joint.safetyController?.softUpperLimit)
+      ? [`soft_upper_limit="${formatScalar(joint.safetyController!.softUpperLimit!)}"`]
+      : []),
+    ...(Number.isFinite(joint.safetyController?.kPosition)
+      ? [`k_position="${formatScalar(joint.safetyController!.kPosition!)}"`]
+      : []),
+    ...(Number.isFinite(joint.safetyController?.kVelocity)
+      ? [`k_velocity="${formatScalar(joint.safetyController!.kVelocity!)}"`]
+      : []),
+  ];
+
+  if (attributes.length === 0) {
+    return null;
+  }
+
+  return `    <safety_controller ${attributes.join(' ')} />`;
+};
+
+const generateOriginTag = (
+  origin: UrdfOrigin | undefined,
+  indent: string,
+  vecStr: (v: { x: number; y: number; z: number }) => string,
+  rotStr: (v: { r: number; p: number; y: number }) => string,
+  formatQuaternionScalar: (n: number) => string,
+): string => {
+  if (!origin) {
+    return '';
+  }
+
+  const attributes = [
+    `xyz="${vecStr(origin.xyz)}"`,
+    `rpy="${rotStr(origin.rpy)}"`,
+  ];
+
+  if (origin.quatXyzw) {
+    attributes.push(
+      `quat_xyzw="${formatQuaternionScalar(origin.quatXyzw.x)} ${formatQuaternionScalar(origin.quatXyzw.y)} ${formatQuaternionScalar(origin.quatXyzw.z)} ${formatQuaternionScalar(origin.quatXyzw.w)}"`,
+    );
+  }
+
+  return `${indent}<origin ${attributes.join(' ')} />\n`;
+};
+
 const generateCollisionElement = (
   collision: UrdfLink['collision'],
   vecStr: (v: { x: number; y: number; z: number }) => string,
   rotStr: (v: { r: number; p: number; y: number }) => string,
+  formatQuaternionScalar: (n: number) => string,
   formatShape: (n: number) => string,
   exportRobotName: string,
   useRelativePaths: boolean = false,
@@ -135,9 +212,10 @@ const generateCollisionElement = (
 ): string => {
   if (!collision || collision.type === GeometryType.NONE) return '';
 
-  let xml = `    <collision>\n`;
+  const collisionNameAttr = collision.name ? ` name="${collision.name}"` : '';
+  let xml = `    <collision${collisionNameAttr}>\n`;
   if (collision.origin) {
-    xml += `      <origin xyz="${vecStr(collision.origin.xyz)}" rpy="${rotStr(collision.origin.rpy)}" />\n`;
+    xml += generateOriginTag(collision.origin, '      ', vecStr, rotStr, formatQuaternionScalar);
   }
   xml += `      <geometry>\n`;
   if (collision.type === GeometryType.BOX) {
@@ -163,6 +241,9 @@ const generateCollisionElement = (
     xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
   }
   xml += `      </geometry>\n`;
+  if (collision.verbose) {
+    xml += `      <verbose value="${collision.verbose}" />\n`;
+  }
   xml += `    </collision>\n`;
 
   return xml;
@@ -211,13 +292,15 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
   const omitMeshMaterialPaths = opts.omitMeshMaterialPaths
     ? new Set(Array.from(opts.omitMeshMaterialPaths, (path) => String(path || '').replace(/\\/g, '/')))
     : null;
-  const { name, links, joints } = robot;
+  const { name, version, links, joints } = robot;
   const exportRobotName = name?.trim() ? name : 'robot';
 
-  let xml = `<?xml version="1.0"?>\n<robot name="${name}">\n\n`;
+  const robotVersionAttr = version ? ` version="${version}"` : '';
+  let xml = `<?xml version="1.0"?>\n<robot name="${name}"${robotVersionAttr}>\n\n`;
 
   // Helper to format numbers
   const formatScalar = (n: number) => formatNumberWithMaxDecimals(n, MAX_PROPERTY_DECIMALS);
+  const formatQuaternionScalar = (n: number) => formatNumberWithMaxDecimals(n, MAX_PROPERTY_DECIMALS + 1);
   const formatShape = (n: number) => formatNumberWithMaxDecimals(n, MAX_GEOMETRY_DIMENSION_DECIMALS);
   const vecStr = (v: { x: number; y: number; z: number }) => `${formatScalar(v.x)} ${formatScalar(v.y)} ${formatScalar(v.z)}`;
   const rotStr = (v: { r: number; p: number; y: number }) => `${formatScalar(v.r)} ${formatScalar(v.p)} ${formatScalar(v.y)}`;
@@ -237,7 +320,8 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
 
   // Generate Links
   Object.values(links).forEach((link) => {
-    xml += `  <link name="${link.name}">\n`;
+    const linkTypeAttr = link.type ? ` type="${link.type}"` : '';
+    xml += `  <link name="${link.name}"${linkTypeAttr}>\n`;
 
     const visualEntries = getVisualGeometryEntries(link);
     visualEntries.forEach((entry, index) => {
@@ -250,9 +334,10 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
         const authoredMaterials = hasExplicitVisualMaterialOverride
           ? undefined
           : visual.authoredMaterials;
-        xml += `    <visual>\n`;
+        const visualNameAttr = visual.name ? ` name="${visual.name}"` : '';
+        xml += `    <visual${visualNameAttr}>\n`;
         if (visual.origin) {
-            xml += `      <origin xyz="${vecStr(visual.origin.xyz)}" rpy="${rotStr(visual.origin.rpy)}" />\n`;
+            xml += generateOriginTag(visual.origin, '      ', vecStr, rotStr, formatQuaternionScalar);
         }
 
         xml += `      <geometry>\n`;
@@ -314,6 +399,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
       link.collision,
       vecStr,
       rotStr,
+      formatQuaternionScalar,
       formatShape,
       exportRobotName,
       useRelativePaths,
@@ -324,6 +410,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
         collisionBody,
         vecStr,
         rotStr,
+        formatQuaternionScalar,
         formatShape,
         exportRobotName,
         useRelativePaths,
@@ -335,7 +422,7 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
     if (hasExportableInertial(link) && link.inertial) {
       xml += `    <inertial>\n`;
       if (link.inertial.origin) {
-        xml += `      <origin xyz="${vecStr(link.inertial.origin.xyz)}" rpy="${rotStr(link.inertial.origin.rpy)}" />\n`;
+        xml += generateOriginTag(link.inertial.origin, '      ', vecStr, rotStr, formatQuaternionScalar);
       }
       xml += `      <mass value="${formatScalar(link.inertial.mass)}" />\n`;
       xml += `      <inertia ixx="${formatScalar(link.inertial.inertia.ixx)}" ixy="${formatScalar(link.inertial.inertia.ixy)}" ixz="${formatScalar(link.inertial.inertia.ixz)}" iyy="${formatScalar(link.inertial.inertia.iyy)}" iyz="${formatScalar(link.inertial.inertia.iyz)}" izz="${formatScalar(link.inertial.inertia.izz)}" />\n`;
@@ -354,14 +441,24 @@ export const generateURDF = (robot: RobotState, options: UrdfGeneratorOptions | 
     xml += `  <joint name="${joint.name}" type="${joint.type}">\n`;
     xml += `    <parent link="${parent.name}" />\n`;
     xml += `    <child link="${child.name}" />\n`;
-    xml += `    <origin xyz="${vecStr(joint.origin.xyz)}" rpy="${rotStr(joint.origin.rpy)}" />\n`;
+    xml += generateOriginTag(joint.origin, '    ', vecStr, rotStr, formatQuaternionScalar);
     if (AXIS_EXPORT_TYPES.has(jointType) && joint.axis) {
         xml += `    <axis xyz="${vecStr(joint.axis)}" />\n`;
+    }
+
+    const calibrationTag = generateCalibrationTag(joint, formatScalar);
+    if (calibrationTag) {
+        xml += `${calibrationTag}\n`;
     }
 
     const limitTag = generateLimitTag(joint, formatScalar);
     if (limitTag) {
         xml += `${limitTag}\n`;
+    }
+
+    const safetyControllerTag = generateSafetyControllerTag(joint, formatScalar);
+    if (safetyControllerTag) {
+        xml += `${safetyControllerTag}\n`;
     }
 
     if (DYNAMICS_EXPORT_TYPES.has(jointType)) {

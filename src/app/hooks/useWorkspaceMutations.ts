@@ -484,8 +484,13 @@ export function useWorkspaceMutations({
 
   const handleAddCollisionBody = useCallback((parentId: string) => {
     if (assemblyState && sidebarTab === 'workspace') {
+      commitPendingAssemblyHistory();
+
       for (const component of Object.values(assemblyState.components)) {
-        const parentLink = component.robot.links[parentId];
+        const resolvedParentId = resolveLinkKey(component.robot.links, parentId);
+        if (!resolvedParentId) continue;
+
+        const parentLink = component.robot.links[resolvedParentId];
         if (!parentLink) continue;
 
         const updatedParentLink = appendCollisionBody(parentLink);
@@ -495,12 +500,14 @@ export function useWorkspaceMutations({
         updateComponentRobot(component.id, {
           links: {
             ...component.robot.links,
-            [parentId]: updatedParentLink,
+            [resolvedParentId]: updatedParentLink,
           },
+        }, {
+          label: 'Add collision body',
         });
 
-        setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
-        focusOn(parentId);
+        setSelection({ type: 'link', id: resolvedParentId, subType: 'collision', objectIndex: nextObjectIndex });
+        focusOn(resolvedParentId);
         return;
       }
       return;
@@ -516,6 +523,7 @@ export function useWorkspaceMutations({
     focusOn(parentId);
   }, [
     assemblyState,
+    commitPendingAssemblyHistory,
     focusOn,
     robotLinks,
     setSelection,

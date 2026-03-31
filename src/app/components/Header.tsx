@@ -1,15 +1,15 @@
 /**
  * App Header Component
- * Contains logo, menus, mode switcher, and action buttons
+ * Contains logo, menus, and action buttons
  */
 import React from 'react';
 import { useUIStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { translations } from '@/shared/i18n';
+import { attachContextMenuBlocker } from '@/shared/utils';
 import { useActiveHistory } from '../hooks/useActiveHistory';
 import { HeaderActions } from './header/HeaderActions';
 import { HeaderMenus } from './header/HeaderMenus';
-import { ModeSwitcher } from './header/ModeSwitcher';
 import { useHeaderResponsiveLayout } from './header/useHeaderResponsiveLayout';
 import type { HeaderAction, HeaderMenuKey, HeaderViewConfig } from './header/types';
 
@@ -35,7 +35,7 @@ interface HeaderProps {
   viewConfig: {
     showToolbar: boolean;
     showOptionsPanel: boolean;
-    showSkeletonOptionsPanel: boolean;
+    showVisualizerOptionsPanel: boolean;
     showJointPanel: boolean;
   };
   setViewConfig: React.Dispatch<React.SetStateAction<HeaderViewConfig>>;
@@ -62,10 +62,12 @@ export function Header({
   const headerRef = React.useRef<HTMLElement | null>(null);
   const [activeMenu, setActiveMenu] = React.useState<HeaderMenuKey>(null);
 
-  const { appMode, setAppMode, theme, setTheme, lang, setLang } = useUIStore(
+  React.useEffect(() => {
+    return attachContextMenuBlocker(headerRef.current);
+  }, []);
+
+  const { theme, setTheme, lang, setLang } = useUIStore(
     useShallow((state) => ({
-      appMode: state.appMode,
-      setAppMode: state.setAppMode,
       theme: state.theme,
       setTheme: state.setTheme,
       lang: state.lang,
@@ -73,18 +75,42 @@ export function Header({
     })),
   );
   const { undo, redo, canUndo, canRedo } = useActiveHistory();
-  const responsive = useHeaderResponsiveLayout(headerRef);
+  const responsiveOptions = React.useMemo(
+    () => ({
+      hasQuickAction: Boolean(quickAction),
+      hasSecondaryAction: Boolean(secondaryAction),
+    }),
+    [quickAction, secondaryAction],
+  );
+  const responsive = useHeaderResponsiveLayout(headerRef, responsiveOptions);
   const t = translations[lang];
+
+  React.useEffect(() => {
+    if (activeMenu === null) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveMenu(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeMenu]);
 
   return (
     <header
       ref={headerRef}
-      className="h-12 border-b shrink-0 bg-panel-bg dark:bg-panel-bg border-border-black grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3"
+      className="h-12 border-b shrink-0 select-none bg-panel-bg dark:bg-panel-bg border-border-black grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3"
     >
       {/* Left Section - Logo & Menus */}
       <div className="flex items-center gap-1 min-w-0">
         <div className="flex items-center gap-2 pr-3 mr-1 border-r border-border-black">
-          <img src="/logos/logo.png" alt="Logo" className="w-7 h-7 object-contain" />
+          <img src="/logos/logo.png" alt="Logo" draggable={false} className="w-7 h-7 object-contain" />
         </div>
 
         <HeaderMenus
@@ -113,21 +139,16 @@ export function Header({
         />
       </div>
 
-      {/* Center - Mode Switcher */}
-      <div className="hidden md:flex justify-self-center">
-        <ModeSwitcher appMode={appMode} setAppMode={setAppMode} t={t} compact={!responsive.showFullModeSwitcher} />
-      </div>
+      <div className="hidden md:block" aria-hidden="true" />
 
       <HeaderActions
         responsive={responsive}
         lang={lang}
         theme={theme}
-        appMode={appMode}
         canUndo={canUndo}
         canRedo={canRedo}
         activeMenu={activeMenu}
         setActiveMenu={setActiveMenu}
-        setAppMode={setAppMode}
         setLang={setLang}
         setTheme={setTheme}
         undo={undo}

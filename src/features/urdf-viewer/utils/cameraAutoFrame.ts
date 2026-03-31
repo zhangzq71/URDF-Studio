@@ -1,9 +1,11 @@
+import type { ViewerSceneMode } from '../types';
+
 export interface AutoFrameRobotChangeOptions {
   autoFrameOnRobotChange: boolean;
   currentScopeKey: string | null;
   lastAutoFramedScopeKey: string | null;
   focusTarget: string | null | undefined;
-  mode?: 'detail' | 'hardware';
+  mode?: ViewerSceneMode;
   active?: boolean;
 }
 
@@ -24,11 +26,11 @@ export function shouldAutoFrameRobotChange({
   mode,
   active = true,
 }: AutoFrameRobotChangeOptions): boolean {
+  void mode;
   if (!active) return false;
   if (!autoFrameOnRobotChange) return false;
   if (!currentScopeKey) return false;
   if (focusTarget) return false;
-  if (mode === 'hardware') return false;
 
   return currentScopeKey !== lastAutoFramedScopeKey;
 }

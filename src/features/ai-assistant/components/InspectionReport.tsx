@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import type { InspectionReport, RobotState } from '@/types'
 import { translations, type Language, type TranslationKeys } from '@/shared/i18n'
+import { buildInspectionEvidenceSummary } from '@/shared/utils/inspectionEvidenceSummary'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
 import { getScoreBgColor, getScoreColor } from '../utils/scoreHelpers'
 
@@ -193,6 +194,7 @@ export function InspectionReportView({
       className: 'text-emerald-600 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/60'
     }
   ]
+  const evidenceSummary = buildInspectionEvidenceSummary(robot.inspectionContext, lang)
 
   return (
     <div className="space-y-6">
@@ -207,6 +209,25 @@ export function InspectionReportView({
               {t.inspectionResultTitle}
             </h2>
             <p className="text-sm text-text-secondary max-w-xl leading-relaxed">{report.summary}</p>
+
+            {evidenceSummary && (
+              <div className="mt-4 rounded-lg border border-border-black bg-element-bg px-3 py-3">
+                <div className="text-[10px] font-medium tracking-wide text-text-tertiary">
+                  {evidenceSummary.title}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {evidenceSummary.metrics.map(metric => (
+                    <div
+                      key={`${metric.label}:${metric.value}`}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border-black bg-panel-bg px-2 py-1"
+                    >
+                      <span className="text-[10px] font-medium text-text-tertiary">{metric.label}</span>
+                      <span className="text-[10px] font-semibold text-text-primary">{metric.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3 shrink-0">

@@ -8,6 +8,7 @@ import { Header } from './components/Header';
 import { AppLayoutOverlays } from './components/AppLayoutOverlays';
 import { DocumentLoadingOverlay } from './components/DocumentLoadingOverlay';
 import { FileDropOverlay } from './components/FileDropOverlay';
+import { SnapshotDialog } from './components/SnapshotDialog';
 import { UnifiedViewer } from './components/UnifiedViewer';
 import {
   loadBridgeCreateModalModule,
@@ -19,7 +20,8 @@ import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
 import {
   getCurrentUsdViewerSceneSnapshot,
-  prepareUsdExportCacheFromSnapshot,
+  prepareUsdPreparedExportCacheWithWorker,
+  resolveUsdExportResolution,
   type ToolMode,
   type ViewerDocumentLoadEvent,
   type ViewerRobotDataResolution,
@@ -36,16 +38,25 @@ import {
   parseEditableRobotSourceWithWorker,
   resolveRobotFileDataWithWorker,
 } from './hooks/robotImportWorkerBridge';
-import { shouldUseEmptyRobotForUsdHydration } from './hooks/workspaceSourceSyncUtils';
+import {
+  getViewerSourceFile,
+  shouldReseedSingleComponentAssemblyFromActiveFile,
+  shouldUseEmptyRobotForUsdHydration,
+} from './hooks/workspaceSourceSyncUtils';
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { generateURDF } from '@/core/parsers';
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type { RobotData, RobotFile, UsdSceneSnapshot } from '@/types';
 import { translations } from '@/shared/i18n';
+import type { SnapshotCaptureOptions } from '@/shared/components/3d';
+import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 import { createRobotSemanticSnapshot } from '@/shared/utils/robot/semanticSnapshot';
 import { registerPendingUsdCacheFlusher } from './utils/pendingUsdCache';
 import { shouldApplyUsdStageHydration } from './utils/usdStageHydration';
 import { buildUsdHydrationPersistencePlan } from './utils/usdHydrationPersistence';
+import { shouldIgnoreStaleViewerDocumentLoadEvent } from './utils/documentLoadFlow';
+import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
+import type { DocumentLoadState, DocumentLoadStatus } from '@/store/assetsStore';
 
 interface UsdPersistenceBaseline {
   fileName: string | null;
@@ -89,13 +100,13 @@ interface AppLayoutProps {
   viewConfig: {
     showToolbar: boolean;
     showOptionsPanel: boolean;
-    showSkeletonOptionsPanel: boolean;
+    showVisualizerOptionsPanel: boolean;
     showJointPanel: boolean;
   };
   setViewConfig: React.Dispatch<React.SetStateAction<{
     showToolbar: boolean;
     showOptionsPanel: boolean;
-    showSkeletonOptionsPanel: boolean;
+    showVisualizerOptionsPanel: boolean;
     showJointPanel: boolean;
   }>>;
   // Robot file handling
@@ -124,7 +135,7 @@ export function AppLayout({
   viewerReloadKey,
 }: AppLayoutProps) {
   // UI Store (grouped with useShallow to reduce subscriptions)
-  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab, setAppMode } = useUIStore(
+  const { appMode, lang, theme, sidebar, toggleSidebar, sidebarTab } = useUIStore(
     useShallow((state) => ({
       appMode: state.appMode,
       lang: state.lang,
@@ -132,9 +143,9 @@ export function AppLayout({
       sidebar: state.sidebar,
       toggleSidebar: state.toggleSidebar,
       sidebarTab: state.sidebarTab,
-      setAppMode: state.setAppMode,
     }))
   );
+  const mergedAppMode = normalizeMergedAppMode(appMode);
   const t = translations[lang];
 
   // Selection Store
@@ -204,13 +215,14 @@ export function AppLayout({
   );
   // Assembly Store
   const {
-    assemblyState, addComponent, removeComponent,
+    assemblyState, addComponent, initAssembly, removeComponent,
     addBridge, removeBridge, getMergedRobotData,
     updateComponentName, updateComponentRobot, renameComponentSourceFolder,
   } = useAssemblyStore(
     useShallow((state) => ({
       assemblyState: state.assemblyState,
       addComponent: state.addComponent,
+      initAssembly: state.initAssembly,
       removeComponent: state.removeComponent,
       addBridge: state.addBridge,
       removeBridge: state.removeBridge,
@@ -221,15 +233,19 @@ export function AppLayout({
     }))
   );
 
-  const snapshotActionRef = useRef<(() => void) | null>(null);
+  const snapshotActionRef = useRef<((options?: Partial<SnapshotCaptureOptions>) => Promise<void>) | null>(null);
   const transformPendingRef = useRef(false);
   const editableSourceParseRequestRef = useRef(0);
   const pendingUsdAssemblyFileRef = useRef<RobotFile | null>(null);
   const pendingUsdHydrationFileRef = useRef<string | null>(null);
   const usdPersistenceBaselineRef = useRef<UsdPersistenceBaseline>(EMPTY_USD_PERSISTENCE_BASELINE);
+  const usdPreparedExportCacheRequestIdRef = useRef(0);
+  const sourceCodeEditorRuntimeWarmupPromiseRef = useRef<Promise<void> | null>(null);
   const [pendingViewerToolMode, setPendingViewerToolMode] = useState<ToolMode | null>(null);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
+  const [isSnapshotDialogOpen, setIsSnapshotDialogOpen] = useState(false);
+  const [isSnapshotCapturing, setIsSnapshotCapturing] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
   const clearSelection = useCallback(() => {
     setSelection({ type: null, id: null });
@@ -250,6 +266,43 @@ export function AppLayout({
 
     pendingUsdHydrationFileRef.current = selectedFile.name;
   }, [isSelectedUsdHydrating, selectedFile]);
+
+  const queueUsdPreparedExportCacheBuild = useCallback((args: {
+    fileName: string;
+    sceneSnapshot: UsdSceneSnapshot;
+    resolution: ViewerRobotDataResolution;
+    robotSnapshot: string;
+  }) => {
+    const requestId = ++usdPreparedExportCacheRequestIdRef.current;
+
+    void prepareUsdPreparedExportCacheWithWorker(
+      args.sceneSnapshot,
+      args.resolution,
+    ).then((preparedCache) => {
+      if (requestId !== usdPreparedExportCacheRequestIdRef.current) {
+        return;
+      }
+
+      const liveAssetsState = useAssetsStore.getState();
+      liveAssetsState.setUsdPreparedExportCache(args.fileName, preparedCache);
+      usdPersistenceBaselineRef.current = {
+        fileName: normalizeUsdPersistenceFileName(args.fileName),
+        robotSnapshot: args.robotSnapshot,
+        fallbackSceneSnapshot: args.sceneSnapshot,
+        hadPreparedExportCache: Boolean(preparedCache),
+        hadSceneSnapshot: true,
+      };
+    }).catch((error) => {
+      if (requestId !== usdPreparedExportCacheRequestIdRef.current) {
+        return;
+      }
+
+      scheduleFailFastInDev(
+        'AppLayout:prepareUsdPreparedExportCacheWithWorker',
+        new Error(`Failed to prepare USD export cache for "${args.fileName}".`, { cause: error }),
+      );
+    });
+  }, []);
 
   const flushPendingUsdCache = useCallback(() => {
     const liveAssetsState = useAssetsStore.getState();
@@ -288,26 +341,60 @@ export function AppLayout({
 
     const sceneSnapshot = getCurrentUsdViewerSceneSnapshot({
       stageSourcePath: currentSelectedFile.name,
-    }) ?? baseline.fallbackSceneSnapshot;
+    });
 
     if (!sceneSnapshot) {
+      scheduleFailFastInDev(
+        'AppLayout:flushPendingUsdCache',
+        new Error(
+          `Missing live USD scene snapshot for "${currentSelectedFile.name}" while semantic edits are pending.`,
+        ),
+        'warn',
+      );
+      liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, null);
+      liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, null);
+      usdPersistenceBaselineRef.current = {
+        fileName: normalizedSelectedFileName,
+        robotSnapshot: currentRobotSnapshot,
+        fallbackSceneSnapshot: null,
+        hadPreparedExportCache: false,
+        hadSceneSnapshot: false,
+      };
       return;
     }
 
-    const preparedCache = prepareUsdExportCacheFromSnapshot(sceneSnapshot, {
+    liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, sceneSnapshot);
+
+    const resolution = resolveUsdExportResolution(sceneSnapshot, {
       fileName: currentSelectedFile.name,
     });
+    if (!resolution) {
+      liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, null);
+      usdPersistenceBaselineRef.current = {
+        fileName: normalizedSelectedFileName,
+        robotSnapshot: currentRobotSnapshot,
+        fallbackSceneSnapshot: sceneSnapshot,
+        hadPreparedExportCache: false,
+        hadSceneSnapshot: true,
+      };
+      return;
+    }
 
-    liveAssetsState.setUsdSceneSnapshot(currentSelectedFile.name, sceneSnapshot);
-    liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, preparedCache);
+    liveAssetsState.setUsdPreparedExportCache(currentSelectedFile.name, null);
     usdPersistenceBaselineRef.current = {
       fileName: normalizedSelectedFileName,
       robotSnapshot: currentRobotSnapshot,
       fallbackSceneSnapshot: sceneSnapshot,
-      hadPreparedExportCache: Boolean(preparedCache),
+      hadPreparedExportCache: false,
       hadSceneSnapshot: true,
     };
-  }, []);
+    queueUsdPreparedExportCacheBuild({
+      fileName: currentSelectedFile.name,
+      sceneSnapshot,
+      resolution,
+      robotSnapshot: currentRobotSnapshot,
+    });
+  }, [queueUsdPreparedExportCacheBuild]);
 
   useEffect(() => {
     registerPendingUsdCacheFlusher(flushPendingUsdCache);
@@ -350,31 +437,37 @@ export function AppLayout({
     if (resolvedSelectedFile.format === 'usd') {
       const existingSceneSnapshot = liveAssetsState.getUsdSceneSnapshot(resolvedSelectedFile.name);
       const existingPreparedExportCache = liveAssetsState.getUsdPreparedExportCache(resolvedSelectedFile.name);
+      const resolvedRobotSnapshot = createRobotSemanticSnapshot(result.robotData);
       const hydrationPersistencePlan = buildUsdHydrationPersistencePlan({
         resolution: result,
         existingSceneSnapshot,
         existingPreparedExportCache,
       });
-      const preparedHydrationExportCache = hydrationPersistencePlan.shouldSeedPreparedExportCache
-        && hydrationPersistencePlan.sceneSnapshot
-        ? prepareUsdExportCacheFromSnapshot(hydrationPersistencePlan.sceneSnapshot, {
-            fileName: resolvedSelectedFile.name,
-            resolution: result,
-          })
-        : existingPreparedExportCache;
+      const shouldBuildPreparedHydrationExportCache = Boolean(
+        hydrationPersistencePlan.shouldSeedPreparedExportCache
+        && hydrationPersistencePlan.sceneSnapshot,
+      );
 
       if (hydrationPersistencePlan.shouldSeedSceneSnapshot && hydrationPersistencePlan.sceneSnapshot) {
         liveAssetsState.setUsdSceneSnapshot(resolvedSelectedFile.name, hydrationPersistencePlan.sceneSnapshot);
       }
-      if (hydrationPersistencePlan.shouldSeedPreparedExportCache && preparedHydrationExportCache) {
-        liveAssetsState.setUsdPreparedExportCache(resolvedSelectedFile.name, preparedHydrationExportCache);
+      if (shouldBuildPreparedHydrationExportCache && hydrationPersistencePlan.sceneSnapshot) {
+        liveAssetsState.setUsdPreparedExportCache(resolvedSelectedFile.name, null);
+        queueUsdPreparedExportCacheBuild({
+          fileName: resolvedSelectedFile.name,
+          sceneSnapshot: hydrationPersistencePlan.sceneSnapshot,
+          resolution: result,
+          robotSnapshot: resolvedRobotSnapshot,
+        });
       }
 
       usdPersistenceBaselineRef.current = {
         fileName: normalizedSelectedFileName,
-        robotSnapshot: createRobotSemanticSnapshot(result.robotData),
+        robotSnapshot: resolvedRobotSnapshot,
         fallbackSceneSnapshot: hydrationPersistencePlan.sceneSnapshot as UsdSceneSnapshot | null,
-        hadPreparedExportCache: Boolean(preparedHydrationExportCache),
+        hadPreparedExportCache: shouldBuildPreparedHydrationExportCache
+          ? false
+          : Boolean(existingPreparedExportCache),
         hadSceneSnapshot: Boolean(hydrationPersistencePlan.sceneSnapshot),
       };
     }
@@ -426,11 +519,12 @@ export function AppLayout({
       }
       pendingUsdAssemblyFileRef.current = null;
     }
-  }, [addComponent, selectedFile, setRobot, setSelection, showToast, t]);
+  }, [addComponent, queueUsdPreparedExportCacheBuild, selectedFile, setRobot, setSelection, showToast, t]);
 
   const {
     emptyRobot,
     robot,
+    shouldRenderAssembly,
     jointAngleState,
     jointMotionState,
     showVisual,
@@ -473,20 +567,106 @@ export function AppLayout({
     ? availableFiles.find((file) => file.name === previewFileName) ?? null
     : null;
 
+  const handleSwitchTreeEditorToProMode = useCallback(() => {
+    const activeFile = previewFile ?? selectedFile;
+    if (!shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState,
+      activeFile,
+    })) {
+      return;
+    }
+
+    if (!activeFile) {
+      return;
+    }
+
+    const preResolvedRobotData = activeFile.format === 'usd'
+      ? getUsdPreparedExportCache(activeFile.name)?.robotData ?? null
+      : null;
+
+    if (activeFile.format === 'usd' && !preResolvedRobotData) {
+      return;
+    }
+
+    void resolveRobotFileDataWithWorker(activeFile, {
+      availableFiles,
+      assets,
+      allFileContents,
+      usdRobotData: preResolvedRobotData,
+    }).then((importResult) => {
+      if (importResult.status !== 'ready') {
+        scheduleFailFastInDev(
+          'AppLayout:handleSwitchTreeEditorToProMode',
+          new Error(`Failed to sync Pro mode assembly source from "${activeFile.name}".`),
+        );
+        showToast(`Failed to sync Pro mode assembly source: ${activeFile.name}`, 'info');
+        return;
+      }
+
+      initAssembly(assemblyState?.name || robotName || 'assembly');
+      const component = addComponent(activeFile, {
+        availableFiles,
+        assets,
+        allFileContents,
+        preResolvedImportResult: importResult,
+        preResolvedRobotData,
+      });
+
+      if (!component) {
+        scheduleFailFastInDev(
+          'AppLayout:handleSwitchTreeEditorToProMode',
+          new Error(`Failed to reseed Pro mode assembly with "${activeFile.name}".`),
+        );
+      }
+    }).catch((error) => {
+      scheduleFailFastInDev(
+        'AppLayout:handleSwitchTreeEditorToProMode',
+        error instanceof Error
+          ? error
+          : new Error(`Failed to resolve Pro mode source from "${activeFile.name}".`),
+      );
+      showToast(`Failed to sync Pro mode assembly source: ${activeFile.name}`, 'info');
+    });
+  }, [
+    addComponent,
+    allFileContents,
+    assemblyState,
+    assets,
+    availableFiles,
+    getUsdPreparedExportCache,
+    initAssembly,
+    previewFile,
+    robotName,
+    selectedFile,
+    showToast,
+  ]);
+
   const handleViewerDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
     const liveAssetsState = useAssetsStore.getState();
     const activeDocumentFile = previewFile ?? liveAssetsState.selectedFile;
+    const currentDocumentLoadState = liveAssetsState.documentLoadState;
 
     if (!activeDocumentFile) {
       return;
     }
 
+    // A different file is staged for load but not yet committed as the active
+    // viewer document. Ignore progress from the still-visible old scene so the
+    // pending file keeps ownership of document loading state.
+    if (shouldIgnoreStaleViewerDocumentLoadEvent({
+      isPreviewing: Boolean(previewFile),
+      activeDocumentFileName: activeDocumentFile.name,
+      documentLoadState: currentDocumentLoadState,
+    })) {
+      return;
+    }
+
     const keepHydrating = !previewFile
       && activeDocumentFile.format === 'usd'
-      && liveAssetsState.documentLoadState.status === 'hydrating'
-      && liveAssetsState.documentLoadState.fileName === activeDocumentFile.name;
+      && currentDocumentLoadState.status === 'hydrating'
+      && currentDocumentLoadState.fileName === activeDocumentFile.name;
 
-    const nextStatus = event.status === 'ready'
+    const nextStatus: DocumentLoadStatus = event.status === 'ready'
       ? 'ready'
       : event.status === 'error'
         ? 'error'
@@ -494,7 +674,7 @@ export function AppLayout({
           ? 'hydrating'
           : 'loading';
 
-    const nextDocumentLoadState = {
+    const nextDocumentLoadState: DocumentLoadState = {
       status: nextStatus,
       fileName: activeDocumentFile.name,
       format: activeDocumentFile.format,
@@ -508,7 +688,6 @@ export function AppLayout({
       totalCount: event.totalCount ?? null,
     };
 
-    const currentDocumentLoadState = liveAssetsState.documentLoadState;
     if (
       currentDocumentLoadState.status !== nextDocumentLoadState.status
       || currentDocumentLoadState.fileName !== nextDocumentLoadState.fileName
@@ -620,17 +799,42 @@ export function AppLayout({
       return;
     }
 
-    const component = addComponent(file, {
+    void resolveRobotFileDataWithWorker(file, {
       availableFiles,
       assets,
       allFileContents,
-      preResolvedRobotData,
-    });
-    if (component) {
-      showToast(t.addedComponent.replace('{name}', component.name), 'success');
-    } else {
+      usdRobotData: preResolvedRobotData,
+    }).then((importResult) => {
+      if (importResult.status !== 'ready') {
+        scheduleFailFastInDev(
+          'AppLayout:handleAddComponent',
+          new Error(`Failed to resolve assembly component "${file.name}".`),
+        );
+        showToast(`Failed to add assembly component: ${file.name}`, 'info');
+        return;
+      }
+
+      const component = addComponent(file, {
+        availableFiles,
+        assets,
+        allFileContents,
+        preResolvedImportResult: importResult,
+        preResolvedRobotData,
+      });
+      if (component) {
+        showToast(t.addedComponent.replace('{name}', component.name), 'success');
+      } else {
+        showToast(`Failed to add assembly component: ${file.name}`, 'info');
+      }
+    }).catch((error) => {
+      scheduleFailFastInDev(
+        'AppLayout:handleAddComponent',
+        error instanceof Error
+          ? error
+          : new Error(`Failed to resolve assembly component "${file.name}".`),
+      );
       showToast(`Failed to add assembly component: ${file.name}`, 'info');
-    }
+    });
   }, [addComponent, allFileContents, assets, availableFiles, getUsdPreparedExportCache, onLoadRobot, showToast, t]);
 
   const handleCreateBridge = useCallback(() => {
@@ -646,11 +850,8 @@ export function AppLayout({
 
   const handleOpenMeasureTool = useCallback(() => {
     setViewConfig((prev) => ({ ...prev, showToolbar: true }));
-    if (appMode === 'skeleton') {
-      setAppMode('detail');
-    }
     setPendingViewerToolMode('measure');
-  }, [appMode, setAppMode, setViewConfig]);
+  }, [setViewConfig]);
 
   const {
     collisionOptimizationSource,
@@ -766,14 +967,24 @@ export function AppLayout({
   ]);
 
   const handleSnapshot = useCallback(() => {
-    if (snapshotActionRef.current) {
-      try {
-        snapshotActionRef.current();
-        showToast(t.generatingSnapshot, 'info');
-      } catch (e) {
-        console.error('Snapshot failed:', e);
-        showToast(t.snapshotFailed, 'info');
-      }
+    setIsSnapshotDialogOpen(true);
+  }, []);
+
+  const handleCaptureSnapshot = useCallback(async (options: SnapshotCaptureOptions) => {
+    if (!snapshotActionRef.current) {
+      showToast(t.snapshotFailed, 'info');
+      return;
+    }
+
+    try {
+      setIsSnapshotCapturing(true);
+      await snapshotActionRef.current(options);
+      setIsSnapshotDialogOpen(false);
+    } catch (error) {
+      console.error('Snapshot failed:', error);
+      showToast(t.snapshotFailed, 'info');
+    } finally {
+      setIsSnapshotCapturing(false);
     }
   }, [showToast, t]);
 
@@ -792,20 +1003,40 @@ export function AppLayout({
     onDropError: () => showToast(t.failedToProcessFiles, 'info'),
   });
 
+  const warmSourceCodeEditorRuntime = useCallback(() => {
+    prefetchSourceCodeEditor();
+
+    if (!sourceCodeEditorRuntimeWarmupPromiseRef.current) {
+      sourceCodeEditorRuntimeWarmupPromiseRef.current = preloadSourceCodeEditorRuntime().catch((error) => {
+        sourceCodeEditorRuntimeWarmupPromiseRef.current = null;
+        console.error('[AppLayout] Failed to preload source code editor runtime:', error);
+      });
+    }
+
+    return sourceCodeEditorRuntimeWarmupPromiseRef.current;
+  }, [prefetchSourceCodeEditor]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      void warmSourceCodeEditorRuntime();
+    }, 1200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [warmSourceCodeEditorRuntime]);
+
   const handleOpenCodeViewer = useCallback(() => {
     if (isSelectedUsdHydrating) {
       showToast(t.usdLoadInProgress, 'info');
       return;
     }
 
-    prefetchSourceCodeEditor();
-    void preloadSourceCodeEditorRuntime();
+    void warmSourceCodeEditorRuntime();
     setIsCodeViewerOpen(true);
-  }, [isSelectedUsdHydrating, prefetchSourceCodeEditor, setIsCodeViewerOpen, showToast, t.usdLoadInProgress]);
+  }, [isSelectedUsdHydrating, setIsCodeViewerOpen, showToast, t.usdLoadInProgress, warmSourceCodeEditorRuntime]);
 
   const handlePrefetchCodeViewer = useCallback(() => {
-    prefetchSourceCodeEditor();
-  }, [prefetchSourceCodeEditor]);
+    void warmSourceCodeEditorRuntime();
+  }, [warmSourceCodeEditorRuntime]);
 
   const handlePreviewFileWithFeedback = useCallback((file: RobotFile) => {
     setDocumentLoadState({
@@ -870,7 +1101,8 @@ export function AppLayout({
         error: t.failedToParseFormat.replace('{format}', file.format.toUpperCase()),
       });
       showToast(t.failedToParseFormat.replace('{format}', file.format.toUpperCase()), 'info');
-    }).catch(() => {
+    }).catch((error) => {
+      console.error(`[AppLayout] Failed to resolve preview robot data for "${file.name}".`, error);
       setDocumentLoadState({
         status: 'error',
         fileName: file.name,
@@ -943,7 +1175,7 @@ export function AppLayout({
           onUpdate={handleUpdate}
           showVisual={showVisual}
           setShowVisual={handleSetShowVisual}
-          mode={appMode}
+          mode={mergedAppMode}
           lang={lang}
           theme={theme}
           collapsed={sidebar.leftCollapsed}
@@ -963,6 +1195,7 @@ export function AppLayout({
           onRemoveBridge={removeBridge}
           onRenameComponent={handleRenameComponent}
           onPreviewFile={handlePreviewFileWithFeedback}
+          onSwitchToProMode={handleSwitchTreeEditorToProMode}
           previewFileName={previewFileName}
           isReadOnly={isPreviewingWorkspaceSource}
         />
@@ -971,7 +1204,7 @@ export function AppLayout({
         <div className="flex-1 relative min-w-0">
           <UnifiedViewer
             robot={robot}
-            mode={appMode}
+            mode={mergedAppMode}
             onSelect={handleViewerSelect}
             onMeshSelect={handleViewerMeshSelect}
             onHover={handleHover}
@@ -986,14 +1219,17 @@ export function AppLayout({
             setShowToolbar={(show) => setViewConfig(prev => ({ ...prev, showToolbar: show }))}
             showOptionsPanel={viewConfig.showOptionsPanel}
             setShowOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showOptionsPanel: show }))}
-            showSkeletonOptionsPanel={viewConfig.showSkeletonOptionsPanel}
-            setShowSkeletonOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showSkeletonOptionsPanel: show }))}
+            showVisualizerOptionsPanel={viewConfig.showVisualizerOptionsPanel}
+            setShowVisualizerOptionsPanel={(show) => setViewConfig(prev => ({ ...prev, showVisualizerOptionsPanel: show }))}
             showJointPanel={viewConfig.showJointPanel}
             setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
             availableFiles={availableFiles}
             urdfContent={urdfContentForViewer}
             sourceFilePath={viewerSourceFilePath}
-            sourceFile={selectedFile}
+            sourceFile={getViewerSourceFile({
+              selectedFile,
+              shouldRenderAssembly,
+            })}
             onRobotDataResolved={handleRobotDataResolved}
             onDocumentLoadEvent={handleViewerDocumentLoadEvent}
             jointAngleState={jointAngleState}
@@ -1009,6 +1245,7 @@ export function AppLayout({
             pendingViewerToolMode={pendingViewerToolMode}
             onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
             viewerReloadKey={viewerReloadKey}
+            documentLoadState={documentLoadState}
           />
           {(previewFileName ?? selectedFile?.name) && documentLoadState.fileName === (previewFileName ?? selectedFile?.name) ? (
             <DocumentLoadingOverlay state={documentLoadState} lang={lang} />
@@ -1020,7 +1257,7 @@ export function AppLayout({
           onUpdate={handleUpdate}
           onSelect={handleSelect}
           onHover={handleHover}
-          mode={appMode}
+          mode={mergedAppMode}
           assets={assets}
           onUploadAsset={handleUploadAsset}
           motorLibrary={motorLibrary}
@@ -1031,6 +1268,14 @@ export function AppLayout({
           readOnlyMessage={isPreviewingWorkspaceSource ? t.previewReadOnlyHint : undefined}
         />
       </div>
+
+      <SnapshotDialog
+        isOpen={isSnapshotDialogOpen}
+        isCapturing={isSnapshotCapturing}
+        lang={lang}
+        onClose={() => setIsSnapshotDialogOpen(false)}
+        onCapture={handleCaptureSnapshot}
+      />
 
       <AppLayoutOverlays
         isCodeViewerOpen={isCodeViewerOpen}

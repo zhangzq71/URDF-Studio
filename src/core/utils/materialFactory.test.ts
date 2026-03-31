@@ -30,7 +30,8 @@ test('createMatteMaterial applies the shared matte defaults', () => {
 test('createMatteMaterial softens non-authored pure white by default', () => {
   const material = createMatteMaterial({ color: 0xffffff });
 
-  assertColorClose(material.color, new THREE.Color(0.95, 0.95, 0.95));
+  assertColorClose(material.color, new THREE.Color(0.93, 0.93, 0.93));
+  assert.ok(material.envMapIntensity < MATERIAL_CONFIG.envMapIntensity);
 });
 
 test('createMatteMaterial can preserve exact authored white when requested', () => {
@@ -41,6 +42,73 @@ test('createMatteMaterial can preserve exact authored white when requested', () 
 
   assertColorClose(material.color, new THREE.Color(0xffffff));
   assert.equal(material.toneMapped, false);
+  assert.ok(material.envMapIntensity < MATERIAL_CONFIG.envMapIntensity);
+});
+
+test('createMatteMaterial uses a softer high-roughness preset for rubber-like material names', () => {
+  const material = createMatteMaterial({
+    color: '#1f1f1f',
+    name: 'dark-rubber',
+  });
+
+  assert.equal(material.userData.materialPreset, 'rubber');
+  assert.equal(material.roughness, 0.82);
+  assert.equal(material.metalness, 0.01);
+  assert.equal(material.envMapIntensity, 0.16);
+});
+
+test('createMatteMaterial uses a more reflective preset for metal-like material names', () => {
+  const material = createMatteMaterial({
+    color: '#8a8f96',
+    name: 'aluminum_bracket',
+  });
+
+  assert.equal(material.userData.materialPreset, 'metal');
+  assert.equal(material.roughness, 0.38);
+  assert.equal(material.metalness, 0.48);
+  assert.equal(material.envMapIntensity, 0.5);
+});
+
+test('createMatteMaterial uses a coated shell preset for body panels', () => {
+  const material = createMatteMaterial({
+    color: '#f2f4f7',
+    name: 'outer_shell',
+  });
+
+  assert.equal(material.userData.materialPreset, 'coated');
+  assert.equal(material.roughness, 0.64);
+  assert.equal(material.metalness, 0.05);
+  assert.ok(material.envMapIntensity < 0.34);
+});
+
+test('createMatteMaterial infers a coated preset from unnamed near-white shell colors', () => {
+  const material = createMatteMaterial({
+    color: '#f2f4f7',
+  });
+
+  assert.equal(material.userData.materialPreset, 'coated');
+  assert.equal(material.roughness, 0.64);
+  assert.equal(material.metalness, 0.05);
+});
+
+test('createMatteMaterial infers a rubber preset from unnamed dark neutral colors', () => {
+  const material = createMatteMaterial({
+    color: '#1f2328',
+  });
+
+  assert.equal(material.userData.materialPreset, 'rubber');
+  assert.equal(material.roughness, 0.82);
+  assert.equal(material.metalness, 0.01);
+});
+
+test('createMatteMaterial keeps saturated accent colors on the default preset when no name hint exists', () => {
+  const material = createMatteMaterial({
+    color: '#ff6c0a',
+  });
+
+  assert.equal(material.userData.materialPreset, 'default');
+  assert.equal(material.roughness, MATERIAL_CONFIG.roughness);
+  assert.equal(material.metalness, MATERIAL_CONFIG.metalness);
 });
 
 test('createMatteMaterial derives opacity from 8-digit hex colors without changing the authored rgb channels', () => {

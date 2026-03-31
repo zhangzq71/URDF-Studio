@@ -14,6 +14,7 @@ import {
 } from '@/core/loaders/objParseWorkerBridge.ts';
 import { createGeometryFromSerializedStlData } from '@/core/loaders/stlGeometryData.ts';
 import { loadSerializedStlGeometryData } from '@/core/loaders/stlParseWorkerBridge.ts';
+import { ensureWorkerXmlDomApis } from '@/core/utils/ensureWorkerXmlDomApis.ts';
 
 import {
   createUsdTextureLoadingManager,
@@ -146,6 +147,7 @@ const loadUsdGltfSceneAsset = async (
   assetUrl: string,
   registry: UsdAssetRegistry,
 ): Promise<CachedUsdGltfSceneAsset> => {
+  ensureWorkerXmlDomApis();
   const cache = getUsdGltfSceneAssetCache(registry);
   const cached = cache.get(assetUrl);
   if (cached) {

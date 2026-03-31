@@ -1,5 +1,5 @@
 import React from 'react';
-import type { RobotState, Theme } from '@/types';
+import type { AppMode, RobotState, Theme } from '@/types';
 import { translations, type Language } from '@/shared/i18n';
 import { useVisualizerController } from '../hooks';
 import { VisualizerCanvas } from './VisualizerCanvas';
@@ -10,7 +10,7 @@ interface VisualizerProps {
   robot: RobotState;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
-  mode: 'skeleton' | 'detail' | 'hardware';
+  mode: AppMode;
   assets: Record<string, string>;
   lang: Language;
   theme: Theme;
@@ -56,7 +56,6 @@ export const Visualizer = React.memo(({
       onContextMenu={(e) => e.preventDefault()}
     >
       <VisualizerPanels
-        mode={mode}
         lang={lang}
         showOptionsPanel={showOptionsPanel}
         setShowOptionsPanel={setShowOptionsPanel}

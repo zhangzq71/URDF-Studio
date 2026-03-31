@@ -27,6 +27,8 @@ export type {
   ExportRobotToUsdPayload,
   ExportRobotToUsdPhase,
   ExportRobotToUsdProgress,
+  ProjectExportProgress,
+  ProjectExportProgressPhase,
   UsdMeshCompressionOptions,
 } from './utils';
 
@@ -44,13 +46,20 @@ export {
   fetchMeshBlobs,
   downloadBlob,
   prepareMjcfMeshExportAssets,
+  assertUsdExportWorkerSupport,
+  disposeUsdExportWorker,
   exportRobotToUsd,
+  exportRobotToUsdWithWorker,
+  getUsdExportWorkerUnsupportedMeshPaths,
   exportLibraryRobotFile,
   getDroppedFiles,
+  isUsdExportWorkerSupportedMeshPath,
   createImportPathCollisionMap,
   remapImportedPath,
   exportProject,
+  exportProjectWithWorker,
   importProject,
+  USD_EXPORT_WORKER_SUPPORTED_MESH_EXTENSIONS,
 } from './utils';
 
 // Hooks
@@ -61,3 +70,4 @@ export {
 } from './hooks';
 
 export { ExportDialog } from './components/ExportDialog';
+export { ExportProgressDialog } from './components/ExportProgressDialog';

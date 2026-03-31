@@ -103,6 +103,19 @@ export function createUsdPreloadSource(
   file: Pick<RobotFile, 'name' | 'content' | 'blobUrl'>,
   assets: Record<string, string>,
 ): UsdPreloadSource {
+  const normalizedPath = normalizeUsdAssetPath(file.name).toLowerCase();
+  const canInlineTextContent = typeof file.content === 'string'
+    && file.content.length > 0
+    && !normalizedPath.endsWith('.usdc')
+    && !normalizedPath.endsWith('.usdz');
+
+  if (canInlineTextContent) {
+    return {
+      kind: 'text-content',
+      loadBlob: async () => new Blob([file.content], { type: 'text/plain' }),
+    };
+  }
+
   const resolvedBlobUrl = resolveUsdBlobUrl(file.name, file.blobUrl, assets);
   if (resolvedBlobUrl) {
     return {

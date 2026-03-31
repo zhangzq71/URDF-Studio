@@ -77,6 +77,7 @@ code, pre, kbd, samp {
   --ui-segmented-bg: #f1f5f9;
   --ui-segmented-active: #ffffff;
   --ui-switch-off: #cbd5e1;
+  --ui-switch-thumb: #ffffff;
   --ui-slider-accent: #007aff;
   --ui-slider-track: #d7dde6;
   --ui-slider-thumb-bg: #ffffff;
@@ -136,6 +137,7 @@ html[data-lang='zh'] {
   --ui-segmented-bg: #151518;
   --ui-segmented-active: #3a3a3c;
   --ui-switch-off: #3a3a3c;
+  --ui-switch-thumb: #ffffff;
   --ui-slider-accent: #0a84ff;
   --ui-slider-track: #48484a;
   --ui-slider-thumb-bg: #f2f2f7;
@@ -235,6 +237,7 @@ html[data-lang='zh'] {
   --color-text-tertiary: var(--ui-text-tertiary);
   --color-segmented-bg: var(--ui-segmented-bg);
   --color-switch-off: var(--ui-switch-off);
+  --color-switch-thumb: var(--ui-switch-thumb);
   --color-slider-accent: var(--ui-slider-accent);
   --color-slider-track: var(--ui-slider-track);
   
@@ -250,6 +253,27 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   @apply bg-google-light-bg text-text-primary;
   overflow: hidden;
+}
+
+button,
+button *,
+label,
+.ui-static-copy-guard,
+.ui-static-copy-guard * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.ui-static-copy-guard input,
+.ui-static-copy-guard textarea,
+.ui-static-copy-guard pre,
+.ui-static-copy-guard code,
+.ui-static-copy-guard [contenteditable='true'],
+.allow-text-selection {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-user-drag: auto;
 }
 
 /* Unified focus ring for keyboard navigation */

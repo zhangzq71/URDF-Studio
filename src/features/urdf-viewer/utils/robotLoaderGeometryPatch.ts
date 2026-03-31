@@ -114,7 +114,16 @@ function patchGeometryCategory({
     );
     mesh.scale.set(dims.x || 0.1, dims.y || 0.1, dims.z || 0.1);
     addPrimitive(mesh);
-  } else if (geometry.type === GeometryType.SPHERE) {
+  } else if (geometry.type === GeometryType.PLANE) {
+    const material = isCollision ? collisionBaseMaterial : createVisualMaterial();
+    material.side = THREE.DoubleSide;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      material,
+    );
+    mesh.scale.set(dims.x || 1, dims.y || 1, 1);
+    addPrimitive(mesh);
+  } else if (geometry.type === GeometryType.SPHERE || geometry.type === GeometryType.ELLIPSOID) {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 30, 30),
       isCollision ? collisionBaseMaterial : createVisualMaterial(),
@@ -367,9 +376,19 @@ function patchPrimitiveDimensionsInPlace(targetGroup: THREE.Object3D, geometry: 
     case GeometryType.BOX:
       mesh.scale.set(dims.x || 0.1, dims.y || 0.1, dims.z || 0.1);
       return true;
+    case GeometryType.PLANE:
+      mesh.scale.set(dims.x || 1, dims.y || 1, 1);
+      return true;
     case GeometryType.SPHERE: {
       const radius = dims.x || 0.1;
       mesh.scale.set(radius, radius, radius);
+      return true;
+    }
+    case GeometryType.ELLIPSOID: {
+      const sx = dims.x || 0.1;
+      const sy = dims.y || sx;
+      const sz = dims.z || sx;
+      mesh.scale.set(sx, sy, sz);
       return true;
     }
     case GeometryType.CYLINDER:

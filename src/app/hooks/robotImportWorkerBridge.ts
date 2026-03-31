@@ -19,6 +19,7 @@ import {
   buildResolveRobotImportWorkerDispatch,
   type PreparedRobotImportWorkerDispatch,
 } from '@/app/utils/robotImportWorkerPayload';
+import { consumePreResolvedRobotImport } from '@/app/utils/preResolvedRobotImportCache';
 import type { RobotState } from '@/types';
 
 interface WorkerLike {
@@ -400,6 +401,11 @@ export function resolveRobotFileDataWithWorker(
   file: RobotFile,
   options: ResolveRobotFileDataOptions = {},
 ): Promise<RobotImportResult> {
+  const preResolvedImportResult = consumePreResolvedRobotImport(file);
+  if (preResolvedImportResult) {
+    return Promise.resolve(preResolvedImportResult);
+  }
+
   return sharedRobotImportWorkerClient.resolve(file, options);
 }
 

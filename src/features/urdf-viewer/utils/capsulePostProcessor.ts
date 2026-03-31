@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { COLLISION_OVERLAY_RENDER_ORDER, createCollisionOverlayMaterial, createMatteMaterial } from '../utils/materials';
+import { disposeReplacedMaterials } from './robotLoaderPatchUtils';
 
 /**
  * Create a Three.js capsule geometry group.
@@ -273,13 +274,15 @@ export function processCapsuleGeometries(
                             }
 
                             // Apply collision material
+                            const disposedMaterials = new Set<THREE.Material>();
                             capsuleGroup.traverse((mesh: any) => {
                                 if (mesh.isMesh) {
                                     mesh.userData.isCollisionMesh = true;
                                     mesh.userData.parentLinkName = linkName;
-
+                                    const previousMaterial = mesh.material as THREE.Material | THREE.Material[] | undefined;
                                     mesh.material = createCollisionOverlayMaterial('collision_capsule');
                                     mesh.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
+                                    disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
                                 }
                             });
 

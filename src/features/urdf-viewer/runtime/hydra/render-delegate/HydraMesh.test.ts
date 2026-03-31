@@ -156,7 +156,7 @@ test('HydraMesh preserves uncovered geometry ranges when geom subsets leave gaps
     ]);
 });
 
-test('HydraMesh reuses adjacent resolved subset materials for uncovered visual gaps when no mesh-level base material exists', () => {
+test('HydraMesh prefers the next resolved subset material for uncovered visual gaps when no mesh-level base material exists', () => {
     const hydraInterface = createHydraInterfaceStub();
     hydraInterface.materials['/Looks/Primary'] = {
         _material: new MeshPhysicalMaterial({ name: 'primary_shell', color: 0xf0f0f0 }),
@@ -183,7 +183,7 @@ test('HydraMesh reuses adjacent resolved subset materials for uncovered visual g
 
     assert.deepEqual(groupSummary, [
         { start: 0, count: 6, material: 'primary_shell' },
-        { start: 6, count: 6, material: 'primary_shell' },
+        { start: 6, count: 6, material: 'accent_shell' },
         { start: 12, count: 6, material: 'accent_shell' },
         { start: 18, count: 18, material: 'accent_shell' },
     ]);

@@ -11,6 +11,7 @@ import { translations } from '@/shared/i18n';
 import { useCollisionTransformStore, useSelectionStore } from '@/store';
 import type { Language } from '@/store';
 import {
+  getVisualGeometryEntries,
   getVisualGeometryByObjectIndex,
   updateVisualGeometryByObjectIndex,
   getCollisionGeometryByObjectIndex,
@@ -51,6 +52,7 @@ import {
   buildColladaRootNormalizationHints,
   shouldNormalizeColladaGeometry,
 } from '@/core/loaders/colladaRootNormalization';
+import { cleanFilePath } from '@/core/loaders';
 import { TransformFields } from './TransformFields';
 
 const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
@@ -62,6 +64,26 @@ const GEOMETRY_EDITOR_MESH_ANALYSIS_OPTIONS = {
 const GEOMETRY_EDITOR_COMPACT_ACTIONS_WIDTH = 300;
 const GEOMETRY_EDITOR_RELAXED_OVERLAP_ALLOWANCE_RATIO = 0.12;
 const GEOMETRY_EDITOR_RELAXED_FIT_VOLUME_WINDOW_RATIO = 1.75;
+const EDITABLE_GEOMETRY_TYPES: GeometryType[] = [
+  GeometryType.BOX,
+  GeometryType.CYLINDER,
+  GeometryType.SPHERE,
+  GeometryType.ELLIPSOID,
+  GeometryType.CAPSULE,
+  GeometryType.MESH,
+];
+const MJCF_SPECIAL_GEOMETRY_TYPES = new Set<GeometryType>([
+  GeometryType.PLANE,
+  GeometryType.HFIELD,
+  GeometryType.SDF,
+]);
+const COLLISION_VISUAL_MESH_REFERENCE_TYPES = new Set<GeometryType>([
+  GeometryType.BOX,
+  GeometryType.CYLINDER,
+  GeometryType.ELLIPSOID,
+  GeometryType.CAPSULE,
+]);
+const APPROXIMATE_VISUAL_REFERENCE_STEM_SUFFIX_PATTERN = /(?:[_\-.](?:visual|collision|collider|mesh|model|col|vis))+$/i;
 
 async function yieldToNextFrame(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -72,6 +94,97 @@ async function yieldToNextFrame(): Promise<void> {
 
     setTimeout(resolve, 0);
   });
+}
+
+function getOriginDistanceSquared(
+  left: UrdfVisual['origin'] | undefined,
+  right: UrdfVisual['origin'] | undefined,
+): number {
+  const leftX = left?.xyz?.x ?? 0;
+  const leftY = left?.xyz?.y ?? 0;
+  const leftZ = left?.xyz?.z ?? 0;
+  const rightX = right?.xyz?.x ?? 0;
+  const rightY = right?.xyz?.y ?? 0;
+  const rightZ = right?.xyz?.z ?? 0;
+  const dx = leftX - rightX;
+  const dy = leftY - rightY;
+  const dz = leftZ - rightZ;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function normalizeMeshReferenceStem(meshPath: string | undefined): string | null {
+  const normalizedPath = cleanFilePath((meshPath ?? '').trim());
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const filename = normalizedPath.split('/').pop() ?? normalizedPath;
+  const lastDotIndex = filename.lastIndexOf('.');
+  const stem = (lastDotIndex >= 0 ? filename.slice(0, lastDotIndex) : filename).toLowerCase();
+  if (!stem) {
+    return null;
+  }
+
+  let simplifiedStem = stem;
+  let previousStem = '';
+  while (simplifiedStem && simplifiedStem !== previousStem) {
+    previousStem = simplifiedStem;
+    simplifiedStem = simplifiedStem.replace(APPROXIMATE_VISUAL_REFERENCE_STEM_SUFFIX_PATTERN, '');
+  }
+
+  return simplifiedStem || stem;
+}
+
+function resolveCollisionVisualMeshReference(
+  link: UrdfLink,
+  collisionObjectIndex: number,
+  collisionGeometry: UrdfVisual,
+): UrdfVisual | null {
+  const meshEntries = getVisualGeometryEntries(link).filter((entry) => (
+    entry.geometry.type === GeometryType.MESH && Boolean(entry.geometry.meshPath)
+  ));
+
+  if (meshEntries.length === 0) {
+    return null;
+  }
+
+  const collisionMeshStem = normalizeMeshReferenceStem(collisionGeometry.meshPath);
+
+  const nearestEntry = meshEntries.reduce((bestEntry, entry) => {
+    if (!bestEntry) {
+      return entry;
+    }
+
+    const entryMeshStem = normalizeMeshReferenceStem(entry.geometry.meshPath);
+    const bestMeshStem = normalizeMeshReferenceStem(bestEntry.geometry.meshPath);
+    const entryStemMatched = Boolean(collisionMeshStem && entryMeshStem && collisionMeshStem === entryMeshStem);
+    const bestStemMatched = Boolean(collisionMeshStem && bestMeshStem && collisionMeshStem === bestMeshStem);
+
+    if (entryStemMatched !== bestStemMatched) {
+      return entryStemMatched ? entry : bestEntry;
+    }
+
+    const entrySameIndex = entry.objectIndex === collisionObjectIndex;
+    const bestSameIndex = bestEntry.objectIndex === collisionObjectIndex;
+    if (entrySameIndex !== bestSameIndex) {
+      return entrySameIndex ? entry : bestEntry;
+    }
+
+    const bestDistance = getOriginDistanceSquared(bestEntry.geometry.origin, collisionGeometry.origin);
+    const nextDistance = getOriginDistanceSquared(entry.geometry.origin, collisionGeometry.origin);
+
+    if (nextDistance < bestDistance - 1e-8) {
+      return entry;
+    }
+
+    if (Math.abs(nextDistance - bestDistance) <= 1e-8 && entry.objectIndex < bestEntry.objectIndex) {
+      return entry;
+    }
+
+    return bestEntry;
+  }, meshEntries[0] ?? null);
+
+  return nearestEntry?.geometry ?? null;
 }
 
 interface GeometryEditorProps {
@@ -193,10 +306,20 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
         : geomData.materialSource === 'gazebo'
           ? t.materialSourceGazebo
           : null;
+    const currentGeometryType = geomData.type || GeometryType.CYLINDER;
+    const geometryTypeOptions = (
+      EDITABLE_GEOMETRY_TYPES.includes(currentGeometryType) || currentGeometryType === GeometryType.NONE
+        ? [...EDITABLE_GEOMETRY_TYPES, GeometryType.NONE]
+        : [...EDITABLE_GEOMETRY_TYPES, currentGeometryType, GeometryType.NONE]
+    );
+    const geometryAssetReference = geomData.assetRef?.trim() || geomData.meshPath?.trim() || '';
+    const hfieldAssetMetadata = geomData.type === GeometryType.HFIELD ? geomData.mjcfHfield : undefined;
     const geometrySnapshotCacheRef = useRef<Record<string, Partial<Record<GeometryType, {
       dimensions?: { x: number; y: number; z: number };
       origin?: { xyz: { x: number; y: number; z: number }; rpy: { r: number; p: number; y: number } };
       meshPath?: string;
+      assetRef?: string;
+      mjcfHfield?: typeof geomData.mjcfHfield;
       color?: string;
     }>>>>({});
     const snapshotKey = category === 'collision'
@@ -226,6 +349,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           }
         : undefined,
       meshPath: source?.meshPath,
+      assetRef: source?.assetRef,
+      mjcfHfield: source?.mjcfHfield
+        ? {
+            ...source.mjcfHfield,
+            size: source.mjcfHfield.size ? { ...source.mjcfHfield.size } : undefined,
+            elevation: source.mjcfHfield.elevation ? [...source.mjcfHfield.elevation] : undefined,
+          }
+        : undefined,
       color: source?.color,
     });
 
@@ -530,6 +661,8 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             dimensions: cachedTarget.dimensions || geomData.dimensions,
             origin: cachedTarget.origin || geomData.origin,
             meshPath: newType === GeometryType.MESH ? cachedTarget.meshPath : undefined,
+            assetRef: MJCF_SPECIAL_GEOMETRY_TYPES.has(newType) ? cachedTarget.assetRef : undefined,
+            mjcfHfield: newType === GeometryType.HFIELD ? cachedTarget.mjcfHfield : undefined,
             color: shouldUseRepresentativeMeshColor
               ? representativeMeshColor
               : (cachedTarget.color || geomData.color),
@@ -542,10 +675,31 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
         void (async () => {
           await yieldToNextFrame();
 
-          const meshAnalysis =
-            currentType === GeometryType.MESH
-              ? await resolveMeshAnalysisForGeometry(geomData)
-              : undefined;
+          let conversionSourceGeometry = geomData;
+          let meshAnalysis: MeshAnalysis | undefined;
+
+          if (
+            category === 'collision'
+            && COLLISION_VISUAL_MESH_REFERENCE_TYPES.has(newType)
+          ) {
+            const visualMeshReference = resolveCollisionVisualMeshReference(
+              data,
+              selectedCollisionObjectIndex,
+              geomData,
+            );
+
+            if (visualMeshReference) {
+              const referenceMeshAnalysis = await resolveMeshAnalysisForGeometry(visualMeshReference);
+              if (referenceMeshAnalysis) {
+                conversionSourceGeometry = visualMeshReference;
+                meshAnalysis = referenceMeshAnalysis;
+              }
+            }
+          }
+
+          if (!meshAnalysis && currentType === GeometryType.MESH) {
+            meshAnalysis = await resolveMeshAnalysisForGeometry(geomData) ?? undefined;
+          }
           const resolvedRepresentativeMeshColor =
             currentType === GeometryType.MESH && newType !== GeometryType.MESH
               ? meshAnalysis?.representativeColor
@@ -558,10 +712,17 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             return;
           }
 
-          const converted = convertGeometryType(geomData, newType, meshAnalysis ?? undefined, clearanceContext);
+          const converted = convertGeometryType(
+            conversionSourceGeometry,
+            newType,
+            meshAnalysis,
+            clearanceContext,
+          );
           const nextGeom = {
             ...converted,
             meshPath: newType === GeometryType.MESH ? geomData.meshPath : undefined,
+            assetRef: MJCF_SPECIAL_GEOMETRY_TYPES.has(newType) ? geomData.assetRef : undefined,
+            mjcfHfield: newType === GeometryType.HFIELD ? geomData.mjcfHfield : undefined,
             color: newType === GeometryType.MESH
               ? geomData.color
               : resolvedRepresentativeMeshColor || geomData.color,
@@ -621,16 +782,35 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             <InlineInputGroup label={t.type} labelWidthClassName="w-11">
                 <div ref={geometryActionRowRef} className="flex items-center gap-1">
                     <select
-                        value={geomData.type || GeometryType.CYLINDER}
+                        value={currentGeometryType}
                         onChange={handleTypeChange}
                         className={`${PROPERTY_EDITOR_SELECT_CLASS} min-w-0 flex-1`}
                     >
-                        <option value={GeometryType.BOX}>{t.box}</option>
-                        <option value={GeometryType.CYLINDER}>{t.cylinder}</option>
-                        <option value={GeometryType.SPHERE}>{t.sphere}</option>
-                        <option value={GeometryType.CAPSULE}>{t.capsule}</option>
-                        <option value={GeometryType.MESH}>{t.mesh}</option>
-                        <option value={GeometryType.NONE}>{t.none}</option>
+                        {geometryTypeOptions.map((typeOption) => {
+                          const label = typeOption === GeometryType.BOX
+                            ? t.box
+                            : typeOption === GeometryType.PLANE
+                              ? t.plane
+                              : typeOption === GeometryType.CYLINDER
+                                ? t.cylinder
+                                : typeOption === GeometryType.SPHERE
+                                  ? t.sphere
+                                  : typeOption === GeometryType.ELLIPSOID
+                                    ? t.ellipsoid
+                                    : typeOption === GeometryType.CAPSULE
+                                      ? t.capsule
+                                      : typeOption === GeometryType.HFIELD
+                                        ? t.hfield
+                                        : typeOption === GeometryType.SDF
+                                          ? t.sdf
+                                          : typeOption === GeometryType.MESH
+                                            ? t.mesh
+                                            : t.none;
+
+                          return (
+                            <option key={typeOption} value={typeOption}>{label}</option>
+                          );
+                        })}
                     </select>
                     {geomData.type !== GeometryType.NONE && (
                         <button
@@ -855,6 +1035,30 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                 </InputGroup>
             )}
 
+            {geomData.type === GeometryType.PLANE && (
+                <InputGroup label={t.dimensions}>
+                    <InlineDimensionInputRow
+                        columns={2}
+                        fields={[
+                            {
+                                label: stripAxisSuffix(t.width || 'Width'),
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
+                                value: geomData.dimensions?.x || 1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v } }),
+                            },
+                            {
+                                label: stripAxisSuffix(t.depth || 'Depth'),
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
+                                value: geomData.dimensions?.y || 1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
+                        ]}
+                        labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
+                        labelWidthClassName="whitespace-nowrap"
+                    />
+                </InputGroup>
+            )}
+
             {/* Sphere dimensions: Radius only */}
             {geomData.type === GeometryType.SPHERE && (
                 <InputGroup label={t.dimensions}>
@@ -866,6 +1070,37 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                 min: POSITIVE_GEOMETRY_VALUE_MIN,
                                 value: geomData.dimensions?.x || 0.1,
                                 onChange: (v) => update({ dimensions: { x: v, y: v, z: v } }),
+                            },
+                        ]}
+                        labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
+                        labelWidthClassName="whitespace-nowrap"
+                    />
+                </InputGroup>
+            )}
+
+            {/* Ellipsoid dimensions: axis radii */}
+            {geomData.type === GeometryType.ELLIPSOID && (
+                <InputGroup label={t.dimensions}>
+                    <InlineDimensionInputRow
+                        columns={3}
+                        fields={[
+                            {
+                                label: t.radiusX || 'Radius X',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
+                                value: geomData.dimensions?.x || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, x: v } }),
+                            },
+                            {
+                                label: t.radiusY || 'Radius Y',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
+                                value: geomData.dimensions?.y || geomData.dimensions?.x || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, y: v } }),
+                            },
+                            {
+                                label: t.radiusZ || 'Radius Z',
+                                min: POSITIVE_GEOMETRY_VALUE_MIN,
+                                value: geomData.dimensions?.z || geomData.dimensions?.x || 0.1,
+                                onChange: (v) => update({ dimensions: { ...geomData.dimensions, z: v } }),
                             },
                         ]}
                         labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
@@ -924,6 +1159,67 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                 </InputGroup>
             )}
 
+            {(geomData.type === GeometryType.HFIELD || geomData.type === GeometryType.SDF) && (
+                <div className="space-y-2">
+                    {geometryAssetReference ? (
+                        <InlineInputGroup label={t.assetReference} labelWidthClassName="w-16">
+                            <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                {geometryAssetReference}
+                            </ReadonlyValueField>
+                        </InlineInputGroup>
+                    ) : null}
+                    {hfieldAssetMetadata?.file ? (
+                        <InlineInputGroup label={t.file} labelWidthClassName="w-16">
+                            <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                {hfieldAssetMetadata.file}
+                            </ReadonlyValueField>
+                        </InlineInputGroup>
+                    ) : null}
+                    {hfieldAssetMetadata?.contentType ? (
+                        <InlineInputGroup label={t.contentType} labelWidthClassName="w-16">
+                            <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                {hfieldAssetMetadata.contentType}
+                            </ReadonlyValueField>
+                        </InlineInputGroup>
+                    ) : null}
+                    {hfieldAssetMetadata?.size ? (
+                        <>
+                            <InlineInputGroup label={t.size} labelWidthClassName="w-16">
+                                <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
+                                    <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                        {`${t.width}: ${hfieldAssetMetadata.size.radiusX * 2}`}
+                                    </ReadonlyValueField>
+                                    <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                        {`${t.depth}: ${hfieldAssetMetadata.size.radiusY * 2}`}
+                                    </ReadonlyValueField>
+                                    <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                        {`${t.height}: ${hfieldAssetMetadata.size.elevationZ}`}
+                                    </ReadonlyValueField>
+                                    <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                        {`${t.baseHeight}: ${hfieldAssetMetadata.size.baseZ}`}
+                                    </ReadonlyValueField>
+                                </div>
+                            </InlineInputGroup>
+                        </>
+                    ) : null}
+                    {Number.isFinite(hfieldAssetMetadata?.nrow) || Number.isFinite(hfieldAssetMetadata?.ncol) ? (
+                        <InlineInputGroup label={t.size} labelWidthClassName="w-16">
+                            <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
+                                <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                    {`${t.rows}: ${hfieldAssetMetadata?.nrow ?? 0}`}
+                                </ReadonlyValueField>
+                                <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                                    {`${t.cols}: ${hfieldAssetMetadata?.ncol ?? 0}`}
+                                </ReadonlyValueField>
+                            </div>
+                        </InlineInputGroup>
+                    ) : null}
+                    <div className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>
+                        {t.mjcfLimitedGeometryHint}
+                    </div>
+                </div>
+            )}
+
             {geomData.type !== GeometryType.NONE && (
                 <InputGroup label={t.originRelativeLink}>
                     <TransformFields
@@ -931,6 +1227,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                         positionValue={displayedOrigin?.xyz || { x: 0, y: 0, z: 0 }}
                         rotationValue={displayedOrigin?.rpy || { r: 0, p: 0, y: 0 }}
                         compact={false}
+                        rotationQuickStepDegrees={category === 'collision' ? 90 : undefined}
                         onPositionChange={(v) => update({
                             origin: { ...(displayedOrigin || { rpy: { r: 0, p: 0, y: 0 } }), xyz: v as { x: number; y: number; z: number } }
                         })}

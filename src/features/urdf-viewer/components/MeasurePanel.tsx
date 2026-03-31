@@ -13,8 +13,8 @@ import {
     setActiveMeasureSlot,
 } from '../utils/measurements';
 import { Language, translations } from '@/shared/i18n';
-import { OptionsPanel, SegmentedControl } from '@/shared/components/Panel/OptionsPanel';
-import { Switch } from '@/shared/components/ui';
+import { OptionsPanel } from '@/shared/components/Panel/OptionsPanel';
+import { SegmentedControl, Switch } from '@/shared/components/ui';
 import { useSelectionStore } from '@/store/selectionStore';
 
 interface MeasurePanelProps {
@@ -76,7 +76,7 @@ function MeasureSlotChip({
                     onActivate();
                 }
             }}
-            className={`flex w-full items-center gap-[5px] rounded-[10px] border px-[5px] py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+            className={`flex w-full items-center gap-1.5 rounded-[8px] border px-1.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
                 isActive
                     ? 'border-system-blue/75 bg-system-blue/10 shadow-[inset_0_0_0_1px_rgba(0,122,255,0.06)]'
                     : target
@@ -84,7 +84,7 @@ function MeasureSlotChip({
                         : 'border-border-black/60 bg-panel-bg hover:bg-element-hover'
             }`}
         >
-            <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[8px] border text-[9px] font-semibold ${
+            <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] border text-[9px] font-semibold ${
                 isActive
                     ? 'border-system-blue bg-system-blue-solid text-white'
                     : 'border-border-black/60 bg-element-bg text-text-secondary'
@@ -92,7 +92,7 @@ function MeasureSlotChip({
                 {indexLabel}
             </span>
 
-            <span className={`min-w-0 flex-1 truncate text-[9px] leading-none ${
+            <span className={`min-w-0 flex-1 truncate text-[10px] leading-[1.2] ${
                 target
                     ? 'font-medium text-text-primary'
                     : isActive
@@ -105,7 +105,7 @@ function MeasureSlotChip({
             {target && (
                 <button
                     type="button"
-                    className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[8px] text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
+                    className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
                     aria-label={clearLabel}
                     onClick={(event) => {
                         event.stopPropagation();
@@ -189,7 +189,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
             onToggleCollapse={() => setIsCollapsed((prev) => !prev)}
             onClose={onClose}
             onMouseDown={onMouseDown}
-            width="12rem"
+            width="12.5rem"
             maxHeight={420}
             zIndex={50}
             panelClassName="measure-panel"
@@ -197,11 +197,11 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
             <div className="space-y-[5px] p-[5px]">
                 <div className="rounded-md border border-border-black/60 bg-panel-bg p-1">
                     <div className="mb-1 flex items-center justify-between">
-                        <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">{t.measureGroups}</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">{t.measureGroups}</span>
                         <div className="flex items-center gap-1">
                             <button
                                 type="button"
-                                className="rounded-md border border-border-black/60 bg-element-bg px-1.5 py-0.5 text-[9px] font-medium text-text-secondary transition-colors hover:border-danger-border hover:bg-danger-soft hover:text-danger-hover disabled:border-transparent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+                                className="rounded-md border border-border-black/60 bg-element-bg px-1.5 py-px text-[9px] font-medium text-text-secondary transition-colors hover:border-danger-border hover:bg-danger-soft hover:text-danger-hover disabled:border-transparent disabled:bg-transparent disabled:text-text-tertiary disabled:cursor-not-allowed disabled:opacity-50"
                                 onClick={() => {
                                     setMeasureState(clearMeasureState);
                                     resetViewportSelection();
@@ -212,12 +212,12 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                             </button>
                             <button
                                 type="button"
-                                className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border-black/60 bg-element-bg text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary"
+                                className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-md border border-border-black/60 bg-element-bg text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary"
                                 title={t.measureAddGroup}
                                 aria-label={t.measureAddGroup}
                                 onClick={() => setMeasureState((prev) => addMeasureGroup(prev))}
                             >
-                                <Plus className="h-3 w-3" />
+                                <Plus className="h-2.5 w-2.5" />
                             </button>
                         </div>
                     </div>
@@ -241,7 +241,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => setMeasureState((prev) => setActiveMeasureGroup(prev, group.id))}
-                                        className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                                        className={`px-1.5 py-px text-[9px] font-medium transition-colors ${
                                             isActive
                                                 ? 'text-system-blue'
                                                 : isComplete
@@ -253,7 +253,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                                     </button>
                                     <button
                                         type="button"
-                                        className={`inline-flex h-[22px] w-[22px] items-center justify-center border-l text-text-tertiary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                                        className={`inline-flex h-[18px] w-[18px] items-center justify-center border-l text-text-tertiary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
                                             isActive
                                                 ? 'border-system-blue/20 hover:bg-danger-soft hover:text-danger-hover'
                                                 : isComplete
@@ -268,7 +268,7 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                                             resetViewportSelection();
                                         }}
                                     >
-                                        <X className="h-3 w-3" />
+                                        <X className="h-2.5 w-2.5" />
                                     </button>
                                 </div>
                             );
@@ -303,16 +303,17 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                     />
                 </div>
 
-                <div className="flex items-center justify-between rounded-md bg-element-bg px-2 py-1 text-[9px] text-text-secondary">
+                <div className="flex items-center justify-between rounded-md bg-element-bg px-1.5 py-[3px] text-[9px] text-text-secondary">
                     <span>{t.measuredCount.replace('{count}', String(completedMeasurements.length))}</span>
                     <span className="font-mono text-text-tertiary">Esc / Del</span>
                 </div>
 
-                <div className="rounded-md border border-border-black/60 bg-element-bg px-2 py-1 text-[9px] leading-4 text-text-secondary">
-                    <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
+                <div className="rounded-md border border-border-black/60 bg-element-bg px-1.5 py-[5px] text-[9px] leading-[1.45] text-text-secondary">
+                    <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
                         {t.measureAnchorMode}
                     </div>
                     <SegmentedControl
+                        className="mb-1"
                         options={measureAnchorOptions}
                         value={measureAnchorMode}
                         onChange={(value) => setMeasureAnchorMode(value)}
@@ -328,14 +329,14 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                         size="sm"
                     />
 
-                    <div className="mt-1 rounded-md bg-element-bg px-1.5 py-1">
-                        <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
+                    <div className="mt-1 rounded-md bg-element-bg px-1.5 py-[5px]">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-tertiary">
                             {t.measureResult}
                         </div>
 
                         {activeMeasurement ? (
                             <div className="space-y-1 text-[10px]">
-                                <div className="mb-1 text-[9px] text-text-tertiary">
+                                <div className="mb-1 text-[10px] text-text-tertiary">
                                     {t.measureGroupLabel.replace('{index}', String(activeMeasurement.groupIndex))}
                                 </div>
                                 <div className="flex items-center justify-between gap-2">

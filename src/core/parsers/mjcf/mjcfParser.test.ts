@@ -4,6 +4,14 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
 
+import { GeometryType } from '@/types';
+import { loadMJCFToThreeJS } from './mjcfLoader.ts';
+import { disposeTransientObject3D } from './mjcfLoadLifecycle.ts';
+import {
+    clearParsedMJCFModelCache,
+    getParsedMJCFModelCacheSize,
+    parseMJCFModel,
+} from './mjcfModel.ts';
 import { parseMJCF } from './mjcfParser.ts';
 import { computeLinkWorldMatrices } from '@/core/robot';
 
@@ -17,6 +25,66 @@ function installDomGlobals(): void {
     globalThis.Element = dom.window.Element as any;
     globalThis.Document = dom.window.Document as any;
 }
+
+test('parseMJCFModel cache can be cleared explicitly', () => {
+    installDomGlobals();
+    clearParsedMJCFModelCache();
+
+    const xml = `
+        <mujoco model="cache-clear-model">
+          <worldbody>
+            <body name="base_link">
+              <geom type="box" size="0.1 0.1 0.1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `;
+
+    const parsed = parseMJCFModel(xml);
+    assert.ok(parsed);
+    assert.equal(getParsedMJCFModelCacheSize(), 1);
+
+    clearParsedMJCFModelCache(xml);
+    assert.equal(getParsedMJCFModelCacheSize(), 0);
+});
+
+test('parseMJCF releases parsed model cache after import completes', () => {
+    installDomGlobals();
+    clearParsedMJCFModelCache();
+
+    const robot = parseMJCF(`
+        <mujoco model="parse-cache-release">
+          <worldbody>
+            <body name="base_link">
+              <geom type="box" size="0.1 0.1 0.1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(getParsedMJCFModelCacheSize(), 0);
+});
+
+test('loadMJCFToThreeJS releases parsed model cache after scene construction', async () => {
+    installDomGlobals();
+    clearParsedMJCFModelCache();
+
+    const root = await loadMJCFToThreeJS(`
+        <mujoco model="loader-cache-release">
+          <worldbody>
+            <body name="base_link">
+              <geom type="box" size="0.1 0.1 0.1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `, {});
+
+    assert.ok(root);
+    assert.equal(getParsedMJCFModelCacheSize(), 0);
+
+    disposeTransientObject3D(root);
+});
 
 test('parseMJCF preserves equality connect constraints as closed-loop metadata', () => {
     installDomGlobals();
@@ -85,6 +153,33 @@ test('parseMJCF keeps base-link collision boxes out of duplicated visuals', () =
     assert.deepEqual(robot.links.base_link.collisionBodies?.[0]?.origin?.xyz, { x: 0.2, y: 0, z: 0 });
     assert.equal(robot.links.base_link_geom_1, undefined);
   });
+
+test('parseMJCF preserves mesh-backed primitive collision geoms as mesh geometry when primitive parameters are unresolved', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="mesh-backed-collision-fallback">
+          <default>
+            <default class="collision">
+              <geom type="capsule" />
+            </default>
+          </default>
+          <asset>
+            <mesh name="link_mesh" file="link.obj" />
+          </asset>
+          <worldbody>
+            <body name="base_link">
+              <geom mesh="link_mesh" class="collision" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.links.base_link.collision.type, GeometryType.MESH);
+    assert.equal(robot.links.base_link.collision.meshPath, 'link.obj');
+    assert.deepEqual(robot.links.base_link.collision.dimensions, { x: 1, y: 1, z: 1 });
+});
 
 test('parseMJCF preserves root free joint transforms as floating joint origins', () => {
     installDomGlobals();
@@ -195,6 +290,289 @@ test('parseMJCF syncs visual colors into robot materials state', () => {
     assert.equal(robot.materials?.base_link?.color, '#969696');
 });
 
+test('parseMJCF inherits actuator effort limits from default-backed position actuators', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="default-backed-actuator">
+          <default class="main">
+            <position ctrlrange="-1 1" />
+            <default class="servo">
+              <position forcerange="-12 12" kp="40" />
+            </default>
+          </default>
+          <worldbody>
+            <body name="base_link">
+              <body name="arm_link">
+                <joint name="arm_joint" type="hinge" axis="0 0 1" />
+              </body>
+            </body>
+          </worldbody>
+          <actuator>
+            <position name="arm_joint_servo" joint="arm_joint" class="servo" />
+          </actuator>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.joints.arm_joint?.limit?.effort, 12);
+});
+
+test('parseMJCFModel exposes site and tendon metadata without changing joint actuator resolution', () => {
+    installDomGlobals();
+
+    const parsed = parseMJCFModel(`
+        <mujoco model="site-tendon-metadata">
+          <compiler autolimits="true" />
+          <default class="main">
+            <site type="sphere" size="0.02" rgba="1 0 0 1" />
+            <tendon width="0.03" rgba="0 1 0 1" />
+            <position ctrlrange="-1 1" />
+            <default class="servo">
+              <position forcerange="-5 5" />
+            </default>
+          </default>
+          <worldbody>
+            <body name="base_link" childclass="main">
+              <site name="tip_site" pos="0 0 0.1" />
+              <frame pos="0 0 0.2">
+                <site name="frame_site" pos="0 0 0.1" />
+              </frame>
+              <body name="arm_link">
+                <joint name="arm_joint" type="hinge" axis="0 0 1" range="-1 1" />
+              </body>
+            </body>
+          </worldbody>
+          <tendon>
+            <spatial name="finger_tendon" range="0 1">
+              <site site="tip_site" />
+              <site site="frame_site" />
+            </spatial>
+          </tendon>
+          <actuator>
+            <position name="arm_servo" joint="arm_joint" class="servo" />
+            <motor name="finger_motor" tendon="finger_tendon" gear="2" />
+          </actuator>
+        </mujoco>
+    `);
+
+    assert.ok(parsed);
+
+    const baseLink = parsed.worldBody.children.find((body) => body.name === 'base_link');
+    assert.ok(baseLink);
+    assert.equal(baseLink.sites.length, 2);
+    assert.deepEqual(baseLink.sites.map((site) => site.name), ['tip_site', 'frame_site']);
+    assert.deepEqual(baseLink.sites[0]?.size, [0.02]);
+    assert.deepEqual(baseLink.sites[0]?.pos, [0, 0, 0.1]);
+    assert.ok(baseLink.sites[1]?.pos);
+    assert.ok(Math.abs((baseLink.sites[1]?.pos?.[0] ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((baseLink.sites[1]?.pos?.[1] ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((baseLink.sites[1]?.pos?.[2] ?? 0) - 0.3) <= 1e-9);
+
+    const tendon = parsed.tendonMap.get('finger_tendon');
+    assert.ok(tendon);
+    assert.equal(tendon.type, 'spatial');
+    assert.equal(tendon.limited, true);
+    assert.equal(tendon.width, 0.03);
+    assert.deepEqual(tendon.attachments, [
+        { type: 'site', ref: 'tip_site' },
+        { type: 'site', ref: 'frame_site' },
+    ]);
+
+    assert.equal(parsed.tendonActuators.length, 1);
+    assert.equal(parsed.tendonActuators[0]?.name, 'finger_motor');
+    assert.equal(parsed.tendonActuators[0]?.tendon, 'finger_tendon');
+    assert.deepEqual(parsed.tendonActuators[0]?.gear, [2]);
+
+    const jointActuators = parsed.actuatorMap.get('arm_joint');
+    assert.ok(jointActuators);
+    assert.equal(jointActuators.length, 1);
+    assert.deepEqual(jointActuators[0]?.ctrlrange, [-1, 1]);
+    assert.deepEqual(jointActuators[0]?.forcerange, [-5, 5]);
+    assert.equal(jointActuators[0]?.ctrllimited, true);
+    assert.equal(jointActuators[0]?.forcelimited, true);
+});
+
+test('parseMJCFModel expands frame-wrapped bodies and frame childclass-scoped joints', () => {
+    installDomGlobals();
+
+    const parsed = parseMJCFModel(`
+        <mujoco model="frame-body-joint-semantics">
+          <default class="main">
+            <joint damping="1" axis="1 0 0" />
+            <default class="alt">
+              <joint axis="0 1 0" />
+            </default>
+          </default>
+          <worldbody>
+            <frame pos="1 2 0" euler="0 0 90" childclass="main">
+              <body name="framed_body" pos="0 1 0">
+                <frame pos="0 0 1" childclass="alt">
+                  <joint name="framed_joint" type="hinge" pos="0 0 0.5" />
+                </frame>
+                <frame pos="0 0 2">
+                  <body name="nested_body" pos="0 0 1" />
+                </frame>
+              </body>
+            </frame>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(parsed);
+
+    const framedBody = parsed.worldBody.children.find((body) => body.name === 'framed_body');
+    assert.ok(framedBody);
+    assert.ok(Math.abs((framedBody.pos?.[0] ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((framedBody.pos?.[1] ?? 0) - 2) <= 1e-9);
+    assert.ok(Math.abs((framedBody.pos?.[2] ?? 0) - 0) <= 1e-9);
+    assert.equal(framedBody.euler, undefined);
+    assert.ok(framedBody.quat);
+
+    const framedJoint = framedBody.joints.find((joint) => joint.name === 'framed_joint');
+    assert.ok(framedJoint);
+    assert.deepEqual(framedJoint.pos, [0, 0, 1.5]);
+    assert.ok(Math.abs((framedJoint.axis?.[0] ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((framedJoint.axis?.[1] ?? 0) - 1) <= 1e-9);
+    assert.ok(Math.abs((framedJoint.axis?.[2] ?? 0) - 0) <= 1e-9);
+    assert.equal(framedJoint.damping, 1);
+
+    const nestedBody = framedBody.children.find((body) => body.name === 'nested_body');
+    assert.ok(nestedBody);
+    assert.deepEqual(nestedBody.pos, [0, 0, 3]);
+});
+
+test('parseMJCF rotates frame-wrapped joint anchors and axes into the parent body frame', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="frame-joint-robot-state">
+          <worldbody>
+            <body name="base_link">
+              <body name="child_link">
+                <frame pos="0 1 0" euler="0 0 90">
+                  <joint name="hinge_joint" type="hinge" axis="1 0 0" range="-1 1" />
+                </frame>
+                <geom type="box" size="0.1 0.1 0.1" />
+              </body>
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.joints.hinge_joint?.parentLinkId, 'base_link');
+    assert.equal(robot.joints.hinge_joint?.childLinkId, 'child_link');
+    assert.ok(Math.abs((robot.joints.hinge_joint?.origin?.xyz?.x ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((robot.joints.hinge_joint?.origin?.xyz?.y ?? 0) - 1) <= 1e-9);
+    assert.ok(Math.abs((robot.joints.hinge_joint?.origin?.xyz?.z ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((robot.joints.hinge_joint?.axis?.x ?? 0) - 0) <= 1e-9);
+    assert.ok(Math.abs((robot.joints.hinge_joint?.axis?.y ?? 0) - 1) <= 1e-9);
+    assert.ok(Math.abs((robot.joints.hinge_joint?.axis?.z ?? 0) - 0) <= 1e-9);
+});
+
+test('parseMJCF preserves ellipsoid geoms as ellipsoid geometry types', () => {
+  installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="ellipsoid-geom">
+          <worldbody>
+            <body name="base_link">
+              <geom type="ellipsoid" size="0.03 0.04 0.02" rgba="0.5 0.7 0.5 1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.links.base_link.visual.type, GeometryType.ELLIPSOID);
+    assert.deepEqual(robot.links.base_link.visual.dimensions, {
+        x: 0.03,
+        y: 0.04,
+        z: 0.02,
+    });
+});
+
+test('parseMJCF preserves plane geoms as plane geometry types', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="plane-geom">
+          <worldbody>
+            <body name="base_link">
+              <geom type="plane" size="3 2 0.1" rgba="0.2 0.2 0.2 1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.links.base_link.visual.type, GeometryType.PLANE);
+    assert.deepEqual(robot.links.base_link.visual.dimensions, {
+        x: 6,
+        y: 4,
+        z: 0,
+    });
+});
+
+test('parseMJCF preserves mjcf-specific hfield and sdf geom types without folding them into mesh/none', () => {
+    installDomGlobals();
+
+    const hfieldRobot = parseMJCF(`
+        <mujoco model="hfield-geom">
+          <asset>
+            <hfield name="terrain_patch" file="terrain.png" size="2 3 0.4 0.1" />
+          </asset>
+          <worldbody>
+            <body name="base_link">
+              <geom type="hfield" hfield="terrain_patch" rgba="0.3 0.5 0.3 1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(hfieldRobot);
+    assert.equal(hfieldRobot.links.base_link.visual.type, GeometryType.HFIELD);
+    assert.equal(hfieldRobot.links.base_link.visual.assetRef, 'terrain_patch');
+    assert.deepEqual(hfieldRobot.links.base_link.visual.dimensions, {
+        x: 4,
+        y: 6,
+        z: 0.5,
+    });
+    assert.deepEqual(hfieldRobot.links.base_link.visual.mjcfHfield, {
+        name: 'terrain_patch',
+        file: 'terrain.png',
+        contentType: undefined,
+        nrow: undefined,
+        ncol: undefined,
+        size: {
+            radiusX: 2,
+            radiusY: 3,
+            elevationZ: 0.4,
+            baseZ: 0.1,
+        },
+        elevation: undefined,
+    });
+
+    const sdfRobot = parseMJCF(`
+        <mujoco model="sdf-geom">
+          <asset>
+            <mesh name="distance_field_mesh" file="distance_field.obj" />
+          </asset>
+          <worldbody>
+            <body name="base_link">
+              <geom type="sdf" mesh="distance_field_mesh" rgba="0.5 0.5 0.7 1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `);
+
+    assert.ok(sdfRobot);
+    assert.equal(sdfRobot.links.base_link.visual.type, GeometryType.SDF);
+    assert.equal(sdfRobot.links.base_link.visual.assetRef, 'distance_field_mesh');
+    assert.equal(sdfRobot.links.base_link.visual.meshPath, 'distance_field.obj');
+});
+
 test('parseMJCF prefers material colors over inherited default geom rgba', () => {
     installDomGlobals();
 
@@ -245,4 +623,51 @@ test('parseMJCF preserves texture-backed material assets with a neutral white mu
         color: '#ffffff',
         texture: 'textures/robot_texture.png',
     });
+});
+
+test('parseMJCF attaches MJCF-specific inspection context for AI review', () => {
+    installDomGlobals();
+
+    const robot = parseMJCF(`
+        <mujoco model="inspection-context">
+          <default>
+            <site type="sphere" size="0.01" />
+          </default>
+          <worldbody>
+            <body name="base_link">
+              <site name="tool_center" pos="0 0 0.1" />
+              <body name="finger_link">
+                <joint name="finger_joint" type="hinge" axis="0 1 0" range="-0.5 0.5" />
+              </body>
+            </body>
+          </worldbody>
+          <tendon>
+            <spatial name="finger_tendon">
+              <site site="tool_center" />
+            </spatial>
+          </tendon>
+          <actuator>
+            <motor name="finger_tendon_motor" tendon="finger_tendon" />
+          </actuator>
+        </mujoco>
+    `);
+
+    assert.ok(robot);
+    assert.equal(robot.inspectionContext?.sourceFormat, 'mjcf');
+    assert.equal(robot.inspectionContext?.mjcf?.siteCount, 1);
+    assert.equal(robot.inspectionContext?.mjcf?.tendonCount, 1);
+    assert.equal(robot.inspectionContext?.mjcf?.tendonActuatorCount, 1);
+    assert.deepEqual(robot.inspectionContext?.mjcf?.bodiesWithSites, [
+        { bodyId: 'base_link', siteCount: 1, siteNames: ['tool_center'] },
+    ]);
+    assert.deepEqual(robot.inspectionContext?.mjcf?.tendons, [
+        {
+            name: 'finger_tendon',
+            type: 'spatial',
+            limited: undefined,
+            range: undefined,
+            attachmentRefs: ['tool_center'],
+            actuatorNames: ['finger_tendon_motor'],
+        },
+    ]);
 });

@@ -146,7 +146,7 @@ test('assembly export preserves colors stored in component materials after prefi
   );
   expectSerializedHexColor(
     mjcf,
-    /<material name="[^"]+" rgba="([^"]+)"(?: texture="[^"]+")? \/>/,
+    /<material name="[^"]+" rgba="([^"]+)"(?: [^/>]+="[^"]+")* \/>/,
     [0.07058824, 0.67058824, 0.20392157, 1],
   );
   assert.match(mjcf, /<geom[^>]*material="[^"]+"[^>]*type="mesh"/);

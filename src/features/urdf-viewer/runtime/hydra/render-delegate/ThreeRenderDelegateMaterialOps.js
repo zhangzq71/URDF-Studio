@@ -1086,7 +1086,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
         this._guideCollisionPrimPathCache.clear();
         this._guideCollisionRefMapByStageSource.clear();
         this._visualSemanticChildMapByStageSource.clear();
-        this._openedGuideStages.clear();
+        this.disposeOpenedGuideStages();
         if (!preserveDriverCaches) {
             this._protoDataBlobBatchCache.clear();
             this._protoDataBlobBatchPrimed = false;
@@ -1550,7 +1550,10 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                     }
                     return candidateStage;
                 })
-                    .catch(() => null)
+                    .catch((error) => {
+                    rawConsoleWarn?.('[HydraDelegate] Failed to resolve async driver stage; falling back to deferred stage lookup.', error);
+                    return null;
+                })
                     .finally(() => {
                     this._pendingDriverStagePromise = null;
                 });
@@ -1816,7 +1819,15 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                 options.onAssigned(nextTexture);
             }
             material.needsUpdate = true;
-        }).catch(() => { });
+        }).catch((error) => {
+            const warn = getRawConsoleMethod('warn');
+            warn('[HydraDelegate] Failed to apply snapshot texture input.', {
+                texturePath: normalizedTexturePath,
+                materialProperty,
+                materialName: String(material?.name || ''),
+                error: error instanceof Error ? error.message : String(error || 'unknown-error'),
+            });
+        });
         return true;
     }
     applySnapshotMaterialRecord(material, record) {

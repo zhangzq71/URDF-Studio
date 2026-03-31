@@ -1093,7 +1093,14 @@ export const urdfSchemaNodes = {
   "visual": {
     "typeName": "visual",
     "allowAnyChildren": false,
-    "attributes": [],
+    "attributes": [
+      {
+        "name": "name",
+        "required": false,
+        "type": "xs:string",
+        "values": []
+      }
+    ],
     "children": [
       {
         "name": "origin",

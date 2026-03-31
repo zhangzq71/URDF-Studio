@@ -318,12 +318,12 @@ function StatCard({
       : 'text-text-primary';
 
   return (
-    <div className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md border px-2 py-1 ${surfaceClass}`}>
+    <div className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md border px-2 py-1.5 ${surfaceClass}`}>
       <div className={`flex min-w-0 items-center gap-1.5 ${accentClass}`}>
         <span className="shrink-0">{icon}</span>
         <span className="truncate text-[9px] font-medium uppercase tracking-[0.12em]">{label}</span>
       </div>
-      <div className={`shrink-0 text-[11px] font-semibold ${valueClass}`}>{value}</div>
+      <div className={`shrink-0 text-[11px] font-semibold tabular-nums ${valueClass}`}>{value}</div>
     </div>
   );
 }
@@ -1027,12 +1027,20 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     switch (type) {
       case GeometryType.BOX:
         return t.box;
+      case GeometryType.PLANE:
+        return t.plane;
       case GeometryType.SPHERE:
         return t.sphere;
+      case GeometryType.ELLIPSOID:
+        return t.ellipsoid;
       case GeometryType.CYLINDER:
         return t.cylinder;
       case GeometryType.CAPSULE:
         return t.capsule;
+      case GeometryType.HFIELD:
+        return t.hfield;
+      case GeometryType.SDF:
+        return t.sdf;
       case GeometryType.MESH:
         return t.mesh;
       default:
@@ -1176,7 +1184,7 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
     zoomIn: copy.zoomIn,
     zoomOut: copy.zoomOut,
   }), [copy]);
-  const statsGridClass = isWideLayout ? 'grid-cols-4' : isCompactLayout ? 'grid-cols-1' : 'grid-cols-2';
+  const statsGridClass = isDenseLayout ? 'grid-cols-1' : 'grid-cols-2';
   const isGraphView = candidatesViewMode === 'graph';
   const mainPanelsGridClass = isStackedLayout
     ? 'grid-cols-1'

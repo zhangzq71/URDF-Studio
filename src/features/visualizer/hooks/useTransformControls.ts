@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { resolveJointKey } from '@/core/robot';
-import { RobotState } from '@/types';
+import { type AppMode, RobotState } from '@/types';
 import { useRobotStore } from '@/store/robotStore';
 import { useSelectionStore } from '@/store/selectionStore';
+import { shouldEnableMergedVisualizerJointTransformControls } from '../utils/mergedVisualizerSceneMode';
 
 const PREVIEW_POSITION_EPSILON_SQ = 1e-12;
 const PREVIEW_ROTATION_EPSILON = 1e-10;
@@ -48,7 +49,7 @@ export function useTransformControls(
   transformMode: 'translate' | 'rotate' | 'universal',
   robot: RobotState,
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void,
-  mode: 'skeleton' | 'detail' | 'hardware',
+  mode: AppMode,
   options: TransformControlsOptions = {},
 ): TransformControlsState {
   const setJointAngle = useRobotStore((state) => state.setJointAngle);
@@ -72,6 +73,7 @@ export function useTransformControls(
     onResetPreview,
     selectedRotateObject,
   } = options;
+  const jointTransformControlsEnabled = shouldEnableMergedVisualizerJointTransformControls(mode);
 
   const getObjectRPY = useCallback((object: THREE.Object3D) => {
     const rotation = tempEulerRef.current.setFromQuaternion(object.quaternion, 'ZYX');
@@ -232,12 +234,12 @@ export function useTransformControls(
           else if (axis === 'Z') selectedObject.position.z = val;
         }
 
-        if (mode === 'skeleton' && robot.selection.type === 'joint' && onPreviewObjectChange) {
+        if (jointTransformControlsEnabled && robot.selection.type === 'joint' && onPreviewObjectChange) {
           onPreviewObjectChange(selectedObject, robot.selection.id);
         }
       }
     },
-    [mode, onPreviewObjectChange, pendingEdit, robot.selection.id, robot.selection.type, selectedObject]
+    [jointTransformControlsEnabled, onPreviewObjectChange, pendingEdit, robot.selection.id, robot.selection.type, selectedObject]
   );
 
   const handleConfirm = useCallback(() => {
@@ -270,7 +272,7 @@ export function useTransformControls(
   }, [onResetPreview, resetPreviewCache, selectedObject]);
 
   const handleObjectChange = useCallback(() => {
-    if (mode !== 'skeleton' || !selectedObject || robot.selection.type !== 'joint' || !onPreviewObjectChange) {
+    if (!jointTransformControlsEnabled || !selectedObject || robot.selection.type !== 'joint' || !onPreviewObjectChange) {
       return;
     }
 
@@ -297,7 +299,7 @@ export function useTransformControls(
     lastPreviewPositionRef.current.copy(selectedObject.position);
     lastPreviewQuaternionRef.current.copy(selectedObject.quaternion);
     onPreviewObjectChange(selectedObject, robot.selection.id);
-  }, [mode, onPreviewObjectChange, robot.selection.id, robot.selection.type, selectedObject]);
+  }, [jointTransformControlsEnabled, onPreviewObjectChange, robot.selection.id, robot.selection.type, selectedObject]);
 
   const handleRotateObjectChange = useCallback(() => {
     const selectedJointEntry = getSelectedJoint();
@@ -332,7 +334,7 @@ export function useTransformControls(
 
   // Setup event listeners for TransformControls
   useEffect(() => {
-    if (!selectedObject || mode !== 'skeleton') return;
+    if (!selectedObject || !jointTransformControlsEnabled) return;
 
     const getAxisValue = (axis: string | null, isRotate: boolean) => {
       if (!axis) return 0;
@@ -429,7 +431,7 @@ export function useTransformControls(
     extractSelectedJointAngle,
     getObjectRPY,
     getSelectedJoint,
-    mode,
+    jointTransformControlsEnabled,
     persistSelectedObject,
     selectedObject,
     selectedRotateObject,

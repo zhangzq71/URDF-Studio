@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { isBlockingGizmoNode, isSelectableHelperObject } from './pickFilter.ts';
+import type { ViewerHelperKind } from '../types';
 
 export interface ResolvedLinkTarget {
     linkId: string;
@@ -7,6 +9,7 @@ export interface ResolvedLinkTarget {
 
 export interface ResolvedSelectionTarget {
     urdfElement: THREE.Object3D | null;
+    subType: 'visual' | 'collision';
     objectIndex: number;
     highlightTarget: THREE.Object3D;
 }
@@ -16,11 +19,210 @@ export interface ResolvedSelectionHit extends ResolvedSelectionTarget {
     linkObject: THREE.Object3D;
 }
 
+export interface ResolvedInteractionSelectionHit {
+    type: 'link' | 'joint';
+    id: string;
+    subType?: 'visual' | 'collision';
+    objectIndex?: number;
+    targetKind: 'geometry' | 'helper';
+    helperKind?: ViewerHelperKind;
+    linkId?: string;
+    linkObject?: THREE.Object3D;
+    highlightTarget?: THREE.Object3D;
+}
+
+function findAncestor(
+    object: THREE.Object3D | null,
+    predicate: (candidate: THREE.Object3D) => boolean
+): THREE.Object3D | null {
+    let current: THREE.Object3D | null = object;
+
+    while (current) {
+        if (predicate(current)) {
+            return current;
+        }
+        current = current.parent;
+    }
+
+    return null;
+}
+
+function isTaggedCollisionObject(object: THREE.Object3D | null): boolean {
+    return Boolean(
+        object
+        && (
+            (object as any).isURDFCollider
+            || object.userData?.isCollisionGroup === true
+            || object.userData?.isCollisionMesh === true
+            || object.userData?.isCollision === true
+            || object.userData?.geometryRole === 'collision'
+        )
+    );
+}
+
+function isTaggedVisualObject(object: THREE.Object3D | null): boolean {
+    return Boolean(
+        object
+        && (
+            (object as any).isURDFVisual
+            || object.userData?.isVisualGroup === true
+            || object.userData?.isVisualMesh === true
+            || object.userData?.isVisual === true
+            || object.userData?.geometryRole === 'visual'
+        )
+    );
+}
+
+function resolveGeometrySubType(
+    hitObject: THREE.Object3D,
+    linkObject: THREE.Object3D,
+): 'visual' | 'collision' {
+    let current: THREE.Object3D | null = hitObject;
+
+    while (current && current !== linkObject) {
+        if (isTaggedCollisionObject(current)) {
+            return 'collision';
+        }
+        if (isTaggedVisualObject(current)) {
+            return 'visual';
+        }
+        current = current.parent;
+    }
+
+    return 'visual';
+}
+
+function findGeometryContainer(
+    hitObject: THREE.Object3D,
+    linkObject: THREE.Object3D,
+    subType: 'visual' | 'collision',
+): THREE.Object3D | null {
+    let current: THREE.Object3D | null = hitObject;
+    let matchedContainer: THREE.Object3D | null = null;
+    const matchesRole = subType === 'collision' ? isTaggedCollisionObject : isTaggedVisualObject;
+
+    while (current && current !== linkObject) {
+        if (matchesRole(current)) {
+            matchedContainer = current;
+        }
+        current = current.parent;
+    }
+
+    return matchedContainer;
+}
+
+function findImmediateChildUnderLink(
+    object: THREE.Object3D | null,
+    linkObject: THREE.Object3D,
+): THREE.Object3D | null {
+    let current = object;
+
+    while (current?.parent && current.parent !== linkObject) {
+        current = current.parent;
+    }
+
+    return current?.parent === linkObject ? current : null;
+}
+
+function subtreeContainsGeometryRole(
+    object: THREE.Object3D,
+    subType: 'visual' | 'collision',
+): boolean {
+    const matchesRole = subType === 'collision' ? isTaggedCollisionObject : isTaggedVisualObject;
+    if (matchesRole(object)) {
+        return true;
+    }
+
+    let found = false;
+    object.traverse((child) => {
+        if (found || child === object) {
+            return;
+        }
+        if (matchesRole(child)) {
+            found = true;
+        }
+    });
+
+    return found;
+}
+
+function resolveGeometryObjectIndex(
+    linkObject: THREE.Object3D,
+    geometryContainer: THREE.Object3D | null,
+    subType: 'visual' | 'collision',
+): number {
+    const directGeometryChild = findImmediateChildUnderLink(geometryContainer, linkObject);
+    if (!directGeometryChild) {
+        return 0;
+    }
+
+    const siblingGeometryRoots = linkObject.children.filter((child: any) => {
+        if (child.isURDFJoint || child.isURDFLink) {
+            return false;
+        }
+        return subtreeContainsGeometryRole(child, subType);
+    });
+    const siblingIndex = siblingGeometryRoots.indexOf(directGeometryChild);
+    return siblingIndex >= 0 ? siblingIndex : 0;
+}
+
+function isJointAxisHelperObject(object: THREE.Object3D | null): boolean {
+    return Boolean(findAncestor(object, (candidate) => (
+        candidate.name === '__joint_axis__' || candidate.name === '__joint_axis_helper__'
+    )));
+}
+
+function resolveHelperKind(object: THREE.Object3D | null): ViewerHelperKind | undefined {
+    const helperRoot = findAncestor(object, (candidate) => (
+        candidate.name === '__com_visual__'
+        || candidate.name === '__inertia_box__'
+        || candidate.name === '__origin_axes__'
+        || candidate.name === '__joint_axis__'
+        || candidate.name === '__joint_axis_helper__'
+    ));
+
+    switch (helperRoot?.name) {
+        case '__com_visual__':
+            return 'center-of-mass';
+        case '__inertia_box__':
+            return 'inertia';
+        case '__origin_axes__':
+            return 'origin-axes';
+        case '__joint_axis__':
+        case '__joint_axis_helper__':
+            return 'joint-axis';
+        default:
+            return undefined;
+    }
+}
+
 export function resolveHitLinkTarget(
     robot: THREE.Object3D | null,
     hitObject: THREE.Object3D
 ): ResolvedLinkTarget | null {
     const robotLinks = (robot as { links?: Record<string, THREE.Object3D> } | null)?.links;
+    const resolveNearestRuntimeLinkTarget = (): ResolvedLinkTarget | null => {
+        let current: THREE.Object3D | null = hitObject;
+        while (current) {
+            if (isBlockingGizmoNode(current)) return null;
+            if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+                return {
+                    linkId: current.name,
+                    linkObject: current,
+                };
+            }
+            if (robotLinks?.[current.name]) {
+                return {
+                    linkId: current.name,
+                    linkObject: current,
+                };
+            }
+            if (current === robot) break;
+            current = current.parent;
+        }
+
+        return null;
+    };
     const metadataLinkId = typeof hitObject.userData?.parentLinkName === 'string'
         ? hitObject.userData.parentLinkName.trim()
         : '';
@@ -33,68 +235,44 @@ export function resolveHitLinkTarget(
                 linkObject: metadataLinkObject,
             };
         }
-    }
 
-    let current: THREE.Object3D | null = hitObject;
-    while (current) {
-        if (current.userData?.isGizmo) return null;
-        if ((current as any).isURDFLink || (current as any).type === 'URDFLink') {
+        const runtimeLinkTarget = resolveNearestRuntimeLinkTarget();
+        if (runtimeLinkTarget) {
             return {
-                linkId: current.name,
-                linkObject: current,
+                linkId: metadataLinkId,
+                linkObject: runtimeLinkTarget.linkObject,
             };
         }
-        if (robotLinks?.[current.name]) {
-            return {
-                linkId: current.name,
-                linkObject: current,
-            };
-        }
-        if (current === robot) break;
-        current = current.parent;
     }
 
-    return null;
+    return resolveNearestRuntimeLinkTarget();
 }
 
 export function resolveSelectionTarget(
     hitObject: THREE.Object3D,
     linkObject: THREE.Object3D
 ): ResolvedSelectionTarget {
-    let current: THREE.Object3D | null = hitObject;
-    let urdfElement: THREE.Object3D | null = null;
+    const subType = resolveGeometrySubType(hitObject, linkObject);
+    const urdfElement = findGeometryContainer(hitObject, linkObject, subType);
 
-    while (current && current !== linkObject) {
-        if ((current as any).isURDFVisual || (current as any).isURDFCollider) {
-            urdfElement = current;
-            break;
-        }
-        current = current.parent;
-    }
-
-    let objectIndex = 0;
-    if (urdfElement) {
-        const isCollider = Boolean((urdfElement as any).isURDFCollider);
-        const siblings = linkObject.children.filter((child: any) =>
-            isCollider ? child.isURDFCollider : child.isURDFVisual
-        );
-        const siblingIndex = siblings.indexOf(urdfElement);
-        if (siblingIndex >= 0) {
-            objectIndex = siblingIndex;
-        }
-    }
+    const objectIndex = resolveGeometryObjectIndex(linkObject, urdfElement, subType);
 
     let highlightTarget = hitObject;
     if (urdfElement) {
-        let bodyRoot = hitObject;
-        while (bodyRoot.parent && bodyRoot.parent !== urdfElement) {
-            bodyRoot = bodyRoot.parent;
+        if ((urdfElement as any).isMesh || urdfElement === hitObject) {
+            highlightTarget = urdfElement;
+        } else {
+            let bodyRoot = hitObject;
+            while (bodyRoot.parent && bodyRoot.parent !== urdfElement) {
+                bodyRoot = bodyRoot.parent;
+            }
+            highlightTarget = bodyRoot;
         }
-        highlightTarget = bodyRoot;
     }
 
     return {
         urdfElement,
+        subType,
         objectIndex,
         highlightTarget
     };
@@ -113,5 +291,57 @@ export function resolveSelectionHit(
         ...resolveSelectionTarget(hitObject, resolvedLink.linkObject),
         linkId: resolvedLink.linkId,
         linkObject: resolvedLink.linkObject,
+    };
+}
+
+export function resolveInteractionSelectionHit(
+    robot: THREE.Object3D | null,
+    hitObject: THREE.Object3D
+): ResolvedInteractionSelectionHit | null {
+    if (isSelectableHelperObject(hitObject)) {
+        const helperKind = resolveHelperKind(hitObject);
+        if (isJointAxisHelperObject(hitObject)) {
+            const jointObject = findAncestor(hitObject, (candidate) => (
+                (candidate as any).isURDFJoint || (candidate as any).type === 'URDFJoint'
+            ));
+
+            if (jointObject?.name) {
+                return {
+                    type: 'joint',
+                    id: jointObject.name,
+                    targetKind: 'helper',
+                    helperKind: helperKind ?? 'joint-axis',
+                };
+            }
+        }
+
+        const resolvedHelperLink = resolveHitLinkTarget(robot, hitObject);
+        if (resolvedHelperLink) {
+            return {
+                type: 'link',
+                id: resolvedHelperLink.linkId,
+                targetKind: 'helper',
+                helperKind,
+                linkId: resolvedHelperLink.linkId,
+                linkObject: resolvedHelperLink.linkObject,
+                highlightTarget: hitObject,
+            };
+        }
+    }
+
+    const resolvedGeometryHit = resolveSelectionHit(robot, hitObject);
+    if (!resolvedGeometryHit) {
+        return null;
+    }
+
+    return {
+        type: 'link',
+        id: resolvedGeometryHit.linkId,
+        subType: resolvedGeometryHit.subType,
+        objectIndex: resolvedGeometryHit.objectIndex,
+        targetKind: 'geometry',
+        linkId: resolvedGeometryHit.linkId,
+        linkObject: resolvedGeometryHit.linkObject,
+        highlightTarget: resolvedGeometryHit.highlightTarget,
     };
 }

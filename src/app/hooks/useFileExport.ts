@@ -18,14 +18,16 @@ import {
 import { rewriteUrdfAssetPathsForExport } from '@/core/parsers/meshPathUtils';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
 import {
-  exportProject,
-  exportRobotToUsd,
+  getUsdExportWorkerUnsupportedMeshPaths,
+  exportProjectWithWorker,
+  exportRobotToUsdWithWorker,
   prepareMjcfMeshExportAssets,
   type ExportDialogConfig,
   type ExportProgressState,
 } from '@/features/file-io';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import { translations } from '@/shared/i18n';
+import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 import type {
   RobotAssetPackagingFailure,
 } from '../utils/exportArchiveAssets';
@@ -35,7 +37,7 @@ import { flushPendingHistory } from '../utils/pendingHistory';
 import { buildCurrentRobotExportData, buildCurrentRobotExportState } from './projectRobotStateUtils';
 import { resolveCurrentUsdExportBundle } from '../utils/usdExportContext';
 import { buildLiveUsdRoundtripArchive } from '../utils/liveUsdRoundtripExport';
-import { convertUsdArchiveFilesToBinary } from '../utils/usdBinaryArchive';
+import { convertUsdArchiveFilesToBinaryWithWorker } from '../utils/usdBinaryArchiveWorkerBridge';
 import { resolveUrdfSourceExportContent } from './urdfSourceExportUtils';
 import { buildGeneratedUrdfOptions } from '../utils/generatedUrdfOptions';
 import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
@@ -61,6 +63,10 @@ interface ExportContext {
 }
 
 interface HandleExportWithConfigOptions {
+  onProgress?: (progress: ExportProgressState) => void;
+}
+
+interface HandleProjectExportOptions {
   onProgress?: (progress: ExportProgressState) => void;
 }
 
@@ -103,6 +109,7 @@ export function useFileExport() {
     appMode: state.appMode,
     sidebarTab: state.sidebarTab,
   })));
+  const mergedAppMode = normalizeMergedAppMode(appMode);
   const t = translations[lang];
   const {
     assets,
@@ -803,12 +810,20 @@ export function useFileExport() {
         throw new Error(t.exportFailedParse);
       }
 
+      const unsupportedWorkerMeshPaths = getUsdExportWorkerUnsupportedMeshPaths(exportContext.robot);
+      if (unsupportedWorkerMeshPaths.length > 0) {
+        throw new Error(replaceTemplate(t.usdExportWorkerUnsupportedMeshes, {
+          count: unsupportedWorkerMeshPaths.length,
+          meshPath: unsupportedWorkerMeshPaths[0],
+        }));
+      }
+
       reportProgress(2, t.exportProgressBuildingUsdScene, t.exportProgressUsdScenePreparingDetail, {
         stageProgress: 0.04,
         indeterminate: true,
       });
 
-      const usdExport = await exportRobotToUsd({
+      const usdExport = await exportRobotToUsdWithWorker({
         robot: exportContext.robot,
         exportName: exportContext.exportName,
         assets,
@@ -873,7 +888,7 @@ export function useFileExport() {
         indeterminate: true,
       });
 
-      const binaryArchiveFiles = await convertUsdArchiveFilesToBinary(usdExport.archiveFiles, {
+      const binaryArchiveFiles = await convertUsdArchiveFilesToBinaryWithWorker(usdExport.archiveFiles, {
         onProgress: ({ current, total, filePath }) => {
           reportProgress(
             3,
@@ -1237,12 +1252,24 @@ export function useFileExport() {
   ]);
 
   // Export project as .usp
-  const handleExportProject = useCallback(async (): Promise<ProjectExportExecutionResult> => {
+  const handleExportProject = useCallback(async (
+    options: HandleProjectExportOptions = {},
+  ): Promise<ProjectExportExecutionResult> => {
     flushPendingHistory();
-    const result = await exportProject({
+    const reportProgress = createProgressReporter(options.onProgress, 6);
+    reportProgress(1, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
+      stageProgress: 0.18,
+      indeterminate: true,
+    });
+    reportProgress(2, t.exportProgressPackingProjectAssets, t.exportProgressPackingProjectAssetsPreparingDetail, {
+      stageProgress: 0.04,
+      indeterminate: true,
+    });
+
+    const result = await exportProjectWithWorker({
       name: robotName || assemblyState?.name || 'my_project',
       uiState: {
-        appMode,
+        appMode: mergedAppMode,
         lang,
       },
       assetsState: {
@@ -1273,15 +1300,87 @@ export function useFileExport() {
         activity: assemblyActivity,
       },
       getMergedRobotData,
+      onProgress: (progress) => {
+        switch (progress.phase) {
+          case 'assets':
+            reportProgress(
+              2,
+              t.exportProgressPackingProjectAssets,
+              replaceTemplate(t.exportProgressPackingProjectAssetsDetail, {
+                current: progress.completed,
+                total: progress.total,
+                file: progress.label || t.exportProgressArchiveFallbackFile,
+              }),
+              {
+                stageProgress: progress.total > 0 ? progress.completed / progress.total : 1,
+                indeterminate: false,
+              },
+            );
+            break;
+          case 'metadata':
+            reportProgress(
+              3,
+              t.exportProgressWritingProjectData,
+              replaceTemplate(t.exportProgressWritingProjectDataDetail, {
+                current: progress.completed,
+                total: progress.total,
+                item: progress.label || 'project.json',
+              }),
+              {
+                stageProgress: progress.total > 0 ? progress.completed / progress.total : 1,
+                indeterminate: false,
+              },
+            );
+            break;
+          case 'components':
+            reportProgress(
+              4,
+              t.exportProgressBundlingProjectComponents,
+              replaceTemplate(t.exportProgressBundlingProjectComponentsDetail, {
+                current: progress.completed,
+                total: progress.total,
+                item: progress.label || t.exportProgressArchiveFallbackFile,
+              }),
+              {
+                stageProgress: progress.total > 0 ? progress.completed / progress.total : 1,
+                indeterminate: false,
+              },
+            );
+            break;
+          case 'output':
+            reportProgress(
+              5,
+              t.exportProgressGeneratingProjectOutputs,
+              replaceTemplate(t.exportProgressGeneratingProjectOutputsDetail, {
+                current: progress.completed,
+                total: progress.total,
+                item: progress.label || t.exportProgressArchiveFallbackFile,
+              }),
+              {
+                stageProgress: progress.total > 0 ? progress.completed / progress.total : 1,
+                indeterminate: false,
+              },
+            );
+            break;
+          case 'archive':
+            reportProgress(
+              6,
+              t.exportProgressPackaging,
+              progress.label
+                ? replaceTemplate(t.exportProgressPackagingDetailFile, { file: progress.label })
+                : t.exportProgressPackagingDetail,
+              {
+                stageProgress: progress.total > 0 ? progress.completed / progress.total : 1,
+                indeterminate: false,
+              },
+            );
+            break;
+          default:
+            break;
+        }
+      },
     });
-    const url = URL.createObjectURL(result.blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${robotName || assemblyState?.name || 'my_project'}.usp`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(result.blob, `${robotName || assemblyState?.name || 'my_project'}.usp`);
 
     return {
       partial: result.partial,
@@ -1304,7 +1403,7 @@ export function useFileExport() {
     assemblyState,
     assemblyHistory,
     assemblyActivity,
-    appMode,
+    mergedAppMode,
     lang,
     availableFiles,
     assets,
@@ -1315,6 +1414,10 @@ export function useFileExport() {
     originalFileFormat,
     usdPreparedExportCaches,
     getMergedRobotData,
+    createProgressReporter,
+    downloadBlob,
+    replaceTemplate,
+    t,
   ]);
 
   return {

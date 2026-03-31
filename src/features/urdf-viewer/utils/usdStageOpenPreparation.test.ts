@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   buildCriticalUsdDependencyPaths,
-  prepareUsdStageOpenData,
+  prepareUsdStageOpenDataCore,
   resolveUsdStageOpenPreparationConcurrency,
-} from './usdStageOpenPreparation.ts';
+} from './usdStageOpenPreparationCore.ts';
 
 test('buildCriticalUsdDependencyPaths infers configuration sublayers for Unitree roots', () => {
   assert.deepEqual(
@@ -34,7 +34,7 @@ test('resolveUsdStageOpenPreparationConcurrency caps worker preload fan-out at 1
   assert.equal(resolveUsdStageOpenPreparationConcurrency(1), 2);
 });
 
-test('prepareUsdStageOpenData materializes preload blobs and keeps optional failures soft', async () => {
+test('prepareUsdStageOpenDataCore materializes preload blobs and keeps optional failures soft', async () => {
   const originalFetch = globalThis.fetch;
   const fetchCalls: string[] = [];
 
@@ -54,7 +54,7 @@ test('prepareUsdStageOpenData materializes preload blobs and keeps optional fail
   }) as typeof fetch;
 
   try {
-    const result = await prepareUsdStageOpenData(
+    const result = await prepareUsdStageOpenDataCore(
       {
         name: 'Go2/usd/go2.usd',
         content: '',

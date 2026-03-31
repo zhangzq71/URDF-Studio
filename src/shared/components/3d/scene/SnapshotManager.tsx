@@ -1,22 +1,72 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useThree } from '@react-three/fiber';
+import { useEnvironment } from '@react-three/drei';
 import * as THREE from 'three';
 import type { RefObject } from 'react';
+import type { Theme } from '@/types';
+import { resolveSnapshotRenderPlan } from './snapshotResolution';
+import {
+  getSnapshotFileExtension,
+  getSnapshotMimeType,
+  normalizeSnapshotCaptureOptions,
+  SNAPSHOT_DETAIL_SUPERSAMPLE_SCALE,
+  type SnapshotCaptureAction,
+} from './snapshotConfig';
+import {
+  applySnapshotBackgroundStyle,
+  applySnapshotSceneVisibility,
+  applySnapshotShadowQuality,
+  applySnapshotTextureQuality,
+  type SnapshotBackgroundFill,
+} from './snapshotSceneQuality';
+import { SnapshotExportLook } from './SnapshotExportLook';
+import {
+  renderSceneWithDofToCanvas,
+  resolveSnapshotDofSettings,
+} from './snapshotPostprocessing';
 
-const SNAPSHOT_MIN_LONG_EDGE = 3840;
-const SNAPSHOT_GRID_OBJECT_NAME = 'ReferenceGrid';
+const SNAPSHOT_RENDER_TARGET_SAMPLES = {
+  viewport: 4,
+  high: 8,
+  ultra: 8,
+} as const;
 
 interface SnapshotManagerProps {
-  actionRef?: RefObject<(() => void) | null>;
+  actionRef?: RefObject<SnapshotCaptureAction | null>;
   robotName: string;
+  theme: Theme;
+  groundOffset?: number;
 }
 
-export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) => {
+export const SnapshotManager = ({
+  actionRef,
+  robotName,
+  theme,
+  groundOffset = 0,
+}: SnapshotManagerProps) => {
   const { gl, get, invalidate } = useThree();
   const pendingCaptureRef = useRef<number | null>(null);
+  const [activeSnapshotOptions, setActiveSnapshotOptions] = useState<ReturnType<typeof normalizeSnapshotCaptureOptions> | null>(null);
+
+  useEffect(() => {
+    useEnvironment.preload({ files: '/potsdamer_platz_1k.hdr' });
+  }, []);
 
   useEffect(() => {
     if (!actionRef) return;
+
+    const cloneSnapshotCamera = (camera: THREE.Camera) => {
+      const snapshotCamera = camera.clone();
+      snapshotCamera.layers.mask = camera.layers.mask;
+      snapshotCamera.matrixAutoUpdate = camera.matrixAutoUpdate;
+      snapshotCamera.matrix.copy(camera.matrix);
+      snapshotCamera.matrixWorld.copy(camera.matrixWorld);
+      snapshotCamera.matrixWorldInverse.copy(camera.matrixWorldInverse);
+      snapshotCamera.projectionMatrix.copy(camera.projectionMatrix);
+      snapshotCamera.projectionMatrixInverse.copy(camera.projectionMatrixInverse);
+      snapshotCamera.updateMatrixWorld(true);
+      return snapshotCamera;
+    };
 
     const clearPendingFrames = () => {
       if (pendingCaptureRef.current !== null) {
@@ -25,22 +75,38 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
       }
     };
 
-    const resolveSnapshotSize = () => {
+    const waitFrames = async (count: number) => {
+      for (let index = 0; index < count; index += 1) {
+        await new Promise<void>((resolve) => {
+          pendingCaptureRef.current = requestAnimationFrame(() => {
+            pendingCaptureRef.current = null;
+            resolve();
+          });
+        });
+      }
+    };
+
+    const resolveSnapshotSize = (longEdgePx: number) => {
       const drawingBufferSize = gl.getDrawingBufferSize(new THREE.Vector2());
       const baseWidth = Math.max(1, Math.round(drawingBufferSize.x || 1));
       const baseHeight = Math.max(1, Math.round(drawingBufferSize.y || 1));
-      const longEdge = Math.max(baseWidth, baseHeight);
-      const scale = longEdge >= SNAPSHOT_MIN_LONG_EDGE ? 1 : SNAPSHOT_MIN_LONG_EDGE / longEdge;
+      const context = gl.getContext();
 
-      return {
+      return resolveSnapshotRenderPlan({
         baseWidth,
         baseHeight,
-        targetWidth: Math.max(1, Math.round(baseWidth * scale)),
-        targetHeight: Math.max(1, Math.round(baseHeight * scale)),
-      };
+        basePixelRatio: gl.getPixelRatio(),
+        targetLongEdge: longEdgePx,
+        maxRenderbufferSize: context.getParameter(context.MAX_RENDERBUFFER_SIZE),
+        maxTextureSize: context.getParameter(context.MAX_TEXTURE_SIZE),
+      });
     };
 
-    const downloadCanvas = (canvas: HTMLCanvasElement, onDone?: () => void) => {
+    const downloadCanvas = async (
+      canvas: HTMLCanvasElement,
+      requestedOptions?: Parameters<SnapshotCaptureAction>[0],
+    ) => {
+      const options = normalizeSnapshotCaptureOptions(requestedOptions);
       const safeRobotName = (robotName || 'robot').replace(/[\\/:*?"<>|]/g, '_');
       const now = new Date();
       const timestamp = [
@@ -52,68 +118,42 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
         String(now.getMinutes()).padStart(2, '0'),
         String(now.getSeconds()).padStart(2, '0'),
       ].join('');
-      const filename = `${safeRobotName}_snapshot_${timestamp}.png`;
+      const filename = `${safeRobotName}_snapshot_${timestamp}.${getSnapshotFileExtension(options.imageFormat)}`;
+      const mimeType = getSnapshotMimeType(options.imageFormat);
+      const quality = mimeType === 'image/png'
+        ? undefined
+        : Math.min(1, Math.max(0.6, options.imageQuality / 100));
 
-      const downloadBlob = (blob: Blob | null) => {
-        if (!blob) {
-          console.error('[Snapshot] Failed to generate PNG blob.');
-          onDone?.();
-          return;
-        }
-
-        const url = URL.createObjectURL(blob);
+      const triggerDownload = (href: string) => {
         const link = document.createElement('a');
-        link.href = url;
+        link.href = href;
         link.download = filename;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-        onDone?.();
       };
 
       if (canvas.toBlob) {
-        canvas.toBlob(downloadBlob, 'image/png');
+        await new Promise<void>((resolve, reject) => {
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error(`[Snapshot] Failed to generate ${options.imageFormat.toUpperCase()} blob.`));
+              return;
+            }
+
+            const url = URL.createObjectURL(blob);
+            triggerDownload(url);
+            URL.revokeObjectURL(url);
+            resolve();
+          }, mimeType, quality);
+        });
         return;
       }
 
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/png');
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      onDone?.();
+      triggerDownload(canvas.toDataURL(mimeType, quality));
     };
 
-    const tryCaptureRendererCanvas = (
-      sourceCanvas: HTMLCanvasElement,
-      targetWidth: number,
-      targetHeight: number,
-    ) => {
-      const captureCanvas = document.createElement('canvas');
-      captureCanvas.width = targetWidth;
-      captureCanvas.height = targetHeight;
-      const ctx = captureCanvas.getContext('2d');
-
-      if (!ctx) {
-        return null;
-      }
-
-      try {
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
-        return captureCanvas;
-      } catch (error) {
-        console.warn('[Snapshot] Falling back to framebuffer capture.', error);
-        return null;
-      }
-    };
-
-    const readFramebufferToCanvas = (width: number, height: number) => {
-      const context = gl.getContext();
-      const pixelBuffer = new Uint8Array(width * height * 4);
+    const buildCanvasFromPixelBuffer = (pixelBuffer: Uint8Array, width: number, height: number) => {
       const captureCanvas = document.createElement('canvas');
       captureCanvas.width = width;
       captureCanvas.height = height;
@@ -122,8 +162,6 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
       if (!ctx) {
         return captureCanvas;
       }
-
-      context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixelBuffer);
 
       const imageData = ctx.createImageData(width, height);
       const rowStride = width * 4;
@@ -142,8 +180,63 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
       return captureCanvas;
     };
 
-    const createExportCanvas = (sourceCanvas: HTMLCanvasElement, targetWidth: number, targetHeight: number) => {
-      if (sourceCanvas.width === targetWidth && sourceCanvas.height === targetHeight) {
+    const readRenderTargetToCanvas = (
+      renderTarget: THREE.WebGLRenderTarget,
+      width: number,
+      height: number,
+    ) => {
+      const pixelBuffer = new Uint8Array(width * height * 4);
+      gl.readRenderTargetPixels(renderTarget, 0, 0, width, height, pixelBuffer);
+      return buildCanvasFromPixelBuffer(pixelBuffer, width, height);
+    };
+
+    const renderSceneToCanvas = ({
+      scene,
+      camera,
+      width,
+      height,
+      detailLevel,
+    }: {
+      scene: THREE.Scene;
+      camera: THREE.Camera;
+      width: number;
+      height: number;
+      detailLevel: ReturnType<typeof normalizeSnapshotCaptureOptions>['detailLevel'];
+    }) => {
+      const renderTarget = new THREE.WebGLRenderTarget(width, height, {
+        type: THREE.UnsignedByteType,
+        depthBuffer: true,
+        stencilBuffer: false,
+      });
+      renderTarget.texture.colorSpace = THREE.SRGBColorSpace;
+      renderTarget.samples = Math.min(
+        gl.capabilities.maxSamples,
+        SNAPSHOT_RENDER_TARGET_SAMPLES[detailLevel],
+      );
+
+      const previousRenderTarget = gl.getRenderTarget();
+      const previousAutoClear = gl.autoClear;
+
+      try {
+        gl.autoClear = true;
+        gl.setRenderTarget(renderTarget);
+        gl.render(scene, camera);
+        return readRenderTargetToCanvas(renderTarget, width, height);
+      } finally {
+        gl.setRenderTarget(previousRenderTarget);
+        gl.autoClear = previousAutoClear;
+        renderTarget.dispose();
+      }
+    };
+
+    const createExportCanvas = (
+      sourceCanvas: HTMLCanvasElement,
+      targetWidth: number,
+      targetHeight: number,
+      backgroundFill: SnapshotBackgroundFill,
+    ) => {
+      const needsResize = sourceCanvas.width !== targetWidth || sourceCanvas.height !== targetHeight;
+      if (backgroundFill.kind === 'transparent' && !needsResize) {
         return sourceCanvas;
       }
 
@@ -156,82 +249,140 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
         return sourceCanvas;
       }
 
+      if (backgroundFill.kind === 'solid' && backgroundFill.colors?.[0]) {
+        ctx.fillStyle = backgroundFill.colors[0];
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+      } else if (backgroundFill.kind === 'linear-gradient' && backgroundFill.colors) {
+        const gradient = ctx.createLinearGradient(0, 0, 0, targetHeight);
+        gradient.addColorStop(0, backgroundFill.colors[0]);
+        gradient.addColorStop(1, backgroundFill.colors[1]);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, targetWidth, targetHeight);
+      }
+
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
       return exportCanvas;
     };
 
-    const hideSnapshotGrid = (scene: THREE.Scene) => {
-      const hiddenObjects: Array<{ object: THREE.Object3D; visible: boolean }> = [];
-
-      scene.traverse((object) => {
-        if (object.name !== SNAPSHOT_GRID_OBJECT_NAME) return;
-        hiddenObjects.push({ object, visible: object.visible });
-        object.visible = false;
-      });
-
-      return () => {
-        hiddenObjects.forEach(({ object, visible }) => {
-          object.visible = visible;
-        });
-      };
-    };
-
-    const waitFrames = (count: number, onDone: () => void) => {
-      if (count <= 0) {
-        onDone();
-        return;
-      }
-
-      pendingCaptureRef.current = requestAnimationFrame(() => {
-        pendingCaptureRef.current = null;
-        waitFrames(count - 1, onDone);
-      });
-    };
-
-    const renderAndDownloadHighRes = (onDone?: () => void) => {
-      const { targetWidth, targetHeight, baseWidth, baseHeight } = resolveSnapshotSize();
-      let restoreSnapshotGrid: (() => void) | null = null;
+    const renderAndDownloadHighRes = async (
+      requestedOptions?: Parameters<SnapshotCaptureAction>[0],
+      frozenCamera?: THREE.Camera,
+    ) => {
+      const snapshotOptions = normalizeSnapshotCaptureOptions(requestedOptions);
+      const outputPlan = resolveSnapshotSize(snapshotOptions.longEdgePx);
+      const supersampleScale = SNAPSHOT_DETAIL_SUPERSAMPLE_SCALE[snapshotOptions.detailLevel];
+      const renderPlan = resolveSnapshotSize(
+        Math.round(snapshotOptions.longEdgePx * supersampleScale),
+      );
+      let restoreSceneVisibility: (() => void) | null = null;
+      let restoreTextureQuality: (() => void) | null = null;
+      let restoreShadowQuality: (() => void) | null = null;
+      let restoreBackgroundStyle: (() => void) | null = null;
+      let backgroundFill: SnapshotBackgroundFill = { kind: 'transparent' };
 
       try {
-        waitFrames(2, () => {
-          const { scene: latestScene, camera: latestCamera } = get();
-          restoreSnapshotGrid = hideSnapshotGrid(latestScene);
-          gl.render(latestScene, latestCamera);
-          const capturedCanvas =
-            tryCaptureRendererCanvas(gl.domElement, targetWidth, targetHeight)
-            ?? createExportCanvas(readFramebufferToCanvas(baseWidth, baseHeight), targetWidth, targetHeight);
-          restoreSnapshotGrid();
-          restoreSnapshotGrid = null;
-          downloadCanvas(capturedCanvas, () => {
-            invalidate();
-            onDone?.();
-          });
+        const { scene: latestScene, camera: liveCamera } = get();
+        const captureCamera = frozenCamera ?? cloneSnapshotCamera(liveCamera);
+        const backgroundState = applySnapshotBackgroundStyle(
+          latestScene,
+          gl,
+          snapshotOptions.backgroundStyle,
+        );
+        restoreBackgroundStyle = backgroundState.restore;
+        backgroundFill = backgroundState.fill;
+        restoreSceneVisibility = applySnapshotSceneVisibility(latestScene, {
+          hideGrid: snapshotOptions.hideGrid,
         });
+        restoreTextureQuality = applySnapshotTextureQuality(latestScene, gl, snapshotOptions.detailLevel);
+        restoreShadowQuality = applySnapshotShadowQuality(
+          latestScene,
+          gl,
+          snapshotOptions.detailLevel,
+          snapshotOptions.shadowStyle,
+        );
+
+        const originalRenderTarget = gl.getRenderTarget();
+        const originalViewport = gl.getViewport(new THREE.Vector4());
+        const originalScissor = gl.getScissor(new THREE.Vector4());
+        const originalScissorTest = gl.getScissorTest();
+        let capturedCanvas: HTMLCanvasElement;
+
+        try {
+          const dofSettings = resolveSnapshotDofSettings(
+            latestScene,
+            captureCamera,
+            snapshotOptions.dofMode,
+          );
+
+          if (dofSettings) {
+            capturedCanvas = renderSceneWithDofToCanvas({
+              gl,
+              scene: latestScene,
+              camera: captureCamera,
+              width: renderPlan.targetWidth,
+              height: renderPlan.targetHeight,
+              samples: Math.min(
+                gl.capabilities.maxSamples,
+                SNAPSHOT_RENDER_TARGET_SAMPLES[snapshotOptions.detailLevel],
+              ),
+              settings: dofSettings,
+            });
+          } else {
+            capturedCanvas = renderSceneToCanvas({
+              scene: latestScene,
+              camera: captureCamera,
+              width: renderPlan.targetWidth,
+              height: renderPlan.targetHeight,
+              detailLevel: snapshotOptions.detailLevel,
+            });
+          }
+        } finally {
+          gl.setRenderTarget(originalRenderTarget);
+          gl.setViewport(originalViewport);
+          gl.setScissor(originalScissor);
+          gl.setScissorTest(originalScissorTest);
+        }
+
+        restoreShadowQuality();
+        restoreShadowQuality = null;
+        restoreTextureQuality();
+        restoreTextureQuality = null;
+        restoreSceneVisibility();
+        restoreSceneVisibility = null;
+        restoreBackgroundStyle();
+        restoreBackgroundStyle = null;
+        capturedCanvas = createExportCanvas(
+          capturedCanvas,
+          outputPlan.targetWidth,
+          outputPlan.targetHeight,
+          backgroundFill,
+        );
+        await downloadCanvas(capturedCanvas, snapshotOptions);
+        invalidate();
       } catch (error) {
-        restoreSnapshotGrid?.();
+        restoreBackgroundStyle?.();
+        restoreShadowQuality?.();
+        restoreTextureQuality?.();
+        restoreSceneVisibility?.();
         invalidate();
         throw error;
       }
     };
 
-    actionRef.current = () => {
+    actionRef.current = async (requestedOptions) => {
+      const snapshotOptions = normalizeSnapshotCaptureOptions(requestedOptions);
+      const frozenCamera = cloneSnapshotCamera(get().camera);
+      clearPendingFrames();
+      setActiveSnapshotOptions(snapshotOptions);
+      invalidate();
+
       try {
-        clearPendingFrames();
-        invalidate();
-        waitFrames(2, () => {
-          try {
-            renderAndDownloadHighRes(() => {
-              invalidate();
-            });
-          } catch (error) {
-            console.error('[Snapshot] Failed:', error);
-            invalidate();
-          }
-        });
-      } catch (error) {
-        console.error('[Snapshot] Failed:', error);
+        await waitFrames(2);
+        await renderAndDownloadHighRes(snapshotOptions, frozenCamera);
+      } finally {
+        setActiveSnapshotOptions(null);
         invalidate();
       }
     };
@@ -242,5 +393,11 @@ export const SnapshotManager = ({ actionRef, robotName }: SnapshotManagerProps) 
     };
   }, [actionRef, get, gl, invalidate, robotName]);
 
-  return null;
+  return activeSnapshotOptions ? (
+    <SnapshotExportLook
+      options={activeSnapshotOptions}
+      theme={theme}
+      groundOffset={groundOffset}
+    />
+  ) : null;
 };

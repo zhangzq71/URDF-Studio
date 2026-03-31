@@ -11,7 +11,6 @@ import {
   UrdfJoint,
 } from '@/types';
 import { translations, type Language } from '@/shared/i18n';
-import { createAssetUrls } from './assetUtils';
 import {
   buildLibraryArchivePath,
   PROJECT_ALL_FILE_CONTENTS_FILE,
@@ -78,6 +77,17 @@ function getRequiredArchiveEntry(zip: JSZip, path: string, label: string): JSZip
   return entry;
 }
 
+function createPackedProjectAssetUrls(assetFiles: AssetFile[]): Record<string, string> {
+  const assets: Record<string, string> = {};
+
+  assetFiles.forEach(({ name, blob }) => {
+    const normalizedPath = name.replace(/\\/g, '/').replace(/^\/+/, '');
+    assets[normalizedPath] = URL.createObjectURL(blob);
+  });
+
+  return assets;
+}
+
 async function readRequiredArchiveText(zip: JSZip, path: string, label: string): Promise<string> {
   const content = await getRequiredArchiveEntry(zip, path, label).async('string');
   if (!content) {
@@ -132,6 +142,7 @@ const parseBridgeXml = (xmlContent: string): Record<string, BridgeJoint> => {
     const originNode = jointNode.getElementsByTagName('origin')[0];
     const xyz = originNode?.getAttribute('xyz')?.split(' ').map(Number) || [0, 0, 0];
     const rpy = originNode?.getAttribute('rpy')?.split(' ').map(Number) || [0, 0, 0];
+    const quatXyzw = originNode?.getAttribute('quat_xyzw')?.split(' ').map(Number);
 
     const axisNode = jointNode.getElementsByTagName('axis')[0];
     const axisXyz = axisNode?.getAttribute('xyz')?.split(' ').map(Number) || [0, 0, 1];
@@ -159,6 +170,16 @@ const parseBridgeXml = (xmlContent: string): Record<string, BridgeJoint> => {
       origin: {
         xyz: { x: xyz[0], y: xyz[1], z: xyz[2] },
         rpy: { r: rpy[0], p: rpy[1], y: rpy[2] },
+        ...(quatXyzw?.length === 4
+          ? {
+              quatXyzw: {
+                x: quatXyzw[0],
+                y: quatXyzw[1],
+                z: quatXyzw[2],
+                w: quatXyzw[3],
+              },
+            }
+          : {}),
       },
       axis: { x: axisXyz[0], y: axisXyz[1], z: axisXyz[2] },
       limit,
@@ -211,7 +232,7 @@ const loadPackedAssets = async (
     }),
   );
 
-  return createAssetUrls(assetFiles);
+  return createPackedProjectAssetUrls(assetFiles);
 };
 
 const loadHistoryFile = async <T>(
@@ -233,11 +254,20 @@ const loadLibraryFiles = async (
     let content = '';
 
     if (fileInfo.format !== 'mesh') {
-      content = await readRequiredArchiveText(
-        zip,
-        buildLibraryArchivePath(fileInfo.name),
-        `library source file "${fileInfo.name}"`,
-      );
+      const archivePath = buildLibraryArchivePath(fileInfo.name);
+      content = fileInfo.format === 'usd'
+        // Binary USD sources are restored from packed assets, so the library
+        // placeholder may intentionally be empty.
+        ? await getRequiredArchiveEntry(
+          zip,
+          archivePath,
+          `library source file "${fileInfo.name}"`,
+        ).async('string')
+        : await readRequiredArchiveText(
+          zip,
+          archivePath,
+          `library source file "${fileInfo.name}"`,
+        );
     }
 
     availableFiles.push({

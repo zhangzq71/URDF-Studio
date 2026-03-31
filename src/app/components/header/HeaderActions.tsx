@@ -1,5 +1,5 @@
 import { Camera, Globe, Info, Moon, Monitor, Settings, Sun } from 'lucide-react';
-import type { AppMode, Theme } from '@/types';
+import type { Theme } from '@/types';
 import type { HeaderAction, HeaderResponsiveLayout, HeaderTranslations, HeaderMenuKey } from './types';
 import { HeaderOverflowMenu } from './HeaderOverflowMenu';
 
@@ -7,12 +7,10 @@ interface HeaderActionsProps {
   responsive: HeaderResponsiveLayout;
   lang: 'en' | 'zh';
   theme: Theme;
-  appMode: AppMode;
   canUndo: boolean;
   canRedo: boolean;
   activeMenu: HeaderMenuKey;
   setActiveMenu: (menu: HeaderMenuKey) => void;
-  setAppMode: (mode: AppMode) => void;
   setLang: (lang: 'en' | 'zh') => void;
   setTheme: (theme: Theme) => void;
   undo: () => void;
@@ -31,12 +29,10 @@ export function HeaderActions({
   responsive,
   lang,
   theme,
-  appMode,
   canUndo,
   canRedo,
   activeMenu,
   setActiveMenu,
-  setAppMode,
   setLang,
   setTheme,
   undo,
@@ -59,6 +55,7 @@ export function HeaderActions({
     showThemeInline,
     showAboutInline,
     showSecondaryActionInline,
+    showSecondaryActionLabel,
     showDesktopOverflow,
   } = responsive;
   const QuickActionIcon = quickAction?.icon;
@@ -68,9 +65,11 @@ export function HeaderActions({
     <div className="flex items-center gap-0.5 shrink-0 justify-self-end">
       {showQuickActionInline && quickAction && QuickActionIcon && (
         <button
+          type="button"
           onClick={quickAction.onClick}
-          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
+          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-colors hidden sm:flex"
           title={quickAction.title ?? quickAction.label}
+          aria-label={quickAction.title ?? quickAction.label}
         >
           <QuickActionIcon className="w-4 h-4" />
           {showQuickActionLabel && <span>{quickAction.label}</span>}
@@ -79,9 +78,11 @@ export function HeaderActions({
 
       {showSnapshotInline && (
         <button
+          type="button"
           onClick={onSnapshot}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
           title={t.snapshot}
+          aria-label={t.snapshot}
         >
           <Camera className="w-4 h-4" />
         </button>
@@ -89,9 +90,11 @@ export function HeaderActions({
 
       {showSettingsInline && (
         <button
+          type="button"
           onClick={onOpenSettings}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
           title={t.settings}
+          aria-label={t.settings}
         >
           <Settings className="w-4 h-4" />
         </button>
@@ -99,9 +102,11 @@ export function HeaderActions({
 
       {showLanguageInline && (
         <button
+          type="button"
           onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
-          className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
           title={t.switchLanguage}
+          aria-label={t.switchLanguage}
         >
           <Globe className="w-3.5 h-3.5" />
           <span className="text-[10px] font-semibold">{lang === 'en' ? 'EN' : '中'}</span>
@@ -110,6 +115,7 @@ export function HeaderActions({
 
       {showThemeInline && (
         <button
+          type="button"
           onClick={() => {
             if (theme === 'system') {
               const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -118,8 +124,9 @@ export function HeaderActions({
               setTheme(theme === 'dark' ? 'light' : 'dark');
             }
           }}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
           title={t.toggleTheme}
+          aria-label={t.toggleTheme}
         >
           {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
@@ -132,12 +139,10 @@ export function HeaderActions({
           className="hidden sm:block"
           lang={lang}
           theme={theme}
-          appMode={appMode}
           canUndo={canUndo}
           canRedo={canRedo}
           activeMenu={activeMenu}
           setActiveMenu={setActiveMenu}
-          setAppMode={setAppMode}
           setLang={setLang}
           setTheme={setTheme}
           undo={undo}
@@ -151,7 +156,6 @@ export function HeaderActions({
           onOpenAbout={onOpenAbout}
           t={t}
           showQuickAction={Boolean(quickAction) && !showQuickActionInline}
-          showModeSwitcher={false}
           showSourceCode={!responsive.showSourceInline}
           showUndoRedo={!responsive.showUndoRedoInline}
           showSnapshot={!showSnapshotInline}
@@ -165,9 +169,11 @@ export function HeaderActions({
 
       {showAboutInline && (
         <button
+          type="button"
           onClick={onOpenAbout}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-all hidden sm:flex"
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
           title={t.about}
+          aria-label={t.about}
         >
           <Info className="w-4 h-4" />
         </button>
@@ -175,12 +181,14 @@ export function HeaderActions({
 
       {showSecondaryActionInline && secondaryAction && SecondaryActionIcon && (
         <button
+          type="button"
           onClick={secondaryAction.onClick}
-          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-all hidden sm:flex"
+          className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-system-blue dark:text-white hover:bg-system-blue-solid hover:text-white dark:hover:bg-system-blue-solid transition-colors hidden sm:flex"
           title={secondaryAction.title ?? secondaryAction.label}
+          aria-label={secondaryAction.title ?? secondaryAction.label}
         >
           <SecondaryActionIcon className="w-4 h-4" />
-          <span className="hidden lg:inline">{secondaryAction.label}</span>
+          {showSecondaryActionLabel && <span>{secondaryAction.label}</span>}
         </button>
       )}
 
@@ -188,12 +196,10 @@ export function HeaderActions({
         className="sm:hidden"
         lang={lang}
         theme={theme}
-        appMode={appMode}
         canUndo={canUndo}
         canRedo={canRedo}
         activeMenu={activeMenu}
         setActiveMenu={setActiveMenu}
-        setAppMode={setAppMode}
         setLang={setLang}
         setTheme={setTheme}
         undo={undo}
@@ -207,7 +213,6 @@ export function HeaderActions({
         onOpenAbout={onOpenAbout}
         t={t}
         showQuickAction={Boolean(quickAction)}
-        showModeSwitcher
         showSourceCode
         showUndoRedo
         showSnapshot

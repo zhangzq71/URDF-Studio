@@ -26,6 +26,12 @@ class FakeWorker {
 
   terminate(): void {}
 
+  emitMessage(data: unknown): void {
+    this.listeners.get('message')?.forEach((handler) => {
+      handler({ data });
+    });
+  }
+
   emitError(error: Error): void {
     this.listeners.get('error')?.forEach((handler) => {
       handler({ error, message: error.message });
@@ -66,4 +72,111 @@ test('OBJ parse worker failures reject instead of silently reparsing on the main
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('OBJ parse worker bridge fails fast when Worker is unavailable instead of using an inline fallback', async () => {
+  const originalWorker = globalThis.Worker;
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  Object.defineProperty(globalThis, 'Worker', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+  globalThis.fetch = (async () => {
+    fetchCount += 1;
+    throw new Error('fetch should not run');
+  }) as typeof fetch;
+
+  try {
+    const client = createObjParseWorkerPoolClient();
+    await assert.rejects(client.load('/demo.obj'), /OBJ parse worker is unavailable in this environment/i);
+    assert.equal(fetchCount, 0);
+  } finally {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: originalWorker,
+    });
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OBJ parse worker cache can be cleared explicitly', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createObjParseWorkerPoolClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const serializedResult = {
+    children: [],
+    materialLibraries: [],
+  };
+
+  const firstLoad = client.load('/demo.obj');
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  fakeWorker.emitMessage({
+    type: 'parse-obj-result',
+    requestId: 1,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(firstLoad);
+
+  await assert.doesNotReject(client.load('/demo.obj'));
+  assert.equal(fakeWorker.postedMessages.length, 1);
+
+  client.clearCache();
+
+  const secondLoad = client.load('/demo.obj');
+  assert.equal(fakeWorker.postedMessages.length, 2);
+  fakeWorker.emitMessage({
+    type: 'parse-obj-result',
+    requestId: 2,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(secondLoad);
+});
+
+test('OBJ parse worker pool can be disposed and recreated on demand', async () => {
+  const workers: FakeWorker[] = [];
+  const client = createObjParseWorkerPoolClient({
+    canUseWorker: () => true,
+    createWorker: () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker as unknown as Worker;
+    },
+    getWorkerCount: () => 1,
+  });
+
+  const serializedResult = {
+    children: [],
+    materialLibraries: [],
+  };
+
+  const firstLoad = client.load('/demo.obj');
+  assert.equal(workers.length, 1);
+  assert.equal(workers[0]?.postedMessages.length, 1);
+  workers[0]?.emitMessage({
+    type: 'parse-obj-result',
+    requestId: 1,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(firstLoad);
+
+  client.dispose();
+
+  const secondLoad = client.load('/second.obj');
+  assert.equal(workers.length, 2);
+  assert.equal(workers[0]?.postedMessages.length, 1);
+  assert.equal(workers[1]?.postedMessages.length, 1);
+  workers[1]?.emitMessage({
+    type: 'parse-obj-result',
+    requestId: 2,
+    result: serializedResult,
+  });
+  await assert.doesNotReject(secondLoad);
 });

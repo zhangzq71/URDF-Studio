@@ -2,6 +2,8 @@ import { DOMParser as LinkedomDOMParser } from 'linkedom';
 
 type WorkerXmlScope = typeof globalThis & {
   DOMParser?: typeof DOMParser;
+  HTMLImageElement?: typeof HTMLImageElement;
+  Image?: typeof Image;
   document?: Document;
   XMLSerializer?: typeof XMLSerializer;
 };
@@ -12,6 +14,9 @@ class WorkerImageElementPolyfill {
   complete = false;
   crossOrigin: string | null = null;
   height = 1;
+  onerror: WorkerImageListener | null = null;
+  onload: WorkerImageListener | null = null;
+  readonly style: Record<string, string> = {};
   width = 1;
 
   private readonly listeners = {
@@ -20,6 +25,10 @@ class WorkerImageElementPolyfill {
   };
 
   private currentSrc = '';
+
+  decode(): Promise<void> {
+    return Promise.resolve();
+  }
 
   addEventListener(type: 'error' | 'load', listener: WorkerImageListener): void {
     this.listeners[type].add(listener);
@@ -34,6 +43,7 @@ class WorkerImageElementPolyfill {
     queueMicrotask(() => {
       this.complete = true;
       const event = { type: 'load' as const, target: this };
+      this.onload?.call(this, event);
       this.listeners.load.forEach((listener) => {
         listener.call(this, event);
       });
@@ -45,11 +55,13 @@ class WorkerImageElementPolyfill {
   }
 }
 
-function createWorkerDocumentPolyfill(): Document {
+function createWorkerDocumentPolyfill(
+  ImageElementConstructor: new () => WorkerImageElementPolyfill,
+): Document {
   return {
     createElementNS(_namespace: string, name: string) {
       if (name === 'img') {
-        return new WorkerImageElementPolyfill();
+        return new ImageElementConstructor();
       }
 
       return {
@@ -83,8 +95,18 @@ export function ensureWorkerXmlDomApis(scope: WorkerXmlScope = globalThis as Wor
     scope.DOMParser = LinkedomDOMParser as unknown as typeof DOMParser;
   }
 
+  if (typeof scope.HTMLImageElement !== 'function') {
+    scope.HTMLImageElement = WorkerImageElementPolyfill as unknown as typeof HTMLImageElement;
+  }
+
+  if (typeof scope.Image !== 'function') {
+    scope.Image = scope.HTMLImageElement as unknown as typeof Image;
+  }
+
   if (!scope.document || typeof scope.document.createElementNS !== 'function') {
-    scope.document = createWorkerDocumentPolyfill();
+    scope.document = createWorkerDocumentPolyfill(
+      scope.HTMLImageElement as unknown as new () => WorkerImageElementPolyfill,
+    );
   }
 
   if (typeof scope.XMLSerializer !== 'function') {

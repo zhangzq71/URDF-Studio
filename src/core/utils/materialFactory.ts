@@ -1,12 +1,87 @@
 import * as THREE from 'three';
 import { parseThreeColorWithOpacity } from './color.ts';
 
+const RUBBER_MATERIAL_PATTERN = /\b(rubber|tire|tyre|grip|gasket|seal|boot|bushing|silicone|footpad|foot_pad)\b/i;
+const METAL_MATERIAL_PATTERN = /\b(metal|steel|stainless|chrome|alum(?:inum|inium)?|iron|alloy|bolt|screw|shaft|bearing|hinge|bracket)\b/i;
+const COATED_SHELL_MATERIAL_PATTERN = /\b(shell|body|cover|panel|fairing|housing|case|coat|paint)\b/i;
+
 export const MATERIAL_CONFIG = {
     roughness: 0.56,
     metalness: 0.035,
-    envMapIntensity: 0.5,
-    whiteColorMultiplier: 0.95,
+    envMapIntensity: 0.42,
+    whiteColorMultiplier: 0.93,
+    whiteEnvMapIntensityMultiplier: 0.82,
+    nearWhiteThreshold: 0.88,
 } as const;
+
+const MATERIAL_PRESET_CONFIG = {
+  default: {
+    roughness: MATERIAL_CONFIG.roughness,
+    metalness: MATERIAL_CONFIG.metalness,
+    envMapIntensity: MATERIAL_CONFIG.envMapIntensity,
+  },
+  coated: {
+    roughness: 0.64,
+    metalness: 0.05,
+    envMapIntensity: 0.34,
+  },
+  rubber: {
+    roughness: 0.82,
+    metalness: 0.01,
+    envMapIntensity: 0.16,
+  },
+  metal: {
+    roughness: 0.38,
+    metalness: 0.48,
+    envMapIntensity: 0.5,
+  },
+} as const;
+
+type MaterialPresetName = keyof typeof MATERIAL_PRESET_CONFIG;
+
+function inferMaterialPresetNameFromName(name?: string): MaterialPresetName | null {
+  const normalizedName = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[._\-]+/g, ' ');
+  if (!normalizedName) {
+    return null;
+  }
+
+  if (RUBBER_MATERIAL_PATTERN.test(normalizedName)) {
+    return 'rubber';
+  }
+
+  if (METAL_MATERIAL_PATTERN.test(normalizedName)) {
+    return 'metal';
+  }
+
+  if (COATED_SHELL_MATERIAL_PATTERN.test(normalizedName)) {
+    return 'coated';
+  }
+
+  return null;
+}
+
+function inferMaterialPresetNameFromColor(color: THREE.Color): MaterialPresetName {
+  const perceptualColor = color.clone().convertLinearToSRGB();
+  const hsl = { h: 0, s: 0, l: 0 };
+  perceptualColor.getHSL(hsl);
+
+  if (hsl.s <= 0.22 && hsl.l <= 0.22) {
+    return 'rubber';
+  }
+
+  if (hsl.s <= 0.26 && hsl.l >= 0.76) {
+    return 'coated';
+  }
+
+  return 'default';
+}
+
+function inferMaterialPresetName(name: string | undefined, color: THREE.Color): MaterialPresetName {
+  return inferMaterialPresetNameFromName(name) ?? inferMaterialPresetNameFromColor(color);
+}
 
 export interface CreateMaterialOptions {
     color: THREE.ColorRepresentation;
@@ -32,6 +107,16 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
     ? Number(options.opacity)
     : parsedColor?.opacity ?? 1.0;
   const effectiveTransparent = Boolean(options.transparent) || effectiveOpacity < 1.0;
+  const presetName = inferMaterialPresetName(name, finalColor);
+  const preset = MATERIAL_PRESET_CONFIG[presetName];
+  const isNearWhite = (
+    finalColor.r >= MATERIAL_CONFIG.nearWhiteThreshold
+    && finalColor.g >= MATERIAL_CONFIG.nearWhiteThreshold
+    && finalColor.b >= MATERIAL_CONFIG.nearWhiteThreshold
+  );
+  const envMapIntensity = isNearWhite
+    ? preset.envMapIntensity * MATERIAL_CONFIG.whiteEnvMapIntensityMultiplier
+    : preset.envMapIntensity;
 
   if (!preserveExactColor && finalColor.r > 0.95 && finalColor.g > 0.95 && finalColor.b > 0.95) {
     finalColor.multiplyScalar(MATERIAL_CONFIG.whiteColorMultiplier);
@@ -39,9 +124,9 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
 
   const material = new THREE.MeshStandardMaterial({
     color: finalColor,
-    roughness: MATERIAL_CONFIG.roughness,
-    metalness: MATERIAL_CONFIG.metalness,
-    envMapIntensity: MATERIAL_CONFIG.envMapIntensity,
+    roughness: preset.roughness,
+    metalness: preset.metalness,
+    envMapIntensity,
     side,
     transparent: effectiveTransparent,
     opacity: effectiveOpacity,
@@ -58,9 +143,10 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
   if (name) material.name = name;
 
   material.userData.originalColor = finalColor.clone();
-  material.userData.originalRoughness = MATERIAL_CONFIG.roughness;
-  material.userData.originalMetalness = MATERIAL_CONFIG.metalness;
-  material.userData.originalEnvMapIntensity = MATERIAL_CONFIG.envMapIntensity;
+  material.userData.materialPreset = presetName;
+  material.userData.originalRoughness = preset.roughness;
+  material.userData.originalMetalness = preset.metalness;
+  material.userData.originalEnvMapIntensity = envMapIntensity;
 
   return material;
 }

@@ -14,6 +14,70 @@ interface ParsedInspectionResult {
   issues?: unknown[]
 }
 
+const issueIncludesAny = (text: string, patterns: string[]) => patterns.some(pattern => text.includes(pattern))
+
+const inferIssueCategory = (text: string) => {
+  if (issueIncludesAny(text, ['mass', 'inertia', '质量', '惯性'])) {
+    return 'physical'
+  }
+
+  if (issueIncludesAny(text, ['frame', 'origin', 'axis', 'joint', '坐标', '原点', '轴', '关节'])) {
+    return 'kinematics'
+  }
+
+  if (issueIncludesAny(text, ['name', '命名', '名称'])) {
+    return 'naming'
+  }
+
+  if (issueIncludesAny(text, ['symmetry', 'left', 'right', '对称', '左右'])) {
+    return 'symmetry'
+  }
+
+  if (issueIncludesAny(text, ['motor', 'hardware', 'armature', 'torque', 'velocity', '电机', '硬件', '电枢', '力矩', '速度'])) {
+    return 'hardware'
+  }
+
+  return undefined
+}
+
+const inferIssueItemId = (
+  text: string,
+  categoryId: string | undefined,
+  selectedItems?: Record<string, string[]>
+) => {
+  if (!categoryId || !selectedItems?.[categoryId]?.length) {
+    return undefined
+  }
+
+  const selectedItemIds = new Set(selectedItems[categoryId])
+
+  if (
+    categoryId === 'kinematics' &&
+    selectedItemIds.has('frame_alignment') &&
+    issueIncludesAny(text, ['frame', 'origin', 'coordinate', 'collinear', '坐标', '原点', '共线'])
+  ) {
+    return 'frame_alignment'
+  }
+
+  if (
+    categoryId === 'hardware' &&
+    selectedItemIds.has('armature_config') &&
+    issueIncludesAny(text, ['armature', 'rotor inertia', 'equivalent inertia', '电枢', '转子', '惯量'])
+  ) {
+    return 'armature_config'
+  }
+
+  if (
+    categoryId === 'hardware' &&
+    selectedItemIds.has('motor_limits') &&
+    issueIncludesAny(text, ['effort', 'velocity', 'torque', 'peak', 'rated', '限位', '力矩', '速度', '额定', '峰值'])
+  ) {
+    return 'motor_limits'
+  }
+
+  return undefined
+}
+
 export function processInspectionResults(
   rawResults: unknown,
   selectedItems?: Record<string, string[]>,
@@ -23,23 +87,18 @@ export function processInspectionResults(
   const parsedResult = (rawResults || {}) as ParsedInspectionResult
 
   const issues = ((parsedResult.issues || []) as Record<string, unknown>[]).map(issue => {
+    const issueText = `${String(issue.title || '').toLowerCase()} ${String(issue.description || '').toLowerCase()}`
+
     if (issue.score === undefined) {
       issue.score = calculateItemScore(issue.type as IssueType, true)
     }
 
     if (!issue.category) {
-      const title = (issue.title as string)?.toLowerCase() || ''
-      if (title.includes('mass') || title.includes('inertia')) {
-        issue.category = 'physical'
-      } else if (title.includes('axis') || title.includes('joint')) {
-        issue.category = 'kinematics'
-      } else if (title.includes('name')) {
-        issue.category = 'naming'
-      } else if (title.includes('symmetry') || title.includes('left') || title.includes('right')) {
-        issue.category = 'symmetry'
-      } else if (title.includes('motor') || title.includes('hardware')) {
-        issue.category = 'hardware'
-      }
+      issue.category = inferIssueCategory(issueText)
+    }
+
+    if (!issue.itemId) {
+      issue.itemId = inferIssueItemId(issueText, issue.category as string | undefined, selectedItems)
     }
 
     return issue

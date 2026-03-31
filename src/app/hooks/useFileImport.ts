@@ -3,8 +3,9 @@
  * Handles importing URDF, MJCF, USD, Xacro files and ZIP packages
  */
 import { useCallback } from 'react';
-import type { MotorSpec, RobotData, RobotFile } from '@/types';
+import type { RobotData, RobotFile } from '@/types';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
+import { mergeMotorLibraryEntries } from '@/shared/data/motorLibraryMerge';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useSelectionStore, useUIStore } from '@/store';
 import { createAssetUrls, importProject } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
@@ -20,9 +21,16 @@ import { buildStandalonePackageAssetImportWarning } from '@/app/utils/importPack
 import { primePreResolvedRobotImports } from '@/app/utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from '@/app/utils/usdSelectionPrewarm';
 
+export interface ImportPreparationOverlayState {
+  label: string;
+  detail?: string;
+}
+
 interface UseFileImportOptions {
   onLoadRobot?: (file: RobotFile) => void;
   onShowToast?: (message: string, type?: 'info' | 'success') => void;
+  onImportPreparationStateChange?: (state: ImportPreparationOverlayState | null) => void;
+  projectImporter?: typeof importProject;
 }
 
 function revokeBlobUrls(urls: readonly string[]): void {
@@ -49,8 +57,23 @@ function pickPreparedPreferredFile(
   return files.find((file) => file.format !== 'mesh') ?? files[0] ?? null;
 }
 
+function waitForNextPaint(): Promise<void> {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 export function useFileImport(options: UseFileImportOptions = {}) {
-  const { onLoadRobot, onShowToast } = options;
+  const {
+    onLoadRobot,
+    onShowToast,
+    onImportPreparationStateChange,
+    projectImporter = importProject,
+  } = options;
 
   const loadRobot = useCallback(async (
     file: RobotFile,
@@ -84,6 +107,10 @@ export function useFileImport(options: UseFileImportOptions = {}) {
     const selectionState = useSelectionStore.getState();
     const assemblyStoreState = useAssemblyStore.getState();
     const t = translations[uiState.lang];
+    const inputFiles = Array.from(files);
+    const shouldShowPreparationOverlay = inputFiles.length > 1
+      || inputFiles.some((file) => Boolean(file.webkitRelativePath))
+      || (inputFiles.length === 1 && inputFiles[0].name.toLowerCase().endsWith('.zip'));
 
     if (onShowToast && uiState.showImportWarning) {
       onShowToast(t.privacyNoticeLocalProcessing, 'success');
@@ -91,15 +118,25 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
     const createdBlobUrls: string[] = [];
     let importedAssetsCommitted = false;
+    let importOverlayActive = false;
+
+    const setImportPreparationOverlay = (state: ImportPreparationOverlayState | null) => {
+      onImportPreparationStateChange?.(state);
+      importOverlayActive = state !== null;
+    };
+
+    const clearImportPreparationOverlay = () => {
+      if (!importOverlayActive) {
+        return;
+      }
+
+      setImportPreparationOverlay(null);
+    };
 
     try {
       if (files.length === 1 && files[0].name.toLowerCase().endsWith('.usp')) {
-        const result = await importProject(files[0], uiState.lang);
+        const result = await projectImporter(files[0], uiState.lang);
         const { manifest, assets: newAssetUrls, availableFiles: newFiles } = result;
-
-        if (manifest.ui?.appMode) {
-          uiState.setAppMode(manifest.ui.appMode as never);
-        }
 
         assetsState.clearAssets();
         assetsState.addAssets(newAssetUrls);
@@ -144,8 +181,16 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       const hadExistingAvailableFiles = assetsState.availableFiles.length > 0;
       const hadSelectedFile = Boolean(assetsState.selectedFile);
 
+      if (shouldShowPreparationOverlay) {
+        setImportPreparationOverlay({
+          label: t.importPreparationLoadingTitle,
+          detail: t.importPreparationLoadingDetail,
+        });
+        await waitForNextPaint();
+      }
+
       const preparedImportPayload = await prepareImportPayloadWithWorker({
-        files: Array.from(files),
+        files: inputFiles,
         existingPaths: [
           ...assetsState.availableFiles.map((file) => file.name),
           ...Object.keys(assetsState.assets),
@@ -177,26 +222,12 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       ));
 
       if (renamedLibraryFiles.length > 0) {
-        const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-        renamedLibraryFiles.forEach((entry) => {
-          try {
-            const parts = entry.path.split('/');
-            if (parts.length >= 2) {
-              const brand = parts[parts.length - 2];
-              const spec = JSON.parse(entry.content) as MotorSpec;
-              if (!newLibrary[brand]) {
-                newLibrary[brand] = [];
-              }
-              if (!newLibrary[brand].some((motor) => motor.name === spec.name)) {
-                newLibrary[brand].push(spec);
-              }
-            }
-          } catch (error) {
-            console.error('Failed to parse motor spec', entry.path, error);
-            motorSpecParseFailures.push(entry.path);
-          }
+        const mergeResult = mergeMotorLibraryEntries(renamedLibraryFiles, DEFAULT_MOTOR_LIBRARY);
+        motorSpecParseFailures.push(...mergeResult.parseFailures);
+        mergeResult.parseFailures.forEach((path) => {
+          console.error('Failed to parse motor spec', path);
         });
-        assetsState.setMotorLibrary(newLibrary);
+        assetsState.setMotorLibrary(mergeResult.library);
       }
 
       const newAssets = createAssetUrls(renamedAssetFiles);
@@ -301,20 +332,27 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             prewarmUsdSelectionInBackground(preferredFile, mergedFiles, mergedAssets);
             if (onLoadRobot) {
               onLoadRobot(preferredFile);
+              if (shouldShowPreparationOverlay) {
+                await waitForNextPaint();
+                clearImportPreparationOverlay();
+              }
             } else {
               await loadRobot(preferredFile, mergedFiles, mergedAssets, mergedAllFileContents);
+              clearImportPreparationOverlay();
             }
-            uiState.setAppMode('detail');
           } else if (!hadSelectedFile) {
             uiState.setSidebarTab('structure');
             prewarmUsdSelectionInBackground(preferredFile, mergedFiles, mergedAssets);
             if (onLoadRobot) {
               onLoadRobot(preferredFile);
+              if (shouldShowPreparationOverlay) {
+                await waitForNextPaint();
+                clearImportPreparationOverlay();
+              }
             } else {
               await loadRobot(preferredFile, mergedFiles, mergedAssets, mergedAllFileContents);
+              clearImportPreparationOverlay();
             }
-            uiState.setAppMode('detail');
-
             if (onShowToast) {
               onShowToast(
                 t.addedFilesToAssetLibrary.replace('{count}', String(renamedRobotFilesWithSources.length)),
@@ -378,8 +416,10 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         revokeBlobUrls(createdBlobUrls);
       }
       alert(translations[useUIStore.getState().lang].importFailedCheckFiles);
+    } finally {
+      clearImportPreparationOverlay();
     }
-  }, [loadRobot, onLoadRobot, onShowToast]);
+  }, [loadRobot, onImportPreparationStateChange, onLoadRobot, onShowToast]);
 
   return {
     handleImport,

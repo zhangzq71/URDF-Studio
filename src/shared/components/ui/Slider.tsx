@@ -1,5 +1,10 @@
 import React from 'react';
 
+export interface SliderMark {
+  value: number;
+  label: React.ReactNode;
+}
+
 interface SliderProps {
   value: number;
   min: number;
@@ -15,6 +20,9 @@ interface SliderProps {
   icon?: React.ReactNode;
   className?: string;
   disabled?: boolean;
+  marks?: SliderMark[];
+  snapToMarks?: boolean;
+  solidThumb?: boolean;
 }
 
 export const Slider: React.FC<SliderProps> = ({
@@ -32,6 +40,9 @@ export const Slider: React.FC<SliderProps> = ({
   icon,
   className = '',
   disabled = false,
+  marks,
+  snapToMarks = false,
+  solidThumb = false,
 }) => {
   const safeMin = Math.min(min, max);
   const safeMax = Math.max(min, max);
@@ -42,8 +53,32 @@ export const Slider: React.FC<SliderProps> = ({
     if (!Number.isFinite(nextValue)) return safeMin;
     return Math.min(Math.max(nextValue, safeMin), safeMax);
   }, [safeMin, safeMax]);
+  const resolvedMarks = React.useMemo(
+    () => (marks ?? [])
+      .map((mark) => ({
+        ...mark,
+        value: clampToRange(mark.value),
+      }))
+      .sort((left, right) => left.value - right.value),
+    [clampToRange, marks],
+  );
   const snapToStep = React.useCallback((nextValue: number) => {
     const clampedValue = clampToRange(nextValue);
+
+    if (snapToMarks && resolvedMarks.length > 0) {
+      let nearestMarkValue = resolvedMarks[0].value;
+      let smallestDistance = Math.abs(clampedValue - nearestMarkValue);
+
+      for (let index = 1; index < resolvedMarks.length; index += 1) {
+        const distance = Math.abs(clampedValue - resolvedMarks[index].value);
+        if (distance < smallestDistance) {
+          smallestDistance = distance;
+          nearestMarkValue = resolvedMarks[index].value;
+        }
+      }
+
+      return nearestMarkValue;
+    }
 
     if (!Number.isFinite(step) || step <= 0) {
       return clampedValue;
@@ -54,7 +89,7 @@ export const Slider: React.FC<SliderProps> = ({
     const precision = Math.min(stepDecimals + 2, 10);
 
     return clampToRange(Number(steppedValue.toFixed(precision)));
-  }, [clampToRange, safeMin, step]);
+  }, [clampToRange, resolvedMarks, safeMin, snapToMarks, step]);
 
   const [localValue, setLocalValue] = React.useState(() => clampToRange(value));
   const [isDragging, setIsDragging] = React.useState(false);
@@ -186,6 +221,9 @@ export const Slider: React.FC<SliderProps> = ({
       : isThumbHovered
         ? 'var(--ui-slider-thumb-shadow-hover)'
         : 'var(--ui-slider-thumb-shadow)';
+  const resolvedThumbBoxShadow = solidThumb
+    ? `0 0 0 2px var(--ui-panel-bg), ${thumbBoxShadow}`
+    : thumbBoxShadow;
   return (
     <div className={`w-full ${className} touch-none`}>
       {(label || showValue) && (
@@ -206,88 +244,121 @@ export const Slider: React.FC<SliderProps> = ({
         </div>
       )}
       
-      <div
-        ref={sliderRef}
-        data-testid="ui-slider-track"
-        className="group relative flex h-6 select-none items-center"
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          handleTrackPointerDown(event.clientX);
-        }}
-        onMouseDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          handleTrackPointerDown(event.clientX);
-        }}
-        onTouchStart={(event) => {
-          const touch = event.touches[0];
-          if (!touch) {
-            return;
-          }
+      <div>
+        <div
+          ref={sliderRef}
+          data-testid="ui-slider-track"
+          className="group relative flex h-6 select-none items-center"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleTrackPointerDown(event.clientX);
+          }}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleTrackPointerDown(event.clientX);
+          }}
+          onTouchStart={(event) => {
+            const touch = event.touches[0];
+            if (!touch) {
+              return;
+            }
 
-          event.preventDefault();
-          event.stopPropagation();
-          handleTrackPointerDown(touch.clientX);
-        }}
-        onPointerEnter={(e) => updateThumbHover(e.clientX, e.clientY)}
-        onPointerMove={(e) => updateThumbHover(e.clientX, e.clientY)}
-        onPointerLeave={() => setIsThumbHovered(false)}
-      >
-        {/* Track Background */}
-        <div className="absolute h-[3px] w-full overflow-hidden rounded-full bg-slider-track">
-          {/* Filled Track */}
-          <div 
-            className="h-full bg-slider-accent transition-colors duration-200"
-            style={{ width: `${clampedPercentage}%` }}
+            event.preventDefault();
+            event.stopPropagation();
+            handleTrackPointerDown(touch.clientX);
+          }}
+          onPointerEnter={(e) => updateThumbHover(e.clientX, e.clientY)}
+          onPointerMove={(e) => updateThumbHover(e.clientX, e.clientY)}
+          onPointerLeave={() => setIsThumbHovered(false)}
+        >
+          {/* Track Background */}
+          <div className="absolute h-[3px] w-full overflow-hidden rounded-full bg-slider-track">
+            {/* Filled Track */}
+            <div
+              className="h-full bg-slider-accent transition-colors duration-200"
+              style={{ width: `${clampedPercentage}%` }}
+            />
+          </div>
+          <input
+            data-testid="ui-slider-input"
+            type="range"
+            min={safeMin}
+            max={safeMax}
+            step={step}
+            value={localValue}
+            onInput={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
+            onChange={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
+            onPointerDown={(e) => {
+              e.preventDefault();
+            }}
+            onPointerUp={stopDragging}
+            onPointerCancel={stopDragging}
+            onMouseDown={(e) => {
+              e.preventDefault();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+            }}
+            disabled={disabled}
+            className="pointer-events-none absolute -top-1.5 z-0 h-8 appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed [&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent"
+            style={{
+              left: `-${halfThumb}px`,
+              width: `calc(100% + ${thumbWidth}px)`,
+            }}
+          />
+          {/* Thumb */}
+          <div
+            className={`pointer-events-none absolute top-1/2 z-10 h-[18px] w-[18px] -translate-y-1/2 rounded-full transition-[transform,box-shadow] duration-150 ease-out group-focus-within:scale-105 group-focus-within:ring-4 group-focus-within:ring-system-blue/15 ${
+              disabled
+                ? 'opacity-60'
+                : isDragging
+                  ? 'scale-110 ring-4 ring-system-blue/15'
+                  : isThumbHovered
+                    ? 'scale-[1.04]'
+                    : 'scale-100'
+            }`}
+            data-testid="ui-slider-thumb"
+            data-hovered={isThumbHovered ? 'true' : 'false'}
+            style={{
+              left: `calc(${clampedPercentage}% - ${halfThumb}px)`,
+              backgroundColor: 'var(--ui-slider-thumb-bg)',
+              border: '1px solid var(--ui-slider-thumb-border)',
+              boxShadow: resolvedThumbBoxShadow,
+            }}
           />
         </div>
-        <input
-          data-testid="ui-slider-input"
-          type="range"
-          min={safeMin}
-          max={safeMax}
-          step={step}
-          value={localValue}
-          onInput={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
-          onChange={(e) => handleChange(parseFloat((e.target as HTMLInputElement).value))}
-          onPointerDown={(e) => {
-            e.preventDefault();
-          }}
-          onPointerUp={stopDragging}
-          onPointerCancel={stopDragging}
-          onMouseDown={(e) => {
-            e.preventDefault();
-          }}
-          onClick={(e) => {
-            e.preventDefault();
-          }}
-          disabled={disabled}
-          className="pointer-events-none absolute -top-1.5 z-10 h-8 appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed [&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent"
-          style={{
-            left: `-${halfThumb}px`,
-            width: `calc(100% + ${thumbWidth}px)`,
-          }}
-        />
-        {/* Thumb */}
-        <div
-          className={`pointer-events-none absolute top-1/2 h-[18px] w-[18px] -translate-y-1/2 rounded-full transition-[transform,box-shadow] duration-150 ease-out group-focus-within:scale-105 group-focus-within:ring-4 group-focus-within:ring-system-blue/15 ${
-            disabled
-              ? 'opacity-60'
-              : isDragging
-                ? 'scale-110 ring-4 ring-system-blue/15'
-                : isThumbHovered
-                  ? 'scale-[1.04]'
-                  : 'scale-100'
-          }`}
-          data-hovered={isThumbHovered ? 'true' : 'false'}
-          style={{
-            left: `calc(${clampedPercentage}% - ${halfThumb}px)`,
-            backgroundColor: 'var(--ui-slider-thumb-bg)',
-            border: '1px solid var(--ui-slider-thumb-border)',
-            boxShadow: thumbBoxShadow,
-          }}
-        />
+        {resolvedMarks.length > 0 && (
+          <div className="relative mt-2 h-7 px-0.5" data-testid="ui-slider-marks">
+            {resolvedMarks.map((mark, index) => {
+              const markPercentage = range > 0
+                ? ((mark.value - safeMin) / range) * 100
+                : 0;
+              const alignmentClass = index === 0
+                ? 'translate-x-0'
+                : index === resolvedMarks.length - 1
+                  ? '-translate-x-full'
+                  : '-translate-x-1/2';
+
+              return (
+                <div
+                  key={`${mark.value}-${index}`}
+                  className={`absolute top-0 ${alignmentClass} text-center`}
+                  style={{ left: `${markPercentage}%` }}
+                >
+                  <div className="mx-auto h-1.5 w-px rounded-full bg-border-black/70" />
+                  <div className={`mt-1 whitespace-nowrap text-[9px] font-medium ${
+                    disabled ? 'text-text-tertiary/60' : 'text-text-tertiary'
+                  }`}
+                  >
+                    {mark.label}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -78,7 +78,7 @@ export interface PrepareImportWorkerRequest {
 export interface PrepareImportWorkerResponse {
   type: 'prepare-import-result' | 'prepare-import-error';
   requestId: number;
-  payload?: import('./importPreparationTransfer').PreparedImportWorkerPayload;
+  payload?: PreparedImportPayload;
   error?: string;
 }
 

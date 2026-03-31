@@ -8,7 +8,7 @@ import {
   createInertiaBox,
   createJointAxisViz,
   createOriginAxes,
-} from './visualizationFactories';
+} from './visualizationFactories.ts';
 
 interface SyncOriginAxesVisualizationOptions {
   links: THREE.Object3D[];
@@ -36,10 +36,25 @@ interface SyncInertiaVisualizationOptions {
   pooledLinkSize?: THREE.Vector3;
 }
 
+interface SyncLinkHelperInteractionStateOptions {
+  links: THREE.Object3D[];
+  hoveredLinkId?: string | null;
+  selectedLinkId?: string | null;
+}
+
+interface SyncJointHelperInteractionStateOptions {
+  joints: THREE.Object3D[];
+  hoveredJointId?: string | null;
+  selectedJointId?: string | null;
+}
+
 const scratchLinkBox = new THREE.Box3();
 const scratchLinkSize = new THREE.Vector3();
 const scratchEuler = new THREE.Euler();
 const scratchQuaternion = new THREE.Quaternion();
+const scratchHelperObjects = new Set<THREE.Object3D>();
+
+type HelperInteractionState = 'idle' | 'selected' | 'hovered';
 
 function updateVisible(object: THREE.Object3D, visible: boolean): boolean {
   if (object.visible === visible) return false;
@@ -131,6 +146,172 @@ function updateRenderOrder(object: THREE.Object3D & { renderOrder?: number }, re
   if (object.renderOrder === renderOrder) return false;
   object.renderOrder = renderOrder;
   return true;
+}
+
+function resolveHelperInteractionState(isHovered: boolean, isSelected: boolean): HelperInteractionState {
+  if (isHovered) return 'hovered';
+  if (isSelected) return 'selected';
+  return 'idle';
+}
+
+function updateInteractionScale(object: THREE.Object3D, multiplier: number): boolean {
+  const previousMultiplier = typeof object.userData.__interactionScaleMultiplier === 'number'
+    ? object.userData.__interactionScaleMultiplier
+    : 1;
+  const baseScaleX = object.scale.x / previousMultiplier;
+  const baseScaleY = object.scale.y / previousMultiplier;
+  const baseScaleZ = object.scale.z / previousMultiplier;
+  const nextScaleX = baseScaleX * multiplier;
+  const nextScaleY = baseScaleY * multiplier;
+  const nextScaleZ = baseScaleZ * multiplier;
+
+  if (
+    object.scale.x === nextScaleX
+    && object.scale.y === nextScaleY
+    && object.scale.z === nextScaleZ
+  ) {
+    object.userData.__interactionScaleMultiplier = multiplier;
+    return false;
+  }
+
+  object.scale.set(nextScaleX, nextScaleY, nextScaleZ);
+  object.userData.__interactionScaleMultiplier = multiplier;
+  return true;
+}
+
+function updateInteractionRenderOrder(
+  object: THREE.Object3D & { renderOrder?: number },
+  offset: number,
+): boolean {
+  const previousOffset = typeof object.userData.__interactionRenderOrderOffset === 'number'
+    ? object.userData.__interactionRenderOrderOffset
+    : 0;
+  const baseRenderOrder = object.renderOrder - previousOffset;
+  const nextRenderOrder = baseRenderOrder + offset;
+
+  if (object.renderOrder === nextRenderOrder) {
+    object.userData.__interactionRenderOrderOffset = offset;
+    return false;
+  }
+
+  object.renderOrder = nextRenderOrder;
+  object.userData.__interactionRenderOrderOffset = offset;
+  return true;
+}
+
+function updateInteractionOpacity(
+  material: THREE.Material & {
+    opacity?: number;
+    transparent?: boolean;
+    needsUpdate?: boolean;
+  },
+  multiplier: number,
+): boolean {
+  if (typeof material.opacity !== 'number') {
+    return false;
+  }
+
+  const previousMultiplier = typeof material.userData.__interactionOpacityMultiplier === 'number'
+    ? material.userData.__interactionOpacityMultiplier
+    : 1;
+  const baseOpacity = material.opacity / previousMultiplier;
+  const nextOpacity = THREE.MathUtils.clamp(baseOpacity * multiplier, 0, 1);
+  const nextTransparent = material.transparent || nextOpacity < 1;
+  let changed = false;
+
+  if (material.opacity !== nextOpacity) {
+    material.opacity = nextOpacity;
+    changed = true;
+  }
+
+  if (material.transparent !== nextTransparent) {
+    material.transparent = nextTransparent;
+    changed = true;
+  }
+
+  if (changed) {
+    material.needsUpdate = true;
+  }
+
+  material.userData.__interactionOpacityMultiplier = multiplier;
+  return changed;
+}
+
+function updateInteractionColor(
+  material: THREE.Material & {
+    color?: THREE.Color;
+    needsUpdate?: boolean;
+  },
+  activeColorHex?: number,
+): boolean {
+  if (!material.color?.isColor) {
+    return false;
+  }
+
+  const previousOverride = typeof material.userData.__interactionColorOverride === 'number'
+    ? material.userData.__interactionColorOverride
+    : null;
+  const baseColorHex = previousOverride !== null
+    ? Number(material.userData.__interactionBaseColorHex ?? material.color.getHex())
+    : material.color.getHex();
+  const nextColorHex = activeColorHex ?? baseColorHex;
+
+  material.userData.__interactionBaseColorHex = baseColorHex;
+  material.userData.__interactionColorOverride = activeColorHex ?? null;
+
+  if (material.color.getHex() === nextColorHex) {
+    return false;
+  }
+
+  material.color.setHex(nextColorHex);
+  material.needsUpdate = true;
+  return true;
+}
+
+function collectUniqueHelperObjects(...objects: Array<THREE.Object3D | null | undefined>): THREE.Object3D[] {
+  scratchHelperObjects.clear();
+
+  objects.forEach((object) => {
+    if (object) {
+      scratchHelperObjects.add(object);
+    }
+  });
+
+  return Array.from(scratchHelperObjects);
+}
+
+function getLinkHelperObjects(link: any): THREE.Object3D[] {
+  return collectUniqueHelperObjects(
+    link.userData.__originAxes as THREE.Object3D | undefined,
+    link.children.find((child: any) => child.name === '__link_axes_helper__'),
+    link.userData.__comVisual as THREE.Object3D | undefined,
+    link.userData.__inertiaBox as THREE.Object3D | undefined,
+  );
+}
+
+function getJointHelperObjects(joint: any): THREE.Object3D[] {
+  return collectUniqueHelperObjects(
+    joint.userData.__jointAxisViz as THREE.Object3D | undefined,
+    joint.children.find((child: any) => child.name === '__joint_axis_helper__'),
+  );
+}
+
+function getHelperScaleMultiplier(state: HelperInteractionState, hoveredScale: number, selectedScale: number): number {
+  if (state === 'hovered') return hoveredScale;
+  if (state === 'selected') return selectedScale;
+  return 1;
+}
+
+function getHelperRenderOrderOffset(state: HelperInteractionState): number {
+  if (state === 'hovered') return 40;
+  if (state === 'selected') return 20;
+  return 0;
+}
+
+function getHelperOpacityMultiplier(state: HelperInteractionState, hoveredOpacity: number, selectedOpacity: number): number {
+  if (state === 'hovered') return hoveredOpacity;
+  if (state === 'selected') return selectedOpacity;
+  return 1;
 }
 
 export function syncOriginAxesVisualizationForLinks({
@@ -299,7 +480,7 @@ export function syncInertiaVisualizationForLinks({
     if (!vizGroup) {
       vizGroup = new THREE.Group();
       vizGroup.name = '__inertia_visual__';
-      vizGroup.userData = { isGizmo: true };
+      vizGroup.userData = { isGizmo: true, isSelectableHelper: true };
       link.add(vizGroup);
       link.userData.__inertiaVisualGroup = vizGroup;
       changed = true;
@@ -408,6 +589,102 @@ export function syncInertiaVisualizationForLinks({
     }
 
     changed = updateVisible(vizGroup, showInertia || showCenterOfMass) || changed;
+  });
+
+  return changed;
+}
+
+export function syncLinkHelperInteractionStateForLinks({
+  links,
+  hoveredLinkId = null,
+  selectedLinkId = null,
+}: SyncLinkHelperInteractionStateOptions): boolean {
+  let changed = false;
+
+  links.forEach((link: any) => {
+    if (!link.isURDFLink) return;
+
+    const state = resolveHelperInteractionState(
+      hoveredLinkId === link.name,
+      selectedLinkId === link.name,
+    );
+    const helperObjects = getLinkHelperObjects(link);
+
+    helperObjects.forEach((helperObject) => {
+      const helperName = helperObject.name;
+      const scaleMultiplier = helperName === '__com_visual__'
+        ? getHelperScaleMultiplier(state, 1.16, 1.08)
+        : helperName === '__inertia_box__'
+          ? getHelperScaleMultiplier(state, 1.02, 1.01)
+          : getHelperScaleMultiplier(state, 1.14, 1.05);
+      const renderOrderOffset = getHelperRenderOrderOffset(state);
+
+      changed = updateInteractionScale(helperObject, scaleMultiplier) || changed;
+
+      helperObject.traverse((child: any) => {
+        if (child.isMesh || child.type === 'LineSegments') {
+          changed = updateInteractionRenderOrder(child, renderOrderOffset) || changed;
+        }
+
+        if (!child.material) {
+          return;
+        }
+
+        const opacityMultiplier = helperName === '__inertia_box__'
+          ? child.type === 'LineSegments'
+            ? getHelperOpacityMultiplier(state, 1.45, 1.2)
+            : getHelperOpacityMultiplier(state, 1.8, 1.45)
+          : helperName === '__com_visual__'
+            ? getHelperOpacityMultiplier(state, 1.08, 1.03)
+            : getHelperOpacityMultiplier(state, 1, 1);
+
+        changed = updateInteractionOpacity(child.material, opacityMultiplier) || changed;
+      });
+    });
+  });
+
+  return changed;
+}
+
+export function syncJointHelperInteractionStateForJoints({
+  joints,
+  hoveredJointId = null,
+  selectedJointId = null,
+}: SyncJointHelperInteractionStateOptions): boolean {
+  let changed = false;
+
+  joints.forEach((joint: any) => {
+    if (!joint.isURDFJoint || joint.jointType === 'fixed') return;
+
+    const state = resolveHelperInteractionState(
+      hoveredJointId === joint.name,
+      selectedJointId === joint.name,
+    );
+    const helperObjects = getJointHelperObjects(joint);
+    const activeColorHex = state === 'hovered'
+      ? 0xfbbf24
+      : state === 'selected'
+        ? 0xf472b6
+        : undefined;
+
+    helperObjects.forEach((helperObject) => {
+      changed = updateInteractionScale(
+        helperObject,
+        getHelperScaleMultiplier(state, 1.16, 1.06),
+      ) || changed;
+
+      helperObject.traverse((child: any) => {
+        if (child.isMesh || child.type === 'LineSegments') {
+          changed = updateInteractionRenderOrder(child, getHelperRenderOrderOffset(state)) || changed;
+        }
+
+        if (!child.material) {
+          return;
+        }
+
+        changed = updateInteractionColor(child.material, activeColorHex) || changed;
+      });
+    });
   });
 
   return changed;

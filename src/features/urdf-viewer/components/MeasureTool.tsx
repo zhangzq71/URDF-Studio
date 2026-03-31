@@ -24,8 +24,8 @@ const MEASURE_AXIS_COLORS = {
 const MEASURE_AXIS_EPSILON = 1e-6;
 const MEASURE_RENDER_ORDER = 2400;
 const MEASURE_LABEL_Z_INDEX_RANGE: [number, number] = [120, 0];
-const MEASURE_TOTAL_LABEL_DISTANCE_FACTOR = 6;
-const MEASURE_AXIS_LABEL_DISTANCE_FACTOR = 5.4;
+const MEASURE_TOTAL_LABEL_DISTANCE_FACTOR = 1.05;
+const MEASURE_AXIS_LABEL_DISTANCE_FACTOR = 0.95;
 const MEASURE_AXIS_DASH_SIZE = 0.03;
 const MEASURE_AXIS_GAP_SIZE = 0.018;
 const MEASURE_SELECTION_COLORS = {
@@ -34,10 +34,9 @@ const MEASURE_SELECTION_COLORS = {
     hover: '#f59e0b',
 } as const;
 const MEASURE_MARKER_Z_INDEX_RANGE: [number, number] = [132, 0];
-const MEASURE_MARKER_DISTANCE_FACTOR = 4.8;
 const MEASURE_PREVIEW_LINE_COLOR = '#f59e0b';
-const MEASURE_PREVIEW_LABEL_DISTANCE_FACTOR = 5.2;
-const SCENE_LABEL_DECIMALS = 3;
+const MEASURE_PREVIEW_LABEL_DISTANCE_FACTOR = 0.95;
+const SCENE_LABEL_DECIMALS = 2;
 const LABEL_OFFSET_PATTERN = [
     new THREE.Vector3(0, 1, 0),
     new THREE.Vector3(1, 0.45, 0),
@@ -123,7 +122,7 @@ const MeasurePreviewItem = memo(({
         [end.point, start.point],
     );
     const labelPosition = useMemo(
-        () => midpoint.clone().add(new THREE.Vector3(0, clamp(metrics.distance * 0.03, 0.012, 0.028), 0)),
+        () => midpoint.clone().add(new THREE.Vector3(0, clamp(metrics.distance * 0.1, 0.04, 0.065), 0)),
         [metrics.distance, midpoint],
     );
 
@@ -167,7 +166,10 @@ const MeasurePreviewItem = memo(({
                 className="pointer-events-none select-none"
                 zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
             >
-                <div className="rounded-full border border-amber-200/30 bg-amber-500/92 px-2 py-[2px] font-mono text-[9px] font-semibold whitespace-nowrap text-white shadow-[0_8px_20px_rgba(15,23,42,0.3)]">
+                <div
+                    className="px-1 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap text-amber-50/98 tracking-[-0.01em]"
+                    style={{ textShadow: '0 2px 8px rgba(15, 23, 42, 0.78), 0 0 8px rgba(245, 158, 11, 0.55)' }}
+                >
                     {formatMeasurementDistance(metrics.distance)}
                 </div>
             </Html>
@@ -198,42 +200,24 @@ const MeasureTargetMarker = memo(({
     tone: string;
     badge: string;
 }) => {
-    const outerRadius = badge === '1' || badge === '2' ? 0.0052 : 0.0044;
-    const innerRadius = outerRadius * 0.48;
-    const labelPosition = useMemo(
-        () => target.point.clone().add(new THREE.Vector3(0, outerRadius * 3.4, 0)),
-        [outerRadius, target.point],
-    );
+    const outerRadius = badge === '2'
+        ? 0.0032
+        : badge === '1'
+            ? 0.0026
+            : 0.0024;
+    const innerRadius = outerRadius * 0.45;
+    const ringOpacity = badge === '2' ? 0.24 : 0.18;
 
     return (
         <group>
             <mesh position={target.point} renderOrder={MEASURE_RENDER_ORDER + 4}>
                 <sphereGeometry args={[outerRadius, 18, 18]} />
-                <meshBasicMaterial color={tone} depthTest={false} depthWrite={false} transparent opacity={0.18} />
+                <meshBasicMaterial color={tone} depthTest={false} depthWrite={false} transparent opacity={ringOpacity} />
             </mesh>
             <mesh position={target.point} renderOrder={MEASURE_RENDER_ORDER + 5}>
                 <sphereGeometry args={[innerRadius, 18, 18]} />
                 <meshBasicMaterial color={tone} depthTest={false} depthWrite={false} transparent opacity={0.96} />
             </mesh>
-            <Html
-                center
-                position={labelPosition}
-                transform
-                sprite
-                distanceFactor={MEASURE_MARKER_DISTANCE_FACTOR}
-                className="pointer-events-none select-none"
-                zIndexRange={MEASURE_MARKER_Z_INDEX_RANGE}
-            >
-                <div
-                    className="rounded-full border px-1.5 py-px font-mono text-[9px] font-semibold whitespace-nowrap text-white shadow-[0_8px_20px_rgba(15,23,42,0.28)]"
-                    style={{
-                        backgroundColor: `${tone}EE`,
-                        borderColor: `${tone}55`,
-                    }}
-                >
-                    {badge}
-                </div>
-            </Html>
         </group>
     );
 });
@@ -271,16 +255,16 @@ const MeasurementItem = memo(({
         [measurement.distance],
     );
     const labelLift = useMemo(
-        () => clamp(measurement.distance * 0.038, 0.012, 0.034),
+        () => clamp(measurement.distance * 0.07, 0.028, 0.05),
         [measurement.distance],
     );
     const labelOffset = useMemo(() => (
         LABEL_OFFSET_PATTERN[measurementIndex % LABEL_OFFSET_PATTERN.length]
             .clone()
-            .multiplyScalar(labelLift * 1.1)
+            .multiplyScalar(labelLift * 1.25)
     ), [labelLift, measurementIndex]);
     const totalLabelPosition = useMemo(
-        () => midpoint.clone().add(labelOffset).add(new THREE.Vector3(0, labelLift * 1.15, 0)),
+        () => midpoint.clone().add(labelOffset).add(new THREE.Vector3(0, labelLift * 1.7, 0)),
         [labelLift, labelOffset, midpoint],
     );
     const decompositionLabels = useMemo(() => (
@@ -343,8 +327,11 @@ const MeasurementItem = memo(({
                     zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
                 >
                     <div
-                        className="rounded-full border border-white/18 px-1.5 py-px font-mono text-[9px] font-semibold whitespace-nowrap text-white/96 shadow-[0_8px_22px_rgba(15,23,42,0.35)]"
-                        style={{ backgroundColor: `${MEASURE_AXIS_COLORS[segmentLabel.axis]}E6` }}
+                        className="px-1 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap tracking-[-0.01em]"
+                        style={{
+                            color: `${MEASURE_AXIS_COLORS[segmentLabel.axis]}F2`,
+                            textShadow: '0 2px 8px rgba(15, 23, 42, 0.82)',
+                        }}
                     >
                         {segmentLabel.text}
                     </div>
@@ -360,11 +347,12 @@ const MeasurementItem = memo(({
                 zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
             >
                 <div
-                    className={`group flex cursor-pointer items-center gap-1 rounded-full border px-2 py-[2px] font-mono text-[10px] font-semibold whitespace-nowrap text-white shadow-[0_10px_28px_rgba(15,23,42,0.38)] transition-colors pointer-events-auto ${
+                    className={`group flex cursor-pointer items-center gap-1 px-1 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap tracking-[-0.01em] transition-colors pointer-events-auto ${
                         isHovered
-                            ? 'border-red-300/35 bg-red-600/94'
-                            : 'border-red-200/22 bg-red-500/90 hover:border-red-300/35 hover:bg-red-600/94'
+                            ? 'text-red-50'
+                            : 'text-red-100/96 hover:text-red-50'
                     }`}
+                    style={{ textShadow: '0 2px 10px rgba(15, 23, 42, 0.82), 0 0 10px rgba(239, 68, 68, 0.52)' }}
                     onMouseEnter={onHover}
                     onMouseLeave={onLeave}
                     onClick={(event) => {
@@ -372,8 +360,8 @@ const MeasurementItem = memo(({
                         onDelete();
                     }}
                     title={deleteTooltip}
-                >
-                    G{measurement.groupIndex} {distance}
+                    >
+                        {distance}
                     <svg
                         className={`h-2.5 w-2.5 transition-opacity ${isHovered ? 'opacity-100' : 'opacity-0'}`}
                         fill="none"

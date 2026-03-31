@@ -6,6 +6,8 @@ import {
   normalizeArchivePath,
   PROJECT_USD_PREPARED_EXPORT_CACHES_FILE,
 } from './projectArchive';
+import type { ProjectArchiveEntryData } from './projectArchiveWorkerTransfer';
+import { appendProjectArchiveEntriesToZip } from './projectArchiveZip';
 
 const PROJECT_USD_PREPARED_EXPORT_CACHE_PREFIX = 'workspace/usd-prepared-export-caches';
 
@@ -29,13 +31,13 @@ function normalizeUsdCacheKey(path: string | null | undefined): string {
   return String(path || '').trim().replace(/^\/+/, '').split('?')[0];
 }
 
-export async function writeUsdPreparedExportCaches(
-  zip: JSZip,
+export async function buildUsdPreparedExportCacheEntries(
   caches: Record<string, UsdPreparedExportCache>,
-): Promise<void> {
+): Promise<Map<string, ProjectArchiveEntryData>> {
   const cacheEntries = Object.entries(caches).filter(([, cache]) => cache?.robotData);
+  const archiveEntries = new Map<string, ProjectArchiveEntryData>();
   if (cacheEntries.length === 0) {
-    return;
+    return archiveEntries;
   }
 
   const manifest: SerializedUsdPreparedExportCacheManifestEntry[] = [];
@@ -61,7 +63,7 @@ export async function writeUsdPreparedExportCaches(
         `mesh_${meshIndex + 1}.obj`,
       );
       const archivePath = `${cacheFolder}/meshes/${uniqueMeshPath}`;
-      zip.file(archivePath, new Uint8Array(await meshBlob.arrayBuffer()));
+      archiveEntries.set(archivePath, meshBlob);
       meshFiles.push({
         path: meshPath,
         archivePath,
@@ -75,7 +77,7 @@ export async function writeUsdPreparedExportCaches(
       meshFiles,
     };
 
-    zip.file(cacheFile, JSON.stringify(payload, null, 2));
+    archiveEntries.set(cacheFile, JSON.stringify(payload, null, 2));
     manifest.push({
       stageSourcePath: normalizedCacheKey,
       cacheFile,
@@ -83,8 +85,18 @@ export async function writeUsdPreparedExportCaches(
   }
 
   if (manifest.length > 0) {
-    zip.file(PROJECT_USD_PREPARED_EXPORT_CACHES_FILE, JSON.stringify(manifest, null, 2));
+    archiveEntries.set(PROJECT_USD_PREPARED_EXPORT_CACHES_FILE, JSON.stringify(manifest, null, 2));
   }
+
+  return archiveEntries;
+}
+
+export async function writeUsdPreparedExportCaches(
+  zip: JSZip,
+  caches: Record<string, UsdPreparedExportCache>,
+): Promise<void> {
+  const archiveEntries = await buildUsdPreparedExportCacheEntries(caches);
+  appendProjectArchiveEntriesToZip(zip, archiveEntries);
 }
 
 export async function readUsdPreparedExportCaches(

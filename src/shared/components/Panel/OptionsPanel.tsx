@@ -7,9 +7,7 @@ import React, { useRef, useState, useCallback, useEffect, ReactNode } from 'reac
 import { 
   Checkbox, 
   IconButton,
-  Slider as UiSlider, 
-  SegmentedControl as UiSegmentedControl,
-  SegmentedControlOption as UiSegmentedControlOption
+  Slider as UiSlider,
 } from '@/shared/components/ui';
 
 // Drag grip icon SVG path
@@ -98,6 +96,7 @@ interface SliderOptionProps {
   icon?: ReactNode;
   showPercentage?: boolean;
   labelClassName?: string;
+  disabled?: boolean;
 }
 
 export const SliderOption: React.FC<SliderOptionProps> = ({
@@ -113,6 +112,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   icon,
   showPercentage = false,
   labelClassName = '',
+  disabled = false,
 }) => {
   const paddingClass = compact
     ? `${indent ? 'pl-2.5' : ''} pr-1.5 pb-1`
@@ -131,6 +131,7 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         showValue={true}
         formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
         labelClassName={`text-[10px] text-text-tertiary mb-1 ${labelClassName}`}
+        disabled={disabled}
       />
     </div>
   );
@@ -201,41 +202,12 @@ export const ToggleSliderOption: React.FC<ToggleSliderOptionProps> = ({
           icon={sliderConfig.icon}
           showPercentage={sliderConfig.showPercentage}
           labelClassName={sliderConfig.labelClassName}
+          disabled={sliderConfig.disabled}
         />
       )}
     </div>
   );
 };
-
-// ============== Segmented Control (Apple Style with Blue Selection) ==============
-// Re-exporting or wrapping the UI component
-interface SegmentedControlProps<T> {
-  options: UiSegmentedControlOption<T>[];
-  value: T;
-  onChange: (value: T) => void;
-  size?: 'xs' | 'sm' | 'md';
-}
-
-export function SegmentedControl<T extends string | number>({
-  options,
-  value,
-  onChange,
-  size = 'xs', // Default to xs for option panels
-}: SegmentedControlProps<T>) {
-  return (
-    <div className="mb-1">
-      <UiSegmentedControl
-        options={options}
-        value={value}
-        onChange={onChange}
-        size={size}
-      />
-    </div>
-  );
-}
-
-// Deprecated: Use SegmentedControl instead
-export const ToggleButtonGroup = SegmentedControl;
 
 // ============== Section Divider ==============
 export const SectionDivider = () => (
@@ -328,6 +300,7 @@ interface GroundPlaneControlsProps {
   autoFitLabel?: string;
   autoFitIcon?: ReactNode;
   compact?: boolean;
+  disabled?: boolean;
   offsetLabel: string;
   offsetValue: number;
   onAutoFit?: () => void;
@@ -342,6 +315,7 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
   autoFitLabel,
   autoFitIcon,
   compact = true,
+  disabled = false,
   offsetLabel,
   offsetValue,
   onAutoFit,
@@ -363,13 +337,15 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
         compact={compact}
         indent={sliderIndent}
         labelClassName={sliderLabelClassName}
+        disabled={disabled}
       />
       <div className="flex gap-1.5 px-2 pb-2">
         {onAutoFit && autoFitLabel && (
           <button
             type="button"
             onClick={onAutoFit}
-            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25"
+            disabled={disabled}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-system-blue/10 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25 dark:disabled:hover:bg-system-blue/20"
           >
             {autoFitIcon}
             {autoFitLabel}
@@ -378,7 +354,8 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
         <button
           type="button"
           onClick={onReset}
-          className="flex items-center justify-center gap-1 rounded-md bg-element-bg px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover"
+          disabled={disabled}
+          className="flex items-center justify-center gap-1 rounded-md bg-element-bg px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-element-bg"
         >
           {resetLabel}
         </button>

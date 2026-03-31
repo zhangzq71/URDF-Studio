@@ -10,8 +10,8 @@ export interface DocumentLoadingOverlayPresentation {
 }
 
 export function shouldBlockDocumentViewport(state: DocumentLoadingOverlayLikeState): boolean {
-  return state.format === 'usd'
-    && (state.status === 'loading' || state.status === 'hydrating');
+  void state;
+  return false;
 }
 
 export function resolveDocumentLoadingOverlayPresentation(
@@ -21,11 +21,10 @@ export function resolveDocumentLoadingOverlayPresentation(
 
   return {
     blocksViewport,
-    overlayClassName: blocksViewport
-      ? 'absolute inset-0 z-20 flex items-center justify-center bg-google-light-bg/96 dark:bg-google-dark-bg/96 p-4 backdrop-blur-[3px]'
-      : 'pointer-events-none absolute inset-0 z-20 flex items-end justify-end p-4',
-    hudWrapperClassName: blocksViewport
-      ? 'pointer-events-none flex w-full items-center justify-center'
-      : undefined,
+    // Keep the workspace canvas visible while documents stream in so the user
+    // still sees the horizon, grid, and existing empty-stage context instead of
+    // a near-opaque white curtain.
+    overlayClassName: 'pointer-events-none absolute inset-0 z-20 flex items-end justify-end p-4',
+    hudWrapperClassName: undefined,
   };
 }

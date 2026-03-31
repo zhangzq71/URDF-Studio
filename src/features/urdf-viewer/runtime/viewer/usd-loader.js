@@ -119,6 +119,7 @@ export async function loadUsdStage(args) {
     const warmupRobotMetadata = true;
     const resolveRobotMetadataBeforeReady = parseBooleanFlag(params.get("resolveRobotMetadataBeforeReady"), !nonBlockingLoad);
     const requireCompleteRobotMetadata = parseBooleanFlag(params.get("requireCompleteRobotMetadata"), !nonBlockingLoad);
+    const disableCameraAutoFit = parseBooleanFlag(params.get("disableCameraAutoFit"), false);
     const maxCpuDraw = parseBooleanFlag(params.get("maxCpuDraw"), false);
     // Favor full-scene readiness during the loading phase to avoid long tail mesh hydration.
     const aggressiveInitialDraw = parseBooleanFlag(params.get("aggressiveInitialDraw"), !nonBlockingLoad);
@@ -348,6 +349,7 @@ export async function loadUsdStage(args) {
         driver: null,
         ready: false,
         drawFailed: false,
+        drawFailureReason: null,
         timeout: 40,
         endTimeCode: 0,
         normalizedPath,
@@ -606,7 +608,7 @@ export async function loadUsdStage(args) {
         stageSourcePath: normalizedPath,
         suppressMaterialBindingApiWarnings: true,
         // Parsing fallback xform ops from raw USDA layer text is extremely expensive
-        // on large Unitree assets; keep it opt-in via URL when needed for diagnostics.
+        // on large Unitree assets; keep this diagnostic fallback disabled by default.
         enableXformOpFallbackFromLayerText: parseBooleanFlag(params.get("enableXformOpFallbackFromLayerText"), false),
         // Proto stage sync is force-enabled to avoid slow per-mesh bridge calls.
         enableProtoBlobFastPath,
@@ -1020,7 +1022,10 @@ export async function loadUsdStage(args) {
         }
         catch (drawError) {
             state.drawFailed = true;
-            void drawError;
+            state.drawFailureReason = drawError instanceof Error
+                ? drawError.message
+                : String(drawError || 'unknown-draw-error');
+            console.error('[usd-loader] Initial Draw failed.', drawError);
             return false;
         }
         finally {
@@ -1044,6 +1049,12 @@ export async function loadUsdStage(args) {
     if (!isLoadStillActive())
         return state;
     const initialDrawStartMs = profileNow();
+    const shouldSliceInteractiveLoadWork = nonBlockingLoad && !strictOneShot;
+    const yieldBetweenInteractiveLoadSteps = async () => {
+        if (!shouldSliceInteractiveLoadWork)
+            return;
+        await yieldToMainThread(initialDrawYieldMs);
+    };
     const updateStreamingStatus = () => {
         const stats = getMeshLoadStats(window.renderInterface);
         const meshReadyPercent = Math.min(100, Math.round((stats.ready / Math.max(stats.total, 1)) * 100));
@@ -1060,8 +1071,14 @@ export async function loadUsdStage(args) {
     if (runInstrumentedDriverDraw("load-fast", { forceRender: drawBurstRenderEveryDraw })) {
         stats = updateStreamingStatus();
     }
+    await yieldBetweenInteractiveLoadSteps();
+    if (!isLoadStillActive())
+        return state;
     runResolvedPrimHydrationPass({ force: true });
     updateStreamingStatus();
+    await yieldBetweenInteractiveLoadSteps();
+    if (!isLoadStillActive())
+        return state;
     markLoadPhase("initial-draw-done");
     const postInitialDrawWarmupSummary = runRuntimeBridgeWarmup("post-initial-draw", { force: true });
     let needsFinalProtoHydrationPass = !hasRuntimeBridgeCompletedProtoHydration(postInitialDrawWarmupSummary);
@@ -1075,6 +1092,9 @@ export async function loadUsdStage(args) {
     const pendingResolvedPrimHydrationCount = getPendingResolvedPrimHydrationCount(postInitialDrawResolvedPrimHydrationSummary);
     needsFinalResolvedPrimHydrationPass = (pendingResolvedPrimHydrationCount !== null
         && pendingResolvedPrimHydrationCount > 0);
+    await yieldBetweenInteractiveLoadSteps();
+    if (!isLoadStillActive())
+        return state;
     if (profileTextureLoads) {
         const textureSnapshot = window.renderInterface?.registry?.getTextureLoadSnapshot?.();
         if (textureSnapshot) {
@@ -1192,6 +1212,9 @@ export async function loadUsdStage(args) {
     }
     const getCameraFitSelection = () => collectCameraFitSelection(window.usdRoot);
     const refitCameraToUsdRoot = () => {
+        if (disableCameraAutoFit) {
+            return;
+        }
         const fitted = fitCameraToSelection(window.camera, window._controls, getCameraFitSelection(), 1.5, params);
         if (!fitted) {
             scheduleCameraRefit(window.camera, window._controls, getCameraFitSelection, params);

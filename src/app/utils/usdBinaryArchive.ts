@@ -18,7 +18,7 @@ type BinaryReadyUsdModule = Awaited<ReturnType<typeof ensureUsdWasmRuntime>>['US
   };
 };
 
-type BinaryReadyUsdRuntime = Pick<Awaited<ReturnType<typeof ensureUsdWasmRuntime>>, 'USD'>;
+export type BinaryReadyUsdRuntime = Pick<Awaited<ReturnType<typeof ensureUsdWasmRuntime>>, 'USD'>;
 
 const USDC_FILE_FORMAT_ARGS = { format: 'usdc' } as const;
 
@@ -135,7 +135,7 @@ function exportUsdLayerAsCrate(
   throw new Error(`Failed to export binary USD crate layer: ${targetFsPath}`);
 }
 
-export async function convertUsdArchiveFilesToBinary(
+export async function convertUsdArchiveFilesToBinaryCore(
   archiveFiles: Map<string, Blob>,
   options: {
     onProgress?: (progress: {
@@ -147,10 +147,6 @@ export async function convertUsdArchiveFilesToBinary(
   } = {},
 ): Promise<Map<string, Blob>> {
   const { onProgress, loadRuntime } = options;
-  if (typeof document === 'undefined') {
-    return archiveFiles;
-  }
-
   const runtime = await (loadRuntime?.() ?? ensureUsdWasmRuntime());
   const USD = runtime.USD as BinaryReadyUsdModule;
 
@@ -232,4 +228,22 @@ export async function convertUsdArchiveFilesToBinary(
     }
     USD.flushPendingDeletes?.();
   }
+}
+
+export async function convertUsdArchiveFilesToBinary(
+  archiveFiles: Map<string, Blob>,
+  options: {
+    onProgress?: (progress: {
+      current: number;
+      total: number;
+      filePath: string;
+    }) => void;
+    loadRuntime?: () => Promise<BinaryReadyUsdRuntime>;
+  } = {},
+): Promise<Map<string, Blob>> {
+  if (typeof document === 'undefined') {
+    return archiveFiles;
+  }
+
+  return convertUsdArchiveFilesToBinaryCore(archiveFiles, options);
 }

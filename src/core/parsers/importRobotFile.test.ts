@@ -8,6 +8,7 @@ import { createUsdPlaceholderRobotData, resolveRobotFileData } from './importRob
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
+globalThis.XMLSerializer = dom.window.XMLSerializer as typeof XMLSerializer;
 
 function createUsdFile(name = 'robots/demo/demo.usd'): RobotFile {
   return {
@@ -351,6 +352,24 @@ test('resolveRobotFileData classifies linkless xacro fragments as source-only pr
   assert.equal(result.status, 'error');
   if (result.status !== 'error') {
     assert.fail('Expected source-only xacro fragment import result to be an error');
+  }
+  assert.equal(result.reason, 'source_only_fragment');
+});
+
+test('resolveRobotFileData classifies worldbody-free MJCF fragments as source-only previews', () => {
+  const result = resolveRobotFileData({
+    name: 'robots/demo/mjcf/keyframes.xml',
+    content: `<mujoco>
+  <keyframe>
+    <key name="home" qpos="0 0 0" />
+  </keyframe>
+</mujoco>`,
+    format: 'mjcf',
+  });
+
+  assert.equal(result.status, 'error');
+  if (result.status !== 'error') {
+    assert.fail('Expected source-only MJCF fragment import result to be an error');
   }
   assert.equal(result.reason, 'source_only_fragment');
 });

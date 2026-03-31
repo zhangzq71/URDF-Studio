@@ -61,6 +61,21 @@ test('createUsdPreloadSource falls back to text content for textual USDA files',
   assert.equal(preloadSource.kind, 'text-content');
 });
 
+test('createUsdPreloadSource prefers inline text content for textual USD files even when blob URLs exist', () => {
+  const preloadSource = createUsdPreloadSource(
+    {
+      name: 'unitree_model/B2/usd/b2.usd',
+      content: '#usda 1.0',
+      blobUrl: 'blob:b2-root',
+    },
+    {
+      'unitree_model/B2/usd/b2.usd': 'blob:b2-root',
+    },
+  );
+
+  assert.equal(preloadSource.kind, 'text-content');
+});
+
 test('inferUsdBundleVirtualDirectory scopes to the package root before /usd/ when available', () => {
   const bundleDirectory = inferUsdBundleVirtualDirectory(
     'robots/unitree/go2/usd/go2.usd',

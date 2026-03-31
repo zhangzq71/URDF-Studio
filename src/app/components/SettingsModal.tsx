@@ -94,6 +94,10 @@ export function SettingsModal() {
   );
   const t = translations[lang];
   const panelRef = React.useRef<HTMLDivElement>(null);
+  const dragMoveHandlerRef = React.useRef<((event: MouseEvent) => void) | null>(null);
+  const dragEndHandlerRef = React.useRef<(() => void) | null>(null);
+  const dragPreviousUserSelectRef = React.useRef('');
+  const dragPreviousCursorRef = React.useRef('');
 
   const maxPanelWidth = typeof window !== 'undefined'
     ? Math.max(DEFAULT_SETTINGS_MIN_WIDTH, Math.min(DEFAULT_SETTINGS_MAX_WIDTH, window.innerWidth - SETTINGS_VIEWPORT_MARGIN * 2))
@@ -116,6 +120,25 @@ export function SettingsModal() {
       x: clamp(x, SETTINGS_VIEWPORT_MARGIN, window.innerWidth - width - SETTINGS_VIEWPORT_MARGIN),
       y: clamp(y, SETTINGS_VIEWPORT_MARGIN, window.innerHeight - height - SETTINGS_VIEWPORT_MARGIN),
     };
+  }, []);
+
+  const clearDragListeners = React.useCallback(() => {
+    const moveHandler = dragMoveHandlerRef.current;
+    const endHandler = dragEndHandlerRef.current;
+
+    if (moveHandler) {
+      document.removeEventListener('mousemove', moveHandler);
+      dragMoveHandlerRef.current = null;
+    }
+
+    if (endHandler) {
+      document.removeEventListener('mouseup', endHandler);
+      window.removeEventListener('blur', endHandler);
+      dragEndHandlerRef.current = null;
+    }
+
+    document.body.style.userSelect = dragPreviousUserSelectRef.current;
+    document.body.style.cursor = dragPreviousCursorRef.current;
   }, []);
 
   React.useEffect(() => {
@@ -153,15 +176,30 @@ export function SettingsModal() {
     };
   }, [clampSettingsPosition, isSettingsOpen, setSettingsPos]);
 
+  React.useEffect(() => {
+    if (isSettingsOpen) {
+      return undefined;
+    }
+
+    clearDragListeners();
+    return undefined;
+  }, [clearDragListeners, isSettingsOpen]);
+
+  React.useEffect(() => (
+    () => {
+      clearDragListeners();
+    }
+  ), [clearDragListeners]);
+
   const handleDragStart = (e: React.MouseEvent) => {
     e.preventDefault();
+    clearDragListeners();
     const startX = e.clientX;
     const startY = e.clientY;
     const initialX = settingsPos.x;
     const initialY = settingsPos.y;
-    const previousUserSelect = document.body.style.userSelect;
-    const previousCursor = document.body.style.cursor;
-
+    dragPreviousUserSelectRef.current = document.body.style.userSelect;
+    dragPreviousCursorRef.current = document.body.style.cursor;
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'move';
 
@@ -173,14 +211,14 @@ export function SettingsModal() {
     };
 
     const handleMouseUp = () => {
-      document.body.style.userSelect = previousUserSelect;
-      document.body.style.cursor = previousCursor;
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      clearDragListeners();
     };
 
+    dragMoveHandlerRef.current = handleMouseMove;
+    dragEndHandlerRef.current = handleMouseUp;
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
   };
 
   if (!isSettingsOpen) {

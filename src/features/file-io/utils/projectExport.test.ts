@@ -7,7 +7,7 @@ import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
 
 import { parseURDF } from '@/core/parsers';
-import type { RobotData } from '@/types';
+import { DEFAULT_JOINT, JointType, type RobotData } from '@/types';
 
 import { exportProject } from './projectExport';
 
@@ -180,6 +180,59 @@ test('exportProject fails fast when a packed workspace asset cannot be fetched',
   );
 });
 
+test('exportProject does not persist legacy appMode state in project.json', async () => {
+  const robot = loadSimpleRobotData();
+  const originalUrdfContent = `<?xml version="1.0"?>
+<robot name="simple_export">
+  <link name="base_link" />
+</robot>`;
+
+  const exportResult = await exportProject({
+    name: 'mode_free_project',
+    uiState: {
+      appMode: 'hardware',
+      lang: 'en',
+    },
+    assetsState: {
+      availableFiles: [
+        {
+          name: 'robots/simple_export.urdf',
+          format: 'urdf',
+          content: originalUrdfContent,
+        },
+      ],
+      assets: {},
+      allFileContents: {
+        'robots/simple_export.urdf': originalUrdfContent,
+      },
+      motorLibrary: {},
+      selectedFileName: 'robots/simple_export.urdf',
+      originalUrdfContent,
+      originalFileFormat: 'urdf',
+      usdPreparedExportCaches: {},
+    },
+    robotState: {
+      present: robot,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    assemblyState: {
+      present: null,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    getMergedRobotData: () => robot,
+  });
+
+  const zip = await JSZip.loadAsync(await exportResult.blob.arrayBuffer());
+  const manifestText = await zip.file('project.json')?.async('string');
+
+  assert.ok(manifestText, 'expected project export to include project.json');
+
+  const manifest = JSON.parse(manifestText);
+  assert.equal('appMode' in (manifest.ui ?? {}), false);
+});
+
 test('exportProject fails fast when a non-mesh library source file has no content', async () => {
   const robot = loadSimpleRobotData();
 
@@ -219,5 +272,189 @@ test('exportProject fails fast when a non-mesh library source file has no conten
       getMergedRobotData: () => robot,
     }),
     /Missing library source content for project export: robots\/simple_export\.urdf/,
+  );
+});
+
+test('exportProject reports phased progress while building a .usp archive', async () => {
+  const robot = loadSimpleRobotData();
+  const originalUrdfContent = `<?xml version="1.0"?>
+<robot name="simple_export">
+  <link name="base_link" />
+</robot>`;
+  const progressUpdates: Array<{
+    phase: string;
+    completed: number;
+    total: number;
+    label?: string;
+  }> = [];
+
+  const exportResult = await exportProject({
+    name: 'progress_project',
+    uiState: {
+      appMode: 'detail',
+      lang: 'en',
+    },
+    assetsState: {
+      availableFiles: [
+        {
+          name: 'robots/simple_export.urdf',
+          format: 'urdf',
+          content: originalUrdfContent,
+        },
+      ],
+      assets: {
+        'textures/progress.png': 'data:text/plain;base64,cHJvZ3Jlc3M=',
+      },
+      allFileContents: {
+        'robots/simple_export.urdf': originalUrdfContent,
+      },
+      motorLibrary: {},
+      selectedFileName: 'robots/simple_export.urdf',
+      originalUrdfContent,
+      originalFileFormat: 'urdf',
+      usdPreparedExportCaches: {},
+    },
+    robotState: {
+      present: robot,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    assemblyState: {
+      present: null,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    getMergedRobotData: () => robot,
+    onProgress: (progress) => {
+      progressUpdates.push({ ...progress });
+    },
+  });
+
+  assert.equal(exportResult.partial, false);
+  assert.ok(progressUpdates.length > 0, 'expected project export to emit progress updates');
+
+  const firstIndexByPhase = (phase: string) => progressUpdates.findIndex((progress) => progress.phase === phase);
+  const phaseOrder = ['assets', 'metadata', 'components', 'output', 'archive'];
+
+  phaseOrder.forEach((phase) => {
+    assert.ok(firstIndexByPhase(phase) >= 0, `expected progress updates for phase ${phase}`);
+  });
+
+  for (let index = 1; index < phaseOrder.length; index += 1) {
+    const previousPhase = phaseOrder[index - 1];
+    const currentPhase = phaseOrder[index];
+    assert.ok(
+      firstIndexByPhase(previousPhase) < firstIndexByPhase(currentPhase),
+      `expected phase ${previousPhase} to occur before ${currentPhase}`,
+    );
+  }
+
+  const finalArchiveProgress = [...progressUpdates]
+    .reverse()
+    .find((progress) => progress.phase === 'archive');
+
+  assert.ok(finalArchiveProgress, 'expected final archive progress update');
+  assert.equal(finalArchiveProgress.completed, 100);
+  assert.equal(finalArchiveProgress.total, 100);
+});
+
+test('exportProject preserves bridge joint quat_xyzw metadata in bridge.xml', async () => {
+  const robot = loadSimpleRobotData();
+  const originalUrdfContent = `<?xml version="1.0"?>
+<robot name="simple_export">
+  <link name="base_link" />
+</robot>`;
+
+  const exportResult = await exportProject({
+    name: 'bridge_quat_project',
+    uiState: {
+      appMode: 'detail',
+      lang: 'en',
+    },
+    assetsState: {
+      availableFiles: [
+        {
+          name: 'robots/component_a.urdf',
+          format: 'urdf',
+          content: originalUrdfContent,
+        },
+        {
+          name: 'robots/component_b.urdf',
+          format: 'urdf',
+          content: originalUrdfContent,
+        },
+      ],
+      assets: {},
+      allFileContents: {
+        'robots/component_a.urdf': originalUrdfContent,
+        'robots/component_b.urdf': originalUrdfContent,
+      },
+      motorLibrary: {},
+      selectedFileName: 'robots/component_a.urdf',
+      originalUrdfContent,
+      originalFileFormat: 'urdf',
+      usdPreparedExportCaches: {},
+    },
+    robotState: {
+      present: robot,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    assemblyState: {
+      present: {
+        name: 'bridge_quat_assembly',
+        components: {
+          component_a: {
+            id: 'component_a',
+            name: 'component_a',
+            sourceFile: 'robots/component_a.urdf',
+            robot,
+          },
+          component_b: {
+            id: 'component_b',
+            name: 'component_b',
+            sourceFile: 'robots/component_b.urdf',
+            robot,
+          },
+        },
+        bridges: {
+          bridge_joint: {
+            id: 'bridge_joint',
+            name: 'bridge_joint',
+            parentComponentId: 'component_a',
+            parentLinkId: 'base_link',
+            childComponentId: 'component_b',
+            childLinkId: 'base_link',
+            joint: {
+              ...DEFAULT_JOINT,
+              id: 'bridge_joint',
+              name: 'bridge_joint',
+              type: JointType.FIXED,
+              parentLinkId: 'base_link',
+              childLinkId: 'base_link',
+              origin: {
+                xyz: { x: 0, y: 0, z: 0 },
+                rpy: { r: 0, p: 0, y: Math.PI / 2 },
+                quatXyzw: { x: 0, y: 0, z: 0.70710678, w: 0.70710678 },
+              },
+            },
+          },
+        },
+      },
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    getMergedRobotData: () => robot,
+  });
+
+  assert.equal(exportResult.partial, false);
+
+  const zip = await JSZip.loadAsync(await exportResult.blob.arrayBuffer());
+  const bridgeXml = await zip.file('bridges/bridge.xml')?.async('string');
+
+  assert.ok(bridgeXml, 'expected project export to include bridges/bridge.xml');
+  assert.match(
+    bridgeXml,
+    /<origin xyz="0 0 0" rpy="0 0 1\.5707963267948966" quat_xyzw="0 0 0\.70710678 0\.70710678" \/>/,
   );
 });

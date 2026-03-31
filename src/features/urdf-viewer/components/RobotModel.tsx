@@ -3,6 +3,7 @@ import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { SceneCompileWarmup } from '@/shared/components/3d';
 import { CollisionTransformControls } from './CollisionTransformControls';
+import { HoverSelectionSync } from './HoverSelectionSync';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps } from '../types';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
@@ -13,17 +14,24 @@ import { useCameraFocus } from '../hooks/useCameraFocus';
 import { useMouseInteraction } from '../hooks/useMouseInteraction';
 import { useHoverDetection } from '../hooks/useHoverDetection';
 import { useVisualizationEffects } from '../hooks/useVisualizationEffects';
+import {
+    createRuntimeSceneLinkMetadataState,
+    resolveRuntimeSceneLinkMetadataState,
+} from '../utils/runtimeSceneMetadata';
 
 // Wrap with memo and custom comparison to prevent unnecessary re-renders
 export const RobotModel: React.FC<RobotModelProps> = memo(({
     urdfContent,
     assets,
     sourceFormat = 'auto',
+    reloadToken = 0,
+    initialRobot = null,
     sourceFilePath,
     onRobotLoaded,
     onDocumentLoadEvent,
     showCollision = false,
     showVisual = true,
+    showCollisionAlwaysOnTop = true,
     onSelect,
     onHover,
     onMeshSelect,
@@ -38,7 +46,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     mode,
     selection,
     hoverSelectionEnabled = true,
-    highlightMode = 'link',
     showInertia = false,
     showCenterOfMass = false,
     showCoMOverlay = true,
@@ -62,11 +69,19 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     isSelectionLockedRef,
     isMeshPreview = false,
     hoveredSelection,
+    interactionLayerPriority = [],
     groundPlaneOffset = 0,
     active = true,
 }) => {
     const { invalidate } = useThree();
     const autoFrameScopeFallbackRef = useRef<string | null>(null);
+    const runtimeSceneMetadataScopeKey = `${sourceFilePath ?? 'viewer-inline'}:${reloadToken}`;
+    const runtimeSceneLinkMetadataRef = useRef(createRuntimeSceneLinkMetadataState({
+        scopeKey: runtimeSceneMetadataScopeKey,
+        robot: null,
+        robotVersion: 0,
+        robotLinks,
+    }));
 
     if (!autoFrameScopeFallbackRef.current) {
         autoFrameScopeFallbackRef.current = `viewer-session:${Math.random().toString(36).slice(2)}`;
@@ -77,7 +92,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     useEffect(() => {
         setIsDraggingRef.current = setIsDragging;
     }, [setIsDragging]);
-
     // ============================================================
     // HOOK: Robot Loading
     // ============================================================
@@ -92,9 +106,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         urdfContent,
         assets,
         sourceFormat,
+        reloadToken,
+        initialRobot,
         sourceFilePath,
         showCollision,
         showVisual,
+        showCollisionAlwaysOnTop,
         isMeshPreview,
         robotLinks,
         robotJoints,
@@ -103,6 +120,20 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         onDocumentLoadEvent,
         groundPlaneOffset,
     });
+
+    // Keep scene metadata pinned to the currently mounted runtime robot while a
+    // different source file is still streaming in. This prevents the old scene
+    // from briefly inheriting the next file's visibility rules and helper state.
+    runtimeSceneLinkMetadataRef.current = resolveRuntimeSceneLinkMetadataState(
+        runtimeSceneLinkMetadataRef.current,
+        {
+            scopeKey: runtimeSceneMetadataScopeKey,
+            robot,
+            robotVersion,
+            robotLinks,
+        },
+    );
+    const runtimeRobotLinks = runtimeSceneLinkMetadataRef.current.robotLinks;
 
     // ============================================================
     // HOOK: Highlight Manager
@@ -115,10 +146,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     } = useHighlightManager({
         robot,
         robotVersion,
-        highlightMode,
         showCollision,
         showVisual,
-        robotLinks,
+        showCollisionAlwaysOnTop,
+        robotLinks: runtimeRobotLinks,
         linkMeshMapRef
     });
 
@@ -149,9 +180,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robotVersion,
         toolMode,
         mode,
-        highlightMode,
         showCollision,
         showVisual,
+        showCollisionAlwaysOnTop,
+        interactionLayerPriority,
         linkMeshMapRef,
         onHover,
         onSelect,
@@ -186,9 +218,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         toolMode,
         hoverSelectionEnabled,
         mode,
-        highlightMode,
         showCollision,
         showVisual,
+        showCollisionAlwaysOnTop,
+        interactionLayerPriority,
         selection,
         onHover,
         linkMeshMapRef,
@@ -212,7 +245,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         robotVersion,
         showCollision,
         showVisual,
-        highlightMode,
+        showCollisionAlwaysOnTop,
         showInertia,
         showCenterOfMass,
         showCoMOverlay,
@@ -224,13 +257,28 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         showJointAxesOverlay,
         jointAxisSize,
         modelOpacity,
-        robotLinks,
+        robotLinks: runtimeRobotLinks,
         selection,
         highlightGeometry,
         highlightedMeshesRef
     });
+    const usesExternalHoverSelection = hoveredSelection !== undefined;
+    const previousUsesExternalHoverSelectionRef = useRef(usesExternalHoverSelection);
 
     useEffect(() => {
+        const usedExternalHoverSelection = previousUsesExternalHoverSelectionRef.current;
+        previousUsesExternalHoverSelectionRef.current = usesExternalHoverSelection;
+
+        if (!usesExternalHoverSelection && usedExternalHoverSelection) {
+            syncHoverHighlight(undefined);
+        }
+    }, [syncHoverHighlight, usesExternalHoverSelection]);
+
+    useEffect(() => {
+        if (!usesExternalHoverSelection) {
+            return;
+        }
+
         syncHoverHighlight(hoverSelectionEnabled ? hoveredSelection : undefined);
     }, [
         hoverSelectionEnabled,
@@ -239,7 +287,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         hoveredSelection?.subType,
         hoveredSelection?.objectIndex,
         syncHoverHighlight,
-        hoveredSelection,
+        usesExternalHoverSelection,
     ]);
 
     const requestSceneRefresh = useCallback(() => {
@@ -296,6 +344,12 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
 
     return (
         <>
+            {!usesExternalHoverSelection ? (
+                <HoverSelectionSync
+                    enabled={hoverSelectionEnabled}
+                    onHoverSelectionChange={syncHoverHighlight}
+                />
+            ) : null}
             <SceneCompileWarmup
                 active={active && Boolean(robot) && !isLoading}
                 warmupKey={sceneCompileWarmupKey}
@@ -316,7 +370,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                 </Html>
             ) : null}
             {(() => {
-                const shouldShow = mode === 'detail' && highlightMode === 'collision' && transformMode !== 'select' && selection?.subType === 'collision';
+                const shouldShow = transformMode !== 'select' && selection?.subType === 'collision';
                 return shouldShow ? (
                     <CollisionTransformControls
                         robot={robot}
@@ -326,7 +380,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
                         setIsDragging={handleCollisionTransformDragging}
                         onTransformChange={onCollisionTransformPreview}
                         onTransformEnd={onCollisionTransformEnd}
-                        robotLinks={robotLinks}
+                        robotLinks={runtimeRobotLinks}
                         onTransformPending={onTransformPending}
                     />
                 ) : null;

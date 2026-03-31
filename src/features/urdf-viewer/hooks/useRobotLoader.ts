@@ -18,7 +18,7 @@ import {
     createMeshLoader,
 } from '@/core/loaders';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
-import { loadMJCFToThreeJS, isMJCFContent } from '@/core/parsers/mjcf';
+import { loadMJCFToThreeJS } from '@/core/parsers/mjcf';
 import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 import type { UrdfJoint, UrdfLink } from '@/types';
 import { setRegressionRuntimeRobot } from '@/shared/debug/regressionBridge';
@@ -30,20 +30,13 @@ import { resolveURDFMaterialsForScene } from '../utils/urdfMaterials';
 import { syncLoadedRobotScene } from '../utils/loadedRobotSceneSync';
 import { shouldMountRobotBeforeAssetsComplete } from '../utils/loadStrategy';
 import { resolveRobotLoaderSourceMetadata } from '../utils/robotLoaderSourceMetadata';
-import type { RobotLoadingPhase, ViewerDocumentLoadEvent } from '../types';
+import { resolveViewerRobotSourceFormat } from '../utils/sourceFormat';
+import type { RobotLoadingPhase, ViewerDocumentLoadEvent, ViewerRobotSourceFormat } from '../types';
 
 function preprocessURDFForLoader(content: string): string {
     // Remove <transmission> blocks to prevent urdf-loader from finding duplicate joints
     // which can overwrite valid joints with empty origins
     return content.replace(/<transmission[\s\S]*?<\/transmission>/g, '');
-}
-
-function resolveRobotSourceFormat(content: string, sourceFormat: 'auto' | 'urdf' | 'mjcf' = 'auto'): 'urdf' | 'mjcf' {
-    if (sourceFormat === 'urdf' || sourceFormat === 'mjcf') {
-        return sourceFormat;
-    }
-
-    return isMJCFContent(content) ? 'mjcf' : 'urdf';
 }
 
 function waitForLoadingHudPaint(invalidate?: () => void): Promise<void> {
@@ -70,9 +63,12 @@ interface RobotLoadingProgress {
 export interface UseRobotLoaderOptions {
     urdfContent: string;
     assets: Record<string, string>;
-    sourceFormat?: 'auto' | 'urdf' | 'mjcf';
+    sourceFormat?: ViewerRobotSourceFormat;
+    reloadToken?: number;
+    initialRobot?: THREE.Object3D | null;
     showCollision: boolean;
     showVisual: boolean;
+    showCollisionAlwaysOnTop?: boolean;
     isMeshPreview?: boolean;
     robotLinks?: Record<string, UrdfLink>;
     robotJoints?: Record<string, UrdfJoint>;
@@ -109,8 +105,11 @@ export function useRobotLoader({
     urdfContent,
     assets,
     sourceFormat = 'auto',
+    reloadToken = 0,
+    initialRobot = null,
     showCollision,
     showVisual,
+    showCollisionAlwaysOnTop = true,
     isMeshPreview = false,
     robotLinks,
     robotJoints,
@@ -120,15 +119,20 @@ export function useRobotLoader({
     onDocumentLoadEvent,
     groundPlaneOffset = 0,
 }: UseRobotLoaderOptions): UseRobotLoaderResult {
-    const [robot, setRobot] = useState<THREE.Object3D | null>(null);
+    const sourceFileDir = getSourceFileDirectory(sourceFilePath);
+    const resolvedSourceFormat = resolveViewerRobotSourceFormat(urdfContent, sourceFormat);
+    const [robot, setRobot] = useState<THREE.Object3D | null>(() => initialRobot);
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [loadingProgress, setLoadingProgress] = useState<RobotLoadingProgress | null>(null);
     const [robotVersion, setRobotVersion] = useState(0);
+    const [urdfCollisionMeshesRequested, setUrdfCollisionMeshesRequested] = useState(
+        () => resolvedSourceFormat !== 'urdf' || showCollision,
+    );
     const { invalidate } = useThree();
 
     // Ref to track current robot for proper cleanup (avoids stale closure issues)
-    const robotRef = useRef<THREE.Object3D | null>(null);
+    const robotRef = useRef<THREE.Object3D | null>(initialRobot);
     // Track component mount state for preventing state updates after unmount
     const isMountedRef = useRef(true);
     // Track loading abort controller to cancel duplicate loads
@@ -142,10 +146,16 @@ export function useRobotLoader({
     const pendingLoadingDispatchRef = useRef<PendingLoadingDispatch | null>(null);
     const lastPublishedLoadingDispatchKeyRef = useRef('');
     const lastPublishedProgressRef = useRef<RobotLoadingProgress | null>(null);
+    const onRobotLoadedRef = useRef(onRobotLoaded);
+    const onDocumentLoadEventRef = useRef(onDocumentLoadEvent);
+    // Ground offset is a presentation-only adjustment; changing it must not
+    // restart the robot load pipeline or re-emit loading HUD phases.
+    const groundPlaneOffsetRef = useRef(groundPlaneOffset);
 
     // Refs for visibility state (used in loading callback)
     const showVisualRef = useRef(showVisual);
     const showCollisionRef = useRef(showCollision);
+    const showCollisionAlwaysOnTopRef = useRef(showCollisionAlwaysOnTop);
     const initialJointAnglesRef = useRef(initialJointAngles);
 
     // PERFORMANCE: Pre-built map of linkName -> meshes for O(1) highlight lookup
@@ -158,13 +168,39 @@ export function useRobotLoader({
     // incremental patch. A counter is more robust than strict content matching
     // when robotLinks/robotJoints and urdfContent updates are not perfectly in sync.
     const skipReloadCountRef = useRef(0);
-    const sourceFileDir = getSourceFileDirectory(sourceFilePath);
-    const resolvedSourceFormat = resolveRobotSourceFormat(urdfContent, sourceFormat);
+    const shouldParseCollisionMeshes = resolvedSourceFormat !== 'urdf' || urdfCollisionMeshesRequested;
+    const hasStructuredRobotState = resolvedSourceFormat === 'urdf'
+        && Boolean(robotLinks && robotJoints)
+        && (
+            Object.keys(robotLinks ?? {}).length > 0
+            || Object.keys(robotJoints ?? {}).length > 0
+        );
 
     // Keep refs in sync
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
+    useEffect(() => { showCollisionAlwaysOnTopRef.current = showCollisionAlwaysOnTop; }, [showCollisionAlwaysOnTop]);
     useEffect(() => { initialJointAnglesRef.current = initialJointAngles; }, [initialJointAngles]);
+    useEffect(() => { onRobotLoadedRef.current = onRobotLoaded; }, [onRobotLoaded]);
+    useEffect(() => { onDocumentLoadEventRef.current = onDocumentLoadEvent; }, [onDocumentLoadEvent]);
+    useEffect(() => { groundPlaneOffsetRef.current = groundPlaneOffset; }, [groundPlaneOffset]);
+    useEffect(() => {
+        setUrdfCollisionMeshesRequested(resolvedSourceFormat !== 'urdf' || showCollision);
+    }, [resolvedSourceFormat, sourceFilePath, urdfContent]);
+    useEffect(() => {
+        if (resolvedSourceFormat !== 'urdf') {
+            return;
+        }
+
+        if (!showCollision || urdfCollisionMeshesRequested) {
+            return;
+        }
+
+        // Most URDF sessions start with collision overlays hidden. Deferring the
+        // collision mesh stream keeps the first visual load much faster, while a
+        // later "Show Collision" toggle still upgrades the scene with one reload.
+        setUrdfCollisionMeshesRequested(true);
+    }, [resolvedSourceFormat, showCollision, urdfCollisionMeshesRequested]);
 
     const disposeRobotObject = useCallback((robotObject: THREE.Object3D | null) => {
         if (!robotObject) return;
@@ -193,8 +229,8 @@ export function useRobotLoader({
     }, []);
 
     const emitDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
-        onDocumentLoadEvent?.(event);
-    }, [onDocumentLoadEvent]);
+        onDocumentLoadEventRef.current?.(event);
+    }, []);
 
     const applyLoadingDispatch = useCallback((dispatch: PendingLoadingDispatch) => {
         const dispatchKey = createLoadingDispatchKey(dispatch.progress, dispatch.event);
@@ -288,7 +324,7 @@ export function useRobotLoader({
         }
 
         if (typeof window === 'undefined') {
-            offsetRobotToGround(loadedRobot, groundPlaneOffset);
+            offsetRobotToGround(loadedRobot, groundPlaneOffsetRef.current);
             return;
         }
 
@@ -299,11 +335,11 @@ export function useRobotLoader({
                 if (!isMountedRef.current) return;
                 if (robotRef.current !== loadedRobot) return;
 
-                offsetRobotToGround(loadedRobot, groundPlaneOffset);
+                offsetRobotToGround(loadedRobot, groundPlaneOffsetRef.current);
                 invalidate();
             }, delay)
         );
-    }, [clearGroundAlignTimers, groundPlaneOffset, invalidate]);
+    }, [clearGroundAlignTimers, invalidate]);
 
     // Incremental path: update exactly one changed link geometry in-place and skip next full URDF reload.
     useEffect(() => {
@@ -433,7 +469,7 @@ export function useRobotLoader({
                     message: null,
                 });
                 setError(null);
-                await waitForLoadingHudPaint(invalidate);
+                invalidate?.();
 
                 if (abortController.aborted || !isMountedRef.current) {
                     return;
@@ -454,7 +490,9 @@ export function useRobotLoader({
                         sourceFormat: resolvedSourceFormat,
                         showCollision: showCollisionRef.current,
                         showVisual: showVisualRef.current,
+                        showCollisionAlwaysOnTop: showCollisionAlwaysOnTopRef.current,
                         urdfMaterials,
+                        robotLinks,
                     });
 
                     linkMeshMapRef.current = linkMeshMap;
@@ -492,7 +530,7 @@ export function useRobotLoader({
 
                     // Place the robot on the ground before the first visible mount so
                     // the scene never shows it popping up from below the grid.
-                    alignRobotToGroundBeforeFirstMount(loadedRobot, groundPlaneOffset);
+                    alignRobotToGroundBeforeFirstMount(loadedRobot, groundPlaneOffsetRef.current);
 
                     const previousRobot = robotRef.current;
 
@@ -522,11 +560,6 @@ export function useRobotLoader({
                         }
                     }
 
-                    await waitForLoadingHudPaint(invalidate);
-                    if (abortController.aborted || !isMountedRef.current) {
-                        return;
-                    }
-
                     setIsLoading(false);
                     publishLoadingDispatch(null, {
                         status: 'ready',
@@ -542,7 +575,7 @@ export function useRobotLoader({
                         setInitialGroundAlignment(loadedRobot, false);
                     }
                     scheduleGroundAlignment(loadedRobot);
-                    onRobotLoaded?.(loadedRobot);
+                    onRobotLoadedRef.current?.(loadedRobot);
                 };
 
                 // Check if content is MJCF (MuJoCo XML)
@@ -568,6 +601,8 @@ export function useRobotLoader({
                                 message: null,
                             }, { defer: true });
                         }
+                    }, {
+                        abortSignal: abortController,
                     });
 
                     if (abortController.aborted) {
@@ -575,6 +610,10 @@ export function useRobotLoader({
                             disposeObject3D(robotModel, true, SHARED_MATERIALS);
                         }
                         return;
+                    }
+
+                    if (!robotModel) {
+                        throw new Error('Failed to build MJCF runtime scene.');
                     }
                 } else {
                     // Standard URDF loading
@@ -637,7 +676,7 @@ export function useRobotLoader({
                     // Use new local URDFLoader
                     const loader = new URDFLoader(manager);
                     const yieldIfNeeded = createMainThreadYieldController();
-                    loader.parseCollision = true;
+                    loader.parseCollision = shouldParseCollisionMeshes;
                     loader.parseVisual = true;
                     loader.loadMeshCb = createMeshLoader(assets, manager, urdfDir, {
                         colladaRootNormalizationHints,
@@ -651,15 +690,18 @@ export function useRobotLoader({
                     try {
                         // The editor already has canonical link/joint state in the hot path.
                         // Rebuilding the runtime scene from that state avoids a second URDF XML parse.
-                        const canBuildFromState = Boolean(robotLinks && robotJoints);
-                        if (canBuildFromState) {
+                        // Initial imports can surface urdfContent one render before the
+                        // structured robot store is populated. When that happens, the first
+                        // load can be aborted during view orchestration and must re-run once
+                        // the canonical link/joint state is available.
+                        if (hasStructuredRobotState) {
                             robotModel = await buildRuntimeRobotFromState({
                                 links: robotLinks!,
                                 joints: robotJoints!,
                                 manager,
                                 loadMeshCb: loader.loadMeshCb,
                                 parseVisual: true,
-                                parseCollision: true,
+                                parseCollision: shouldParseCollisionMeshes,
                                 yieldIfNeeded,
                             });
                         } else {
@@ -746,7 +788,7 @@ export function useRobotLoader({
             // We allow the old robot to persist until the new one is ready, 
             // or until the component unmounts (handled by the separate useEffect).
         };
-    }, [assets, clearGroundAlignTimers, groundPlaneOffset, invalidate, onRobotLoaded, publishLoadingDispatch, resolvedSourceFormat, scheduleGroundAlignment, sourceFileDir, urdfContent]);
+    }, [assets, clearGroundAlignTimers, hasStructuredRobotState, invalidate, publishLoadingDispatch, reloadToken, resolvedSourceFormat, scheduleGroundAlignment, shouldParseCollisionMeshes, sourceFileDir, urdfContent]);
 
     return {
         robot,

@@ -574,7 +574,15 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
                 options.onAssigned(nextTexture);
             }
             material.needsUpdate = true;
-        }).catch(() => { });
+        }).catch((error) => {
+            const warn = getRawConsoleMethod('warn');
+            warn('[HydraDelegate] Failed to apply stage fallback texture input.', {
+                texturePath,
+                materialProperty,
+                materialName: String(material?.name || ''),
+                error: error instanceof Error ? error.message : String(error || 'unknown-error'),
+            });
+        });
         return true;
     }
     safeGetPrimAtPath(stage, path) {
@@ -874,8 +882,7 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
         if (this._hasRunStageTruthAlignmentDiagnostics)
             return;
         this._hasRunStageTruthAlignmentDiagnostics = true;
-        const diagnosticsEnabled = typeof window !== 'undefined'
-            && /\bdebugStageAlignment=1\b/.test(String(window.location?.search || ''));
+        const diagnosticsEnabled = globalThis?.__HYDRA_DEBUG_STAGE_ALIGNMENT__ === true;
         if (!diagnosticsEnabled)
             return;
         const linkPaths = new Set();

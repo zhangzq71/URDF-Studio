@@ -5,7 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { useViewerOrchestration } from './useViewerOrchestration.ts';
-import { useSelectionStore } from '@/store';
+import { useSelectionStore, useUIStore } from '@/store';
 import type { RobotState } from '@/types';
 
 function resetSelectionStore() {
@@ -15,6 +15,14 @@ function resetSelectionStore() {
   store.setHoveredSelection({ type: null, id: null });
   store.setAttentionSelection({ type: null, id: null });
   store.setFocusTarget(null);
+}
+
+function resetUiStore() {
+  const store = useUIStore.getState();
+  store.setAppMode('detail');
+  store.setDetailLinkTab('visual');
+  store.setPanelSection('property_editor_link_inertial', true);
+  store.setPanelSection('kinematics', true);
 }
 
 function renderHook(options: {
@@ -38,6 +46,7 @@ function renderHook(options: {
 
 test('handleSelect preserves the selected collision body index for the same link', () => {
   resetSelectionStore();
+  resetUiStore();
   useSelectionStore.getState().setSelection({
     type: 'link',
     id: 'arm_link',
@@ -68,6 +77,7 @@ test('handleSelect preserves the selected collision body index for the same link
 
 test('handleViewerSelect preserves collision objectIndex when re-selecting the same link', () => {
   resetSelectionStore();
+  resetUiStore();
   useSelectionStore.getState().setSelection({
     type: 'link',
     id: 'arm_link',
@@ -102,6 +112,7 @@ test('handleViewerSelect preserves collision objectIndex when re-selecting the s
 
 test('handleSelect does not carry collision objectIndex across different links', () => {
   resetSelectionStore();
+  resetUiStore();
   useSelectionStore.getState().setSelection({
     type: 'link',
     id: 'arm_link',
@@ -127,4 +138,66 @@ test('handleSelect does not carry collision objectIndex across different links',
     id: 'forearm_link',
     subType: 'collision',
   });
+});
+
+test('handleViewerMeshSelect seeds the detail tab from visual mesh clicks while in hardware mode', () => {
+  resetSelectionStore();
+  resetUiStore();
+  useUIStore.getState().setAppMode('hardware');
+  useUIStore.getState().setDetailLinkTab('collision');
+
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerMeshSelect('arm_link', 'shoulder_joint', 0, 'visual');
+
+  assert.equal(useUIStore.getState().detailLinkTab, 'visual');
+});
+
+test('handleViewerSelect routes inertial helpers to the physics tab without pinning hover', () => {
+  resetSelectionStore();
+  resetUiStore();
+
+  let nextSelection: RobotState['selection'] | null = null;
+  let nextHoveredSelection: RobotState['selection'] | null = null;
+  const hook = renderHook({
+    setSelection: (selection) => {
+      nextSelection = selection;
+    },
+    pulseSelection: () => {},
+    setHoveredSelection: (selection) => {
+      nextHoveredSelection = selection;
+    },
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerSelect('link', 'base_link', undefined, 'center-of-mass');
+
+  assert.deepEqual(nextSelection, { type: 'link', id: 'base_link', subType: undefined });
+  assert.deepEqual(nextHoveredSelection, { type: null, id: null });
+  assert.equal(useUIStore.getState().detailLinkTab, 'physics');
+  assert.equal(useUIStore.getState().panelSections.property_editor_link_inertial, false);
+});
+
+test('handleViewerSelect opens joint kinematics for axis helpers', () => {
+  resetSelectionStore();
+  resetUiStore();
+
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerSelect('joint', 'hip_joint', undefined, 'joint-axis');
+
+  assert.equal(useUIStore.getState().panelSections.kinematics, false);
 });

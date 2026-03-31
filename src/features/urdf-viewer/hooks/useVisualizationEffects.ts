@@ -9,7 +9,9 @@ import { getRobotSceneNodeIndex } from '../utils/robotSceneNodeIndex';
 import { getRobotVisualMeshIndex } from '../utils/robotVisualMeshIndex';
 import {
     syncInertiaVisualizationForLinks,
+    syncJointHelperInteractionStateForJoints,
     syncJointAxesVisualizationForJoints,
+    syncLinkHelperInteractionStateForLinks,
     syncOriginAxesVisualizationForLinks
 } from '../utils/visualizationObjectSync';
 import { isModelOpacitySyncActive, shouldRunVisualizationSync } from '../utils/visualizationSyncActivity';
@@ -22,7 +24,7 @@ export interface UseVisualizationEffectsOptions {
     robotVersion: number;
     showCollision: boolean;
     showVisual: boolean;
-    highlightMode: 'link' | 'collision';
+    showCollisionAlwaysOnTop: boolean;
     showInertia: boolean;
     showInertiaOverlay?: boolean;
     showCenterOfMass: boolean;
@@ -61,7 +63,7 @@ export function useVisualizationEffects({
     robotVersion,
     showCollision,
     showVisual,
-    highlightMode,
+    showCollisionAlwaysOnTop,
     showInertia,
     showInertiaOverlay = true,
     showCenterOfMass,
@@ -149,6 +151,41 @@ export function useVisualizationEffects({
         return { id: childLink.name, subType: candidate.subType, objectIndex: candidate.objectIndex };
     }, [robot]);
 
+    const syncHelperInteractionHighlight = useCallback((hoveredSelection?: URDFViewerProps['selection']) => {
+        if (!robot) return;
+
+        const activeSelection = selectionRef.current;
+        const hoveredLinkId = hoveredSelection?.type === 'link' && !hoveredSelection.subType
+            ? hoveredSelection.id
+            : null;
+        const hoveredJointId = hoveredSelection?.type === 'joint' && !hoveredSelection.subType
+            ? hoveredSelection.id
+            : null;
+        const selectedLinkId = activeSelection?.type === 'link' && !activeSelection.subType
+            ? activeSelection.id
+            : null;
+        const selectedJointId = activeSelection?.type === 'joint' && !activeSelection.subType
+            ? activeSelection.id
+            : null;
+        const { links, joints } = getRobotSceneNodeIndex(robot);
+
+        const linkHelpersMutated = syncLinkHelperInteractionStateForLinks({
+            links,
+            hoveredLinkId,
+            selectedLinkId,
+        });
+        const jointHelpersMutated = syncJointHelperInteractionStateForJoints({
+            joints,
+            hoveredJointId,
+            selectedJointId,
+        });
+        const didMutate = linkHelpersMutated || jointHelpersMutated;
+
+        if (didMutate) {
+            invalidate();
+        }
+    }, [invalidate, robot]);
+
     useEffect(() => { showVisualRef.current = showVisual; }, [showVisual]);
     useEffect(() => { showCollisionRef.current = showCollision; }, [showCollision]);
     useEffect(() => {
@@ -179,13 +216,14 @@ export function useVisualizationEffects({
             robotLinks,
             showCollision,
             showVisual,
+            showCollisionAlwaysOnTop,
             highlightedMeshes: highlightedMeshesRef.current,
         });
 
         if (didMutate) {
             invalidate();
         }
-    }, [robot, showCollision, showVisual, robotLinks, robotVersion, invalidate, highlightedMeshesRef]);
+    }, [robot, showCollision, showVisual, showCollisionAlwaysOnTop, robotLinks, robotVersion, invalidate, highlightedMeshesRef]);
 
     // Update helper visibility without touching all visual materials
     useEffect(() => {
@@ -385,6 +423,9 @@ export function useVisualizationEffects({
 
         if (!robot) return;
 
+        let didMutateGeometryHighlight = false;
+        syncHelperInteractionHighlight(hoveredSelection);
+
         const activeSelection = selectionRef.current;
         const {
             id: selectionHighlightId,
@@ -404,6 +445,7 @@ export function useVisualizationEffects({
                     currentHoverRef.current.subType as any,
                     currentHoverRef.current.objectIndex
                 );
+                didMutateGeometryHighlight = true;
                 if (selectionHighlightId) {
                     highlightGeometry(
                         selectionHighlightId,
@@ -411,6 +453,7 @@ export function useVisualizationEffects({
                         selectionHighlightSubType,
                         selectionHighlightObjectIndex
                     );
+                    didMutateGeometryHighlight = true;
                 }
             }
         }
@@ -422,17 +465,31 @@ export function useVisualizationEffects({
         } = resolveHighlightTarget(hoveredSelection);
 
         if (hoverTargetId) {
+            const hoverStateChanged =
+                currentHoverRef.current.id !== hoverTargetId
+                || currentHoverRef.current.subType !== (hoverTargetSubType || null)
+                || currentHoverRef.current.objectIndex !== hoverTargetObjectIndex;
             highlightGeometry(hoverTargetId, false, hoverTargetSubType, hoverTargetObjectIndex);
             currentHoverRef.current = {
                 id: hoverTargetId,
                 subType: hoverTargetSubType || null,
                 objectIndex: hoverTargetObjectIndex
             };
+            if (hoverStateChanged || didMutateGeometryHighlight) {
+                invalidate();
+            }
             return;
         }
 
+        const hadHoverHighlight =
+            currentHoverRef.current.id !== null
+            || currentHoverRef.current.subType !== null
+            || currentHoverRef.current.objectIndex !== undefined;
         currentHoverRef.current = { id: null, subType: null };
-    }, [robot, highlightGeometry, resolveHighlightTarget]);
+        if (didMutateGeometryHighlight || hadHoverHighlight) {
+            invalidate();
+        }
+    }, [robot, highlightGeometry, resolveHighlightTarget, syncHelperInteractionHighlight]);
 
     // Effect to handle selection highlighting
     useEffect(() => {
@@ -451,7 +508,31 @@ export function useVisualizationEffects({
             currentSelectionRef.current = { id: null, subType: null };
         }
         syncHoverHighlight(latestHoverSelectionRef.current);
-    }, [robot, selection?.type, selection?.id, selection?.subType, selection?.objectIndex, highlightGeometry, robotVersion, highlightMode, showCollision, showVisual, syncHoverHighlight]);
+    }, [robot, selection?.type, selection?.id, selection?.subType, selection?.objectIndex, highlightGeometry, robotVersion, showCollision, showVisual, syncHoverHighlight]);
+
+    useEffect(() => {
+        if (!robot) return;
+        syncHelperInteractionHighlight(latestHoverSelectionRef.current);
+    }, [
+        robot,
+        robotVersion,
+        showInertia,
+        showInertiaOverlay,
+        showCenterOfMass,
+        showCoMOverlay,
+        centerOfMassSize,
+        showOrigins,
+        showOriginsOverlay,
+        originSize,
+        showJointAxes,
+        showJointAxesOverlay,
+        jointAxisSize,
+        selection?.type,
+        selection?.id,
+        selection?.subType,
+        selection?.objectIndex,
+        syncHelperInteractionHighlight,
+    ]);
 
     return { syncHoverHighlight };
 }

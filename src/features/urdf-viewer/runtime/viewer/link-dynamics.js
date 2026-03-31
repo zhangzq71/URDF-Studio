@@ -1,6 +1,7 @@
 import { BufferGeometry, Group, Line, LineBasicMaterial, Matrix4, Quaternion, Vector3, } from "three";
 import { getRenderRobotMetadataSnapshot, warmupRenderRobotMetadataSnapshot, } from "./robot-metadata.js";
 import { createCoMVisual, createInertiaBox } from "../../utils/visualizationFactories.ts";
+import { disposeUsdStageHandle } from "./usd-stage-handle.js";
 const linkDynamicsCacheByStagePath = new Map();
 const maxLinkDynamicsCacheEntries = 8;
 function getLinkPathFromMeshId(meshId) {
@@ -83,20 +84,7 @@ function cloneMatrix4FromUnknown(value) {
     return new Matrix4().fromArray(numeric);
 }
 function getRequestedDynamicsFrameModeFromUrl() {
-    if (typeof window === "undefined" || !window.location)
-        return "auto";
-    try {
-        const params = new URLSearchParams(window.location.search || "");
-        const rawValue = String(params.get("dynamicsFrame") || "").trim().toLowerCase();
-        if (rawValue === "visual")
-            return "visual";
-        if (rawValue === "physics" || rawValue === "stage")
-            return "stage";
-        return "auto";
-    }
-    catch {
-        return "auto";
-    }
+    return "auto";
 }
 function getRootPathFromPrimPath(primPath) {
     if (!primPath || !primPath.startsWith("/"))
@@ -946,12 +934,17 @@ export class LinkDynamicsController {
                 const openedStage = await this.safeOpenUsdStage(usdModule, resolvedPath);
                 if (!openedStage)
                     continue;
-                const layerText = this.safeExportRootLayerText(openedStage);
-                if (!layerText)
-                    continue;
-                this.mergeLinkDynamicsPatches(patchesByLinkPath, parseLinkDynamicsPatchesFromLayerText(layerText));
-                if (current.depth + 1 < 2 && visited.size < maxOpenedStages) {
-                    queue.push({ stagePath: resolvedPath, layerText, depth: current.depth + 1 });
+                try {
+                    const layerText = this.safeExportRootLayerText(openedStage);
+                    if (!layerText)
+                        continue;
+                    this.mergeLinkDynamicsPatches(patchesByLinkPath, parseLinkDynamicsPatchesFromLayerText(layerText));
+                    if (current.depth + 1 < 2 && visited.size < maxOpenedStages) {
+                        queue.push({ stagePath: resolvedPath, layerText, depth: current.depth + 1 });
+                    }
+                }
+                finally {
+                    disposeUsdStageHandle(usdModule, openedStage);
                 }
             }
         }
@@ -1137,12 +1130,21 @@ export class LinkDynamicsController {
     }) {
         const markerGroup = new Group();
         markerGroup.name = `dynamics:${record.linkPath}`;
+        markerGroup.userData = {
+            ...(markerGroup.userData || {}),
+            usdLinkPath: record.linkPath,
+        };
         markerGroup.position.set(0, 0, 0);
         markerGroup.quaternion.set(0, 0, 0, 1);
         markerGroup.scale.set(1, 1, 1);
         const centerOfMassLocal = record.centerOfMassLocal.clone();
         if (visibility.showCenterOfMass) {
             const centerMarker = createCoMVisual();
+            centerMarker.userData = {
+                ...centerMarker.userData,
+                viewerHelperKind: "center-of-mass",
+                usdLinkPath: record.linkPath,
+            };
             const sizeScale = Number(visibility.centerOfMassSize || 0.01) / 0.01;
             centerMarker.position.copy(centerOfMassLocal);
             centerMarker.scale.set(sizeScale, sizeScale, sizeScale);
@@ -1173,6 +1175,11 @@ export class LinkDynamicsController {
                 inertiaBoxSize.z,
                 record.principalAxesLocal,
             );
+            inertiaBox.userData = {
+                ...inertiaBox.userData,
+                viewerHelperKind: "inertia",
+                usdLinkPath: record.linkPath,
+            };
             inertiaBox.position.copy(centerOfMassLocal);
             inertiaBox.traverse((child) => {
                 if (!child.material)

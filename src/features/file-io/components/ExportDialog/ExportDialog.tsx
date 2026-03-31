@@ -1,11 +1,12 @@
 import React, { useState, useCallback } from 'react';
-import { Upload, Package, FileCode, Layers, Lock, Braces, Loader2 } from 'lucide-react';
+import { Upload, Package, FileCode, Layers, Lock, Braces, Loader2, Info } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
-import { Slider } from '@/shared/components/ui';
-import { translations, type TranslationKeys } from '@/shared/i18n';
+import { Slider, Switch } from '@/shared/components/ui';
+import { translations } from '@/shared/i18n';
 import type { ExportProgressState } from '../../types';
 import type { MjcfActuatorType } from '@/core/parsers/mjcf/mjcfGenerator';
+import { ExportProgressView } from '../ExportProgressView';
 
 export type ExportFormat = 'mjcf' | 'urdf' | 'xacro' | 'sdf' | 'usd';
 
@@ -134,16 +135,30 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function Row({
   label,
   desc,
+  hint,
   children,
 }: {
   label: string;
   desc?: string;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="flex items-start justify-between gap-3 py-1.5 border-b border-border-black last:border-0">
       <div className="flex flex-col gap-0.5 min-w-0">
-        <span className="text-[11px] text-text-primary leading-tight">{label}</span>
+        <div className="flex items-start gap-1.5 min-w-0">
+          <span className="text-[11px] text-text-primary leading-tight">{label}</span>
+          {hint && (
+            <button
+              type="button"
+              title={hint}
+              aria-label={hint}
+              className="mt-px inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-system-blue/10 hover:text-system-blue focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+            >
+              <Info className="h-3 w-3" />
+            </button>
+          )}
+        </div>
         {desc && <span className="text-[9px] text-text-tertiary leading-tight">{desc}</span>}
       </div>
       <div className="shrink-0">{children}</div>
@@ -152,35 +167,25 @@ function Row({
 }
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!value)}
-      className={`relative w-9 h-5 rounded-full transition-colors ${
-        value ? 'bg-system-blue' : 'bg-switch-off'
-      }`}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full shadow transition-transform ${
-          value ? 'translate-x-4 bg-white' : 'translate-x-0 bg-white dark:bg-element-bg'
-        }`}
-      />
-    </button>
-  );
+  return <Switch checked={value} onChange={onChange} size="sm" />;
 }
 
 function SelectField({
   value,
   options,
   onChange,
+  title,
 }: {
   value: string;
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
+  title?: string;
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      title={title}
       className="bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all"
     >
       {options.map((opt) => (
@@ -341,87 +346,6 @@ function STLQualitySelector({
   );
 }
 
-function ExportProgressView({
-  progress,
-  t,
-}: {
-  progress: ExportProgressState;
-  t: TranslationKeys;
-}) {
-  const progressWidth = `${Math.round(Math.min(1, Math.max(0, progress.progress)) * 100)}%`;
-  const currentStepLabel = t.exportProgressStepCounter
-    .replace('{current}', String(progress.currentStep))
-    .replace('{total}', String(progress.totalSteps));
-
-  return (
-    <div className="flex h-full min-h-[360px] flex-col justify-center px-1 py-2">
-      <div className="rounded-2xl border border-border-black bg-element-bg px-5 py-5 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border-black bg-panel-bg shadow-sm">
-            <Loader2 className="h-5 w-5 animate-spin text-system-blue" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-tertiary">
-              {t.exportProgressTitle}
-            </div>
-            <h3 className="mt-1 text-base font-semibold text-text-primary">
-              {progress.stepLabel}
-            </h3>
-            <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-              {progress.detail}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5">
-          <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-medium text-text-secondary">
-            <span>{currentStepLabel}</span>
-            <span>{t.exporting}</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-panel-bg">
-            <div
-              aria-hidden="true"
-              className={`h-full rounded-full bg-slider-accent ${
-                progress.indeterminate
-                  ? 'motion-safe:animate-pulse'
-                  : 'transition-[width] duration-200 ease-out motion-reduce:transition-none'
-              }`}
-              style={{ width: progressWidth }}
-            />
-          </div>
-          <div
-            className="mt-3 grid gap-2"
-            style={{ gridTemplateColumns: `repeat(${progress.totalSteps}, minmax(0, 1fr))` }}
-          >
-            {Array.from({ length: progress.totalSteps }, (_, index) => {
-              const step = index + 1;
-              const isCompleted = step < progress.currentStep;
-              const isActive = step === progress.currentStep;
-
-              return (
-                <div
-                  key={step}
-                  className={`h-1.5 rounded-full transition-colors ${
-                    isCompleted
-                      ? 'bg-slider-accent'
-                      : isActive
-                        ? 'bg-system-blue/60'
-                        : 'bg-panel-bg'
-                  }`}
-                />
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="mt-5 rounded-xl border border-border-black bg-panel-bg px-3 py-3 text-[11px] leading-relaxed text-text-secondary">
-          {t.exportProgressKeepWindowOpen}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export const ExportDialog: React.FC<ExportDialogProps> = ({
   onClose,
   onExport,
@@ -552,7 +476,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       >
         {/* Scrollable body */}
         {isExporting ? (
-          <div className="flex-1 overflow-hidden px-4 py-3">
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
             <ExportProgressView progress={progressState} t={t} />
           </div>
         ) : (
@@ -619,12 +543,6 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
           {/* Divider */}
           <div className="h-px bg-border-black my-3" />
-
-          {config.format === 'xacro' && (
-            <div className="rounded-xl border border-border-black bg-element-bg px-3 py-2 text-[11px] leading-5 text-text-secondary">
-              {t.exportXacroStaticHint}
-            </div>
-          )}
 
           {/* MJCF Options */}
           {config.format === 'mjcf' && (
@@ -743,30 +661,41 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
                 <Row
                   label={t.rosVersion}
-                  desc={config.xacro.rosVersion === 'ros1' ? t.rosProfileDescRos1 : t.rosProfileDescRos2}
+                  hint={`${t.exportXacroStaticHint} ${config.xacro.rosVersion === 'ros1' ? t.rosProfileDescRos1 : t.rosProfileDescRos2}`}
                 >
-                  <div className="flex flex-wrap gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black max-w-[260px] justify-end">
-                    {(['ros1', 'ros2'] as RosVersion[]).map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => updateXacro('rosVersion', v)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
-                          config.xacro.rosVersion === v
-                            ? 'bg-white dark:bg-segmented-active text-text-primary shadow-sm'
-                            : 'text-text-secondary hover:text-text-primary'
-                        }`}
-                      >
-                        {v === 'ros1' ? t.rosProfileRos1 : t.rosProfileRos2}
-                      </button>
-                    ))}
+                  <div className="grid min-w-[240px] max-w-full grid-cols-2 gap-1.5 rounded-xl border border-border-black bg-segmented-bg p-1.5">
+                    {(['ros1', 'ros2'] as RosVersion[]).map((v) => {
+                      const isActive = config.xacro.rosVersion === v;
+                      const label = v === 'ros1' ? t.rosProfileRos1 : t.rosProfileRos2;
+                      const description = v === 'ros1' ? t.rosProfileDescRos1 : t.rosProfileDescRos2;
+
+                      return (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => updateXacro('rosVersion', v)}
+                          title={description}
+                          aria-label={`${label}. ${description}`}
+                          aria-pressed={isActive}
+                          className={`flex min-h-[3.15rem] items-center rounded-lg border px-2.5 py-2 text-left text-[11px] font-semibold leading-tight whitespace-normal transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                            isActive
+                              ? 'border-system-blue/30 bg-system-blue/10 text-system-blue shadow-sm'
+                              : 'border-transparent text-text-secondary hover:border-system-blue/20 hover:bg-element-hover hover:text-text-primary'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </Row>
                 <Row
                   label={t.hardwareInterface}
-                  desc={config.xacro.rosVersion === 'ros1' ? t.hardwareInterfaceDescRos1 : t.hardwareInterfaceDescRos2}
+                  hint={config.xacro.rosVersion === 'ros1' ? t.hardwareInterfaceDescRos1 : t.hardwareInterfaceDescRos2}
                 >
                   <SelectField
                     value={config.xacro.rosHardwareInterface}
+                    title={config.xacro.rosVersion === 'ros1' ? t.hardwareInterfaceDescRos1 : t.hardwareInterfaceDescRos2}
                     options={[
                       { value: 'effort', label: t.hardwareInterfaceEffort },
                       { value: 'position', label: t.hardwareInterfacePosition },

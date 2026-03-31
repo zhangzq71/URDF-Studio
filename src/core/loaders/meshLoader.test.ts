@@ -526,10 +526,20 @@ test('createMeshLoader offsets duplicated coplanar material subsets in b2 base_l
     assert.equal(materials[1]?.name, 'logo.001');
     assert.equal(materials[2]?.name, '材质.023');
     assert.equal(materials[3]?.name, '材质.024');
-    assert.equal(isCoplanarOffsetMaterial(materials[0]), true);
-    assert.equal(isCoplanarOffsetMaterial(materials[1]), false);
-    assert.equal(isCoplanarOffsetMaterial(materials[2]), true);
+    assert.equal(materials[4]?.name, '材质.023');
+    assert.equal(materials[5]?.name, '材质.023');
+    assert.equal(isCoplanarOffsetMaterial(materials[0]), false);
+    assert.equal(isCoplanarOffsetMaterial(materials[1]), true);
+    assert.equal(isCoplanarOffsetMaterial(materials[2]), false);
     assert.equal(isCoplanarOffsetMaterial(materials[3]), true);
+    assert.equal(isCoplanarOffsetMaterial(materials[4]), true);
+    assert.equal(isCoplanarOffsetMaterial(materials[5]), true);
+    assert.equal(materials[1].polygonOffsetFactor, -3);
+    assert.equal(materials[1].polygonOffsetUnits, -4);
+    assert.equal(materials[4].polygonOffsetFactor, -2);
+    assert.equal(materials[4].polygonOffsetUnits, -2);
+    assert.equal(materials[5].polygonOffsetFactor, -4);
+    assert.equal(materials[5].polygonOffsetUnits, -6);
 });
 
 test('createMeshLoader offsets near-coplanar shell materials in b2 calf.dae', async () => {

@@ -1,7 +1,7 @@
 import React from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
-import type { RobotState, UrdfJoint } from '@/types';
+import type { AppMode, RobotState, UrdfJoint } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
 import {
@@ -18,7 +18,10 @@ import { ClosedLoopConstraintsOverlay } from './constraints';
 import { JointTransformControls } from './controls';
 import { VisualizerHoverController } from './VisualizerHoverController';
 import type { VisualizerController } from '../hooks/useVisualizerController';
+import { shouldRenderMergedVisualizerConstraintOverlay } from '../utils/mergedVisualizerSceneMode';
+import { resolveMergedVisualizerRootPlacements } from '../utils/mergedVisualizerLayout';
 import { collectVisualizerMeshLoadKeys } from '../utils/visualizerMeshLoading';
+import { buildVisualizerDocumentLoadEvent } from '../utils/visualizerDocumentLoad';
 
 const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode }>(
   function GroundedGroup({ children }, ref) {
@@ -30,11 +33,20 @@ interface VisualizerSceneProps {
   robot: RobotState;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
-  mode: 'skeleton' | 'detail' | 'hardware';
+  mode: AppMode;
   assets: Record<string, string>;
   lang: Language;
   controller: VisualizerController;
   active?: boolean;
+  onDocumentLoadEvent?: (event: {
+    status: 'loading' | 'ready' | 'error';
+    phase?: string | null;
+    message?: string | null;
+    progressPercent?: number | null;
+    loadedCount?: number | null;
+    totalCount?: number | null;
+    error?: string | null;
+  }) => void;
 }
 
 export const VisualizerScene = React.memo(({
@@ -46,6 +58,7 @@ export const VisualizerScene = React.memo(({
   lang,
   controller,
   active = true,
+  onDocumentLoadEvent,
 }: VisualizerSceneProps) => {
   const t = translations[lang];
   const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
@@ -76,6 +89,10 @@ export const VisualizerScene = React.memo(({
 
     return grouped;
   }, [robot.joints]);
+  const rootPlacements = React.useMemo(
+    () => resolveMergedVisualizerRootPlacements(robot),
+    [robot.joints, robot.links, robot.rootLinkId],
+  );
   const colladaRootNormalizationHints = React.useMemo(
     () => buildColladaRootNormalizationHints(robot.links),
     [robot.links]
@@ -142,6 +159,17 @@ export const VisualizerScene = React.memo(({
     });
   }, [expectedMeshLoadSignature]);
 
+  React.useEffect(() => {
+    if (!active || !onDocumentLoadEvent) {
+      return;
+    }
+
+    onDocumentLoadEvent(buildVisualizerDocumentLoadEvent({
+      resolvedCount: resolvedMeshCount,
+      totalCount: expectedMeshLoadKeys.length,
+    }));
+  }, [active, expectedMeshLoadKeys.length, onDocumentLoadEvent, resolvedMeshCount]);
+
   const handleCollisionDraggingChanged = React.useCallback(
     (event: { value?: boolean }) => {
       const dragging = Boolean(event?.value);
@@ -178,45 +206,52 @@ export const VisualizerScene = React.memo(({
       };
     });
   }, [expectedMeshLoadKeySet, expectedMeshLoadSignature, requestGroundRealignment]);
+  const shouldRenderConstraintOverlay = shouldRenderMergedVisualizerConstraintOverlay(mode);
 
   return (
     <>
       <SceneCompileWarmup active={active && !isMeshLoading} warmupKey={sceneCompileWarmupKey} />
-      <VisualizerHoverController robotRootRef={robotRootRef} active={active} />
+      <VisualizerHoverController
+        robotRootRef={robotRootRef}
+        interactionLayerPriority={state.interactionLayerPriority}
+        active={active}
+      />
       <GroundedGroup ref={robotRootRef}>
-        {mode === 'skeleton' && <ClosedLoopConstraintsOverlay robot={robot} />}
-        <RobotNode
-          linkId={robot.rootLinkId}
-          robot={robot}
-          onSelect={onSelect}
-          onUpdate={onUpdate}
-          mode={mode}
-          showGeometry={state.showGeometry}
-          showVisual={state.showVisual}
-          showLabels={state.showLabels}
-          showJointAxes={state.showJointAxes}
-          showSkeletonOrigin={state.showSkeletonOrigin}
-          jointAxisSize={state.jointAxisSize}
-          frameSize={state.frameSize}
-          labelScale={state.labelScale}
-          showDetailOrigin={state.showDetailOrigin}
-          showDetailLabels={state.showDetailLabels}
-          showCollision={state.showCollision}
-          showHardwareOrigin={state.showHardwareOrigin}
-          showHardwareLabels={state.showHardwareLabels}
-          showInertia={state.showInertia}
-          showCenterOfMass={state.showCenterOfMass}
-          transformMode={state.transformMode}
-          depth={0}
-          assets={assets}
-          lang={lang}
-          colladaRootNormalizationHints={colladaRootNormalizationHints}
-          childJointsByParent={childJointsByParent}
-          onRegisterJointPivot={handleRegisterJointPivot}
-          onRegisterJointMotion={handleRegisterJointMotion}
-          onRegisterCollisionRef={handleRegisterCollisionRef}
-          onMeshResolved={handleMeshResolved}
-        />
+        {shouldRenderConstraintOverlay && <ClosedLoopConstraintsOverlay robot={robot} />}
+        {rootPlacements.map(({ linkId, position }) => (
+          <group key={linkId} position={position}>
+            <RobotNode
+              linkId={linkId}
+              robot={robot}
+              onSelect={onSelect}
+              onUpdate={onUpdate}
+              mode={mode}
+              showGeometry={state.showGeometry}
+              showVisual={state.showVisual}
+              showOrigin={state.showOrigin}
+              showLabels={state.showLabels}
+              showJointAxes={state.showJointAxes}
+              jointAxisSize={state.jointAxisSize}
+              frameSize={state.frameSize}
+              labelScale={state.labelScale}
+              showCollision={state.showCollision}
+              modelOpacity={state.modelOpacity}
+              showInertia={state.showInertia}
+              showCenterOfMass={state.showCenterOfMass}
+              interactionLayerPriority={state.interactionLayerPriority}
+              transformMode={state.transformMode}
+              depth={0}
+              assets={assets}
+              lang={lang}
+              colladaRootNormalizationHints={colladaRootNormalizationHints}
+              childJointsByParent={childJointsByParent}
+              onRegisterJointPivot={handleRegisterJointPivot}
+              onRegisterJointMotion={handleRegisterJointMotion}
+              onRegisterCollisionRef={handleRegisterCollisionRef}
+              onMeshResolved={handleMeshResolved}
+            />
+          </group>
+        ))}
       </GroundedGroup>
       {active && isMeshLoading ? (
         <Html fullscreen>
@@ -242,8 +277,7 @@ export const VisualizerScene = React.memo(({
         transformControlsState={transformControlsState}
       />
 
-      {mode === 'detail' &&
-        selectedCollisionRef &&
+      {selectedCollisionRef &&
         robot.selection.type === 'link' &&
         robot.selection.id &&
         robot.selection.subType === 'collision' && (

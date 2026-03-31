@@ -6,6 +6,11 @@ import {
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import type { MJCFMesh } from './mjcfUtils';
 import { loadMJCFMeshObject, type MJCFMeshCache } from './mjcfMeshAssetLoader';
+import {
+    disposeTransientObject3D,
+    type MJCFLoadAbortSignal,
+    throwIfMJCFLoadAborted,
+} from './mjcfLoadLifecycle';
 
 export type { MJCFMeshCache } from './mjcfMeshAssetLoader';
 
@@ -14,6 +19,7 @@ export interface MJCFGeometryDef {
     type: string;
     size?: number[];
     mesh?: string;
+    hfield?: string;
     fromto?: number[];
 }
 
@@ -235,15 +241,18 @@ export async function createGeometryMesh(
     assets: Record<string, string>,
     meshCache: MJCFMeshCache,
     sourceFileDir = '',
+    abortSignal?: MJCFLoadAbortSignal,
 ): Promise<THREE.Object3D | null> {
-    // Determine geometry type: mesh attribute takes priority, otherwise use parsed type
-    const type = geom.mesh ? 'mesh' : geom.type;
-
-    if (type === 'plane') {
-        return null;
-    }
+    const type = geom.type?.trim() || (geom.mesh ? 'mesh' : '');
 
     switch (type) {
+        case 'plane': {
+            const sx = ((geom.size?.[0] ?? 1) || 1) * 2;
+            const sy = ((geom.size?.[1] ?? geom.size?.[0] ?? 1) || 1) * 2;
+            const geometry = new THREE.PlaneGeometry(sx, sy, 1, 1);
+            return new THREE.Mesh(geometry, createDefaultMaterial());
+        }
+
         case 'box': {
             if (!geom.size || geom.size.length < 1) return null;
             // MJCF size is half-size
@@ -314,7 +323,13 @@ export async function createGeometryMesh(
             return mesh;
         }
 
-        case 'mesh': {
+        case 'hfield': {
+            console.warn(`[MJCFLoader] Height field geom "${geom.name || geom.hfield || 'unnamed'}" is not rendered yet.`);
+            return null;
+        }
+
+        case 'mesh':
+        case 'sdf': {
             if (!geom.mesh) return null;
 
             const meshDef = meshMap.get(geom.mesh);
@@ -333,9 +348,14 @@ export async function createGeometryMesh(
                 return createPlaceholderMesh(meshDef.file);
             }
 
-            const loadedMesh = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache);
+            const loadedMesh = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache, abortSignal);
             if (!loadedMesh) {
                 return createPlaceholderMesh(meshDef.file);
+            }
+
+            if (abortSignal?.aborted) {
+                disposeTransientObject3D(loadedMesh);
+                throwIfMJCFLoadAborted(abortSignal);
             }
 
             return applyMeshAssetTransform(loadedMesh, meshDef);

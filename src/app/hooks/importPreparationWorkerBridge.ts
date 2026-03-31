@@ -5,22 +5,11 @@ import {
   type PrepareImportWorkerRequest,
   type PrepareImportWorkerResponse,
 } from '@/app/utils/importPreparation';
-import { hydratePreparedImportPayloadFromWorker } from '@/app/utils/importPreparationTransfer';
 
 interface PendingWorkerRequest {
   resolve: (value: PreparedImportPayload) => void;
   reject: (error: unknown) => void;
 }
-
-const EMPTY_PREPARED_IMPORT_PAYLOAD: PreparedImportPayload = {
-  robotFiles: [],
-  assetFiles: [],
-  usdSourceFiles: [],
-  libraryFiles: [],
-  textFiles: [],
-  preferredFileName: null,
-  preResolvedImports: [],
-};
 
 const pendingWorkerRequests = new Map<number, PendingWorkerRequest>();
 let requestIdCounter = 0;
@@ -71,11 +60,17 @@ function handleSharedWorkerMessage(event: MessageEvent<PrepareImportWorkerRespon
     return;
   }
 
-  pendingRequest.resolve(
-    message.payload
-      ? hydratePreparedImportPayloadFromWorker(message.payload)
-      : EMPTY_PREPARED_IMPORT_PAYLOAD,
-  );
+  if (message.type !== 'prepare-import-result') {
+    pendingRequest.reject(new Error('Import preparation worker returned an unexpected response'));
+    return;
+  }
+
+  if (!message.payload) {
+    pendingRequest.reject(new Error('Import preparation worker returned no payload'));
+    return;
+  }
+
+  pendingRequest.resolve(message.payload);
 }
 
 function handleSharedWorkerError(event: ErrorEvent): void {

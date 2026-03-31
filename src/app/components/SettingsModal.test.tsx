@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { JSDOM } from 'jsdom';
+
+import { SettingsModal } from './SettingsModal';
+import { useUIStore } from '@/store';
+
+function installDom() {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    url: 'http://localhost/',
+    pretendToBeVisual: true,
+  });
+
+  (globalThis as { window?: Window }).window = dom.window as unknown as Window;
+  (globalThis as { document?: Document }).document = dom.window.document;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: dom.window.navigator,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: dom.window.localStorage,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, 'innerWidth', {
+    value: dom.window.innerWidth,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, 'innerHeight', {
+    value: dom.window.innerHeight,
+    configurable: true,
+  });
+
+  (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
+  (globalThis as { HTMLButtonElement?: typeof HTMLButtonElement }).HTMLButtonElement = dom.window.HTMLButtonElement;
+  (globalThis as { HTMLDivElement?: typeof HTMLDivElement }).HTMLDivElement = dom.window.HTMLDivElement;
+  (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
+  (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
+  (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver = undefined;
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+  return dom;
+}
+
+function createComponentRoot() {
+  const dom = installDom();
+  const container = dom.window.document.getElementById('root');
+  assert.ok(container, 'root container should exist');
+
+  const root = createRoot(container);
+  return { dom, container, root };
+}
+
+test('SettingsModal removes drag listeners when unmounted mid-drag', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const initialState = useUIStore.getState();
+
+  const addedDocumentListeners = new Map<string, EventListenerOrEventListenerObject[]>();
+  const removedDocumentListeners = new Map<string, EventListenerOrEventListenerObject[]>();
+  const addedWindowListeners = new Map<string, EventListenerOrEventListenerObject[]>();
+  const removedWindowListeners = new Map<string, EventListenerOrEventListenerObject[]>();
+
+  const originalDocumentAdd = document.addEventListener.bind(document);
+  const originalDocumentRemove = document.removeEventListener.bind(document);
+  const originalWindowAdd = window.addEventListener.bind(window);
+  const originalWindowRemove = window.removeEventListener.bind(window);
+
+  document.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+    const listeners = addedDocumentListeners.get(type) ?? [];
+    listeners.push(listener);
+    addedDocumentListeners.set(type, listeners);
+    originalDocumentAdd(type, listener, options);
+  }) as typeof document.addEventListener;
+
+  document.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions | boolean) => {
+    const listeners = removedDocumentListeners.get(type) ?? [];
+    listeners.push(listener);
+    removedDocumentListeners.set(type, listeners);
+    originalDocumentRemove(type, listener, options);
+  }) as typeof document.removeEventListener;
+
+  window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+    const listeners = addedWindowListeners.get(type) ?? [];
+    listeners.push(listener);
+    addedWindowListeners.set(type, listeners);
+    originalWindowAdd(type, listener, options);
+  }) as typeof window.addEventListener;
+
+  window.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions | boolean) => {
+    const listeners = removedWindowListeners.get(type) ?? [];
+    listeners.push(listener);
+    removedWindowListeners.set(type, listeners);
+    originalWindowRemove(type, listener, options);
+  }) as typeof window.removeEventListener;
+
+  try {
+    useUIStore.setState({
+      isSettingsOpen: true,
+      settingsPos: { x: 48, y: 64 },
+    });
+
+    await act(async () => {
+      root.render(React.createElement(SettingsModal));
+    });
+
+    const dragHandle = container.querySelector('.cursor-move');
+    assert.ok(dragHandle, 'settings modal should render a draggable header');
+
+    await act(async () => {
+      dragHandle.dispatchEvent(new dom.window.MouseEvent('mousedown', {
+        bubbles: true,
+        clientX: 180,
+        clientY: 160,
+      }));
+    });
+
+    const addedMoveHandler = addedDocumentListeners.get('mousemove')?.at(-1);
+    const addedUpHandler = addedDocumentListeners.get('mouseup')?.at(-1);
+    const addedBlurHandler = addedWindowListeners.get('blur')?.at(-1);
+
+    assert.ok(addedMoveHandler, 'drag start should register a document mousemove listener');
+    assert.ok(addedUpHandler, 'drag start should register a document mouseup listener');
+    assert.ok(addedBlurHandler, 'drag start should register a window blur listener');
+
+    await act(async () => {
+      root.unmount();
+    });
+
+    assert.equal(
+      removedDocumentListeners.get('mousemove')?.includes(addedMoveHandler) ?? false,
+      true,
+      'mousemove listener should be removed during unmount cleanup',
+    );
+    assert.equal(
+      removedDocumentListeners.get('mouseup')?.includes(addedUpHandler) ?? false,
+      true,
+      'mouseup listener should be removed during unmount cleanup',
+    );
+    assert.equal(
+      removedWindowListeners.get('blur')?.includes(addedBlurHandler) ?? false,
+      true,
+      'blur listener should be removed during unmount cleanup',
+    );
+  } finally {
+    document.addEventListener = originalDocumentAdd;
+    document.removeEventListener = originalDocumentRemove;
+    window.addEventListener = originalWindowAdd;
+    window.removeEventListener = originalWindowRemove;
+    useUIStore.setState(initialState);
+    dom.window.close();
+  }
+});

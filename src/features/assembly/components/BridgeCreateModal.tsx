@@ -5,63 +5,18 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { Link2 } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
-import { useSelectionStore, type Selection } from '@/store/selectionStore';
+import { useSelectionStore } from '@/store/selectionStore';
 import type { AssemblyState } from '@/types';
 import { JointType } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
-
-type BridgePickTarget = 'parent' | 'child';
-
-interface ResolvedAssemblySelection {
-  componentId: string;
-  componentName: string;
-  linkId: string;
-  linkName: string;
-}
-
-function resolveAssemblySelection(
-  assemblyState: AssemblyState,
-  selection: Selection,
-): ResolvedAssemblySelection | null {
-  if (!selection.id || !selection.type) {
-    return null;
-  }
-
-  for (const component of Object.values(assemblyState.components)) {
-    if (selection.type === 'link') {
-      const link = component.robot.links[selection.id];
-      if (link) {
-        return {
-          componentId: component.id,
-          componentName: component.name,
-          linkId: link.id,
-          linkName: link.name,
-        };
-      }
-      continue;
-    }
-
-    const joint = component.robot.joints[selection.id];
-    if (!joint) {
-      continue;
-    }
-
-    const childLink = component.robot.links[joint.childLinkId];
-    if (!childLink) {
-      continue;
-    }
-
-    return {
-      componentId: component.id,
-      componentName: component.name,
-      linkId: childLink.id,
-      linkName: childLink.name,
-    };
-  }
-
-  return null;
-}
+import {
+  filterSelectableBridgeComponents,
+  isAssemblySelectionAllowedForBridge,
+  resolveAssemblySelection,
+  resolveBlockedBridgeComponentId,
+  type BridgePickTarget,
+} from '../utils/bridgeSelection';
 
 export interface BridgeCreateModalProps {
   isOpen: boolean;
@@ -93,6 +48,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   const t = translations[lang];
   const comps = Object.values(assemblyState.components);
   const selection = useSelectionStore((state) => state.selection);
+  const setInteractionGuard = useSelectionStore((state) => state.setInteractionGuard);
   const lastAppliedSelectionRef = useRef<string | null>(null);
   const defaultPosition = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -142,6 +98,22 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
   const parentComp = parentCompId ? assemblyState.components[parentCompId] : null;
   const childComp = childCompId ? assemblyState.components[childCompId] : null;
+  const blockedComponentId = useMemo(
+    () => resolveBlockedBridgeComponentId({
+      pickTarget,
+      parentComponentId: parentCompId,
+      childComponentId: childCompId,
+    }),
+    [childCompId, parentCompId, pickTarget],
+  );
+  const parentComponentOptions = useMemo(
+    () => filterSelectableBridgeComponents(comps, childCompId || null),
+    [childCompId, comps],
+  );
+  const childComponentOptions = useMemo(
+    () => filterSelectableBridgeComponents(comps, parentCompId || null),
+    [comps, parentCompId],
+  );
   const parentLinks = parentComp ? Object.values(parentComp.robot.links) : [];
   const childLinks = childComp ? Object.values(childComp.robot.links) : [];
 
@@ -166,7 +138,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
   const handleSubmit = useCallback(() => {
     if (!name.trim() || !parentCompId || !parentLinkId || !childCompId || !childLinkId) return;
-    if (parentCompId === childCompId && parentLinkId === childLinkId) return;
+    if (parentCompId === childCompId) return;
 
     onCreate({
       name: name.trim(),
@@ -214,8 +186,15 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   useEffect(() => {
     if (!isOpen) {
       lastAppliedSelectionRef.current = null;
+      setInteractionGuard(null);
       return undefined;
     }
+
+    setInteractionGuard((nextSelection) => isAssemblySelectionAllowedForBridge(
+      assemblyState,
+      nextSelection,
+      blockedComponentId,
+    ));
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -224,8 +203,11 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleClose, isOpen]);
+    return () => {
+      setInteractionGuard(null);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [assemblyState, blockedComponentId, handleClose, isOpen, setInteractionGuard]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -237,7 +219,11 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
       return;
     }
 
-    const selectionSignature = `${selection.type}:${selection.id}`;
+    if (!isAssemblySelectionAllowedForBridge(assemblyState, selection, blockedComponentId)) {
+      return;
+    }
+
+    const selectionSignature = `${pickTarget}:${selection.type}:${selection.id}:${selection.subType ?? ''}:${selection.objectIndex ?? ''}`;
     if (lastAppliedSelectionRef.current === selectionSignature) {
       return;
     }
@@ -257,6 +243,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     setChildLinkId(resolvedSelection.linkId);
   }, [
     assemblyState,
+    blockedComponentId,
     childCompId,
     childLinkId,
     isOpen,
@@ -354,7 +341,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                 className={fieldClassName}
               >
                 <option value="">--</option>
-                {comps.map((c) => (
+                {parentComponentOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -397,7 +384,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                 className={fieldClassName}
               >
                 <option value="">--</option>
-                {comps.map((c) => (
+                {childComponentOptions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -510,7 +497,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
         </button>
         <button
           onClick={handleSubmit}
-          disabled={!name.trim() || !parentCompId || !parentLinkId || !childCompId || !childLinkId}
+          disabled={!name.trim() || !parentCompId || !parentLinkId || !childCompId || !childLinkId || parentCompId === childCompId}
           className="rounded-lg bg-system-blue-solid px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-system-blue-hover disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
         >

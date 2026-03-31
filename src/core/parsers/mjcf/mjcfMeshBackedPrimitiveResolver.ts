@@ -4,6 +4,11 @@ import { applyMeshAssetTransform, resolveMJCFAssetUrl } from './mjcfGeometry';
 import type { MJCFModelBody, MJCFModelGeom, ParsedMJCFModel } from './mjcfModel';
 import type { MJCFMesh } from './mjcfUtils';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
+import {
+  disposeTransientObject3D,
+  type MJCFLoadAbortSignal,
+  throwIfMJCFLoadAborted,
+} from './mjcfLoadLifecycle';
 
 const MAX_FIT_POINTS = 4096;
 
@@ -48,6 +53,7 @@ interface FitPrimitiveFromMeshAssetParams {
 
 interface ResolveMJCFMeshBackedPrimitiveOptions {
   assets: Record<string, string>;
+  abortSignal?: MJCFLoadAbortSignal;
   meshCache?: MJCFMeshCache;
   sourceFileDir?: string;
   yieldIfNeeded?: () => Promise<void>;
@@ -635,21 +641,6 @@ export function collectMeshPrimitiveFitPoints(
   return points;
 }
 
-function disposeTemporaryObject(root: THREE.Object3D): void {
-  root.traverse((child) => {
-    const mesh = child as THREE.Mesh;
-    if (!mesh.isMesh) {
-      return;
-    }
-
-    mesh.geometry?.dispose();
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) {
-      material?.dispose?.();
-    }
-  });
-}
-
 export function fitPrimitiveFromPoints(
   points: PrimitivePoint[],
   geomType: 'capsule' | 'cylinder',
@@ -683,22 +674,34 @@ async function fitPrimitiveFromMeshAssetViaUrl(
   assets: Record<string, string>,
   sourceFileDir: string,
   meshCache: MJCFMeshCache,
+  abortSignal?: MJCFLoadAbortSignal,
 ): Promise<MJCFFittedPrimitive | null> {
+  throwIfMJCFLoadAborted(abortSignal);
   const assetUrl = resolveMJCFAssetUrl(meshDef.file, assets, sourceFileDir);
   if (!assetUrl) {
     return null;
   }
 
-  const loadedObject = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache);
+  const loadedObject = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache, abortSignal);
   if (!loadedObject) {
     return null;
   }
 
+  if (abortSignal?.aborted) {
+    disposeTransientObject3D(loadedObject);
+    throwIfMJCFLoadAborted(abortSignal);
+  }
+
   const transformed = applyMeshAssetTransform(loadedObject, meshDef);
-  transformed.updateMatrixWorld(true);
-  const fit = fitPrimitiveFromPoints(collectMeshPrimitiveFitPoints(transformed), geomType);
-  disposeTemporaryObject(transformed);
-  return fit;
+  try {
+    throwIfMJCFLoadAborted(abortSignal);
+    transformed.updateMatrixWorld(true);
+    const fit = fitPrimitiveFromPoints(collectMeshPrimitiveFitPoints(transformed), geomType);
+    throwIfMJCFLoadAborted(abortSignal);
+    return fit;
+  } finally {
+    disposeTransientObject3D(transformed);
+  }
 }
 
 export function fitPrimitiveFromObject3D(
@@ -762,6 +765,7 @@ function createDefaultMeshPrimitiveFitter(
   assets: Record<string, string>,
   sourceFileDir: string,
   meshCache: MJCFMeshCache,
+  abortSignal?: MJCFLoadAbortSignal,
 ) {
   const meshSpaceFitCache = new Map<string, Promise<MJCFFittedPrimitive | null>>();
 
@@ -778,7 +782,7 @@ function createDefaultMeshPrimitiveFitter(
     if (!meshSpaceFitCache.has(cacheKey)) {
       meshSpaceFitCache.set(
         cacheKey,
-        fitPrimitiveFromMeshAssetViaUrl(geomType, meshDef, assets, sourceFileDir, meshCache),
+        fitPrimitiveFromMeshAssetViaUrl(geomType, meshDef, assets, sourceFileDir, meshCache, abortSignal),
       );
     }
 
@@ -790,13 +794,17 @@ async function resolveBodyMeshBackedPrimitives(
   body: MJCFModelBody,
   parsedModel: ParsedMJCFModel,
   yieldIfNeeded: () => Promise<void>,
+  abortSignal: MJCFLoadAbortSignal | undefined,
   fitPrimitiveFromMeshAsset: (
     params: FitPrimitiveFromMeshAssetParams,
   ) => Promise<MJCFFittedPrimitive | null>,
 ): Promise<number> {
   let resolvedCount = 0;
 
+  throwIfMJCFLoadAborted(abortSignal);
+
   for (const geom of body.geoms) {
+    throwIfMJCFLoadAborted(abortSignal);
     if (!shouldResolveMeshBackedPrimitive(geom)) {
       continue;
     }
@@ -822,7 +830,14 @@ async function resolveBodyMeshBackedPrimitives(
   }
 
   for (const child of body.children) {
-    resolvedCount += await resolveBodyMeshBackedPrimitives(child, parsedModel, yieldIfNeeded, fitPrimitiveFromMeshAsset);
+    throwIfMJCFLoadAborted(abortSignal);
+    resolvedCount += await resolveBodyMeshBackedPrimitives(
+      child,
+      parsedModel,
+      yieldIfNeeded,
+      abortSignal,
+      fitPrimitiveFromMeshAsset,
+    );
     await yieldIfNeeded();
   }
 
@@ -833,16 +848,18 @@ export async function resolveMJCFMeshBackedPrimitiveGeoms(
   parsedModel: ParsedMJCFModel,
   {
     assets,
+    abortSignal,
     meshCache = new Map(),
     sourceFileDir = '',
     yieldIfNeeded = createMainThreadYieldController(),
-    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(assets, sourceFileDir, meshCache),
+    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(assets, sourceFileDir, meshCache, abortSignal),
   }: ResolveMJCFMeshBackedPrimitiveOptions,
 ): Promise<number> {
   return await resolveBodyMeshBackedPrimitives(
     parsedModel.worldBody,
     parsedModel,
     yieldIfNeeded,
+    abortSignal,
     fitPrimitiveFromMeshAsset,
   );
 }

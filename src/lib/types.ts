@@ -1,7 +1,8 @@
 import type { CSSProperties, RefObject } from 'react';
 import type { Object3D } from 'three';
 import type { Language } from '../shared/i18n';
-import type { Theme, UrdfJoint, UrdfLink } from '../types';
+import type { SnapshotCaptureAction } from '../shared/components/3d';
+import type { AppMode, Theme, UrdfJoint, UrdfLink } from '../types';
 import type { ToolMode } from '../features/urdf-viewer/types';
 
 export type RobotCanvasSourceFormat = 'auto' | 'urdf' | 'mjcf';
@@ -69,7 +70,7 @@ export interface RobotCanvasProps {
   assets?: Record<string, string>;
   lang?: Language;
   theme?: Theme;
-  mode?: 'detail' | 'hardware';
+  mode?: AppMode;
   className?: string;
   style?: CSSProperties;
   selection?: RobotCanvasSelection;
@@ -92,7 +93,7 @@ export interface RobotCanvasProps {
   robotJoints?: Record<string, UrdfJoint>;
   focusTarget?: string | null;
   groundPlaneOffset?: number;
-  snapshotAction?: RefObject<(() => void) | null>;
+  snapshotAction?: RefObject<SnapshotCaptureAction | null>;
   orbitEnabled?: boolean;
   showUsageGuide?: boolean;
   enableJointInteraction?: boolean;

@@ -1,80 +1,15 @@
 // @ts-nocheck
 import { BackSide, BoxGeometry, BufferGeometry, CapsuleGeometry, CylinderGeometry, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, MeshPhysicalMaterial, Quaternion, SkinnedMesh, SphereGeometry, Uint32BufferAttribute, Vector3, } from 'three';
 import * as Shared from './shared.js';
-import { mitigateCoplanarMaterialZFighting } from '../../../../../core/loaders/coplanarMaterialOffset.ts';
+import { mitigateCoplanarMaterialZFighting } from '../../../../../core/loaders/coplanarMaterialOffset.shared.js';
 import { stackCoincidentVisualRoots } from '../../../../../core/loaders/visualMeshStacking.ts';
 import { getDefaultMaterial } from './default-material-state.js';
 import { createUnifiedHydraPhysicalMaterial } from './material-defaults.js';
 const { buildProtoPrimPathCandidates, clamp01, createMatrixFromXformOp, debugInstancer, debugMaterials, debugMeshes, debugPrims, debugTextures, defaultGrayComponent, disableMaterials, disableTextures, extractPrimPathFromMaterialBindingWarning, extractReferencePrimTargets, extractScopeBodyText, extractUsdAssetReferencesFromLayerText, getActiveMaterialBindingWarningOwner, getAngleInRadians, getCollisionGeometryTypeFromUrdfElement, getExpectedPrimTypesForCollisionProto, getExpectedPrimTypesForProtoType, getMatrixMaxElementDelta, getPathBasename, getPathWithoutRoot, getRawConsoleMethod, getRootPathFromPrimPath, getSafePrimTypeName, hasNonZeroTranslation, hydraCallbackErrorCounts, installMaterialBindingApiWarningInterceptor, isIdentityQuaternion, isLikelyDefaultGrayMaterial, isLikelyInverseTransform, isMaterialBindingApiWarningMessage, isMatrixApproximatelyIdentity, isNonZero, isPotentiallyLargeBaseAssetPath, logHydraCallbackError, materialBindingRepairMaxLayerTextLength, materialBindingWarningHandlers, maxHydraCallbackErrorLogsPerMethod, nearlyEqual, normalizeHydraPath, normalizeUsdPathToken, parseGuideCollisionReferencesFromLayerText, parseProtoMeshIdentifier, parseUrdfTruthFromText, parseVector3Text, parseXformOpFallbacksFromLayerText, rawConsoleError, rawConsoleWarn, registerMaterialBindingApiWarningHandler, remapRootPathIfNeeded, resolveUrdfTruthFileNameForStagePath, resolveUsdAssetPath, setActiveMaterialBindingWarningOwner, shouldAllowLargeBaseAssetScan, stringifyConsoleArgs, toArrayLike, toColorArray, toFiniteNumber, toFiniteQuaternionWxyzTuple, toFiniteVector2Tuple, toFiniteVector3Tuple, toMatrixFromUrdfOrigin, toQuaternionWxyzFromRpy, transformEpsilon, wrapHydraCallbackObject } = Shared;
-const HYDRA_SYNC_PROFILE_FROM_QUERY = (() => {
-    try {
-        const search = typeof window !== 'undefined' ? String(window.location?.search || '') : '';
-        return /\b(profileHydraSync|profileHydraMesh|debugHydraPerf)=1\b/.test(search);
-    }
-    catch {
-        return false;
-    }
-})();
-const PREFER_HYDRA_COLLISION_GEOMETRY = (() => {
-    try {
-        const search = typeof window !== 'undefined' ? String(window.location?.search || '') : '';
-        if (!search)
-            return true;
-        const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-        const raw = params.get('preferHydraCollisionGeometry');
-        if (raw === null || raw === undefined)
-            return true;
-        const normalized = String(raw).trim().toLowerCase();
-        if (['0', 'false', 'no', 'off'].includes(normalized))
-            return false;
-        if (['1', 'true', 'yes', 'on'].includes(normalized))
-            return true;
-        return true;
-    }
-    catch {
-        return true;
-    }
-})();
-const DEFER_COLLISION_OVERRIDE_IN_COMMIT = (() => {
-    try {
-        const search = typeof window !== 'undefined' ? String(window.location?.search || '') : '';
-        if (!search)
-            return true;
-        const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-        const raw = params.get('deferCollisionOverrideInCommit');
-        if (raw === null || raw === undefined)
-            return true;
-        const normalized = String(raw).trim().toLowerCase();
-        if (['0', 'false', 'no', 'off'].includes(normalized))
-            return false;
-        if (['1', 'true', 'yes', 'on'].includes(normalized))
-            return true;
-        return true;
-    }
-    catch {
-        return true;
-    }
-})();
-const ALLOW_RESOLVED_VISUAL_SUBMESH_TRANSFORM = (() => {
-    try {
-        const search = typeof window !== 'undefined' ? String(window.location?.search || '') : '';
-        if (!search)
-            return false;
-        const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-        const raw = params.get('allowResolvedVisualSubmeshTransform');
-        if (raw === null || raw === undefined)
-            return false;
-        const normalized = String(raw).trim().toLowerCase();
-        if (['1', 'true', 'yes', 'on'].includes(normalized))
-            return true;
-        if (['0', 'false', 'no', 'off'].includes(normalized))
-            return false;
-        return false;
-    }
-    catch {
-        return false;
-    }
-})();
+const HYDRA_SYNC_PROFILE_FROM_QUERY = false;
+const PREFER_HYDRA_COLLISION_GEOMETRY = true;
+const DEFER_COLLISION_OVERRIDE_IN_COMMIT = true;
+const ALLOW_RESOLVED_VISUAL_SUBMESH_TRANSFORM = false;
 const EMPTY_UINT32_ARRAY = new Uint32Array(0);
 // Keep primitive tessellation multiples of 4 so cardinal directions land on
 // vertices; this avoids ~1.5% AABB shrink on spheres/cylinders.
@@ -99,6 +34,7 @@ const FAST_COLLISION_PRIMITIVE_SEGMENTS = {
 const VISUAL_SEGMENT_PATTERN = /(?:^|\/)visuals?(?:$|[/.])/i;
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
 const PRIMITIVE_GEOMETRY_TEMPLATE_CACHE = new Map();
+const warnedMissingMaterials = new Set();
 function toPrimitiveKeyNumber(value, digits = 6) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed))

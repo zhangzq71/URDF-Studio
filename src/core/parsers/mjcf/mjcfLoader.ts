@@ -7,9 +7,19 @@ import * as THREE from 'three';
 import { type MJCFMeshCache } from './mjcfGeometry';
 import { buildMJCFHierarchy } from './mjcfHierarchyBuilder';
 import { resolveMJCFMeshBackedPrimitiveGeoms } from './mjcfMeshBackedPrimitiveResolver';
-import { parseMJCFModel } from './mjcfModel';
+import { clearParsedMJCFModelCache, parseMJCFModel } from './mjcfModel';
 import { looksLikeMJCFDocument } from './mjcfUtils';
+import { disposeColladaParseWorkerPoolClient } from '@/core/loaders/colladaParseWorkerBridge';
+import { disposeObjParseWorkerPoolClient } from '@/core/loaders/objParseWorkerBridge';
+import { disposeStlParseWorkerPoolClient } from '@/core/loaders/stlParseWorkerBridge';
 import { createMainThreadYieldController, yieldToMainThread } from '@/core/utils/yieldToMainThread';
+import {
+    disposeTransientObject3D,
+    isMJCFLoadAbortedError,
+    type MJCFLoadAbortSignal,
+    throwIfMJCFLoadAborted,
+} from './mjcfLoadLifecycle';
+import { disposeMJCFMeshCache } from './mjcfMeshAssetLoader';
 
 interface MJCFBody {
     name: string;
@@ -53,25 +63,45 @@ export interface MJCFLoadProgress {
     totalCount?: number | null;
 }
 
+export interface LoadMJCFToThreeJSOptions {
+    abortSignal?: MJCFLoadAbortSignal;
+}
+
 /** Load MJCF XML content and create a Three.js scene graph. */
 export async function loadMJCFToThreeJS(
     xmlContent: string,
     assets: Record<string, string>,
     sourceFileDir = '',
     onProgress?: (progress: MJCFLoadProgress) => void,
+    options: LoadMJCFToThreeJSOptions = {},
 ): Promise<THREE.Object3D | null> {
     const emitProgress = (progress: MJCFLoadProgress) => {
         onProgress?.(progress);
     };
+    const { abortSignal } = options;
+    const throwIfAborted = () => {
+        throwIfMJCFLoadAborted(abortSignal);
+    };
+
+    let rootGroup: THREE.Group | null = null;
+    const meshCache: MJCFMeshCache = new Map();
 
     try {
         const yieldIfNeeded = createMainThreadYieldController();
+        const cooperativeYieldIfNeeded = async () => {
+            throwIfAborted();
+            await yieldIfNeeded();
+            throwIfAborted();
+        };
+
+        throwIfAborted();
         emitProgress({
             phase: 'preparing-scene',
             progressPercent: 0,
         });
 
         await yieldToMainThread();
+        throwIfAborted();
         const parsedModel = parseMJCFModel(xmlContent);
         if (!parsedModel) {
             return null;
@@ -84,29 +114,28 @@ export async function loadMJCFToThreeJS(
             phase: 'preparing-scene',
             progressPercent: 16,
         });
-        await yieldIfNeeded();
-
-        const meshCache: MJCFMeshCache = new Map();
+        await cooperativeYieldIfNeeded();
 
         await resolveMJCFMeshBackedPrimitiveGeoms(parsedModel, {
             assets,
+            abortSignal,
             meshCache,
             sourceFileDir,
-            yieldIfNeeded,
+            yieldIfNeeded: cooperativeYieldIfNeeded,
         });
 
         emitProgress({
             phase: 'preparing-scene',
             progressPercent: 28,
         });
-        await yieldIfNeeded();
+        await cooperativeYieldIfNeeded();
 
         const meshMap = parsedModel.meshMap;
         const materialMap = parsedModel.materialMap;
         const textureMap = parsedModel.textureMap;
         const bodies: MJCFBody[] = [parsedModel.worldBody as MJCFBody];
 
-        const rootGroup = new THREE.Group();
+        rootGroup = new THREE.Group();
         rootGroup.name = modelName;
         (rootGroup as any).isURDFRobot = true;
 
@@ -115,12 +144,12 @@ export async function loadMJCFToThreeJS(
             rootGroup,
             meshMap,
             assets,
+            abortSignal,
             meshCache,
             compilerSettings,
             materialMap,
             textureMap,
             sourceFileDir,
-            yieldIfNeeded,
             onProgress: ({ processedGeoms, totalGeoms }) => {
                 const normalizedPercent = totalGeoms > 0
                     ? 28 + (processedGeoms / totalGeoms) * 60
@@ -133,13 +162,14 @@ export async function loadMJCFToThreeJS(
                     progressPercent: normalizedPercent,
                 });
             },
+            yieldIfNeeded: cooperativeYieldIfNeeded,
         });
 
         emitProgress({
             phase: 'finalizing-scene',
             progressPercent: 96,
         });
-        await yieldIfNeeded();
+        await cooperativeYieldIfNeeded();
 
         (rootGroup as any).links = linksMap;
         (rootGroup as any).joints = jointsMap;
@@ -151,8 +181,26 @@ export async function loadMJCFToThreeJS(
 
         return rootGroup;
     } catch (error) {
+        disposeMJCFMeshCache(meshCache);
+        disposeTransientObject3D(rootGroup);
+
+        if (isMJCFLoadAbortedError(error)) {
+            throw error;
+        }
+
         console.error('[MJCFLoader] Failed to load MJCF:', error);
         return null;
+    } finally {
+        // Parsed MJCF model trees are only needed while constructing the
+        // current scene. Releasing them here prevents old robots from staying
+        // resident after the viewer switches to another MJCF document.
+        clearParsedMJCFModelCache(xmlContent);
+        // MJCF switches can drive large mesh parse workloads. Tear down the
+        // shared parse worker pools here so worker-side heap does not stay
+        // resident across document switches.
+        disposeColladaParseWorkerPoolClient();
+        disposeObjParseWorkerPoolClient();
+        disposeStlParseWorkerPoolClient();
     }
 }
 

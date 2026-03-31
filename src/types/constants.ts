@@ -6,6 +6,9 @@ import { GeometryType } from './geometry';
 import { JointType } from './robot';
 import type { UrdfLink, UrdfJoint } from './robot';
 
+export const DEFAULT_VISUAL_COLOR = '#f2f0e8';
+export const DEFAULT_COLLISION_COLOR = '#ef4444';
+
 export const DEFAULT_LINK: UrdfLink = {
   id: '',
   name: 'link',
@@ -13,14 +16,14 @@ export const DEFAULT_LINK: UrdfLink = {
   visual: {
     type: GeometryType.CYLINDER,
     dimensions: { x: 0.05, y: 0.5, z: 0.05 },
-    color: '#3b82f6',
+    color: DEFAULT_VISUAL_COLOR,
     origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }
   },
   visualBodies: [],
   collision: {
     type: GeometryType.CYLINDER,
     dimensions: { x: 0.05, y: 0.5, z: 0.05 },
-    color: '#ef4444',
+    color: DEFAULT_COLLISION_COLOR,
     origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } }
   },
   collisionBodies: [],

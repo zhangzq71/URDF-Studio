@@ -72,19 +72,6 @@ export const getObjectRPY = (object: THREE.Object3D) => {
     return { r: rotation.x, p: rotation.y, y: rotation.z };
 };
 
-export const getAxisColor = (axis: string | null) => {
-    if (axis === 'X') return '#ef4444';
-    if (axis === 'Y') return '#22c55e';
-    if (axis === 'Z') return '#3b82f6';
-    return '#94a3b8';
-};
-
-export const getTransformControlMode = (transformMode: 'select' | 'translate' | 'rotate' | 'universal') => {
-    if (transformMode === 'translate') return 'translate';
-    if (transformMode === 'rotate') return 'rotate';
-    return 'translate';
-};
-
 export const formatPendingDelta = (pendingEdit: CollisionPendingEdit | null) => {
     if (!pendingEdit) return '0';
     const delta = pendingEdit.value - pendingEdit.startValue;

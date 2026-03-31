@@ -4,7 +4,11 @@ import * as THREE from 'three';
 
 import { URDFLink } from '@/core/parsers/urdf/loader/URDFClasses';
 
-import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial } from './materials';
+import {
+  COLLISION_OVERLAY_RENDER_ORDER,
+  COLLISION_STANDARD_RENDER_ORDER,
+  collisionBaseMaterial,
+} from './materials';
 import { syncCollisionGroupVisibility } from './collisionVisibilitySync';
 
 test('syncCollisionGroupVisibility skips collider subtree traversal while collisions are hidden', () => {
@@ -125,4 +129,76 @@ test('syncCollisionGroupVisibility reuses cached collider mesh lists across visi
   assert.equal(changedSecondPass, false);
   assert.equal(traverseCalls, 1);
   assert.equal(mesh.material, collisionBaseMaterial);
+});
+
+test('syncCollisionGroupVisibility supports non-topmost collision rendering when requested', () => {
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collider = new THREE.Group();
+  (collider as any).isURDFCollider = true;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collider.add(mesh);
+  link.add(collider);
+
+  const changed = syncCollisionGroupVisibility({
+    collider,
+    showCollision: true,
+    showCollisionAlwaysOnTop: false,
+  });
+
+  assert.equal(changed, true);
+  assert.equal(mesh.material, collisionBaseMaterial);
+  assert.equal(mesh.renderOrder, COLLISION_STANDARD_RENDER_ORDER);
+  assert.equal(collisionBaseMaterial.depthTest, true);
+  assert.equal(collisionBaseMaterial.depthWrite, false);
+
+  syncCollisionGroupVisibility({
+    collider,
+    showCollision: true,
+    showCollisionAlwaysOnTop: true,
+  });
+  assert.equal(mesh.renderOrder, COLLISION_OVERLAY_RENDER_ORDER);
+  assert.equal(collisionBaseMaterial.depthTest, false);
+});
+
+test('syncCollisionGroupVisibility disposes replaced collider materials without clobbering original references', () => {
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collider = new THREE.Group();
+  (collider as any).isURDFCollider = true;
+
+  let materialDisposeCalls = 0;
+  let textureDisposeCalls = 0;
+
+  const previousTexture = new THREE.Texture();
+  previousTexture.dispose = () => {
+    textureDisposeCalls += 1;
+  };
+
+  const previousMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, map: previousTexture });
+  previousMaterial.dispose = () => {
+    materialDisposeCalls += 1;
+  };
+
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), previousMaterial);
+  const meshWithOriginalMaterial = mesh as THREE.Mesh & { __origMaterial?: THREE.Material | THREE.Material[] };
+  meshWithOriginalMaterial.__origMaterial = previousMaterial;
+  collider.add(mesh);
+  link.add(collider);
+
+  const changed = syncCollisionGroupVisibility({
+    collider,
+    showCollision: true,
+  });
+
+  assert.equal(changed, true);
+  assert.equal(mesh.material, collisionBaseMaterial);
+  assert.equal(meshWithOriginalMaterial.__origMaterial, previousMaterial);
+  assert.equal(materialDisposeCalls, 1);
+  assert.equal(textureDisposeCalls, 1);
 });

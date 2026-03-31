@@ -62,3 +62,30 @@ test('origin axes overlay preference still restores explicit user opt-in', () =>
 
   dom.window.close();
 });
+
+test('viewer visibility toggles and sizing parameters restore from saved preferences', () => {
+  const dom = installDom();
+  dom.window.localStorage.setItem('urdf_viewer_show_collision', 'true');
+  dom.window.localStorage.setItem('urdf_viewer_show_visual', 'false');
+  dom.window.localStorage.setItem('urdf_viewer_show_center_of_mass', 'true');
+  dom.window.localStorage.setItem('urdf_viewer_com_size', '0.12');
+  dom.window.localStorage.setItem('urdf_viewer_show_inertia', 'true');
+  dom.window.localStorage.setItem('urdf_viewer_show_origins', 'true');
+  dom.window.localStorage.setItem('urdf_viewer_origin_size', '0.18');
+  dom.window.localStorage.setItem('urdf_viewer_show_joint_axes', 'true');
+  dom.window.localStorage.setItem('urdf_viewer_joint_axis_size', '0.42');
+
+  const settings = renderSettings();
+
+  assert.equal(settings.showCollision, true);
+  assert.equal(settings.localShowVisual, false);
+  assert.equal(settings.showCenterOfMass, true);
+  assert.equal(settings.centerOfMassSize, 0.12);
+  assert.equal(settings.showInertia, true);
+  assert.equal(settings.showOrigins, true);
+  assert.equal(settings.originSize, 0.18);
+  assert.equal(settings.showJointAxes, true);
+  assert.equal(settings.jointAxisSize, 0.42);
+
+  dom.window.close();
+});

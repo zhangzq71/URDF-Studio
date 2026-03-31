@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, Eye, EyeOff, FileCode, Plus, Shapes, Shield } from 'lucide-react';
 import { translations } from '@/shared/i18n';
-import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
+import type { AppMode, AssemblyState, RobotState } from '@/types';
 import { AssemblyTreeView } from '../AssemblyTreeView';
 import { TreeNode } from '../TreeNode';
 
@@ -15,10 +15,10 @@ interface TreeEditorStructureSectionProps {
   currentFileName?: string;
   mode: AppMode;
   assemblyState?: AssemblyState | null;
-  robot: RobotData;
+  robot: RobotState;
   treeRootLinkIds: string[];
   childJointsByParent: Record<string, RobotState['joints'][string][]>;
-  parentLinkByChild: Record<string, string>;
+  selectionBranchLinkIds: Set<string>;
   t: TreeEditorTranslations;
   onToggleOpen: () => void;
   onToggleGeometryDetails: () => void;
@@ -51,7 +51,7 @@ export function TreeEditorStructureSection({
   robot,
   treeRootLinkIds,
   childJointsByParent,
-  parentLinkByChild,
+  selectionBranchLinkIds,
   t,
   onToggleOpen,
   onToggleGeometryDetails,
@@ -105,7 +105,7 @@ export function TreeEditorStructureSection({
                 value={currentFileName ?? ''}
                 aria-label={currentFileName ?? ''}
                 spellCheck={false}
-                className="min-w-0 flex-1 bg-transparent text-[9px] leading-none font-medium text-text-secondary outline-none dark:text-text-tertiary cursor-text"
+                className="allow-text-selection min-w-0 flex-1 bg-transparent text-[9px] leading-none font-medium text-text-secondary outline-none dark:text-text-tertiary cursor-text"
                 onFocus={(event) => event.currentTarget.select()}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -136,7 +136,7 @@ export function TreeEditorStructureSection({
             <Shield size={11} />
           </button>
 
-          {mode === 'skeleton' && !isAssemblyView && !isReadOnly && (
+          {!isAssemblyView && !isReadOnly && (
             <button
               className="p-0.5 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
               onClick={(event) => {
@@ -198,7 +198,7 @@ export function TreeEditorStructureSection({
                       robot={robot}
                       showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
                       childJointsByParent={childJointsByParent}
-                      parentLinkByChild={parentLinkByChild}
+                      selectionBranchLinkIds={selectionBranchLinkIds}
                       onSelect={onSelect}
                       onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}

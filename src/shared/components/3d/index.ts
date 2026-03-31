@@ -11,17 +11,45 @@ export {
   GLTFRenderer,
   useLoadingManager
 } from './MeshRenderers';
+export { MeshAssetNode } from './MeshAssetNode';
 
 // Scene Utilities
 export {
   HoverInvalidator,
   CanvasResizeSync,
   SnapshotManager,
+  DEFAULT_SNAPSHOT_CAPTURE_OPTIONS,
+  SNAPSHOT_BACKGROUND_STYLES,
+  SNAPSHOT_DOF_MODES,
+  SNAPSHOT_DETAIL_LEVELS,
+  SNAPSHOT_ENVIRONMENT_PRESETS,
+  SNAPSHOT_GROUND_STYLES,
+  SNAPSHOT_IMAGE_FORMATS,
+  SNAPSHOT_IMAGE_QUALITY_MAX,
+  SNAPSHOT_IMAGE_QUALITY_MIN,
+  SNAPSHOT_IMAGE_QUALITY_STEP,
+  SNAPSHOT_LONG_EDGE_INPUT_STEP,
+  SNAPSHOT_MAX_LONG_EDGE_INPUT,
+  SNAPSHOT_SHADOW_STYLES,
+  normalizeSnapshotCaptureOptions,
+  normalizeSnapshotImageQuality,
+  normalizeSnapshotLongEdgePx,
+  type SnapshotBackgroundStyle,
+  type SnapshotCaptureAction,
+  type SnapshotCaptureOptions,
+  type SnapshotDofMode,
+  type SnapshotDetailLevel,
+  type SnapshotEnvironmentPreset,
+  type SnapshotGroundStyle,
+  type SnapshotImageFormat,
+  type SnapshotShadowStyle,
   NeutralStudioEnvironment,
   SceneLighting,
   GroundShadowPlane,
   ReferenceGrid,
   AdaptiveGroundPlane,
+  SnapshotContactShadows,
+  SnapshotExportLook,
   SceneCompileWarmup,
   INTERACTION_DPR_CAP,
   INTERACTION_RECOVERY_DELAY_MS,
@@ -46,3 +74,4 @@ export * from './helpers';
 export { UsageGuide } from './UsageGuide';
 export { ViewModeBadge } from './ViewModeBadge';
 export { TransformConfirmOverlay } from './TransformConfirmOverlay';
+export { TransformConfirmHtmlOverlay } from './TransformConfirmHtmlOverlay';

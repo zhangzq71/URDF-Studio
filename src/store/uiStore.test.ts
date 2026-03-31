@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 type UIStoreModule = typeof import('./uiStore.ts');
-const UI_STORE_PERSIST_VERSION = 6;
+const UI_STORE_PERSIST_VERSION = 8;
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -71,12 +71,14 @@ test('view options restore persisted world-origin axes and usage-guide preferenc
       showCenterOfMass: false,
       showCollision: false,
       showUsageGuide: false,
+      modelOpacity: 0.42,
     },
   });
 
   const state = useUIStore.getState();
   assert.equal(state.viewOptions.showAxes, false);
   assert.equal(state.viewOptions.showUsageGuide, false);
+  assert.equal(state.viewOptions.modelOpacity, 0.42);
 
   dom.window.close();
 });
@@ -87,6 +89,7 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
   const state = useUIStore.getState();
   state.setViewOption('showAxes', false);
   state.setViewOption('showUsageGuide', false);
+  state.setViewOption('modelOpacity', 0.42);
 
   const raw = dom.window.localStorage.getItem('urdf-studio-ui');
   assert.ok(raw, 'persisted ui store payload should be written');
@@ -96,12 +99,14 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
       viewOptions?: {
         showAxes?: boolean;
         showUsageGuide?: boolean;
+        modelOpacity?: number;
       };
     };
   };
 
   assert.equal(persisted.state?.viewOptions?.showAxes, false);
   assert.equal(persisted.state?.viewOptions?.showUsageGuide, false);
+  assert.equal(persisted.state?.viewOptions?.modelOpacity, 0.42);
 
   dom.window.close();
 });

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ensureUsdWasmRuntime, resolvePreferredUsdThreadCount } from './usdWasmRuntime';
+import { ensureUsdWasmRuntime, resolvePreferredUsdThreadCount } from './usdWasmRuntime.ts';
 
-test('resolvePreferredUsdThreadCount uses hardware concurrency up to 10 threads', () => {
+test('resolvePreferredUsdThreadCount caps browser USD runtime concurrency at 4 threads', () => {
   const previousNavigator = globalThis.navigator;
 
   Object.defineProperty(globalThis, 'navigator', {
@@ -13,8 +13,8 @@ test('resolvePreferredUsdThreadCount uses hardware concurrency up to 10 threads'
   });
 
   try {
-    assert.equal(resolvePreferredUsdThreadCount(), 10);
-    assert.equal(resolvePreferredUsdThreadCount(6), 6);
+    assert.equal(resolvePreferredUsdThreadCount(), 4);
+    assert.equal(resolvePreferredUsdThreadCount(6), 4);
     assert.equal(resolvePreferredUsdThreadCount(1), 1);
   } finally {
     if (previousNavigator === undefined) {

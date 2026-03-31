@@ -65,7 +65,11 @@ async function destroyComponentRoot(dom: JSDOM, root: Root) {
   dom.window.close();
 }
 
-async function renderExportDialog(root: Root, onExport: (config: ExportDialogConfig) => void) {
+async function renderExportDialog(
+  root: Root,
+  onExport: (config: ExportDialogConfig) => void,
+  props: Partial<React.ComponentProps<typeof ExportDialog>> = {},
+) {
   await act(async () => {
     root.render(
       React.createElement(ExportDialog, {
@@ -73,6 +77,7 @@ async function renderExportDialog(root: Root, onExport: (config: ExportDialogCon
         onExport,
         lang: 'zh',
         canExportUsd: true,
+        ...props,
       }),
     );
   });
@@ -198,6 +203,66 @@ test('custom compression uses semantic space-vs-fidelity guidance instead of per
     assert.doesNotMatch(container.textContent ?? '', /更小体积/);
     assert.doesNotMatch(container.textContent ?? '', /更多细节/);
     assert.doesNotMatch(container.textContent ?? '', /\b50%\b/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('MJCF export label omits the XML suffix in the format picker', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    assert.match(container.textContent ?? '', /导出格式MJCFURDFXacroSDFUSD/);
+    assert.doesNotMatch(container.textContent ?? '', /MJCF \/ XML/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('Xacro export moves ROS profile guidance into hover titles instead of inline copy', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'Xacro'));
+
+    const ros2Button = getButtonByText(container, 'ROS2 + gazebo_ros2_control');
+    assert.equal(ros2Button.getAttribute('title'), '导出 ros2_control 与 gazebo_ros2_control 约定。');
+    assert.equal(ros2Button.getAttribute('aria-pressed'), 'true');
+
+    const xacroHintButton = Array.from(container.querySelectorAll('button[title]')).find(
+      (candidate) => candidate.getAttribute('title')?.includes('导出为真正的 xacro'),
+    );
+    assert.ok(xacroHintButton, 'xacro static hint should still be available via hover');
+
+    const hardwareSelect = container.querySelector('select');
+    assert.ok(hardwareSelect, 'xacro hardware interface select should render');
+    assert.equal(
+      hardwareSelect?.getAttribute('title'),
+      '写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称。',
+    );
+
+    const textContent = container.textContent ?? '';
+    assert.doesNotMatch(textContent, /导出为真正的 xacro/);
+    assert.doesNotMatch(textContent, /导出 ros2_control 与 gazebo_ros2_control 约定/);
+    assert.doesNotMatch(textContent, /写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('exporting state renders progress UI without crashing', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {}, { isExporting: true });
+
+    const exportingButton = getButtonByText(container, '导出中...');
+    assert.equal(exportingButton.disabled, true);
+    assert.match(container.textContent ?? '', /准备导出/);
   } finally {
     await destroyComponentRoot(dom, root);
   }

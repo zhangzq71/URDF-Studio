@@ -1,6 +1,6 @@
 /**
  * Motor Library - Default motor specifications from various manufacturers
- * Used in Hardware mode for joint motor configuration
+ * Used for joint motor configuration in the hardware configuration workflow
  */
 import type { MotorSpec } from '@/types';
 
@@ -477,5 +477,63 @@ export const DEFAULT_MOTOR_LIBRARY: Record<string, MotorSpec[]> = {
         effort: 14,
         url: 'https://www.hightorque.cn/',
         description: 'Mini Pi Hollow Wiring Waist.'
-    }]
+   }]
 };
+
+function cloneDefaultMotorLibrary(): Record<string, MotorSpec[]> {
+  return Object.fromEntries(
+    Object.entries(DEFAULT_MOTOR_LIBRARY).map(([brand, motors]) => [
+      brand,
+      motors.map((motor) => ({ ...motor })),
+    ]),
+  );
+}
+
+function appendUniqueMotorSpec(target: MotorSpec[], incoming: MotorSpec): void {
+  if (!incoming.name || target.some((motor) => motor.name === incoming.name)) {
+    return;
+  }
+
+  target.push({
+    ...incoming,
+  });
+}
+
+export function normalizeMotorLibrary(
+  library: Record<string, MotorSpec[]> | null | undefined,
+  context: string = 'unknown',
+): Record<string, MotorSpec[]> {
+  const normalized = cloneDefaultMotorLibrary();
+
+  if (!library || typeof library !== 'object' || Array.isArray(library)) {
+    console.warn(`[motorLibrary] Invalid library payload from ${context}; using default library.`);
+    return normalized;
+  }
+
+  if (Object.keys(library).length === 0) {
+    console.warn(`[motorLibrary] Empty library payload from ${context}; using default library.`);
+    return normalized;
+  }
+
+  Object.entries(library).forEach(([brand, motors]) => {
+    if (!Array.isArray(motors)) {
+      console.warn(`[motorLibrary] Brand "${brand}" from ${context} is not a motor array; skipping.`);
+      return;
+    }
+
+    if (!normalized[brand]) {
+      normalized[brand] = [];
+    }
+
+    motors.forEach((motor, index) => {
+      if (!motor || typeof motor.name !== 'string' || motor.name.trim().length === 0) {
+        console.warn(`[motorLibrary] Invalid motor spec at ${context}:${brand}[${index}]; skipping.`);
+        return;
+      }
+
+      appendUniqueMotorSpec(normalized[brand], motor);
+    });
+  });
+
+  return normalized;
+}

@@ -100,7 +100,7 @@ export function TreeEditorFileBrowserContent({
 
       {isOpen && isProMode && availableFiles.length > 0 && (
         <div className="px-2.5 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
-          <span className="text-[9px] leading-none text-system-blue">{t.clickToAddComponent}</span>
+          <span className="ui-static-copy-guard text-[9px] leading-none text-system-blue">{t.clickToAddComponent}</span>
         </div>
       )}
 
@@ -112,7 +112,7 @@ export function TreeEditorFileBrowserContent({
           }}
         >
           {availableFiles.length === 0 ? (
-            <div className="text-xs text-text-tertiary text-center py-4 italic">{t.dropOrImport}</div>
+            <div className="ui-static-copy-guard py-4 text-center text-xs italic whitespace-pre-line text-text-tertiary">{t.dropOrImport}</div>
           ) : (
             fileTree.map((node) => (
               <div

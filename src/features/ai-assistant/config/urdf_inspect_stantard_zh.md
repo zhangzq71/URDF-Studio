@@ -10,6 +10,74 @@ URDF 机器人检查标准 (详细版)
 
 最终达成率 (Achievement Rate): $Rate = (Score_{total} / Score_{max}) \times 100\%$
 
+0. URDF 规范合规 (URDF Spec Compliance)
+
+章节ID: spec
+
+0.1 机器人根节点契约 (Robot Root Contract)
+
+项目ID: robot_root_contract
+
+判定标准:
+
+文档必须具有唯一的 `<robot>` 根节点，并带有稳定的 `name`。
+
+顶层子元素应与目标消费方兼容：核心 URDF（`link`、`joint`、`material`）以及被明确说明的扩展（`transmission`、`gazebo`、`sensor`、自定义标签）。
+
+得分参考: 根节点缺失/非法计 0 分；未说明的扩展混用计 4-6 分。
+
+0.2 Link / Joint 必填字段 (Link / Joint Required Fields)
+
+项目ID: link_joint_required_fields
+
+判定标准:
+
+每个 `link` 都必须有唯一 `name`。
+
+每个 `joint` 都必须有 `name`、`type`、`<parent link="...">` 与 `<child link="...">`。
+
+parent/child 引用必须指向真实存在的 link。
+
+得分参考: 必填字段缺失或引用断裂计 0-3 分。
+
+0.3 树拓扑约束 (Tree Topology Constraint)
+
+项目ID: topology_tree_constraint
+
+判定标准:
+
+核心 URDF 模型是树，不是一般图结构。
+
+应当只有一个逻辑根节点，不允许存在孤立 link，也不应直接在核心 URDF 语义中编码闭环，除非闭环由下游工具在 URDF 之外额外表达。
+
+得分参考: 多根、断裂子图或直接用普通 URDF 编码闭环计 0-2 分。
+
+0.4 关节语义规则 (Joint Semantic Rules)
+
+项目ID: joint_semantics
+
+判定标准:
+
+axis、limit、mimic、calibration 与安全相关标签必须符合对应关节类型的语义。
+
+`continuous` 关节不应依赖位置上下界。
+
+`mimic` 的目标关节必须存在，且关系应是明确、有意图的。
+
+得分参考: 与类型冲突的标签或自相矛盾的关节语义计 2-5 分。
+
+0.5 扩展兼容性 (Extension Compatibility)
+
+项目ID: extension_compatibility
+
+判定标准:
+
+`transmission`、`gazebo`、`sensor` 以及自定义标签属于扩展面，不是所有消费方都支持的核心 URDF。
+
+需要审查文件是否说明了目标消费方，以及这些扩展在不支持的环境中是可忽略的，还是实际上依赖它们才能正确工作。
+
+得分参考: 存在隐藏的消费方依赖，或必须扩展却没有说明，计 3-6 分。
+
 1. 物理合理性 (Physical Plausibility)
 
 章节ID: physical

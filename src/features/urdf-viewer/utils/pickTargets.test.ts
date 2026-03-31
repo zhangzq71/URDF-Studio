@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { collectPickTargets, findPickIntersections } from './pickTargets.ts';
+import {
+  collectPickTargets,
+  collectSelectableHelperTargets,
+  findPickIntersections,
+} from './pickTargets.ts';
 
 function createBoxMesh(material?: THREE.Material): THREE.Mesh {
   return new THREE.Mesh(
@@ -35,6 +39,38 @@ test('collectPickTargets skips internal helper meshes and fully transparent mesh
   assert.deepEqual(targets, [pickableMesh]);
 });
 
+test('collectSelectableHelperTargets keeps selectable helper overlays even when they sit outside link geometry', () => {
+  const robot = new THREE.Group();
+
+  const linkMesh = createBoxMesh();
+  linkMesh.position.set(0, 0, -1);
+  linkMesh.userData.parentLinkName = 'base_link';
+  linkMesh.userData.isVisualMesh = true;
+  robot.add(linkMesh);
+
+  const helperGroup = new THREE.Group();
+  helperGroup.name = '__inertia_box__';
+  helperGroup.userData = { isGizmo: true, isSelectableHelper: true };
+
+  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.25 }));
+  helperMesh.position.set(3, 0, -1);
+  helperMesh.userData = { isGizmo: true, isSelectableHelper: true };
+  helperGroup.add(helperMesh);
+  robot.add(helperGroup);
+
+  const transparentHelperMesh = createBoxMesh(
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 }),
+  );
+  transparentHelperMesh.userData = { isGizmo: true, isSelectableHelper: true };
+  helperGroup.add(transparentHelperMesh);
+
+  const targets = collectSelectableHelperTargets(robot);
+
+  assert.equal(targets.includes(helperMesh), true);
+  assert.equal(targets.includes(linkMesh), false);
+  assert.equal(targets.includes(transparentHelperMesh), false);
+});
+
 test('findPickIntersections keeps nearest hit first even when pick target order is unsorted', () => {
   const robot = new THREE.Group();
 
@@ -62,4 +98,208 @@ test('findPickIntersections keeps nearest hit first even when pick target order 
   assert.equal(hits.length >= 2, true);
   assert.equal(hits[0]?.object, nearMesh);
   assert.ok((hits[0]?.distance ?? Infinity) <= (hits[1]?.distance ?? Infinity));
+});
+
+test('findPickIntersections includes selectable helpers that are not in pickTargets', () => {
+  const robot = new THREE.Group();
+
+  const linkMesh = createBoxMesh();
+  linkMesh.position.set(0, 0, -1.5);
+  linkMesh.userData.parentLinkName = 'base_link';
+  linkMesh.userData.isVisualMesh = true;
+  robot.add(linkMesh);
+
+  const helperGroup = new THREE.Group();
+  helperGroup.name = '__origin_axes__';
+  helperGroup.userData = { isGizmo: true, isSelectableHelper: true };
+
+  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+  helperMesh.position.set(0, 0, -1);
+  helperMesh.userData = { isGizmo: true, isSelectableHelper: true };
+  helperGroup.add(helperMesh);
+  robot.add(helperGroup);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  const hits = findPickIntersections(robot, raycaster, [linkMesh], 'visual', false);
+
+  assert.equal(hits.length > 0, true);
+  assert.equal(hits[0]?.object, helperMesh);
+  assert.ok(hits.some((hit) => hit.object === linkMesh));
+});
+
+test('findPickIntersections prefers selectable helper overlays over nearer collision meshes', () => {
+  const robot = new THREE.Group();
+
+  const collisionMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+  collisionMesh.position.set(0, 0, -1);
+  collisionMesh.userData.parentLinkName = 'base_link';
+  collisionMesh.userData.isCollisionMesh = true;
+  collisionMesh.renderOrder = 999;
+  robot.add(collisionMesh);
+
+  const helperGroup = new THREE.Group();
+  helperGroup.name = '__joint_axis__';
+  helperGroup.userData = { isGizmo: true, isSelectableHelper: true };
+
+  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+  helperMesh.position.set(0, 0, -2);
+  helperMesh.userData = { isGizmo: true, isSelectableHelper: true };
+  helperMesh.renderOrder = 10020;
+  helperGroup.add(helperMesh);
+  robot.add(helperGroup);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  const hits = findPickIntersections(robot, raycaster, [collisionMesh], 'all', false);
+
+  assert.equal(hits.length >= 2, true);
+  assert.equal(hits[0]?.object, helperMesh);
+  assert.ok(hits.some((hit) => hit.object === collisionMesh));
+});
+
+test('findPickIntersections keeps the visually topmost surface first when collision is not an overlay', () => {
+  const robot = new THREE.Group();
+
+  const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
+  visualMesh.position.set(0, 0, -1);
+  visualMesh.userData.parentLinkName = 'visual_link';
+  visualMesh.userData.isVisualMesh = true;
+  robot.add(visualMesh);
+
+  const collisionMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+  collisionMesh.position.set(0, 0, -2);
+  collisionMesh.userData.parentLinkName = 'collision_link';
+  collisionMesh.userData.isCollisionMesh = true;
+  robot.add(collisionMesh);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  const hits = findPickIntersections(robot, raycaster, [visualMesh, collisionMesh], 'all', false);
+
+  assert.equal(hits.length >= 2, true);
+  assert.equal(hits[0]?.object, visualMesh);
+  assert.ok(hits.some((hit) => hit.object === collisionMesh));
+});
+
+test('findPickIntersections filters out hidden collision hits', () => {
+  const robot = new THREE.Group();
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.visible = false;
+  const collisionMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+  collisionMesh.userData.parentLinkName = 'collision_link';
+  collisionMesh.userData.isCollisionMesh = true;
+  collisionGroup.add(collisionMesh);
+  robot.add(collisionGroup);
+
+  const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
+  visualMesh.position.set(0, 0, -2);
+  visualMesh.userData.parentLinkName = 'visual_link';
+  visualMesh.userData.isVisualMesh = true;
+  robot.add(visualMesh);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  const hits = findPickIntersections(robot, raycaster, [collisionMesh, visualMesh], 'all', false);
+
+  assert.equal(hits.length > 0, true);
+  assert.equal(hits[0]?.object, visualMesh);
+  assert.equal(hits.some((hit) => hit.object === collisionMesh), false);
+});
+
+test('findPickIntersections honors explicit layer priority over legacy helper bias', () => {
+  const robot = new THREE.Group();
+
+  const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
+  visualMesh.position.set(0, 0, -1);
+  visualMesh.userData.parentLinkName = 'visual_link';
+  visualMesh.userData.isVisualMesh = true;
+  robot.add(visualMesh);
+
+  const helperGroup = new THREE.Group();
+  helperGroup.name = '__origin_axes__';
+  helperGroup.userData = { isGizmo: true, isSelectableHelper: true };
+
+  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+  helperMesh.position.set(0, 0, -1.5);
+  helperMesh.userData = { isGizmo: true, isSelectableHelper: true };
+  helperGroup.add(helperMesh);
+  robot.add(helperGroup);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  const hits = findPickIntersections(
+    robot,
+    raycaster,
+    [visualMesh],
+    'all',
+    false,
+    ['visual', 'origin-axes'],
+  );
+
+  assert.equal(hits.length >= 2, true);
+  assert.equal(hits[0]?.object, visualMesh);
+  assert.ok(hits.some((hit) => hit.object === helperMesh));
+});
+
+test('findPickIntersections honors explicit layer priority over legacy collision ordering', () => {
+  const robot = new THREE.Group();
+
+  const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
+  visualMesh.position.set(0, 0, -1);
+  visualMesh.userData.parentLinkName = 'shared_link';
+  visualMesh.userData.isVisualMesh = true;
+  robot.add(visualMesh);
+
+  const collisionMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+  collisionMesh.position.set(0, 0, -1.01);
+  collisionMesh.userData.parentLinkName = 'shared_link';
+  collisionMesh.userData.isCollisionMesh = true;
+  robot.add(collisionMesh);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  const hits = findPickIntersections(
+    robot,
+    raycaster,
+    [visualMesh, collisionMesh],
+    'all',
+    false,
+    ['visual', 'collision'],
+  );
+
+  assert.equal(hits.length >= 2, true);
+  assert.equal(hits[0]?.object, visualMesh);
+  assert.ok(hits.some((hit) => hit.object === collisionMesh));
 });

@@ -33,6 +33,22 @@ test('resolveActiveViewerJointKeyFromSelection resolves the parent joint for a s
   );
 });
 
+test('resolveActiveViewerJointKeyFromSelection resolves the parent joint for structured joints using childLinkId', () => {
+  const joints = {
+    ankle_joint: {
+      id: 'ankle_joint',
+      name: 'ankle_joint',
+      type: 'revolute',
+      childLinkId: 'foot_link',
+    },
+  };
+
+  assert.equal(
+    resolveActiveViewerJointKeyFromSelection(joints, { type: 'link', id: 'foot_link' }),
+    'ankle_joint',
+  );
+});
+
 test('resolveActiveViewerJointKeyFromSelection ignores non-controllable joints', () => {
   const joints = {
     base_fixed_joint: {

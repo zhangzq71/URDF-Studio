@@ -6,9 +6,13 @@ import {
 
 export interface MJCFCompilerSettings {
     angleUnit: 'radian' | 'degree';
+    assetdir: string;
     meshdir: string;
     texturedir: string;
     eulerSequence: string;
+    autolimits: boolean;
+    inertiafromgeom: 'false' | 'true' | 'auto';
+    inertiagrouprange?: [number, number];
 }
 
 export type MJCFMeshInertiaMode = 'legacy' | 'shell' | 'exact' | 'convex';
@@ -41,6 +45,16 @@ export interface MJCFTexture {
     builtin?: string;
 }
 
+export interface MJCFHfield {
+    name: string;
+    file?: string;
+    contentType?: string;
+    nrow?: number;
+    ncol?: number;
+    size?: [number, number, number, number];
+    elevation?: number[];
+}
+
 export interface MJCFPosition {
     x: number;
     y: number;
@@ -54,7 +68,24 @@ export interface MJCFQuaternion {
     z: number;
 }
 
-type MJCFElementType = 'body' | 'geom' | 'joint' | 'inertial' | 'mesh' | 'material' | 'texture';
+type MJCFElementType =
+    | 'body'
+    | 'geom'
+    | 'joint'
+    | 'inertial'
+    | 'mesh'
+    | 'material'
+    | 'texture'
+    | 'site'
+    | 'tendon'
+    | 'motor'
+    | 'position'
+    | 'velocity'
+    | 'intvelocity'
+    | 'general'
+    | 'damper'
+    | 'muscle'
+    | 'adhesion';
 
 type MJCFAttributeMap = Record<string, string>;
 
@@ -66,6 +97,16 @@ interface MJCFElementDefaults {
     mesh: MJCFAttributeMap;
     material: MJCFAttributeMap;
     texture: MJCFAttributeMap;
+    site: MJCFAttributeMap;
+    tendon: MJCFAttributeMap;
+    motor: MJCFAttributeMap;
+    position: MJCFAttributeMap;
+    velocity: MJCFAttributeMap;
+    intvelocity: MJCFAttributeMap;
+    general: MJCFAttributeMap;
+    damper: MJCFAttributeMap;
+    muscle: MJCFAttributeMap;
+    adhesion: MJCFAttributeMap;
 }
 
 interface MJCFDefaultClassEntry {
@@ -108,14 +149,23 @@ export function parseCompilerSettings(doc: Document): MJCFCompilerSettings {
 
     // MuJoCo default when not explicitly set.
     let angleAttr = 'degree';
-    let meshdir = '';
-    let texturedir = '';
+    let assetdir = '';
+    let meshdir: string | null = null;
+    let texturedir: string | null = null;
     let eulerSequence = 'xyz';
+    let autolimits = false;
+    let inertiafromgeom: 'false' | 'true' | 'auto' = 'auto';
+    let inertiagrouprange: [number, number] | undefined;
 
     for (const compiler of compilers) {
         const rawAngle = compiler.getAttribute('angle');
         if (rawAngle) {
             angleAttr = rawAngle.toLowerCase();
+        }
+
+        const rawAssetdir = compiler.getAttribute('assetdir');
+        if (rawAssetdir !== null) {
+            assetdir = rawAssetdir;
         }
 
         const rawMeshdir = compiler.getAttribute('meshdir');
@@ -132,13 +182,41 @@ export function parseCompilerSettings(doc: Document): MJCFCompilerSettings {
         if (rawEulerSequence) {
             eulerSequence = rawEulerSequence;
         }
+
+        const rawAutolimits = compiler.getAttribute('autolimits');
+        if (rawAutolimits !== null) {
+            autolimits = rawAutolimits.trim().toLowerCase() === 'true';
+        }
+
+        const rawInertiaFromGeom = compiler.getAttribute('inertiafromgeom');
+        if (rawInertiaFromGeom) {
+            const normalizedInertiaFromGeom = rawInertiaFromGeom.trim().toLowerCase();
+            if (normalizedInertiaFromGeom === 'true' || normalizedInertiaFromGeom === 'false' || normalizedInertiaFromGeom === 'auto') {
+                inertiafromgeom = normalizedInertiaFromGeom;
+            }
+        }
+
+        const rawInertiaGroupRange = parseNumbers(compiler.getAttribute('inertiagrouprange'));
+        if (rawInertiaGroupRange.length >= 2) {
+            inertiagrouprange = [
+                rawInertiaGroupRange[0] ?? 0,
+                rawInertiaGroupRange[1] ?? 0,
+            ];
+        }
     }
+
+    const effectiveMeshdir = meshdir ?? assetdir;
+    const effectiveTexturedir = texturedir ?? assetdir;
 
     return {
         angleUnit: angleAttr === 'degree' ? 'degree' : 'radian',
-        meshdir,
-        texturedir,
+        assetdir,
+        meshdir: effectiveMeshdir,
+        texturedir: effectiveTexturedir,
         eulerSequence,
+        autolimits,
+        inertiafromgeom,
+        inertiagrouprange,
     };
 }
 
@@ -384,6 +462,16 @@ function createEmptyDefaults(): MJCFElementDefaults {
         mesh: {},
         material: {},
         texture: {},
+        site: {},
+        tendon: {},
+        motor: {},
+        position: {},
+        velocity: {},
+        intvelocity: {},
+        general: {},
+        damper: {},
+        muscle: {},
+        adhesion: {},
     };
 }
 
@@ -396,6 +484,16 @@ function cloneDefaults(defaults: MJCFElementDefaults): MJCFElementDefaults {
         mesh: { ...defaults.mesh },
         material: { ...defaults.material },
         texture: { ...defaults.texture },
+        site: { ...defaults.site },
+        tendon: { ...defaults.tendon },
+        motor: { ...defaults.motor },
+        position: { ...defaults.position },
+        velocity: { ...defaults.velocity },
+        intvelocity: { ...defaults.intvelocity },
+        general: { ...defaults.general },
+        damper: { ...defaults.damper },
+        muscle: { ...defaults.muscle },
+        adhesion: { ...defaults.adhesion },
     };
 }
 
@@ -408,6 +506,16 @@ function mergeDefaults(base: MJCFElementDefaults, override: Partial<MJCFElementD
         mesh: { ...base.mesh, ...(override.mesh || {}) },
         material: { ...base.material, ...(override.material || {}) },
         texture: { ...base.texture, ...(override.texture || {}) },
+        site: { ...base.site, ...(override.site || {}) },
+        tendon: { ...base.tendon, ...(override.tendon || {}) },
+        motor: { ...base.motor, ...(override.motor || {}) },
+        position: { ...base.position, ...(override.position || {}) },
+        velocity: { ...base.velocity, ...(override.velocity || {}) },
+        intvelocity: { ...base.intvelocity, ...(override.intvelocity || {}) },
+        general: { ...base.general, ...(override.general || {}) },
+        damper: { ...base.damper, ...(override.damper || {}) },
+        muscle: { ...base.muscle, ...(override.muscle || {}) },
+        adhesion: { ...base.adhesion, ...(override.adhesion || {}) },
     };
 }
 
@@ -434,6 +542,16 @@ function collectDefaultAttributes(defaultEl: Element): Partial<MJCFElementDefaul
         mesh: collectDirectAttributes(defaultEl, 'mesh'),
         material: collectDirectAttributes(defaultEl, 'material'),
         texture: collectDirectAttributes(defaultEl, 'texture'),
+        site: collectDirectAttributes(defaultEl, 'site'),
+        tendon: collectDirectAttributes(defaultEl, 'tendon'),
+        motor: collectDirectAttributes(defaultEl, 'motor'),
+        position: collectDirectAttributes(defaultEl, 'position'),
+        velocity: collectDirectAttributes(defaultEl, 'velocity'),
+        intvelocity: collectDirectAttributes(defaultEl, 'intvelocity'),
+        general: collectDirectAttributes(defaultEl, 'general'),
+        damper: collectDirectAttributes(defaultEl, 'damper'),
+        muscle: collectDirectAttributes(defaultEl, 'muscle'),
+        adhesion: collectDirectAttributes(defaultEl, 'adhesion'),
     };
 }
 
@@ -734,6 +852,47 @@ export function parseTextureAssets(
     });
 
     return textureMap;
+}
+
+export function parseHfieldAssets(
+    doc: Document,
+): Map<string, MJCFHfield> {
+    const hfieldMap = new Map<string, MJCFHfield>();
+    const mujocoEl = doc.querySelector('mujoco');
+    if (!mujocoEl) {
+        return hfieldMap;
+    }
+
+    let hfieldIndex = 0;
+    const assetSections = mujocoEl.querySelectorAll(':scope > asset');
+    assetSections.forEach((assetEl) => {
+        const hfields = assetEl.querySelectorAll(':scope > hfield');
+        hfields.forEach((hfieldEl) => {
+            const name = hfieldEl.getAttribute('name') || `hfield_${hfieldIndex}`;
+            const file = hfieldEl.getAttribute('file') || undefined;
+            const contentType = hfieldEl.getAttribute('content_type') || undefined;
+            const nrowAttr = hfieldEl.getAttribute('nrow');
+            const ncolAttr = hfieldEl.getAttribute('ncol');
+            const size = parseNumbers(hfieldEl.getAttribute('size'));
+            const elevation = parseNumbers(hfieldEl.getAttribute('elevation'));
+
+            hfieldMap.set(name, {
+                name,
+                file,
+                contentType,
+                nrow: nrowAttr != null ? parseInt(nrowAttr, 10) : undefined,
+                ncol: ncolAttr != null ? parseInt(ncolAttr, 10) : undefined,
+                size: size.length >= 4
+                    ? [size[0] ?? 0, size[1] ?? 0, size[2] ?? 0, size[3] ?? 0]
+                    : undefined,
+                elevation: elevation.length > 0 ? elevation : undefined,
+            });
+
+            hfieldIndex += 1;
+        });
+    });
+
+    return hfieldMap;
 }
 
 export function parseMaterialAssets(

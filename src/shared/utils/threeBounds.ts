@@ -14,6 +14,35 @@ interface VisibleMeshBoundsOptions {
 type MeshRole = 'visual' | 'collision' | 'unknown';
 const GROUND_PLANE_BOUND_OBJECT_NAMES = new Set(['ReferenceGrid', 'GroundShadowPlane']);
 
+function shouldIgnoreBoundsAncestor(
+  object: THREE.Object3D | null,
+  options?: { includeGroundPlaneHelpers?: boolean },
+): boolean {
+  let current: THREE.Object3D | null = object;
+
+  while (current) {
+    const isGroundPlaneHelper = Boolean(
+      options?.includeGroundPlaneHelpers
+      && GROUND_PLANE_BOUND_OBJECT_NAMES.has(current.name),
+    );
+
+    if (
+      current.userData?.isGizmo
+      || current.name?.startsWith('__')
+      || (
+        (current.userData?.isHelper || current.userData?.excludeFromSceneBounds)
+        && !isGroundPlaneHelper
+      )
+    ) {
+      return true;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
 function getMeshRole(mesh: THREE.Mesh): MeshRole {
   let current: THREE.Object3D | null = mesh;
 
@@ -53,7 +82,7 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
   root.updateMatrixWorld(true);
 
   const visitNode = (obj: THREE.Object3D) => {
-    if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
+    if (shouldIgnoreBoundsAncestor(obj)) return;
     if (!(obj as THREE.Mesh).isMesh) return;
 
     const mesh = obj as THREE.Mesh;
@@ -128,18 +157,10 @@ export function computeVisibleMeshBounds(
   const worldBox = new THREE.Box3();
   let hasBounds = false;
 
-  root.updateMatrixWorld(true, true);
+  root.updateMatrixWorld(true);
 
   const visitNode = (obj: THREE.Object3D) => {
-    const isGroundPlaneHelper = includeGroundPlaneHelpers
-      && GROUND_PLANE_BOUND_OBJECT_NAMES.has(obj.name);
-
-    if (
-      (obj.userData?.isHelper && !isGroundPlaneHelper) ||
-      obj.userData?.isGizmo ||
-      (obj.userData?.excludeFromSceneBounds && !isGroundPlaneHelper) ||
-      obj.name?.startsWith('__')
-    ) {
+    if (shouldIgnoreBoundsAncestor(obj, { includeGroundPlaneHelpers })) {
       return;
     }
 

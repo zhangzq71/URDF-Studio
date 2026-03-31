@@ -7,9 +7,15 @@ dist/
 build/
 test/
 scripts/
+!scripts/
+scripts/*
+!scripts/regression/
+scripts/regression/*
+!scripts/regression/validate_sdf_cli_truth.ts
 .github/
 output/
 tmp/
+.playwright-mcp/
 
 .claude/
 .codex/

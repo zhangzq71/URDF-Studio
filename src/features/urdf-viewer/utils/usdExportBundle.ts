@@ -67,6 +67,9 @@ export interface UsdExportBundle {
   resolution: ViewerRobotDataResolution;
 }
 
+export type PreparedUsdExportCacheResult =
+  UsdPreparedExportCache & { resolution: ViewerRobotDataResolution };
+
 type SnapshotHost = {
   renderInterface?: {
     getCachedRobotSceneSnapshot?: (stageSourcePath?: string | null) => unknown;
@@ -733,12 +736,34 @@ function cloneRobotState(input: RobotLike): RobotState {
   };
 }
 
+function dimensionsApproximatelyEqual(
+  left: UrdfVisual['dimensions'] | null | undefined,
+  right: UrdfVisual['dimensions'] | null | undefined,
+): boolean {
+  if (!left || !right) {
+    return false;
+  }
+
+  return Math.abs((left.x || 0) - (right.x || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.y || 0) - (right.y || 0)) <= ORIGIN_EPSILON
+    && Math.abs((left.z || 0) - (right.z || 0)) <= ORIGIN_EPSILON;
+}
+
+function canReuseFallbackMeshPath(current: UrdfVisual, fallback?: UrdfVisual): boolean {
+  if (!fallback || current.type !== GeometryType.MESH || fallback.type !== GeometryType.MESH) {
+    return false;
+  }
+
+  return dimensionsApproximatelyEqual(current.dimensions, fallback.dimensions)
+    && originsApproximatelyEqual(current.origin, fallback.origin);
+}
+
 function fillMeshPath(current: UrdfVisual, fallback?: UrdfVisual): UrdfVisual {
   if (current.type !== GeometryType.MESH) {
     return current;
   }
 
-  if (current.meshPath || !fallback?.meshPath) {
+  if (current.meshPath || !fallback?.meshPath || !canReuseFallbackMeshPath(current, fallback)) {
     return current;
   }
 
@@ -757,10 +782,6 @@ function mergeGeometryWithSnapshot(current: UrdfVisual | undefined, fallback?: U
     return current;
   }
 
-  if (current.type === GeometryType.NONE && fallback.type !== GeometryType.NONE) {
-    return fallback;
-  }
-
   return fillMeshPath(current, fallback);
 }
 
@@ -771,16 +792,43 @@ function mergeLinkWithSnapshotMeshPaths(current: UrdfLink, fallback?: UrdfLink):
 
   const fallbackBodies = fallback.collisionBodies || [];
   const currentBodies = current.collisionBodies || [];
-  const mergedBodyCount = Math.max(currentBodies.length, fallbackBodies.length);
-  const mergedBodies = mergedBodyCount > 0
-    ? Array.from({ length: mergedBodyCount }, (_, index) => {
-        const currentBody = currentBodies[index];
-        const fallbackBody = fallbackBodies[index];
-        if (currentBody && fallbackBody) {
-          return mergeGeometryWithSnapshot(currentBody, fallbackBody);
-        }
-        return currentBody || fallbackBody;
-      }).filter(Boolean) as UrdfVisual[]
+  const usedFallbackBodyIndexes = new Set<number>();
+  const resolveFallbackBody = (currentBody: UrdfVisual, bodyIndex: number): UrdfVisual | undefined => {
+    const indexedFallbackBody = fallbackBodies[bodyIndex];
+    if (
+      indexedFallbackBody
+      && !usedFallbackBodyIndexes.has(bodyIndex)
+      && canReuseFallbackMeshPath(currentBody, indexedFallbackBody)
+    ) {
+      usedFallbackBodyIndexes.add(bodyIndex);
+      return indexedFallbackBody;
+    }
+
+    for (let index = 0; index < fallbackBodies.length; index += 1) {
+      if (usedFallbackBodyIndexes.has(index)) {
+        continue;
+      }
+
+      const candidate = fallbackBodies[index];
+      if (!canReuseFallbackMeshPath(currentBody, candidate)) {
+        continue;
+      }
+
+      usedFallbackBodyIndexes.add(index);
+      return candidate;
+    }
+
+    return undefined;
+  };
+
+  // Keep the live robot as source of truth for geometry existence. Snapshot fallback
+  // may only supplement missing meshPath on already-existing geometry records.
+  const mergedBodies = currentBodies.length > 0
+    ? currentBodies
+      .map((currentBody, index) => (
+        mergeGeometryWithSnapshot(currentBody, resolveFallbackBody(currentBody, index))
+      ))
+      .filter((body): body is UrdfVisual => Boolean(body))
     : current.collisionBodies;
 
   return {
@@ -880,7 +928,7 @@ function stripSyntheticWorldRootForExport(robot: RobotState): RobotState {
   };
 }
 
-function resolveUsdExportResolution(
+export function resolveUsdExportResolution(
   snapshot: UsdExportSnapshot,
   options: {
     fileName?: string;
@@ -1956,20 +2004,10 @@ export function resolveUsdExportSceneSnapshot(
   });
 }
 
-export function prepareUsdExportCacheFromSnapshot(
+export function prepareUsdExportCacheFromResolvedSnapshot(
   snapshot: UsdExportSnapshot,
-  options: {
-    fileName?: string;
-    resolution?: ViewerRobotDataResolution | null;
-    targetWindow?: SnapshotHost;
-  } = {},
-): (UsdPreparedExportCache & { resolution: ViewerRobotDataResolution }) | null {
-  const resolution = resolveUsdExportResolution(snapshot, options);
-
-  if (!resolution) {
-    return null;
-  }
-
+  resolution: ViewerRobotDataResolution,
+): PreparedUsdExportCacheResult {
   const { robot: snapshotRobot, descriptorByPath } = createDescriptorExportMap(snapshot, resolution);
   const meshFiles: Record<string, Blob> = {};
 
@@ -1996,6 +2034,23 @@ export function prepareUsdExportCacheFromSnapshot(
     meshFiles,
     resolution,
   };
+}
+
+export function prepareUsdExportCacheFromSnapshot(
+  snapshot: UsdExportSnapshot,
+  options: {
+    fileName?: string;
+    resolution?: ViewerRobotDataResolution | null;
+    targetWindow?: SnapshotHost;
+  } = {},
+): PreparedUsdExportCacheResult | null {
+  const resolution = resolveUsdExportResolution(snapshot, options);
+
+  if (!resolution) {
+    return null;
+  }
+
+  return prepareUsdExportCacheFromResolvedSnapshot(snapshot, resolution);
 }
 
 export function buildUsdExportBundleFromPreparedCache(

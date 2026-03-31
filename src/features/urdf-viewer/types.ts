@@ -1,6 +1,7 @@
 import React from 'react';
 import * as THREE from 'three';
 import type { Language, translations } from '@/shared/i18n';
+import type { SnapshotCaptureAction } from '@/shared/components/3d';
 import type { JointQuaternion, RobotFile, Theme, UrdfJoint, UrdfLink } from '@/types';
 import type { ViewerRobotDataResolution } from './utils/viewerRobotData';
 import type {
@@ -15,6 +16,16 @@ import type {
 import type { MeasureSelectionLike } from './utils/measureTargetResolvers';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
+export type ViewerSceneMode = 'detail';
+export type ViewerHelperKind = 'center-of-mass' | 'inertia' | 'origin-axes' | 'joint-axis';
+export type ViewerInteractiveLayer =
+    | 'visual'
+    | 'collision'
+    | 'origin-axes'
+    | 'joint-axis'
+    | 'center-of-mass'
+    | 'inertia';
+export type ViewerRobotSourceFormat = 'auto' | 'urdf' | 'mjcf' | 'sdf' | 'xacro';
 export type RobotLoadingPhase = 'preparing-scene' | 'streaming-meshes' | 'finalizing-scene' | 'ready';
 export type UsdLoadingPhase =
     | 'checking-path'
@@ -55,7 +66,7 @@ export type MeasureTargetResolver = (
 
 export interface ViewerRuntimeStageBridge {
     onRobotResolved?: (robot: any | null) => void;
-    onSelectionChange?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    onSelectionChange?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
     onActiveJointChange?: (jointName: string | null) => void;
     onJointAnglesChange?: (jointAngles: Record<string, number>) => void;
 }
@@ -78,8 +89,8 @@ export interface URDFViewerProps {
     jointAngleState?: Record<string, number>;
     jointMotionState?: Record<string, ViewerJointMotionStateValue>;
     lang: Language;
-    mode?: 'detail' | 'hardware';
-    onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    mode?: ViewerSceneMode;
+    onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
     onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
@@ -99,7 +110,7 @@ export interface URDFViewerProps {
     setShowJointPanel?: (show: boolean) => void;
     onCollisionTransformPreview?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
     onCollisionTransform?: (linkName: string, position: {x: number, y: number, z: number}, rotation: {r: number, p: number, y: number}, objectIndex?: number) => void;
-    snapshotAction?: React.RefObject<(() => void) | null>;
+    snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
     /** True when previewing a standalone mesh asset from the library (STL/DAE/OBJ/GLB). */
     isMeshPreview?: boolean;
     /** Notify parent when collision transform has a pending confirm/cancel state */
@@ -111,13 +122,16 @@ export interface URDFViewerProps {
 export interface RobotModelProps {
     urdfContent: string;
     assets: Record<string, string>;
-    sourceFormat?: 'auto' | 'urdf' | 'mjcf';
+    sourceFormat?: ViewerRobotSourceFormat;
+    reloadToken?: number;
+    initialRobot?: THREE.Object3D | null;
     sourceFilePath?: string;
     onRobotLoaded?: (robot: any) => void;
     onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
     showCollision?: boolean;
     showVisual?: boolean;
-    onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+    showCollisionAlwaysOnTop?: boolean;
+    onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
     onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
@@ -128,8 +142,7 @@ export interface RobotModelProps {
     setActiveJoint?: (jointName: string | null) => void;
     justSelectedRef?: React.RefObject<boolean>;
     t: typeof translations['en'];
-    mode?: 'detail' | 'hardware';
-    highlightMode?: 'link' | 'collision';
+    mode?: ViewerSceneMode;
     showInertia?: boolean;
     showInertiaOverlay?: boolean;
     showCenterOfMass?: boolean;
@@ -155,6 +168,7 @@ export interface RobotModelProps {
     selection?: URDFViewerProps['selection'];
     hoverSelectionEnabled?: boolean;
     hoveredSelection?: URDFViewerProps['hoveredSelection'];
+    interactionLayerPriority?: ViewerInteractiveLayer[];
     isMeshPreview?: boolean;
     groundPlaneOffset?: number;
     active?: boolean;
