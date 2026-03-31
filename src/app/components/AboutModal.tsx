@@ -13,6 +13,10 @@ interface AboutModalProps {
   onClose: () => void;
 }
 
+const APP_VERSION = typeof __APP_VERSION__ === 'string' && __APP_VERSION__.trim().length > 0
+  ? __APP_VERSION__
+  : 'dev';
+
 function GitHubMark(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
@@ -47,7 +51,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
           <img src="/logos/logo.png" alt="URDF Studio" className="w-12 h-12 object-contain" />
           <div>
             <h2 className="text-lg font-bold text-text-primary">URDF Studio</h2>
-            <p className="text-xs text-text-tertiary font-mono">v1.0.0</p>
+            <p className="text-xs text-text-tertiary font-mono">v{APP_VERSION}</p>
           </div>
         </div>
 
