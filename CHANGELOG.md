@@ -24,4 +24,5 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [1.0.0] - 2026-03-31
 
 ### Added
-- Stable release marker for the app workspace on `main`.
+- First stable `1.0.0` release marker for the URDF Studio app workspace.
+- Automated app version display and repo version bump scripts for future releases.
