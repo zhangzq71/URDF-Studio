@@ -4,6 +4,10 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+const appPackageVersion = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
+).version ?? '0.0.0';
+
 const threeRoot = path.resolve(__dirname, 'node_modules/three');
 const threeModuleEntry = path.resolve(threeRoot, 'build/three.module.js');
 const threeExamplesDir = path.resolve(threeRoot, 'examples/jsm');
@@ -268,6 +272,7 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react(), tailwindcss(), createUsdConfigurationProxyPlugin()],
       define: {
+        __APP_VERSION__: JSON.stringify(appPackageVersion),
         'process.env.API_KEY': JSON.stringify(env.OPENAI_API_KEY || env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.OPENAI_API_KEY),
         'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY),
