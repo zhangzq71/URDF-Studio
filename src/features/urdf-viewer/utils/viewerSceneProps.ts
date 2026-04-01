@@ -8,6 +8,7 @@ interface BuildURDFViewerScenePropsArgs {
   controller: URDFViewerController;
   active?: boolean;
   sourceFile?: RobotFile | null;
+  sourceFormat?: URDFViewerProps['sourceFormat'];
   availableFiles: RobotFile[];
   urdfContent: string;
   assets: Record<string, string>;
@@ -41,6 +42,7 @@ export function buildURDFViewerSceneProps({
   controller,
   active = true,
   sourceFile,
+  sourceFormat,
   availableFiles,
   urdfContent,
   assets,
@@ -69,6 +71,7 @@ export function buildURDFViewerSceneProps({
     controller,
     active,
     sourceFile,
+    sourceFormat,
     availableFiles,
     urdfContent,
     assets,

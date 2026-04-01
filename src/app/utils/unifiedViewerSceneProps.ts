@@ -25,6 +25,7 @@ interface BuildUnifiedViewerScenePropsArgs {
   effectiveSourceFile: RobotFile | null | undefined;
   effectiveSourceFilePath?: string;
   effectiveUrdfContent: string;
+  effectiveSourceFormat?: URDFViewerProps['sourceFormat'];
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   onSceneReadyForDisplay?: () => void;
@@ -51,6 +52,7 @@ export function buildUnifiedViewerSceneProps({
   effectiveSourceFile,
   effectiveSourceFilePath,
   effectiveUrdfContent,
+  effectiveSourceFormat,
   onRobotDataResolved,
   onDocumentLoadEvent,
   onSceneReadyForDisplay,
@@ -74,6 +76,7 @@ export function buildUnifiedViewerSceneProps({
     sourceFile: effectiveSourceFile,
     availableFiles: viewerResourceScope.availableFiles,
     urdfContent: effectiveUrdfContent,
+    sourceFormat: effectiveSourceFormat,
     assets: viewerResourceScope.assets,
     onRobotDataResolved,
     onDocumentLoadEvent,

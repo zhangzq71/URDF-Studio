@@ -23,6 +23,7 @@ export function HoverSelectionSync({
     hoveredSelection?.id,
     hoveredSelection?.subType,
     hoveredSelection?.objectIndex,
+    hoveredSelection?.helperKind,
     onHoverSelectionChange,
   ]);
 

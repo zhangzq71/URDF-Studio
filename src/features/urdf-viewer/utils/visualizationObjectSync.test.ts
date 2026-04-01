@@ -197,3 +197,55 @@ test('syncLinkHelperInteractionStateForLinks boosts hovered inertia helpers', ()
   assert.ok((comMesh.material as THREE.MeshBasicMaterial).opacity >= baseOpacity);
   assert.ok(comMesh.renderOrder > baseRenderOrder);
 });
+
+test('syncLinkHelperInteractionStateForLinks scopes hover to the active helper kind', () => {
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'base_link';
+  link.userData.__cachedMaxLinkSize = 1;
+  link.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()));
+
+  const robotLinks = {
+    base_link: {
+      inertial: {
+        mass: 1,
+        inertia: {
+          ixx: 1,
+          ixy: 0,
+          ixz: 0,
+          iyy: 1,
+          iyz: 0,
+          izz: 1,
+        },
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+    },
+  } as any;
+
+  syncInertiaVisualizationForLinks({
+    links: [link],
+    robotLinks,
+    showInertia: true,
+    showInertiaOverlay: true,
+    showCenterOfMass: true,
+    showCoMOverlay: true,
+    centerOfMassSize: 0.01,
+  });
+
+  const comVisual = link.userData.__comVisual as THREE.Object3D;
+  const inertiaGroup = link.userData.__inertiaVisualGroup as THREE.Object3D;
+  const inertiaBox = inertiaGroup.children.find((child) => child.name === '__inertia_box__') as THREE.Object3D;
+
+  const changed = syncLinkHelperInteractionStateForLinks({
+    links: [link],
+    hoveredLinkId: 'base_link',
+    hoveredHelperKind: 'center-of-mass',
+  });
+
+  assert.equal(changed, true);
+  assert.ok(comVisual.scale.x > 1);
+  assert.equal(inertiaBox.scale.x, 1);
+});

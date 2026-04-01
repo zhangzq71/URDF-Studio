@@ -27,7 +27,7 @@ test('resolveWorkspaceOrbitPanSpeed keeps the base speed when zoom level is comf
 
 test('resolveWorkspaceOrbitPanSpeed boosts close-range panning for perspective inspection', () => {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-  camera.position.set(0.1, 0, 0);
+  camera.position.set(0.12, 0, 0);
 
   const sceneBounds = new THREE.Box3(
     new THREE.Vector3(-0.5, -0.5, -0.5),
@@ -45,7 +45,7 @@ test('resolveWorkspaceOrbitPanSpeed boosts close-range panning for perspective i
   });
 
   assert.ok(panSpeed > 0.9, 'expected close inspection to receive a pan speed boost');
-  assert.equal(panSpeed, 0.9 * (distanceFloor / 0.1));
+  assert.equal(panSpeed, 0.9 * (distanceFloor / 0.12));
 });
 
 test('resolveWorkspaceOrbitPanSpeed caps the boost so ultra-close zooms do not overshoot', () => {

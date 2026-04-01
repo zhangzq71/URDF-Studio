@@ -286,6 +286,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
         hoveredSelection?.id,
         hoveredSelection?.subType,
         hoveredSelection?.objectIndex,
+        hoveredSelection?.helperKind,
         syncHoverHighlight,
         usesExternalHoverSelection,
     ]);

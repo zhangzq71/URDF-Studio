@@ -18,6 +18,8 @@ import {
   getPreferredSdfContent,
   getPreferredUrdfContent,
   getPreferredXacroContent,
+  getWorkspaceAssemblyViewerRobotData,
+  getSingleComponentWorkspaceMjcfViewerSource,
   shouldReseedSingleComponentAssemblyFromActiveFile,
   shouldUseEmptyRobotForUsdHydration,
 } from './workspaceSourceSyncUtils.ts';
@@ -397,11 +399,243 @@ test('getViewerSourceFile keeps the selected file outside assembly rendering', (
   );
 });
 
+test('getViewerSourceFile keeps an explicit workspace source file while rendering an assembly view', () => {
+  const workspaceSourceFile = createMjcfFile('robots/demo/workspace.xml');
+
+  assert.equal(
+    getViewerSourceFile({
+      selectedFile: createMjcfFile('robots/demo/selected.xml'),
+      shouldRenderAssembly: true,
+      workspaceSourceFile,
+    }),
+    workspaceSourceFile,
+  );
+});
+
+test('getSingleComponentWorkspaceMjcfViewerSource returns the lone visible MJCF component source', () => {
+  const sourceFile = createMjcfFile('robots/demo/workspace.xml');
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: createAssemblyState(sourceFile.name),
+      availableFiles: [sourceFile],
+    }),
+    sourceFile,
+  );
+});
+
+test('getSingleComponentWorkspaceMjcfViewerSource ignores assemblies that need the merged workspace viewer path', () => {
+  const sourceFile = createMjcfFile('robots/demo/workspace.xml');
+  const secondSourceFile = createMjcfFile('robots/demo/other.xml');
+  const multiComponentAssembly = createAssemblyState(sourceFile.name);
+  multiComponentAssembly.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: secondSourceFile.name,
+    robot: {
+      name: 'other',
+      rootLinkId: 'other_root',
+      links: {
+        other_root: {
+          ...DEFAULT_LINK,
+          id: 'other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: multiComponentAssembly,
+      availableFiles: [sourceFile, secondSourceFile],
+    }),
+    null,
+  );
+
+  const bridgedAssembly = createAssemblyState(sourceFile.name);
+  bridgedAssembly.bridges.bridge_1 = {
+    id: 'bridge_1',
+    name: 'bridge_1',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_demo',
+    childLinkId: 'base_link',
+    joint: {
+      id: 'bridge_joint',
+      name: 'bridge_joint',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'base_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      axis: { x: 0, y: 0, z: 1 },
+      limit: { lower: 0, upper: 0, effort: 0, velocity: 0 },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: bridgedAssembly,
+      availableFiles: [sourceFile],
+    }),
+    null,
+  );
+
+  const urdfSourceFile = createUrdfFile('robots/demo/workspace.urdf');
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: createAssemblyState(urdfSourceFile.name),
+      availableFiles: [urdfSourceFile],
+    }),
+    null,
+  );
+});
+
+test('getWorkspaceAssemblyViewerRobotData injects a transient bridge preview without mutating persisted bridges', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  const previewRobot = getWorkspaceAssemblyViewerRobotData({
+    assemblyState,
+    bridgePreview: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      parentComponentId: 'comp_demo',
+      parentLinkId: 'comp_demo_base_link',
+      childComponentId: 'comp_other',
+      childLinkId: 'comp_other_other_root',
+      joint: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        type: JointType.FIXED,
+        parentLinkId: 'comp_demo_base_link',
+        childLinkId: 'comp_other_other_root',
+        origin: { xyz: { x: 0.1, y: -0.2, z: 0.3 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  });
+
+  assert.ok(previewRobot);
+  assert.equal(previewRobot?.joints.__bridge_preview__?.parentLinkId, 'comp_demo_base_link');
+  assert.equal(previewRobot?.joints.__bridge_preview__?.childLinkId, 'comp_other_other_root');
+  assert.equal(previewRobot?.joints.__bridge_preview__?.origin.xyz.x, 0.1);
+  assert.equal(Object.keys(assemblyState.bridges).length, 0);
+});
+
+test('getWorkspaceAssemblyViewerRobotData skips transient previews for hidden components', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: false,
+  };
+
+  const previewRobot = getWorkspaceAssemblyViewerRobotData({
+    assemblyState,
+    bridgePreview: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      parentComponentId: 'comp_demo',
+      parentLinkId: 'comp_demo_base_link',
+      childComponentId: 'comp_other',
+      childLinkId: 'comp_other_other_root',
+      joint: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        type: JointType.FIXED,
+        parentLinkId: 'comp_demo_base_link',
+        childLinkId: 'comp_other_other_root',
+        origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  });
+
+  assert.ok(previewRobot);
+  assert.equal(previewRobot?.joints.__bridge_preview__, undefined);
+});
+
 test('shouldReseedSingleComponentAssemblyFromActiveFile detects a stale single-component assembly seed', () => {
   assert.equal(
     shouldReseedSingleComponentAssemblyFromActiveFile({
       assemblyState: createAssemblyState('robots/demo/left_hand.xml'),
       activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    true,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile seeds initial and empty assemblies', () => {
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: null,
+      activeFile: createMjcfFile('robots/demo/left_hand.xml'),
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: {
+        name: 'demo_project',
+        components: {},
+        bridges: {},
+      },
+      activeFile: createMjcfFile('robots/demo/left_hand.xml'),
     }),
     true,
   );
@@ -674,14 +908,14 @@ test('getPreferredMjcfContent keeps the imported MJCF before viewer edits', () =
   );
 });
 
-test('getPreferredMjcfContent switches to generated MJCF after viewer edits', () => {
+test('getPreferredMjcfContent keeps the imported MJCF after viewer edits when source is available', () => {
   assert.equal(
     getPreferredMjcfContent({
       sourceContent: '<mujoco model="cassie-source"/>',
       generatedContent: '<mujoco model="cassie-generated"/>',
       hasViewerEdits: true,
     }),
-    '<mujoco model="cassie-generated"/>',
+    '<mujoco model="cassie-source"/>',
   );
 });
 

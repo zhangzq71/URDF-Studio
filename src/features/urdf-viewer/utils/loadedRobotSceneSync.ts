@@ -145,6 +145,18 @@ function resolveRobotLinkDataByRuntimeName(
     ?? null;
 }
 
+function resolveSemanticLinkIdForRuntimeLink(
+  sourceFormat: 'urdf' | 'mjcf',
+  robotLinks: Record<string, UrdfLink> | undefined,
+  runtimeLinkName: string,
+): string {
+  if (sourceFormat !== 'mjcf') {
+    return runtimeLinkName;
+  }
+
+  return resolveRobotLinkDataByRuntimeName(robotLinks, runtimeLinkName)?.id ?? runtimeLinkName;
+}
+
 function hasVisualGeometry(link: UrdfLink | null | undefined): boolean {
   return Boolean(link && link.visual.type !== GeometryType.NONE);
 }
@@ -274,11 +286,21 @@ export function syncLoadedRobotScene({
     }
 
     if (parentLink) {
-      if (mesh.userData?.parentLinkName !== parentLink.name) {
+      const semanticLinkName = resolveSemanticLinkIdForRuntimeLink(
+        sourceFormat,
+        robotLinkData,
+        parentLink.name,
+      );
+
+      if (
+        mesh.userData?.parentLinkName !== semanticLinkName
+        || mesh.userData?.runtimeParentLinkName !== parentLink.name
+      ) {
         changed = true;
       }
-      mesh.userData.parentLinkName = parentLink.name;
-      pushMesh(linkMeshMap, `${parentLink.name}:collision`, mesh);
+      mesh.userData.parentLinkName = semanticLinkName;
+      mesh.userData.runtimeParentLinkName = parentLink.name;
+      pushMesh(linkMeshMap, `${semanticLinkName}:collision`, mesh);
     }
   };
 
@@ -340,10 +362,20 @@ export function syncLoadedRobotScene({
       node.visible = showCollision;
 
       if (nextParentLink) {
-        if (node.userData?.parentLinkName !== nextParentLink.name) {
+        const semanticLinkName = resolveSemanticLinkIdForRuntimeLink(
+          sourceFormat,
+          robotLinkData,
+          nextParentLink.name,
+        );
+
+        if (
+          node.userData?.parentLinkName !== semanticLinkName
+          || node.userData?.runtimeParentLinkName !== nextParentLink.name
+        ) {
           changed = true;
         }
-        node.userData.parentLinkName = nextParentLink.name;
+        node.userData.parentLinkName = semanticLinkName;
+        node.userData.runtimeParentLinkName = nextParentLink.name;
       }
 
       if (!showCollision) {

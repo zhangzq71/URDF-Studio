@@ -158,12 +158,14 @@ export function useVisualizationEffects({
         const hoveredLinkId = hoveredSelection?.type === 'link' && !hoveredSelection.subType
             ? hoveredSelection.id
             : null;
+        const hoveredHelperKind = hoveredSelection?.helperKind ?? null;
         const hoveredJointId = hoveredSelection?.type === 'joint' && !hoveredSelection.subType
             ? hoveredSelection.id
             : null;
         const selectedLinkId = activeSelection?.type === 'link' && !activeSelection.subType
             ? activeSelection.id
             : null;
+        const selectedHelperKind = activeSelection?.helperKind ?? null;
         const selectedJointId = activeSelection?.type === 'joint' && !activeSelection.subType
             ? activeSelection.id
             : null;
@@ -172,12 +174,16 @@ export function useVisualizationEffects({
         const linkHelpersMutated = syncLinkHelperInteractionStateForLinks({
             links,
             hoveredLinkId,
+            hoveredHelperKind,
             selectedLinkId,
+            selectedHelperKind,
         });
         const jointHelpersMutated = syncJointHelperInteractionStateForJoints({
             joints,
             hoveredJointId,
+            hoveredHelperKind,
             selectedJointId,
+            selectedHelperKind,
         });
         const didMutate = linkHelpersMutated || jointHelpersMutated;
 

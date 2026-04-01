@@ -20,6 +20,7 @@ import { TreeEditor } from '@/features/robot-tree';
 import { PropertyEditor } from '@/features/property-editor/components/PropertyEditor';
 import {
   getCurrentUsdViewerSceneSnapshot,
+  prepareUsdExportCacheFromSnapshot,
   prepareUsdPreparedExportCacheWithWorker,
   resolveUsdExportResolution,
   type ToolMode,
@@ -30,6 +31,7 @@ import {
   useAppLayoutEffects,
   useCollisionOptimizationWorkflow,
   useLibraryFileActions,
+  usePreparedUsdViewerAssets,
   useViewerOrchestration,
   useWorkspaceMutations,
   useWorkspaceSourceSync,
@@ -46,7 +48,7 @@ import {
 import { useUIStore, useSelectionStore, useAssetsStore, useRobotStore, useAssemblyStore, useCollisionTransformStore } from '@/store';
 import { generateURDF } from '@/core/parsers';
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
-import type { RobotData, RobotFile, UsdSceneSnapshot } from '@/types';
+import type { BridgeJoint, RobotData, RobotFile, UsdSceneSnapshot } from '@/types';
 import { translations } from '@/shared/i18n';
 import type { SnapshotCaptureOptions } from '@/shared/components/3d';
 import { normalizeMergedAppMode } from '@/shared/utils/appMode';
@@ -57,6 +59,7 @@ import { buildUsdHydrationPersistencePlan } from './utils/usdHydrationPersistenc
 import { shouldIgnoreStaleViewerDocumentLoadEvent } from './utils/documentLoadFlow';
 import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
 import type { DocumentLoadState, DocumentLoadStatus } from '@/store/assetsStore';
+import { BRIDGE_PREVIEW_ID } from '@/features/assembly/utils/bridgePreview';
 
 interface UsdPersistenceBaseline {
   fileName: string | null;
@@ -247,6 +250,7 @@ export function AppLayout({
   const [isSnapshotDialogOpen, setIsSnapshotDialogOpen] = useState(false);
   const [isSnapshotCapturing, setIsSnapshotCapturing] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
+  const [bridgePreview, setBridgePreview] = useState<BridgeJoint | null>(null);
   const clearSelection = useCallback(() => {
     setSelection({ type: null, id: null });
   }, [setSelection]);
@@ -524,12 +528,15 @@ export function AppLayout({
   const {
     emptyRobot,
     robot,
+    viewerRobot,
     shouldRenderAssembly,
     jointAngleState,
     jointMotionState,
     showVisual,
     urdfContentForViewer,
+    viewerSourceFormat,
     viewerSourceFilePath,
+    workspaceViewerMjcfSourceFile,
     sourceCodeContent,
     sourceCodeDocumentFlavor,
     sourceCodeFileName,
@@ -540,6 +547,7 @@ export function AppLayout({
     handleClosePreview,
   } = useWorkspaceSourceSync({
     assemblyState,
+    assemblyBridgePreview: bridgePreview,
     sidebarTab,
     getMergedRobotData,
     selection,
@@ -567,10 +575,20 @@ export function AppLayout({
     ? availableFiles.find((file) => file.name === previewFileName) ?? null
     : null;
 
+  const viewerAssets = usePreparedUsdViewerAssets({
+    assemblyState,
+    assets,
+    availableFiles,
+    getUsdPreparedExportCache,
+    shouldRenderAssembly,
+  });
+
   const handleSwitchTreeEditorToProMode = useCallback(() => {
     const activeFile = previewFile ?? selectedFile;
+    const currentAssemblyState = useAssemblyStore.getState().assemblyState;
+
     if (!shouldReseedSingleComponentAssemblyFromActiveFile({
-      assemblyState,
+      assemblyState: currentAssemblyState,
       activeFile,
     })) {
       return;
@@ -580,20 +598,34 @@ export function AppLayout({
       return;
     }
 
-    const preResolvedRobotData = activeFile.format === 'usd'
-      ? getUsdPreparedExportCache(activeFile.name)?.robotData ?? null
-      : null;
+    void (async () => {
+      let preResolvedRobotData = activeFile.format === 'usd'
+        ? getUsdPreparedExportCache(activeFile.name)?.robotData ?? null
+        : null;
 
-    if (activeFile.format === 'usd' && !preResolvedRobotData) {
-      return;
-    }
+      if (activeFile.format === 'usd' && !preResolvedRobotData) {
+        const fallbackSceneSnapshot = getCurrentUsdViewerSceneSnapshot({ stageSourcePath: activeFile.name });
+        const preparedCache = fallbackSceneSnapshot
+          ? prepareUsdExportCacheFromSnapshot(fallbackSceneSnapshot, { fileName: activeFile.name })
+          : null;
 
-    void resolveRobotFileDataWithWorker(activeFile, {
-      availableFiles,
-      assets,
-      allFileContents,
-      usdRobotData: preResolvedRobotData,
-    }).then((importResult) => {
+        if (!preparedCache?.robotData) {
+          pendingUsdAssemblyFileRef.current = activeFile;
+          onLoadRobot(activeFile);
+          return;
+        }
+
+        useAssetsStore.getState().setUsdPreparedExportCache(activeFile.name, preparedCache);
+        preResolvedRobotData = preparedCache.robotData;
+      }
+
+      const importResult = await resolveRobotFileDataWithWorker(activeFile, {
+        availableFiles,
+        assets,
+        allFileContents,
+        usdRobotData: preResolvedRobotData,
+      });
+
       if (importResult.status !== 'ready') {
         scheduleFailFastInDev(
           'AppLayout:handleSwitchTreeEditorToProMode',
@@ -603,7 +635,8 @@ export function AppLayout({
         return;
       }
 
-      initAssembly(assemblyState?.name || robotName || 'assembly');
+      initAssembly(currentAssemblyState?.name || robotName || 'assembly');
+
       const component = addComponent(activeFile, {
         availableFiles,
         assets,
@@ -618,7 +651,7 @@ export function AppLayout({
           new Error(`Failed to reseed Pro mode assembly with "${activeFile.name}".`),
         );
       }
-    }).catch((error) => {
+    })().catch((error) => {
       scheduleFailFastInDev(
         'AppLayout:handleSwitchTreeEditorToProMode',
         error instanceof Error
@@ -630,11 +663,13 @@ export function AppLayout({
   }, [
     addComponent,
     allFileContents,
-    assemblyState,
     assets,
     availableFiles,
     getUsdPreparedExportCache,
+    getCurrentUsdViewerSceneSnapshot,
     initAssembly,
+    onLoadRobot,
+    prepareUsdExportCacheFromSnapshot,
     previewFile,
     robotName,
     selectedFile,
@@ -725,6 +760,14 @@ export function AppLayout({
     setHoveredSelection,
     focusOn,
   });
+  const handleViewerSelectWithBridgePreview = useCallback((...args: Parameters<typeof handleViewerSelect>) => {
+    const [type, id] = args;
+    if (type === 'joint' && id === BRIDGE_PREVIEW_ID) {
+      return;
+    }
+
+    handleViewerSelect(...args);
+  }, [handleViewerSelect]);
 
   const setPendingCollisionTransform = useCollisionTransformStore((state) => state.setPendingCollisionTransform);
   const clearPendingCollisionTransform = useCollisionTransformStore((state) => state.clearPendingCollisionTransform);
@@ -838,10 +881,25 @@ export function AppLayout({
   }, [addComponent, allFileContents, assets, availableFiles, getUsdPreparedExportCache, onLoadRobot, showToast, t]);
 
   const handleCreateBridge = useCallback(() => {
+    setBridgePreview(null);
     setShouldRenderBridgeModal(true);
     void loadBridgeCreateModalModule();
     setIsBridgeModalOpen(true);
   }, []);
+
+  const handleCloseBridgeModal = useCallback(() => {
+    setBridgePreview(null);
+    setIsBridgeModalOpen(false);
+  }, []);
+
+  const handleBridgePreviewChange = useCallback((nextPreview: BridgeJoint | null) => {
+    setBridgePreview(nextPreview);
+  }, []);
+
+  const handleCreateBridgeCommit = useCallback((params: Parameters<typeof addBridge>[0]) => {
+    setBridgePreview(null);
+    return addBridge(params);
+  }, [addBridge]);
 
   const handleOpenCollisionOptimizer = useCallback(() => {
     void loadCollisionOptimizationDialogModule();
@@ -1203,13 +1261,13 @@ export function AppLayout({
         {/* Viewer Container */}
         <div className="flex-1 relative min-w-0">
           <UnifiedViewer
-            robot={robot}
+            robot={viewerRobot}
             mode={mergedAppMode}
-            onSelect={handleViewerSelect}
+            onSelect={handleViewerSelectWithBridgePreview}
             onMeshSelect={handleViewerMeshSelect}
             onHover={handleHover}
             onUpdate={handleUpdate}
-            assets={assets}
+            assets={viewerAssets}
             lang={lang}
             theme={theme}
             showVisual={showVisual}
@@ -1225,10 +1283,12 @@ export function AppLayout({
             setShowJointPanel={(show) => setViewConfig(prev => ({ ...prev, showJointPanel: show }))}
             availableFiles={availableFiles}
             urdfContent={urdfContentForViewer}
+            viewerSourceFormat={viewerSourceFormat}
             sourceFilePath={viewerSourceFilePath}
             sourceFile={getViewerSourceFile({
               selectedFile,
               shouldRenderAssembly,
+              workspaceSourceFile: workspaceViewerMjcfSourceFile,
             })}
             onRobotDataResolved={handleRobotDataResolved}
             onDocumentLoadEvent={handleViewerDocumentLoadEvent}
@@ -1301,8 +1361,9 @@ export function AppLayout({
         shouldRenderBridgeModal={shouldRenderBridgeModal}
         loadingBridgeDialogLabel={t.loadingBridgeDialog}
         isBridgeModalOpen={isBridgeModalOpen}
-        onCloseBridgeModal={() => setIsBridgeModalOpen(false)}
-        onCreateBridge={addBridge}
+        onCloseBridgeModal={handleCloseBridgeModal}
+        onCreateBridge={handleCreateBridgeCommit}
+        onPreviewBridgeChange={handleBridgePreviewChange}
       />
     </div>
   );

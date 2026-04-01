@@ -3,7 +3,7 @@ import * as THREE from 'three';
 export const DEFAULT_WORKSPACE_ORBIT_PAN_TUNING = {
   closeRangeDistanceFactor: 0.18,
   minDistanceFloorFactor: 4,
-  maxBoost: 4,
+  maxBoost: 3,
 } as const;
 
 interface ResolveWorkspaceOrbitPanSpeedOptions {

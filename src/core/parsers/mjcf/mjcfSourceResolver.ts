@@ -465,6 +465,50 @@ function expandMJCFSource(
   return expandAttachedModelsRecursive(included, indexedFileMap, basePath, expansionStack);
 }
 
+export function prefixMJCFSourceIdentifiers(content: string, prefix: string): string {
+  const normalizedPrefix = prefix.trim();
+  if (!normalizedPrefix) {
+    return content;
+  }
+
+  const doc = parseXml(content);
+  if (!doc) {
+    return content;
+  }
+
+  const bodyReferenceAttributes = ['body', 'body1', 'body2'] as const;
+  const jointReferenceAttributes = ['joint', 'joint1', 'joint2'] as const;
+  const elements = Array.from(doc.querySelectorAll('*'));
+
+  elements.forEach((element) => {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName === 'body' || tagName === 'joint') {
+      const name = element.getAttribute('name');
+      if (name) {
+        element.setAttribute('name', prefixIdentifier(name, normalizedPrefix));
+      }
+    }
+  });
+
+  elements.forEach((element) => {
+    bodyReferenceAttributes.forEach((attributeName) => {
+      const value = element.getAttribute(attributeName);
+      if (value) {
+        element.setAttribute(attributeName, prefixIdentifier(value, normalizedPrefix));
+      }
+    });
+
+    jointReferenceAttributes.forEach((attributeName) => {
+      const value = element.getAttribute(attributeName);
+      if (value) {
+        element.setAttribute(attributeName, prefixIdentifier(value, normalizedPrefix));
+      }
+    });
+  });
+
+  return new XMLSerializer().serializeToString(doc);
+}
+
 export interface ResolvedMJCFSource {
   content: string;
   sourceFile: RobotFile;

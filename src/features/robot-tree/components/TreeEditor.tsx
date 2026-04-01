@@ -134,7 +134,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   const handleSwitchToProMode = useCallback(() => {
     unstable_batchedUpdates(() => {
       onSwitchToProMode?.();
-      if (!assemblyState) {
+      if (!onSwitchToProMode && !assemblyState) {
         initAssembly(robot.name || 'assembly');
       }
       setSidebarTab('workspace');

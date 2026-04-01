@@ -28,7 +28,7 @@ interface UseWorkspaceMutationsParams {
   robotLinks: Record<string, UrdfLink>;
   rootLinkId: string;
   setName: (name: string) => void;
-  addChild: (parentId: string) => { jointId: string };
+  addChild: (parentId: string) => { linkId: string; jointId: string };
   deleteSubtree: (linkId: string) => void;
   updateLink: (
     id: string,
@@ -454,6 +454,7 @@ export function useWorkspaceMutations({
           resolvedParentId,
         );
         const jointId = nextRobotState.selection.id;
+        const linkId = jointId ? nextRobotState.joints[jointId]?.childLinkId ?? null : null;
 
         updateComponentRobot(component.id, {
           links: nextRobotState.links,
@@ -462,7 +463,10 @@ export function useWorkspaceMutations({
           label: 'Add child link',
         });
 
-        if (jointId) {
+        if (linkId) {
+          setSelection({ type: 'link', id: linkId });
+          focusOn(linkId);
+        } else if (jointId) {
           setSelection({ type: 'joint', id: jointId });
         }
         return;
@@ -470,13 +474,20 @@ export function useWorkspaceMutations({
     }
 
     commitPendingRobotHistory();
-    const { jointId } = addChild(parentId);
+    const { linkId, jointId } = addChild(parentId);
+    if (linkId) {
+      setSelection({ type: 'link', id: linkId });
+      focusOn(linkId);
+      return;
+    }
+
     setSelection({ type: 'joint', id: jointId });
   }, [
     addChild,
     assemblyState,
     commitPendingAssemblyHistory,
     commitPendingRobotHistory,
+    focusOn,
     setSelection,
     sidebarTab,
     updateComponentRobot,

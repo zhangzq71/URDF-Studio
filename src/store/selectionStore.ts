@@ -3,14 +3,10 @@
  * Handles link/joint selection and hover state for synchronized highlighting
  */
 import { create } from 'zustand';
+import type { InteractionSelection } from '@/types';
 
-// Selection type matching RobotState['selection']
-export interface Selection {
-  type: 'link' | 'joint' | null;
-  id: string | null;
-  subType?: 'visual' | 'collision';
-  objectIndex?: number;
-}
+// Selection type matching RobotState['selection'] plus hover-only helper overlays.
+export type Selection = InteractionSelection;
 
 export type SelectionGuard = (selection: Selection) => boolean;
 
@@ -68,12 +64,12 @@ function resolveHoverStateUpdate(
   const nextSelection = sanitizeSelection(selection, state.interactionGuard);
 
   if (state.hoverFrozen) {
-    return matchesSelection(state.deferredHoveredSelection, nextSelection)
+    return matchesSelection(state.deferredHoveredSelection, nextSelection, { ignoreHelperKind: false })
       ? state
       : { deferredHoveredSelection: nextSelection };
   }
 
-  return matchesSelection(state.hoveredSelection, nextSelection)
+  return matchesSelection(state.hoveredSelection, nextSelection, { ignoreHelperKind: false })
     ? state
     : { hoveredSelection: nextSelection };
 }
@@ -84,8 +80,11 @@ export function matchesSelection(
   options: {
     ignoreSubType?: boolean;
     ignoreObjectIndex?: boolean;
+    ignoreHelperKind?: boolean;
   } = {}
 ): boolean {
+  const ignoreHelperKind = options.ignoreHelperKind ?? true;
+
   if (selection.type !== target.type || selection.id !== target.id) {
     return false;
   }
@@ -95,6 +94,10 @@ export function matchesSelection(
   }
 
   if (!options.ignoreObjectIndex && (selection.objectIndex ?? 0) !== (target.objectIndex ?? 0)) {
+    return false;
+  }
+
+  if (!ignoreHelperKind && selection.helperKind !== target.helperKind) {
     return false;
   }
 
@@ -110,8 +113,8 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
     const nextDeferredHoveredSelection = sanitizeSelection(state.deferredHoveredSelection, guard);
 
     return state.interactionGuard === guard
-      && matchesSelection(state.hoveredSelection, nextHoveredSelection)
-      && matchesSelection(state.deferredHoveredSelection, nextDeferredHoveredSelection)
+      && matchesSelection(state.hoveredSelection, nextHoveredSelection, { ignoreHelperKind: false })
+      && matchesSelection(state.deferredHoveredSelection, nextDeferredHoveredSelection, { ignoreHelperKind: false })
       ? state
       : {
           interactionGuard: guard,
@@ -121,7 +124,10 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   }),
   isInteractionAllowed: (selection) => isSelectionAllowed(selection, get().interactionGuard),
   setSelection: (selection) => set((state) => {
-    if (!isSelectionAllowed(selection, state.interactionGuard) || matchesSelection(state.selection, selection)) {
+    if (
+      !isSelectionAllowed(selection, state.interactionGuard)
+      || matchesSelection(state.selection, selection, { ignoreHelperKind: false })
+    ) {
       return state;
     }
 
@@ -129,7 +135,10 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   }),
   selectLink: (id, subType, objectIndex) => set((state) => {
     const selection = { type: 'link' as const, id, subType, objectIndex };
-    if (!isSelectionAllowed(selection, state.interactionGuard) || matchesSelection(state.selection, selection)) {
+    if (
+      !isSelectionAllowed(selection, state.interactionGuard)
+      || matchesSelection(state.selection, selection, { ignoreHelperKind: false })
+    ) {
       return state;
     }
 
@@ -137,7 +146,10 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   }),
   selectJoint: (id) => set((state) => {
     const selection = { type: 'joint' as const, id };
-    if (!isSelectionAllowed(selection, state.interactionGuard) || matchesSelection(state.selection, selection)) {
+    if (
+      !isSelectionAllowed(selection, state.interactionGuard)
+      || matchesSelection(state.selection, selection, { ignoreHelperKind: false })
+    ) {
       return state;
     }
 
@@ -154,8 +166,8 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       if (
         !frozen
         || (
-          matchesSelection(state.hoveredSelection, emptySelection)
-          && matchesSelection(state.deferredHoveredSelection, state.hoveredSelection)
+          matchesSelection(state.hoveredSelection, emptySelection, { ignoreHelperKind: false })
+          && matchesSelection(state.deferredHoveredSelection, state.hoveredSelection, { ignoreHelperKind: false })
         )
       ) {
         return state;
@@ -179,10 +191,10 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   hoverJoint: (id) => set((state) => resolveHoverStateUpdate(state, { type: 'joint', id })),
   clearHover: () => set((state) => (
     state.hoverFrozen
-      ? matchesSelection(state.deferredHoveredSelection, emptySelection)
+      ? matchesSelection(state.deferredHoveredSelection, emptySelection, { ignoreHelperKind: false })
         ? state
         : { deferredHoveredSelection: emptySelection }
-      : matchesSelection(state.hoveredSelection, emptySelection)
+      : matchesSelection(state.hoveredSelection, emptySelection, { ignoreHelperKind: false })
         ? state
         : { hoveredSelection: emptySelection }
   )),
@@ -221,7 +233,7 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
       pendingTimeout = setTimeout(() => {
         pendingTimeout = null;
         set({ focusTarget: null });
-      }, 100);
+      }, 1500);
     };
   })(),
 }));

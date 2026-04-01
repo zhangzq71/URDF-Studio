@@ -2,6 +2,7 @@ import * as THREE from 'three';
 
 import { MathUtils as SharedMathUtils } from '@/shared/utils';
 import type { UrdfLink } from '@/types';
+import type { ViewerHelperKind } from '../types';
 
 import {
   createCoMVisual,
@@ -39,13 +40,17 @@ interface SyncInertiaVisualizationOptions {
 interface SyncLinkHelperInteractionStateOptions {
   links: THREE.Object3D[];
   hoveredLinkId?: string | null;
+  hoveredHelperKind?: ViewerHelperKind | null;
   selectedLinkId?: string | null;
+  selectedHelperKind?: ViewerHelperKind | null;
 }
 
 interface SyncJointHelperInteractionStateOptions {
   joints: THREE.Object3D[];
   hoveredJointId?: string | null;
+  hoveredHelperKind?: ViewerHelperKind | null;
   selectedJointId?: string | null;
+  selectedHelperKind?: ViewerHelperKind | null;
 }
 
 const scratchLinkBox = new THREE.Box3();
@@ -235,6 +240,22 @@ function updateInteractionOpacity(
 
   material.userData.__interactionOpacityMultiplier = multiplier;
   return changed;
+}
+
+function resolveHelperKindFromObject(object: THREE.Object3D): ViewerHelperKind | null {
+  switch (object.name) {
+    case '__com_visual__':
+      return 'center-of-mass';
+    case '__inertia_box__':
+      return 'inertia';
+    case '__origin_axes__':
+      return 'origin-axes';
+    case '__joint_axis__':
+    case '__joint_axis_helper__':
+      return 'joint-axis';
+    default:
+      return null;
+  }
 }
 
 function updateInteractionColor(
@@ -597,20 +618,22 @@ export function syncInertiaVisualizationForLinks({
 export function syncLinkHelperInteractionStateForLinks({
   links,
   hoveredLinkId = null,
+  hoveredHelperKind = null,
   selectedLinkId = null,
+  selectedHelperKind = null,
 }: SyncLinkHelperInteractionStateOptions): boolean {
   let changed = false;
 
   links.forEach((link: any) => {
     if (!link.isURDFLink) return;
-
-    const state = resolveHelperInteractionState(
-      hoveredLinkId === link.name,
-      selectedLinkId === link.name,
-    );
     const helperObjects = getLinkHelperObjects(link);
 
     helperObjects.forEach((helperObject) => {
+      const helperKind = resolveHelperKindFromObject(helperObject);
+      const state = resolveHelperInteractionState(
+        hoveredLinkId === link.name && (!hoveredHelperKind || hoveredHelperKind === helperKind),
+        selectedLinkId === link.name && (!selectedHelperKind || selectedHelperKind === helperKind),
+      );
       const helperName = helperObject.name;
       const scaleMultiplier = helperName === '__com_visual__'
         ? getHelperScaleMultiplier(state, 1.16, 1.08)
@@ -649,7 +672,9 @@ export function syncLinkHelperInteractionStateForLinks({
 export function syncJointHelperInteractionStateForJoints({
   joints,
   hoveredJointId = null,
+  hoveredHelperKind = null,
   selectedJointId = null,
+  selectedHelperKind = null,
 }: SyncJointHelperInteractionStateOptions): boolean {
   let changed = false;
 
@@ -657,8 +682,8 @@ export function syncJointHelperInteractionStateForJoints({
     if (!joint.isURDFJoint || joint.jointType === 'fixed') return;
 
     const state = resolveHelperInteractionState(
-      hoveredJointId === joint.name,
-      selectedJointId === joint.name,
+      hoveredJointId === joint.name && (!hoveredHelperKind || hoveredHelperKind === 'joint-axis'),
+      selectedJointId === joint.name && (!selectedHelperKind || selectedHelperKind === 'joint-axis'),
     );
     const helperObjects = getJointHelperObjects(joint);
     const activeColorHex = state === 'hovered'

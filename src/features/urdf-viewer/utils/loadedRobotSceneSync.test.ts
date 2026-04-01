@@ -215,6 +215,66 @@ test('syncLoadedRobotScene maps folded MJCF visual meshes onto semantic syntheti
   assert.equal(attachmentMesh.userData.runtimeParentLinkName, 'base_link');
 });
 
+test('syncLoadedRobotScene keeps MJCF visual and collision ownership on the same semantic link id when assembly prefixes diverge from runtime names', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'left_hand_base_link';
+
+  const visual = new URDFVisual();
+  visual.name = 'base_visual';
+  const visualMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshPhongMaterial({ name: 'base_visual', color: new THREE.Color('#7f7f7f') }),
+  );
+  visual.add(visualMesh);
+  link.add(visual);
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.name = 'base_collision';
+  (collisionGroup as any).isURDFCollider = true;
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collisionGroup.add(collisionMesh);
+  link.add(collisionGroup);
+
+  robot.add(link);
+  (robot as any).links = { left_hand_base_link: link };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: true,
+    showVisual: true,
+    urdfMaterials: null,
+    robotLinks: {
+      comp_left_hand_base_link: {
+        ...DEFAULT_LINK,
+        id: 'comp_left_hand_base_link',
+        name: 'left_hand_base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.SPHERE,
+        },
+      },
+    },
+  });
+
+  assert.equal(result.linkMeshMap.get('comp_left_hand_base_link:visual')?.includes(visualMesh), true);
+  assert.equal(result.linkMeshMap.get('comp_left_hand_base_link:collision')?.includes(collisionMesh), true);
+  assert.equal(visualMesh.userData.parentLinkName, 'comp_left_hand_base_link');
+  assert.equal(visualMesh.userData.runtimeParentLinkName, 'left_hand_base_link');
+  assert.equal(collisionGroup.userData.parentLinkName, 'comp_left_hand_base_link');
+  assert.equal(collisionGroup.userData.runtimeParentLinkName, 'left_hand_base_link');
+  assert.equal(collisionMesh.userData.parentLinkName, 'comp_left_hand_base_link');
+  assert.equal(collisionMesh.userData.runtimeParentLinkName, 'left_hand_base_link');
+});
+
 test('syncLoadedRobotScene keeps all meshes inside one folded MJCF visual body on the same semantic link id', () => {
   const robot = new THREE.Group();
   const link = new URDFLink();

@@ -26,6 +26,10 @@ interface AppRegressionHandlers {
   getAvailableFiles: () => RobotFile[];
   getSelectedFile: () => RobotFile | null;
   getRobotState: () => RobotState;
+  getAssetDebugState: () => {
+    appAssetKeys: string[];
+    preparedUsdCacheKeysByFile: Record<string, string[]>;
+  };
   getInteractionState: () => {
     selection: {
       type: 'link' | 'joint' | null;
@@ -127,9 +131,28 @@ interface RegressionSnapshot {
   runtime: ReturnType<typeof summarizeRuntimeRobot> | null;
 }
 
+interface RegressionViewerResourceScopeState {
+  sourceFileName: string | null;
+  sourceFilePath: string | null;
+  assetKeys: string[];
+  availableFileNames: string[];
+  signature: string | null;
+}
+
+interface RegressionAssetDebugState {
+  appAssetKeys: string[];
+  preparedUsdCacheKeysByFile: Record<string, string[]>;
+  viewerScopedAssetKeys: string[];
+  viewerScopedAvailableFileNames: string[];
+  viewerScopedSourceFileName: string | null;
+  viewerScopedSourceFilePath: string | null;
+  viewerScopedSignature: string | null;
+}
+
 export interface RegressionDebugApi {
   getAvailableFiles: () => Array<{ name: string; format: string }>;
   getRegressionSnapshot: () => RegressionSnapshot;
+  getAssetDebugState: () => RegressionAssetDebugState;
   getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
   setViewerFlags: (flags: RegressionViewerFlags) => { ok: boolean };
@@ -164,6 +187,7 @@ const DEFAULT_FLAGS: Required<RegressionViewerFlags> = {
 
 let appHandlers: AppRegressionHandlers | null = null;
 let viewerHandlers: ViewerRegressionHandlers | null = null;
+let viewerResourceScopeState: RegressionViewerResourceScopeState | null = null;
 let runtimeRobot: any | null = null;
 let runtimeRevision = 0;
 
@@ -623,6 +647,12 @@ export function setRegressionViewerHandlers(handlers: ViewerRegressionHandlers |
   viewerHandlers = handlers;
 }
 
+export function setRegressionViewerResourceScope(
+  scope: RegressionViewerResourceScopeState | null,
+): void {
+  viewerResourceScopeState = scope;
+}
+
 export function setRegressionRuntimeRobot(robot: any | null): void {
   runtimeRobot = robot;
   runtimeRevision += 1;
@@ -666,6 +696,22 @@ export function installRegressionDebugApi(targetWindow: Window): void {
   targetWindow.__URDF_STUDIO_DEBUG__ = {
     getAvailableFiles: () => getAvailableFilesSummary(),
     getRegressionSnapshot: () => getRegressionSnapshot(),
+    getAssetDebugState: () => {
+      const appAssetDebugState = appHandlers?.getAssetDebugState() ?? {
+        appAssetKeys: [],
+        preparedUsdCacheKeysByFile: {},
+      };
+
+      return {
+        appAssetKeys: appAssetDebugState.appAssetKeys,
+        preparedUsdCacheKeysByFile: appAssetDebugState.preparedUsdCacheKeysByFile,
+        viewerScopedAssetKeys: viewerResourceScopeState?.assetKeys ?? [],
+        viewerScopedAvailableFileNames: viewerResourceScopeState?.availableFileNames ?? [],
+        viewerScopedSourceFileName: viewerResourceScopeState?.sourceFileName ?? null,
+        viewerScopedSourceFilePath: viewerResourceScopeState?.sourceFilePath ?? null,
+        viewerScopedSignature: viewerResourceScopeState?.signature ?? null,
+      };
+    },
     getRuntimeSceneTransforms: () => summarizeRuntimeSceneTransforms(runtimeRobot),
     loadRobotByName: async (fileName: string) => {
       if (!appHandlers) {

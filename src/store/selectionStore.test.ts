@@ -84,3 +84,17 @@ test('interaction guard clears invalid hover targets instead of keeping the prev
   state.setHoveredSelection({ type: 'link', id: 'blocked_link' });
   assert.deepEqual(useSelectionStore.getState().hoveredSelection, { type: null, id: null });
 });
+
+test('hover state updates when helper identity changes on the same link', () => {
+  resetSelectionStore();
+
+  const state = useSelectionStore.getState();
+  state.setHoveredSelection({ type: 'link', id: 'base_link', helperKind: 'center-of-mass' });
+  state.setHoveredSelection({ type: 'link', id: 'base_link', helperKind: 'inertia' });
+
+  assert.deepEqual(useSelectionStore.getState().hoveredSelection, {
+    type: 'link',
+    id: 'base_link',
+    helperKind: 'inertia',
+  });
+});

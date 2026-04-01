@@ -729,8 +729,9 @@ export const useURDFViewerController = ({
       id: string | null,
       subType?: 'visual' | 'collision',
       objectIndex?: number,
+      helperKind?: ViewerHelperKind,
     ) => {
-      onHover?.(type, id, subType, objectIndex);
+      onHover?.(type, id, subType, objectIndex, helperKind);
     },
     [onHover]
   );

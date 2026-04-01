@@ -9,7 +9,7 @@ import {
   MJCF_COMPILER_EULERSEQ_SCOPE_ATTR,
 } from './mjcfCompilerScope.ts';
 import { parseMJCFModel } from './mjcfModel.ts';
-import { resolveMJCFSource } from './mjcfSourceResolver.ts';
+import { prefixMJCFSourceIdentifiers, resolveMJCFSource } from './mjcfSourceResolver.ts';
 
 function installDomGlobals(): void {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { contentType: 'text/html' });
@@ -212,4 +212,55 @@ test('resolveMJCFSource resolves attached model assets through compiler assetdir
 
   assert.match(resolved.content, /name="child\/child_root"/);
   assert.match(resolved.content, /name="child\/child_geom"/);
+});
+
+test('prefixMJCFSourceIdentifiers rewrites standalone MJCF identifiers without changing body structure', () => {
+  installDomGlobals();
+
+  const source = `
+    <mujoco model="hand">
+      <compiler meshdir="assets" />
+      <default>
+        <default class="hand">
+          <joint />
+        </default>
+      </default>
+      <asset>
+        <material name="metallic" />
+        <mesh class="hand" name="forearm_mesh" file="forearm.obj" />
+      </asset>
+      <worldbody>
+        <body name="lh_forearm" childclass="hand">
+          <geom name="lh_forearm_visual" mesh="forearm_mesh" material="metallic" />
+          <body name="lh_wrist">
+            <joint name="lh_WRJ2" />
+          </body>
+        </body>
+      </worldbody>
+      <contact>
+        <exclude body1="lh_wrist" body2="lh_forearm" />
+      </contact>
+      <actuator>
+        <position name="lh_A_WRJ2" joint="lh_WRJ2" />
+      </actuator>
+    </mujoco>
+  `;
+
+  const prefixed = prefixMJCFSourceIdentifiers(source, 'left_hand_');
+
+  assert.match(prefixed, /name="left_hand_lh_forearm"/);
+  assert.match(prefixed, /name="left_hand_lh_wrist"/);
+  assert.match(prefixed, /name="left_hand_lh_WRJ2"/);
+  assert.match(prefixed, /body1="left_hand_lh_wrist"/);
+  assert.match(prefixed, /body2="left_hand_lh_forearm"/);
+  assert.match(prefixed, /joint="left_hand_lh_WRJ2"/);
+  assert.match(prefixed, /class="hand"/);
+  assert.match(prefixed, /mesh="forearm_mesh"/);
+  assert.match(prefixed, /material="metallic"/);
+  assert.match(prefixed, /file="forearm\.obj"/);
+
+  const sourceDoc = new DOMParser().parseFromString(source, 'text/xml');
+  const prefixedDoc = new DOMParser().parseFromString(prefixed, 'text/xml');
+  assert.equal(prefixedDoc.querySelectorAll('worldbody body').length, sourceDoc.querySelectorAll('worldbody body').length);
+  assert.equal(prefixedDoc.querySelectorAll('worldbody geom').length, sourceDoc.querySelectorAll('worldbody geom').length);
 });

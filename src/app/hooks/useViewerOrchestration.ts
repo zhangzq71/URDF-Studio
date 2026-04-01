@@ -1,6 +1,6 @@
 import { useCallback, type RefObject } from 'react';
 import { useSelectionStore, useUIStore } from '@/store';
-import type { RobotState } from '@/types';
+import type { InteractionSelection, RobotState } from '@/types';
 import type { ViewerHelperKind } from '@/features/urdf-viewer';
 import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 import {
@@ -11,7 +11,7 @@ import {
 interface UseViewerOrchestrationOptions {
   setSelection: (selection: RobotState['selection']) => void;
   pulseSelection: (selection: RobotState['selection'], durationMs?: number) => void;
-  setHoveredSelection: (selection: RobotState['selection']) => void;
+  setHoveredSelection: (selection: InteractionSelection) => void;
   focusOn: (id: string) => void;
   transformPendingRef: RefObject<boolean>;
 }
@@ -152,7 +152,8 @@ export function useViewerOrchestration({
     type: 'link' | 'joint' | null,
     id: string | null,
     subType?: 'visual' | 'collision',
-    objectIndex?: number
+    objectIndex?: number,
+    helperKind?: ViewerHelperKind,
   ) => {
     const current = useSelectionStore.getState().hoveredSelection;
     if (
@@ -160,11 +161,12 @@ export function useViewerOrchestration({
       && current.id === id
       && current.subType === subType
       && (current.objectIndex ?? 0) === (objectIndex ?? 0)
+      && current.helperKind === helperKind
     ) {
       return;
     }
 
-    const nextSelection = { type, id, subType, objectIndex };
+    const nextSelection = { type, id, subType, objectIndex, helperKind };
     if (!isInteractionAllowed(nextSelection)) {
       setHoveredSelection({ type: null, id: null });
       return;

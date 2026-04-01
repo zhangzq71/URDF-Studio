@@ -16,6 +16,7 @@ import type {
 } from '@/types';
 import { DEFAULT_JOINT, JointType } from '@/types';
 import { resolveRobotFileData } from '@/core/parsers';
+import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
@@ -296,7 +297,9 @@ export const useAssemblyStore = create<
           return null;
         }
 
-        const robotData = importResult.robotData;
+        const robotData = file.format === 'usd'
+          ? rewriteRobotMeshPathsForSource(importResult.robotData, file.name)
+          : importResult.robotData;
 
         const baseId = sanitizeComponentId(file.name);
         const state = get().assemblyState;

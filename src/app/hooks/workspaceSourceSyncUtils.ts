@@ -1,4 +1,4 @@
-import { computeLinkWorldMatrices, isSyntheticWorldRoot } from '@/core/robot';
+import { computeLinkWorldMatrices, isSyntheticWorldRoot, mergeAssembly } from '@/core/robot';
 import { generateURDF } from '@/core/parsers';
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import {
@@ -12,6 +12,7 @@ import {
   GeometryType,
   JointType,
   type AssemblyState,
+  type BridgeJoint,
   type RobotData,
   type RobotFile,
   type RobotState,
@@ -109,11 +110,15 @@ export function getPreferredMjcfContent({
   generatedContent,
   hasViewerEdits,
 }: PreferredMjcfContentOptions): string | null {
-  if (hasViewerEdits) {
-    return generatedContent ?? sourceContent ?? null;
+  if (sourceContent) {
+    return sourceContent;
   }
 
-  return sourceContent ?? generatedContent ?? null;
+  if (hasViewerEdits) {
+    return generatedContent ?? null;
+  }
+
+  return generatedContent ?? null;
 }
 
 interface PreferredXmlContentOptions {
@@ -172,11 +177,104 @@ export function shouldUseEmptyRobotForUsdHydration({
 export function getViewerSourceFile({
   selectedFile,
   shouldRenderAssembly,
+  workspaceSourceFile = null,
 }: {
   selectedFile: RobotFile | null;
   shouldRenderAssembly: boolean;
+  workspaceSourceFile?: RobotFile | null;
 }): RobotFile | null {
-  return shouldRenderAssembly ? null : selectedFile;
+  return shouldRenderAssembly ? workspaceSourceFile : selectedFile;
+}
+
+export function getSingleComponentWorkspaceMjcfViewerSource({
+  assemblyState,
+  availableFiles,
+}: {
+  assemblyState: AssemblyState | null;
+  availableFiles: RobotFile[];
+}): RobotFile | null {
+  if (!assemblyState) {
+    return null;
+  }
+
+  const visibleComponents = Object.values(assemblyState.components)
+    .filter((component) => component.visible !== false);
+
+  if (visibleComponents.length !== 1) {
+    return null;
+  }
+
+  const visibleComponentIds = new Set(visibleComponents.map((component) => component.id));
+  const hasVisibleBridges = Object.values(assemblyState.bridges).some((bridge) => (
+    visibleComponentIds.has(bridge.parentComponentId)
+    && visibleComponentIds.has(bridge.childComponentId)
+  ));
+
+  if (hasVisibleBridges) {
+    return null;
+  }
+
+  const sourceFilePath = visibleComponents[0]?.sourceFile;
+  if (!sourceFilePath) {
+    return null;
+  }
+
+  const sourceFile = availableFiles.find((file) => file.name === sourceFilePath) ?? null;
+  return sourceFile?.format === 'mjcf' ? sourceFile : null;
+}
+
+export function getWorkspaceAssemblyViewerRobotData({
+  assemblyState,
+  fallbackMergedRobotData = null,
+  bridgePreview = null,
+}: {
+  assemblyState: AssemblyState | null;
+  fallbackMergedRobotData?: RobotData | null;
+  bridgePreview?: BridgeJoint | null;
+}): RobotData | null {
+  if (!assemblyState) {
+    return null;
+  }
+
+  if (!bridgePreview) {
+    return fallbackMergedRobotData ?? null;
+  }
+
+  const visibleComponents = Object.fromEntries(
+    Object.entries(assemblyState.components).filter(([, component]) => component.visible !== false),
+  );
+  const visibleComponentIds = new Set(Object.keys(visibleComponents));
+
+  if (visibleComponentIds.size === 0) {
+    return null;
+  }
+
+  const visibleBridges = Object.fromEntries(
+    Object.entries(assemblyState.bridges).filter(([, bridge]) => (
+      visibleComponentIds.has(bridge.parentComponentId)
+      && visibleComponentIds.has(bridge.childComponentId)
+    )),
+  );
+
+  if (
+    visibleComponentIds.has(bridgePreview.parentComponentId)
+    && visibleComponentIds.has(bridgePreview.childComponentId)
+  ) {
+    const parentComponent = visibleComponents[bridgePreview.parentComponentId];
+    const childComponent = visibleComponents[bridgePreview.childComponentId];
+    const hasParentLink = Boolean(parentComponent?.robot.links[bridgePreview.parentLinkId]);
+    const hasChildLink = Boolean(childComponent?.robot.links[bridgePreview.childLinkId]);
+
+    if (hasParentLink && hasChildLink) {
+      visibleBridges[bridgePreview.id] = bridgePreview;
+    }
+  }
+
+  return mergeAssembly({
+    ...assemblyState,
+    components: visibleComponents,
+    bridges: visibleBridges,
+  });
 }
 
 export function shouldReseedSingleComponentAssemblyFromActiveFile({
@@ -186,11 +284,19 @@ export function shouldReseedSingleComponentAssemblyFromActiveFile({
   assemblyState: AssemblyState | null;
   activeFile: RobotFile | null;
 }): boolean {
-  if (!assemblyState || !activeFile || activeFile.format === 'mesh') {
+  if (!activeFile || activeFile.format === 'mesh') {
     return false;
   }
 
+  if (!assemblyState) {
+    return true;
+  }
+
   const components = Object.values(assemblyState.components);
+  if (components.length === 0) {
+    return true;
+  }
+
   if (components.length !== 1 || Object.keys(assemblyState.bridges).length > 0) {
     return false;
   }

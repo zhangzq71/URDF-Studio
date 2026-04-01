@@ -2,7 +2,15 @@ import React from 'react';
 import * as THREE from 'three';
 import type { Language, translations } from '@/shared/i18n';
 import type { SnapshotCaptureAction } from '@/shared/components/3d';
-import type { JointQuaternion, RobotFile, Theme, UrdfJoint, UrdfLink } from '@/types';
+import type {
+    InteractionHelperKind,
+    InteractionSelection,
+    JointQuaternion,
+    RobotFile,
+    Theme,
+    UrdfJoint,
+    UrdfLink,
+} from '@/types';
 import type { ViewerRobotDataResolution } from './utils/viewerRobotData';
 import type {
     MeasureAnchorMode,
@@ -17,7 +25,7 @@ import type { MeasureSelectionLike } from './utils/measureTargetResolvers';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
 export type ViewerSceneMode = 'detail';
-export type ViewerHelperKind = 'center-of-mass' | 'inertia' | 'origin-axes' | 'joint-axis';
+export type ViewerHelperKind = InteractionHelperKind;
 export type ViewerInteractiveLayer =
     | 'visual'
     | 'collision'
@@ -80,6 +88,7 @@ export interface URDFViewerProps {
     urdfContent: string;
     assets: Record<string, string>;
     sourceFile?: RobotFile | null;
+    sourceFormat?: ViewerRobotSourceFormat;
     availableFiles?: RobotFile[];
     sourceFilePath?: string;
     onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
@@ -92,11 +101,17 @@ export interface URDFViewerProps {
     mode?: ViewerSceneMode;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
+    onHover?: (
+        type: 'link' | 'joint' | null,
+        id: string | null,
+        subType?: 'visual' | 'collision',
+        objectIndex?: number,
+        helperKind?: ViewerHelperKind,
+    ) => void;
     onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
     theme: Theme;
-    selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
-    hoveredSelection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
+    selection?: InteractionSelection;
+    hoveredSelection?: InteractionSelection;
     robotLinks?: Record<string, UrdfLink>;
     robotJoints?: Record<string, UrdfJoint>;
     focusTarget?: string | null;
@@ -132,7 +147,13 @@ export interface RobotModelProps {
     showVisual?: boolean;
     showCollisionAlwaysOnTop?: boolean;
     onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
+    onHover?: (
+        type: 'link' | 'joint' | null,
+        id: string | null,
+        subType?: 'visual' | 'collision',
+        objectIndex?: number,
+        helperKind?: ViewerHelperKind,
+    ) => void;
     onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
     onJointChange?: (name: string, angle: number) => void;
     onJointChangeCommit?: (name: string, angle: number) => void;

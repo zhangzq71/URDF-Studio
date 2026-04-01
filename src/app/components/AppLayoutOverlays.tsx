@@ -10,7 +10,7 @@ import {
   type SourceCodeDocumentFlavor,
 } from '@/app/utils/sourceCodeDisplay';
 import type { Language } from '@/shared/i18n';
-import type { Theme, UrdfJoint } from '@/types';
+import type { BridgeJoint, Theme, UrdfJoint } from '@/types';
 import type { AssemblyState } from '@/types';
 import type {
   CollisionOptimizationOperation,
@@ -60,6 +60,7 @@ interface AppLayoutOverlaysProps {
   loadingBridgeDialogLabel: string;
   isBridgeModalOpen: boolean;
   onCloseBridgeModal: () => void;
+  onPreviewBridgeChange: (bridge: BridgeJoint | null) => void;
   onCreateBridge: (params: {
     name: string;
     parentComponentId: string;
@@ -95,6 +96,7 @@ export function AppLayoutOverlays({
   loadingBridgeDialogLabel,
   isBridgeModalOpen,
   onCloseBridgeModal,
+  onPreviewBridgeChange,
   onCreateBridge,
 }: AppLayoutOverlaysProps) {
   const codeEditorFileName = selectedFileName
@@ -136,6 +138,7 @@ export function AppLayoutOverlays({
           <BridgeCreateModal
             isOpen={isBridgeModalOpen}
             onClose={onCloseBridgeModal}
+            onPreviewChange={onPreviewBridgeChange}
             onCreate={onCreateBridge}
             assemblyState={assemblyState}
             lang={lang}

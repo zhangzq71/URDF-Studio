@@ -3,8 +3,6 @@ import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { highlightFaceMaterial } from '../utils/materials';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
-import { resolvePreferredHoverMatch } from '../utils/hoverLinkBounds';
-import { resolveHoverSelectionState } from '../utils/hoverSelectionState';
 import {
     collectPickTargets,
     findPickIntersections,
@@ -20,7 +18,13 @@ import {
     resolveTopLayerInteractionSubType,
     resolveTopLayerInteractionSubTypeFromHits
 } from '../utils/interactionMode';
-import type { ToolMode, URDFViewerProps, ViewerInteractiveLayer, ViewerSceneMode } from '../types';
+import type {
+    ToolMode,
+    URDFViewerProps,
+    ViewerHelperKind,
+    ViewerInteractiveLayer,
+    ViewerSceneMode,
+} from '../types';
 
 export interface UseHoverDetectionOptions {
     robot: THREE.Object3D | null;
@@ -33,7 +37,13 @@ export interface UseHoverDetectionOptions {
     showCollisionAlwaysOnTop: boolean;
     interactionLayerPriority?: ViewerInteractiveLayer[];
     selection?: URDFViewerProps['selection'];
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
+    onHover?: (
+        type: 'link' | 'joint' | null,
+        id: string | null,
+        subType?: 'visual' | 'collision',
+        objectIndex?: number,
+        helperKind?: ViewerHelperKind,
+    ) => void;
     linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
     mouseRef: React.RefObject<THREE.Vector2>;
     raycasterRef: React.RefObject<THREE.Raycaster>;
@@ -82,17 +92,11 @@ export function useHoverDetection({
     rayIntersectsBoundingBox,
     highlightGeometry
 }: UseHoverDetectionOptions): UseHoverDetectionResult {
-    const { scene, camera, size } = useThree();
-    type HoverBoundsCandidateMeta = {
-        linkId: string;
-        highlightTarget?: THREE.Object3D | null;
-        objectIndex?: number;
-    };
+    const { scene, camera } = useThree();
     type PickTargetCacheEntry = {
         key: string;
         updatedAt: number;
         targets: THREE.Object3D[];
-        hoverBoundsCandidates: Array<{ mesh: THREE.Mesh; meta: HoverBoundsCandidateMeta }>;
     };
 
     const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh; faceIndex: number } | null>(null);
@@ -102,14 +106,15 @@ export function useHoverDetection({
         id: string | null;
         subType?: 'visual' | 'collision';
         objectIndex?: number;
+        helperKind?: ViewerHelperKind;
     }>({ type: null, id: null });
     const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
     const gizmoTargetsCacheKeyRef = useRef('');
     const gizmoTargetsUpdatedAtRef = useRef(0);
     const pickTargetCachesRef = useRef<Record<PickTargetMode, PickTargetCacheEntry>>({
-        all: { key: '', updatedAt: 0, targets: [], hoverBoundsCandidates: [] },
-        visual: { key: '', updatedAt: 0, targets: [], hoverBoundsCandidates: [] },
-        collision: { key: '', updatedAt: 0, targets: [], hoverBoundsCandidates: [] }
+        all: { key: '', updatedAt: 0, targets: [] },
+        visual: { key: '', updatedAt: 0, targets: [] },
+        collision: { key: '', updatedAt: 0, targets: [] }
     });
 
     // Track last camera position to detect camera movement
@@ -128,17 +133,14 @@ export function useHoverDetection({
         pickTargetCachesRef.current.all.key = '';
         pickTargetCachesRef.current.all.updatedAt = 0;
         pickTargetCachesRef.current.all.targets = [];
-        pickTargetCachesRef.current.all.hoverBoundsCandidates = [];
 
         pickTargetCachesRef.current.visual.key = '';
         pickTargetCachesRef.current.visual.updatedAt = 0;
         pickTargetCachesRef.current.visual.targets = [];
-        pickTargetCachesRef.current.visual.hoverBoundsCandidates = [];
 
         pickTargetCachesRef.current.collision.key = '';
         pickTargetCachesRef.current.collision.updatedAt = 0;
         pickTargetCachesRef.current.collision.targets = [];
-        pickTargetCachesRef.current.collision.hoverBoundsCandidates = [];
     }, []);
 
     const getGizmoTargets = () => {
@@ -161,7 +163,8 @@ export function useHoverDetection({
         type: 'link' | 'joint' | null,
         id: string | null,
         subType?: 'visual' | 'collision',
-        objectIndex?: number
+        objectIndex?: number,
+        helperKind?: ViewerHelperKind,
     ) => {
         if (!onHover) return;
 
@@ -171,12 +174,13 @@ export function useHoverDetection({
             && previous.id === id
             && previous.subType === subType
             && (previous.objectIndex ?? 0) === (objectIndex ?? 0)
+            && previous.helperKind === helperKind
         ) {
             return;
         }
 
-        emittedHoverSelectionRef.current = { type, id, subType, objectIndex };
-        onHover(type, id, subType, objectIndex);
+        emittedHoverSelectionRef.current = { type, id, subType, objectIndex, helperKind };
+        onHover(type, id, subType, objectIndex, helperKind);
     };
 
     const getPickTargets = (targetMode: PickTargetMode) => {
@@ -196,41 +200,11 @@ export function useHoverDetection({
             || now - cache.updatedAt > 120
         ) {
             cache.targets = collectPickTargets(linkMeshMapRef.current, targetMode);
-            cache.hoverBoundsCandidates = cache.targets.flatMap((target) => {
-                if (!(target as THREE.Mesh).isMesh) {
-                    return [];
-                }
-
-                const mesh = target as THREE.Mesh;
-                const resolvedHoverHit = resolveInteractionSelectionHit(robot, mesh);
-                if (
-                    !resolvedHoverHit
-                    || resolvedHoverHit.type !== 'link'
-                    || resolvedHoverHit.targetKind !== 'geometry'
-                    || !resolvedHoverHit.linkId
-                ) {
-                    return [];
-                }
-
-                return [{
-                    mesh,
-                    meta: {
-                        linkId: resolvedHoverHit.linkId,
-                        highlightTarget: resolvedHoverHit.highlightTarget,
-                        objectIndex: resolvedHoverHit.objectIndex,
-                    },
-                }];
-            });
             cache.key = nextCacheKey;
             cache.updatedAt = now;
         }
 
         return cache.targets;
-    };
-
-    const getHoverBoundsCandidates = (targetMode: PickTargetMode) => {
-        getPickTargets(targetMode);
-        return pickTargetCachesRef.current[targetMode].hoverBoundsCandidates;
     };
 
     const getSelectionHighlightSubType = useCallback(() => {
@@ -588,7 +562,13 @@ export function useHoverDetection({
             (hoveredLinkRef as any).currentMesh = null;
             (hoveredLinkRef as any).currentObjectIndex = null;
             (hoveredLinkRef as any).currentSubType = null;
-            emitHoverSelection(resolvedInteraction.type, resolvedInteraction.id);
+            emitHoverSelection(
+                resolvedInteraction.type,
+                resolvedInteraction.id,
+                undefined,
+                undefined,
+                resolvedInteraction.helperKind,
+            );
             return;
         }
 
@@ -598,52 +578,14 @@ export function useHoverDetection({
             return;
         }
 
-        const exactHoverMatch: {
-            meta: {
-                linkId: string;
-                highlightTarget?: THREE.Object3D | null;
-                objectIndex?: number;
-            };
-            distance: number;
-        } | null = (() => {
-            if (!resolvedInteraction) {
-                return null;
-            }
-
-            return {
-                meta: {
-                    linkId: resolvedInteraction.id,
-                    highlightTarget: resolvedInteraction.highlightTarget,
-                    objectIndex: resolvedInteraction.objectIndex,
-                },
-                distance: resolvedInteraction.distance,
-            };
-        })();
-
-        const preferredHoverMatch = resolvePreferredHoverMatch({
-            exactMatch: exactHoverMatch,
-            ray: raycasterRef.current.ray,
-            candidates: getHoverBoundsCandidates(activeInteractionSubType),
-            getLinkKey: (meta) => meta.linkId,
-            boundsOptions: {
-                camera,
-                viewportWidth: size.width,
-                viewportHeight: size.height,
-                pointerScreenX: ((mouseRef.current.x + 1) * 0.5) * size.width,
-                pointerScreenY: ((1 - mouseRef.current.y) * 0.5) * size.height,
-            },
-        });
-
-        if (!preferredHoverMatch) {
+        if (!resolvedInteraction) {
             resetHoverState();
             return;
         }
 
-        const {
-            linkId: newHoveredLink,
-            highlightTarget: newHoveredMesh,
-            objectIndex: newHoveredObjectIndex,
-        } = resolveHoverSelectionState(preferredHoverMatch);
+        const newHoveredLink = resolvedInteraction.id;
+        const newHoveredMesh = resolvedInteraction.highlightTarget ?? null;
+        const newHoveredObjectIndex = resolvedInteraction.objectIndex;
 
         const previousHoveredMesh = (hoveredLinkRef as any).currentMesh ?? null;
         const previousHoveredObjectIndex = (hoveredLinkRef as any).currentObjectIndex ?? null;

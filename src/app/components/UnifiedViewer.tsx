@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import type { Group as ThreeGroup, Object3D as ThreeObject3D } from 'three';
 import { AlertCircle, FileCode, X } from 'lucide-react';
-import type { AppMode, RobotFile, RobotState, Theme } from '@/types';
+import type { AppMode, InteractionSelection, RobotFile, RobotState, Theme } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { useResolvedTheme } from '@/shared/hooks';
@@ -24,6 +24,7 @@ import {
   type ViewerDocumentLoadEvent,
   type ViewerJointMotionStateValue,
   type ViewerRobotDataResolution,
+  type ViewerRobotSourceFormat,
   type ViewerResourceScope,
 } from '@/features/urdf-viewer';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
@@ -45,6 +46,7 @@ import { resolveUnifiedViewerViewportState } from '@/app/utils/unifiedViewerView
 import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
 import type { DocumentLoadState } from '@/store/assetsStore';
+import { setRegressionViewerResourceScope } from '@/shared/debug/regressionBridge';
 
 interface FilePreviewState {
   urdfContent: string;
@@ -56,7 +58,13 @@ interface UnifiedViewerProps {
   mode: AppMode;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
   onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
-  onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
+  onHover?: (
+    type: 'link' | 'joint' | null,
+    id: string | null,
+    subType?: 'visual' | 'collision',
+    objectIndex?: number,
+    helperKind?: ViewerHelperKind,
+  ) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   assets: Record<string, string>;
   lang: Language;
@@ -74,6 +82,7 @@ interface UnifiedViewerProps {
   setShowJointPanel?: (show: boolean) => void;
   availableFiles: RobotFile[];
   urdfContent: string;
+  viewerSourceFormat?: ViewerRobotSourceFormat;
   sourceFilePath?: string;
   sourceFile?: RobotFile | null;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
@@ -82,7 +91,7 @@ interface UnifiedViewerProps {
   jointMotionState?: Record<string, ViewerJointMotionStateValue>;
   onJointChange?: (jointName: string, angle: number) => void;
   syncJointChangesToApp?: boolean;
-  selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
+  selection?: InteractionSelection;
   focusTarget?: string | null;
   isMeshPreview?: boolean;
   onTransformPendingChange?: (pending: boolean) => void;
@@ -191,6 +200,7 @@ interface ViewerSceneConnectorProps {
   effectiveSourceFile: RobotFile | null | undefined;
   effectiveSourceFilePath?: string;
   effectiveUrdfContent: string;
+  effectiveSourceFormat?: ViewerRobotSourceFormat;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   onSceneReadyForDisplay?: () => void;
@@ -217,6 +227,7 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
   effectiveSourceFile,
   effectiveSourceFilePath,
   effectiveUrdfContent,
+  effectiveSourceFormat,
   onRobotDataResolved,
   onDocumentLoadEvent,
   onSceneReadyForDisplay,
@@ -250,6 +261,7 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
     effectiveSourceFile,
     effectiveSourceFilePath,
     effectiveUrdfContent,
+    effectiveSourceFormat,
     onRobotDataResolved,
     onDocumentLoadEvent,
     onSceneReadyForDisplay,
@@ -294,6 +306,7 @@ export const UnifiedViewer = React.memo(({
   setShowJointPanel,
   availableFiles,
   urdfContent,
+  viewerSourceFormat,
   sourceFilePath,
   sourceFile,
   onRobotDataResolved,
@@ -417,6 +430,27 @@ export const UnifiedViewer = React.memo(({
     viewerRobotLinksForScope,
     visualizerRobotLinksForScope,
   ]);
+
+  React.useEffect(() => {
+    setRegressionViewerResourceScope({
+      sourceFileName: effectiveSourceFile?.name ?? null,
+      sourceFilePath: effectiveSourceFilePath ?? null,
+      assetKeys: Object.keys(viewerResourceScope.assets).sort((left, right) => left.localeCompare(right)),
+      availableFileNames: viewerResourceScope.availableFiles
+        .map((file) => file.name)
+        .sort((left, right) => left.localeCompare(right)),
+      signature: viewerResourceScope.signature,
+    });
+
+    return () => {
+      setRegressionViewerResourceScope(null);
+    };
+  }, [
+    effectiveSourceFile?.name,
+    effectiveSourceFilePath,
+    viewerResourceScope,
+  ]);
+
   const pendingViewerLoadScopeKey = viewerPendingLoadScopeRef.current;
   const releasedViewerLoadScopeKey = viewerReleasedLoadScopeRef.current;
   const {
@@ -911,6 +945,7 @@ export const UnifiedViewer = React.memo(({
             effectiveSourceFile={effectiveSourceFile}
             effectiveSourceFilePath={effectiveSourceFilePath}
             effectiveUrdfContent={effectiveUrdfContent}
+            effectiveSourceFormat={viewerSourceFormat}
             onRobotDataResolved={onRobotDataResolved}
             onDocumentLoadEvent={handleViewerDocumentLoadEvent}
             onSceneReadyForDisplay={handleViewerSceneReadyForDisplay}

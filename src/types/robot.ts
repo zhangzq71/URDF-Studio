@@ -4,6 +4,7 @@
 
 import type { UsdSceneMaterialRecord } from './usd';
 import type { QuaternionXYZW, UrdfOrigin, UrdfVisual, Vector3 } from './geometry';
+import type { InteractionSelection } from './ui';
 
 export enum JointType {
   FIXED = 'fixed',
@@ -159,7 +160,7 @@ export interface RobotState {
   materials?: Record<string, RobotMaterialState>;
   closedLoopConstraints?: RobotClosedLoopConstraint[];
   inspectionContext?: RobotInspectionContext;
-  selection: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
+  selection: InteractionSelection;
 }
 
 /** Robot data without selection (selection is in selectionStore) */

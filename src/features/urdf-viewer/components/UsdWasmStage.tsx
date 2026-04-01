@@ -64,7 +64,6 @@ import {
   shouldProcessUsdHoverRaycast,
 } from '../utils/usdHoverPointerState';
 import { updateUsdHoverCameraMotionState } from '../utils/usdHoverCameraMotion';
-import { resolvePreferredHoverMatch } from '../utils/hoverLinkBounds';
 import { hasPickableMaterial, isInternalHelperObject, isVisibleInHierarchy } from '../utils/pickFilter';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import { collectSelectableHelperTargets } from '../utils/pickTargets';
@@ -101,7 +100,6 @@ import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
 import { resolveUsdGroundAlignmentSettleDelaysMs } from '../utils/usdGroundAlignmentDelays';
 import {
   isUsdPickableHelperObject,
-  resolvePreferredUsdGeometryRole,
   resolveUsdHelperHit,
   sortUsdInteractionCandidates,
   type ResolvedUsdHelperHit,
@@ -214,7 +212,6 @@ type RuntimeMeshIndex = {
   meshesByLinkKey: Map<string, THREE.Mesh[]>;
   pickMeshes: THREE.Mesh[];
   pickMeshesByRole: Record<UsdMeshRole, THREE.Mesh[]>;
-  hoverBoundsCandidatesByRole: Record<UsdMeshRole, Array<{ mesh: THREE.Mesh; meta: RuntimeMeshMeta }>>;
   helperTargets: THREE.Object3D[];
 };
 
@@ -379,7 +376,8 @@ function areSelectionStatesEqual(
   return (left?.type ?? null) === (right?.type ?? null)
     && (left?.id ?? null) === (right?.id ?? null)
     && left?.subType === right?.subType
-    && (left?.objectIndex ?? -1) === (right?.objectIndex ?? -1);
+    && (left?.objectIndex ?? -1) === (right?.objectIndex ?? -1)
+    && left?.helperKind === right?.helperKind;
 }
 
 function captureHighlightedMeshSnapshot(mesh: THREE.Mesh): HighlightedMeshSnapshot {
@@ -784,10 +782,6 @@ export function UsdWasmStage({
     visual: [],
     collision: [],
   });
-  const hoverBoundsCandidatesByRoleRef = useRef<RuntimeMeshIndex['hoverBoundsCandidatesByRole']>({
-    visual: [],
-    collision: [],
-  });
   const helperTargetsRef = useRef<THREE.Object3D[]>([]);
   const baseLocalMatrixByMeshRef = useRef<WeakMap<THREE.Object3D, THREE.Matrix4>>(new WeakMap());
   const highlightedMeshesRef = useRef(new Map<THREE.Mesh, HighlightedMeshSnapshot>());
@@ -803,6 +797,7 @@ export function UsdWasmStage({
     id: null,
     subType: undefined,
     objectIndex: undefined,
+    helperKind: undefined,
   });
   const lastPointerDownMeshMetaRef = useRef<RuntimeMeshMeta | null>(null);
   const lastRuntimeJointAnglesRef = useRef<Record<string, number>>({});
@@ -811,6 +806,7 @@ export function UsdWasmStage({
     id: null,
     subType: undefined,
     objectIndex: undefined,
+    helperKind: undefined,
   });
   const selectionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibilityRef = useRef({ showVisual, showCollision, showCollisionAlwaysOnTop });
@@ -1088,10 +1084,6 @@ export function UsdWasmStage({
       visual: [],
       collision: [],
     };
-    const nextHoverBoundsCandidatesByRole: RuntimeMeshIndex['hoverBoundsCandidatesByRole'] = {
-      visual: [],
-      collision: [],
-    };
     const nextHelperTargets = collectSelectableHelperTargets(rootGroup);
     const nextCollisionMeshGroups = new Map<string, Array<{ mesh: THREE.Mesh; meta: RuntimeMeshMeta }>>();
     const nextCollisionAssignments = new Map<string, number | undefined>();
@@ -1166,7 +1158,6 @@ export function UsdWasmStage({
       nextMeshMetaByObject.set(mesh, meta);
       nextPickMeshes.push(mesh);
       nextPickMeshesByRole[role].push(mesh);
-      nextHoverBoundsCandidatesByRole[role].push({ mesh, meta });
 
       const key = `${linkPath}:${role}`;
       const meshes = nextMeshesByLinkKey.get(key) || [];
@@ -1229,14 +1220,12 @@ export function UsdWasmStage({
     meshesByLinkKeyRef.current = nextMeshesByLinkKey;
     pickMeshesRef.current = nextPickMeshes;
     pickMeshesByRoleRef.current = nextPickMeshesByRole;
-    hoverBoundsCandidatesByRoleRef.current = nextHoverBoundsCandidatesByRole;
     helperTargetsRef.current = nextHelperTargets;
     return {
       meshMetaByObject: nextMeshMetaByObject,
       meshesByLinkKey: nextMeshesByLinkKey,
       pickMeshes: nextPickMeshes,
       pickMeshesByRole: nextPickMeshesByRole,
-      hoverBoundsCandidatesByRole: nextHoverBoundsCandidatesByRole,
       helperTargets: nextHelperTargets,
     };
   }, [robotLinks, rootGroup]);
@@ -1252,7 +1241,6 @@ export function UsdWasmStage({
         meshesByLinkKey: meshesByLinkKeyRef.current,
         pickMeshes: pickMeshesRef.current as THREE.Mesh[],
         pickMeshesByRole: pickMeshesByRoleRef.current,
-        hoverBoundsCandidatesByRole: hoverBoundsCandidatesByRoleRef.current,
         helperTargets: helperTargetsRef.current,
       };
     }
@@ -1709,7 +1697,13 @@ export function UsdWasmStage({
 
   const emitRuntimeSelectionChange = useCallback((linkPath: string | null) => {
     if (!linkPath) {
-      lastRuntimeSelectionRef.current = { type: null, id: null, subType: undefined, objectIndex: undefined };
+      lastRuntimeSelectionRef.current = {
+        type: null,
+        id: null,
+        subType: undefined,
+        objectIndex: undefined,
+        helperKind: undefined,
+      };
       return;
     }
 
@@ -1798,16 +1792,8 @@ export function UsdWasmStage({
   const pickRuntimeInteractionTargetAtLocalPoint = useCallback((
     localX: number,
     localY: number,
-    options: { allowBoundsFallback?: boolean } = {},
   ): RuntimeInteractionTarget | null => {
     if (!camera) return null;
-
-    const preferredGeometryRole = resolvePreferredUsdGeometryRole({
-      interactionLayerPriority,
-      showVisual: visibilityRef.current.showVisual,
-      showCollision: visibilityRef.current.showCollision,
-      showCollisionAlwaysOnTop: visibilityRef.current.showCollisionAlwaysOnTop,
-    });
 
     const width = gl.domElement.clientWidth;
     const height = gl.domElement.clientHeight;
@@ -1834,7 +1820,6 @@ export function UsdWasmStage({
     const {
       meshMetaByObject,
       pickMeshes,
-      hoverBoundsCandidatesByRole,
       helperTargets,
     } = getRuntimeMeshIndex();
     const rawHits = raycaster.intersectObjects(pickMeshes, false);
@@ -1908,63 +1893,12 @@ export function UsdWasmStage({
       };
     }
 
-    const exactHoverMatch = exactCandidate?.kind === 'geometry'
+    return exactCandidate?.kind === 'geometry'
       ? {
+          kind: 'geometry',
           meta: exactCandidate.meta,
-          distance: exactCandidate.distance,
         }
       : null;
-    const activeGeometryRole = exactHoverMatch?.meta.role ?? preferredGeometryRole;
-
-    if (!activeGeometryRole) {
-      return null;
-    }
-
-    if (!options.allowBoundsFallback) {
-      return exactHoverMatch
-        ? {
-            kind: 'geometry',
-            meta: exactHoverMatch.meta,
-          }
-        : null;
-    }
-
-    const preferredHoverMatch = resolvePreferredHoverMatch({
-      exactMatch: exactHoverMatch,
-      ray: raycaster.ray,
-      candidates: hoverBoundsCandidatesByRole[activeGeometryRole],
-      getLinkKey: (meta) => meta.linkPath,
-      boundsOptions: {
-        camera,
-        viewportWidth: width,
-        viewportHeight: height,
-        pointerScreenX: localX,
-        pointerScreenY: localY,
-      },
-    });
-
-    if (!preferredHoverMatch) {
-      return null;
-    }
-
-    if (
-      preferredHoverMatch.source === 'exact'
-      || !exactHoverMatch
-      || preferredHoverMatch.match.meta.linkPath === exactHoverMatch.meta.linkPath
-    ) {
-      return {
-        kind: 'geometry',
-        meta: preferredHoverMatch.match.meta,
-      };
-    }
-
-    return {
-      kind: 'geometry',
-      meta: {
-        ...preferredHoverMatch.match.meta,
-        objectIndex: undefined,
-      },
-    };
   }, [camera, getGizmoTargets, getRuntimeMeshIndex, gl.domElement, interactionLayerPriority]);
 
   const pickRuntimeInteractionTargetAtPointer = useCallback((event: PointerEvent | MouseEvent): RuntimeInteractionTarget | null => (
@@ -2097,12 +2031,25 @@ export function UsdWasmStage({
       id: nextState?.id ?? null,
       subType: nextState?.subType,
       objectIndex: nextState?.objectIndex,
+      helperKind: nextState?.helperKind,
     };
-    onHover?.(nextState?.type ?? null, nextState?.id ?? null, nextState?.subType, nextState?.objectIndex);
+    onHover?.(
+      nextState?.type ?? null,
+      nextState?.id ?? null,
+      nextState?.subType,
+      nextState?.objectIndex,
+      nextState?.helperKind,
+    );
   }, [onHover]);
 
   const clearRuntimeHover = useCallback(() => {
-    emitRuntimeHoverState({ type: null, id: null, subType: undefined, objectIndex: undefined });
+    emitRuntimeHoverState({
+      type: null,
+      id: null,
+      subType: undefined,
+      objectIndex: undefined,
+      helperKind: undefined,
+    });
   }, [emitRuntimeHoverState]);
 
   const commitRuntimeHoverTarget = useCallback((pickedTarget: RuntimeInteractionTarget | null) => {
@@ -2117,6 +2064,7 @@ export function UsdWasmStage({
         id: pickedTarget.selection.id,
         subType: undefined,
         objectIndex: undefined,
+        helperKind: pickedTarget.selection.helperKind,
       });
       return;
     }
@@ -2158,7 +2106,7 @@ export function UsdWasmStage({
 
     hoverNeedsRaycastRef.current = false;
     commitRuntimeHoverTarget(
-      pickRuntimeInteractionTargetAtLocalPoint(localX, localY, { allowBoundsFallback: true }),
+      pickRuntimeInteractionTargetAtLocalPoint(localX, localY),
     );
   }, [
     clearRuntimeHover,
@@ -2192,6 +2140,7 @@ export function UsdWasmStage({
       const nextSelection: URDFViewerProps['selection'] = {
         type: pickedTarget.selection.type,
         id: pickedTarget.selection.id,
+        helperKind: pickedTarget.selection.helperKind,
       };
 
       lastRuntimeSelectionRef.current = nextSelection;
@@ -2410,17 +2359,28 @@ export function UsdWasmStage({
       meshesByLinkKeyRef.current.clear();
       pickMeshesRef.current = [];
       pickMeshesByRoleRef.current = { visual: [], collision: [] };
-      hoverBoundsCandidatesByRoleRef.current = { visual: [], collision: [] };
       helperTargetsRef.current = [];
       baseLocalMatrixByMeshRef.current = new WeakMap();
       gizmoTargetsRef.current = [];
       gizmoTargetsCacheKeyRef.current = '';
       gizmoTargetsUpdatedAtRef.current = 0;
       revertUsdHighlights();
-      lastRuntimeSelectionRef.current = { type: null, id: null, subType: undefined, objectIndex: undefined };
+      lastRuntimeSelectionRef.current = {
+        type: null,
+        id: null,
+        subType: undefined,
+        objectIndex: undefined,
+        helperKind: undefined,
+      };
       lastPointerDownMeshMetaRef.current = null;
       lastRuntimeJointAnglesRef.current = {};
-      lastRuntimeHoverRef.current = { type: null, id: null, subType: undefined, objectIndex: undefined };
+      lastRuntimeHoverRef.current = {
+        type: null,
+        id: null,
+        subType: undefined,
+        objectIndex: undefined,
+        helperKind: undefined,
+      };
       hoverCameraMotionPendingRef.current = false;
       onRuntimeActiveJointChangeRef.current?.(null);
       clearUsdHoverPointerState({
@@ -3002,7 +2962,7 @@ export function UsdWasmStage({
       if (shouldProcessHover) {
         hoverNeedsRaycastRef.current = false;
         commitRuntimeHoverTarget(
-          pickRuntimeInteractionTargetAtLocalPoint(pointer.x, pointer.y, { allowBoundsFallback: true }),
+          pickRuntimeInteractionTargetAtLocalPoint(pointer.x, pointer.y),
         );
       }
     }

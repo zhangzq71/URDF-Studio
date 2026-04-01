@@ -529,6 +529,20 @@ function AppContent() {
         rootLinkId: useRobotStore.getState().rootLinkId,
         selection: useSelectionStore.getState().selection,
       }),
+      getAssetDebugState: () => {
+        const assetsState = useAssetsStore.getState();
+        return {
+          appAssetKeys: Object.keys(assetsState.assets).sort((left, right) => left.localeCompare(right)),
+          preparedUsdCacheKeysByFile: Object.fromEntries(
+            Object.entries(assetsState.usdPreparedExportCaches)
+              .sort(([left], [right]) => left.localeCompare(right))
+              .map(([fileName, cache]) => [
+                fileName,
+                Object.keys(cache.meshFiles || {}).sort((left, right) => left.localeCompare(right)),
+              ]),
+          ),
+        };
+      },
       getInteractionState: () => ({
         selection: useSelectionStore.getState().selection,
         hoveredSelection: useSelectionStore.getState().hoveredSelection,

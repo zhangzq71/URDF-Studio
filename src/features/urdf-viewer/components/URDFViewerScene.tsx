@@ -29,6 +29,7 @@ export const URDFViewerScene = ({
   controller,
   active = true,
   sourceFile,
+  sourceFormat,
   availableFiles,
   urdfContent,
   assets,
@@ -233,12 +234,12 @@ export const URDFViewerScene = ({
         </Suspense>
       ) : (
         <Suspense fallback={null}>
-          <RobotModel
-            active={active}
-            urdfContent={urdfContent}
-            assets={assets}
-            sourceFormat={getViewerRobotSourceFormat(sourceFile?.format)}
-            reloadToken={runtimeInstanceKey}
+            <RobotModel
+              active={active}
+              urdfContent={urdfContent}
+              assets={assets}
+              sourceFormat={sourceFormat ?? getViewerRobotSourceFormat(sourceFile?.format)}
+              reloadToken={runtimeInstanceKey}
             initialRobot={retainedRobot}
             sourceFilePath={sourceFilePath}
             onRobotLoaded={handleRobotLoaded}
