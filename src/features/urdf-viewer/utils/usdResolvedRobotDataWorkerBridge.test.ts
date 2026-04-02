@@ -152,3 +152,55 @@ test('USD resolved robot data worker client resolves the first worker robot-data
   assert.equal(fakeWorker.postedMessages.length, 2);
   assert.equal((fakeWorker.postedMessages[1] as { type: string }).type, 'dispose');
 });
+
+test('USD resolved robot data worker client forwards load-debug events without interrupting resolution', async () => {
+  const fakeWorker = new FakeWorker();
+  const receivedLoadDebugEntries: Array<{ step: string; status: string }> = [];
+  const client = createUsdResolvedRobotDataWorkerClient({
+    canUseWorker: () => true,
+    createCanvas: () => ({ width: 1, height: 1 } as OffscreenCanvas),
+    createWorker: () => fakeWorker as unknown as Worker,
+    onLoadDebugEntry: (entry) => {
+      receivedLoadDebugEntries.push({
+        step: entry.step,
+        status: entry.status,
+      });
+    },
+  });
+
+  const resultPromise = client.resolve(
+    {
+      name: 'robots/go2/usd/go2.usd',
+      content: '#usda 1.0',
+      blobUrl: undefined,
+      format: 'usd',
+    },
+    [],
+    {},
+  );
+
+  fakeWorker.emitMessage({
+    type: 'load-debug',
+    entry: {
+      sourceFileName: 'robots/go2/usd/go2.usd',
+      step: 'prepare-stage-open-data',
+      status: 'resolved',
+      timestamp: 123,
+      durationMs: 45,
+      detail: { rendererMode: 'offscreen-worker' },
+    },
+  });
+  fakeWorker.emitMessage({
+    type: 'robot-data',
+    resolution: demoResolution,
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.stageSourcePath, '/robots/go2/usd/go2.usd');
+  assert.deepEqual(receivedLoadDebugEntries, [
+    {
+      step: 'prepare-stage-open-data',
+      status: 'resolved',
+    },
+  ]);
+});

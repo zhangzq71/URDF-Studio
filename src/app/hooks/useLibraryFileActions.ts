@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { TranslationKeys } from '@/shared/i18n';
+import { isLibraryRobotExportableFormat } from '@/shared/utils';
 import type { RenameRobotFolderResult } from '@/store/assetsStore';
 import type { AssemblyState, RobotData, RobotFile } from '@/types';
 
@@ -203,7 +204,7 @@ export function useLibraryFileActions({
   ]);
 
   const handleExportLibraryFile = useCallback((file: RobotFile) => {
-    if (file.format !== 'urdf' && file.format !== 'mjcf' && file.format !== 'xacro' && file.format !== 'sdf') {
+    if (!isLibraryRobotExportableFormat(file.format)) {
       showToast(t.onlyUrdfMjcfExport, 'info');
       return;
     }

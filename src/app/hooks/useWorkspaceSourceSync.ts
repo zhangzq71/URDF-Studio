@@ -7,8 +7,11 @@ import { DEFAULT_LINK, GeometryType, type AssemblyState, type BridgeJoint, type 
 import { stripTransientJointMotionFromJoints } from '@/shared/utils/robot/semanticSnapshot';
 import { getSourceCodeDocumentFlavor, type SourceCodeDocumentFlavor } from '@/app/utils/sourceCodeDisplay';
 import {
+  buildLightweightWorkspaceViewerReloadContent,
+  buildWorkspaceAssemblyViewerDisplayRobotData,
   buildWorkspaceViewerRobotData,
   buildPreviewSceneSourceFromImportResult,
+  canUseLightweightWorkspaceViewerReloadContent,
   createPreviewRobotStateFromImportResult,
   createRobotSourceSnapshot,
   createRobotSourceSnapshotFromUrdfContent,
@@ -17,8 +20,11 @@ import {
   getPreferredUrdfContent,
   getWorkspaceAssemblyViewerRobotData,
   getSingleComponentWorkspaceMjcfViewerSource,
+  normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource,
+  shouldKeepPristineSingleComponentWorkspaceOnSourceViewer,
 } from './workspaceSourceSyncUtils';
 import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
+import { useAnimatedWorkspaceViewerRobotData } from './useAnimatedWorkspaceViewerRobotData';
 
 export interface JointMotionStateValue {
   angle?: number;
@@ -27,7 +33,9 @@ export interface JointMotionStateValue {
 
 interface UseWorkspaceSourceSyncOptions {
   assemblyState: AssemblyState | null;
+  assemblyRevision: number;
   assemblyBridgePreview?: BridgeJoint | null;
+  assemblySelection?: { type: 'assembly' | 'component' | null; id: string | null };
   sidebarTab: string;
   getMergedRobotData: () => RobotData | null | undefined;
   selection: RobotState['selection'];
@@ -85,7 +93,9 @@ function areJointSourceCompatible(
 
 export function useWorkspaceSourceSync({
   assemblyState,
+  assemblyRevision,
   assemblyBridgePreview = null,
+  assemblySelection,
   sidebarTab,
   getMergedRobotData,
   selection,
@@ -113,9 +123,6 @@ export function useWorkspaceSourceSync({
   const hasWorkspaceComponents = Boolean(
     assemblyState && Object.keys(assemblyState.components).length > 0,
   );
-  // Keep the current robot rendered while the workspace is empty so switching
-  // modes does not force an unnecessary viewer reload to an empty assembly.
-  const shouldRenderAssembly = isWorkspaceAssembly && hasWorkspaceComponents;
   const [filePreviewFile, setFilePreviewFile] = useState<RobotFile | null>(null);
   const [previewRobot, setPreviewRobot] = useState<RobotState | null>(null);
   const [filePreview, setFilePreview] = useState<{ urdfContent: string; fileName: string } | undefined>(undefined);
@@ -161,6 +168,54 @@ export function useWorkspaceSourceSync({
     () => getSourceCodeDocumentFlavor(activeSourceFile),
     [activeSourceFile],
   );
+  const sourceRobotJoints = useMemo(() => {
+    if (areJointSourceCompatible(sourceJointsRef.current, robotJoints)) {
+      return sourceJointsRef.current;
+    }
+
+    const nextSourceJoints = stripTransientJointMotionFromJoints(robotJoints);
+    sourceJointsRef.current = nextSourceJoints;
+    return nextSourceJoints;
+  }, [robotJoints]);
+  const currentRobotSourceState = useMemo<RobotState>(() => ({
+    name: robotName,
+    links: robotLinks,
+    joints: sourceRobotJoints,
+    rootLinkId,
+    materials: robotMaterials,
+    closedLoopConstraints,
+    selection: { type: null, id: null },
+  }), [closedLoopConstraints, robotLinks, robotMaterials, robotName, rootLinkId, sourceRobotJoints]);
+  const currentRobotSourceSnapshot = useMemo(
+    () => createRobotSourceSnapshot(currentRobotSourceState),
+    [currentRobotSourceState],
+  );
+  const shouldReuseSelectedFileViewerForWorkspace = useMemo(() => (
+    isWorkspaceAssembly
+    && hasWorkspaceComponents
+    && shouldKeepPristineSingleComponentWorkspaceOnSourceViewer({
+      assemblyState,
+      activeFile: selectedFile,
+      sourceSnapshot: currentRobotSourceSnapshot,
+      assemblySelectionType: assemblySelection?.type ?? null,
+    })
+  ), [
+    assemblySelection?.type,
+    assemblyState,
+    currentRobotSourceSnapshot,
+    hasWorkspaceComponents,
+    isWorkspaceAssembly,
+    selectedFile,
+  ]);
+  const hasActiveWorkspaceTransformTarget = isWorkspaceAssembly
+    && Boolean(assemblySelection?.type)
+    && !shouldReuseSelectedFileViewerForWorkspace;
+  // Keep the current robot rendered while the workspace is empty or still a
+  // pristine single-component seed so switching to workspace does not trigger
+  // a redundant viewer reload before the assembly actually diverges.
+  const shouldRenderAssembly = isWorkspaceAssembly
+    && hasWorkspaceComponents
+    && !shouldReuseSelectedFileViewerForWorkspace;
 
   const mergedRobotData = useMemo(() => {
     if (!shouldRenderAssembly) return null;
@@ -210,8 +265,15 @@ export function useWorkspaceSourceSync({
       return null;
     }
 
-    return buildWorkspaceViewerRobotData(viewerMergedRobotData ?? emptyRobot);
-  }, [emptyRobot, shouldRenderAssembly, viewerMergedRobotData]);
+    return buildWorkspaceAssemblyViewerDisplayRobotData({
+      assemblyState,
+      mergedRobotData: viewerMergedRobotData ?? emptyRobot,
+    }) ?? buildWorkspaceViewerRobotData(viewerMergedRobotData ?? emptyRobot);
+  }, [assemblyState, emptyRobot, shouldRenderAssembly, viewerMergedRobotData]);
+  const animatedWorkspaceViewerRobotData = useAnimatedWorkspaceViewerRobotData(
+    workspaceViewerRobotData,
+    shouldRenderAssembly,
+  );
 
   const robot = useMemo<RobotState>(() => {
     if (shouldRenderAssembly) {
@@ -250,15 +312,15 @@ export function useWorkspaceSourceSync({
   ]);
   const viewerRobot = useMemo<RobotState>(() => {
     if (shouldRenderAssembly) {
-      if (viewerMergedRobotData) {
-        return { ...viewerMergedRobotData, selection };
+      if (animatedWorkspaceViewerRobotData) {
+        return { ...animatedWorkspaceViewerRobotData, selection };
       }
 
       return emptyRobot;
     }
 
     return robot;
-  }, [emptyRobot, robot, selection, shouldRenderAssembly, viewerMergedRobotData]);
+  }, [animatedWorkspaceViewerRobotData, emptyRobot, robot, selection, shouldRenderAssembly]);
 
   const jointAngleState = useMemo(() => {
     const angles: Record<string, number> = {};
@@ -294,40 +356,6 @@ export function useWorkspaceSourceSync({
     return Object.values(robot.links).some((link) => link.visible !== false);
   }, [robot.links]);
 
-  const sourceRobotJoints = useMemo(() => {
-    if (areJointSourceCompatible(sourceJointsRef.current, robotJoints)) {
-      return sourceJointsRef.current;
-    }
-
-    const nextSourceJoints = stripTransientJointMotionFromJoints(robotJoints);
-    sourceJointsRef.current = nextSourceJoints;
-    return nextSourceJoints;
-  }, [robotJoints]);
-
-  const currentRobotSourceState = useMemo<RobotState>(() => ({
-    name: robotName,
-    links: robotLinks,
-    joints: sourceRobotJoints,
-    rootLinkId,
-    materials: robotMaterials,
-    closedLoopConstraints,
-    selection: { type: null, id: null },
-  }), [closedLoopConstraints, robotLinks, robotMaterials, robotName, rootLinkId, sourceRobotJoints]);
-
-  const currentRobotSourceSnapshot = useMemo(
-    () => createRobotSourceSnapshot(currentRobotSourceState),
-    [currentRobotSourceState],
-  );
-  const workspaceRobotSourceSnapshot = useMemo(() => {
-    if (!workspaceViewerRobotData) {
-      return null;
-    }
-
-    return createRobotSourceSnapshot({
-      ...workspaceViewerRobotData,
-      selection: { type: null, id: null },
-    });
-  }, [workspaceViewerRobotData]);
   const workspaceViewerMjcfSourceFile = useMemo(
     () => getSingleComponentWorkspaceMjcfViewerSource({
       assemblyState,
@@ -724,23 +752,34 @@ export function useWorkspaceSourceSync({
     return mjcfViewerBaselineContentRef.current !== generatedMjcfContent;
   }, [generatedMjcfContent, mjcfViewerBaselineKey]);
 
-  const workspaceViewerContent = useMemo(() => {
-    if (!shouldRenderAssembly || !workspaceRobotSourceSnapshot) {
+  const workspaceViewerNeedsGeneratedUrdfContent = useMemo(() => {
+    if (!shouldRenderAssembly || !workspaceViewerRobotData) {
+      return false;
+    }
+
+    return !canUseLightweightWorkspaceViewerReloadContent(workspaceViewerRobotData.links);
+  }, [shouldRenderAssembly, workspaceViewerRobotData]);
+  const workspaceViewerGeneratedUrdfContent = useMemo(() => {
+    if (!workspaceViewerNeedsGeneratedUrdfContent || !workspaceViewerRobotData) {
       return null;
     }
 
+    const normalizedWorkspaceViewerRobotData = normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource(
+      workspaceViewerRobotData,
+    );
+
     return readCachedGeneratedSource(
-      `workspace-viewer-urdf:${workspaceRobotSourceSnapshot}`,
+      `workspace-viewer-urdf:${assemblyRevision}`,
       () => generateURDF({
-        ...workspaceViewerRobotData!,
+        ...normalizedWorkspaceViewerRobotData,
         selection: { type: null, id: null },
       }, { preserveMeshPaths: true }),
     );
   }, [
+    assemblyRevision,
     readCachedGeneratedSource,
-    shouldRenderAssembly,
+    workspaceViewerNeedsGeneratedUrdfContent,
     workspaceViewerRobotData,
-    workspaceRobotSourceSnapshot,
   ]);
   const workspaceViewerMjcfContent = useMemo(() => {
     if (!shouldRenderAssembly || !workspaceViewerMjcfSourceFile || !workspaceResolvedMjcfSource || !assemblyState) {
@@ -772,6 +811,28 @@ export function useWorkspaceSourceSync({
     shouldRenderAssembly,
     workspaceResolvedMjcfSource,
     workspaceViewerMjcfSourceFile,
+  ]);
+
+  const workspaceViewerReloadContent = useMemo(() => {
+    if (!shouldRenderAssembly) {
+      return null;
+    }
+
+    if (workspaceViewerMjcfContent) {
+      return workspaceViewerMjcfContent;
+    }
+
+    if (workspaceViewerNeedsGeneratedUrdfContent) {
+      return workspaceViewerGeneratedUrdfContent;
+    }
+
+    return buildLightweightWorkspaceViewerReloadContent(assemblyRevision);
+  }, [
+    assemblyRevision,
+    shouldRenderAssembly,
+    workspaceViewerGeneratedUrdfContent,
+    workspaceViewerMjcfContent,
+    workspaceViewerNeedsGeneratedUrdfContent,
   ]);
 
   const syncedSourceContent = useMemo(() => {
@@ -903,7 +964,7 @@ export function useWorkspaceSourceSync({
 
   const urdfContentForViewer = useMemo(() => {
     if (shouldRenderAssembly) {
-      return workspaceViewerMjcfContent ?? workspaceViewerContent!;
+      return workspaceViewerReloadContent ?? '';
     }
 
     if (selectedFile?.format === 'usd' && isSelectedUsdHydrating) {
@@ -928,8 +989,7 @@ export function useWorkspaceSourceSync({
     selectedFile,
     viewerGeneratedUrdfContent,
     viewerUrdfContent,
-    workspaceViewerMjcfContent,
-    workspaceViewerContent,
+    workspaceViewerReloadContent,
     shouldRenderAssembly,
   ]);
 

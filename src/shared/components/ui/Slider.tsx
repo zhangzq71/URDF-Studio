@@ -23,6 +23,8 @@ interface SliderProps {
   marks?: SliderMark[];
   snapToMarks?: boolean;
   solidThumb?: boolean;
+  compactThumb?: boolean;
+  parseValue?: (value: string) => number | null;
 }
 
 export const Slider: React.FC<SliderProps> = ({
@@ -43,12 +45,34 @@ export const Slider: React.FC<SliderProps> = ({
   marks,
   snapToMarks = false,
   solidThumb = false,
+  compactThumb = false,
+  parseValue,
 }) => {
   const safeMin = Math.min(min, max);
   const safeMax = Math.max(min, max);
-  const thumbWidth = 18;
+  const thumbWidth = compactThumb ? 16 : 18;
   const halfThumb = thumbWidth / 2;
+  const thumbClassName = compactThumb ? 'h-4 w-4' : 'h-[18px] w-[18px]';
+  const nativeThumbClassName = compactThumb
+    ? '[&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent'
+    : '[&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent';
   const sliderRef = React.useRef<HTMLDivElement>(null);
+  const formatDisplayValue = React.useCallback((nextValue: number) => (
+    formatValue ? formatValue(nextValue) : `${nextValue}`
+  ), [formatValue]);
+  const parseDisplayValue = React.useCallback((input: string) => {
+    if (parseValue) {
+      return parseValue(input);
+    }
+
+    const normalized = input.trim().replace(/,/g, '').replace(/[^0-9eE+.-]/g, '');
+    if (!normalized) {
+      return null;
+    }
+
+    const numericValue = Number.parseFloat(normalized);
+    return Number.isFinite(numericValue) ? numericValue : null;
+  }, [parseValue]);
   const clampToRange = React.useCallback((nextValue: number) => {
     if (!Number.isFinite(nextValue)) return safeMin;
     return Math.min(Math.max(nextValue, safeMin), safeMax);
@@ -94,12 +118,20 @@ export const Slider: React.FC<SliderProps> = ({
   const [localValue, setLocalValue] = React.useState(() => clampToRange(value));
   const [isDragging, setIsDragging] = React.useState(false);
   const [isThumbHovered, setIsThumbHovered] = React.useState(false);
+  const [isEditingValue, setIsEditingValue] = React.useState(false);
+  const [valueInput, setValueInput] = React.useState(() => formatDisplayValue(clampToRange(value)));
 
   React.useEffect(() => {
     if (!isDragging) {
       setLocalValue(clampToRange(value));
     }
   }, [value, isDragging, clampToRange]);
+
+  React.useEffect(() => {
+    if (!isEditingValue) {
+      setValueInput(formatDisplayValue(localValue));
+    }
+  }, [formatDisplayValue, isEditingValue, localValue]);
 
   const stopDragging = React.useCallback(() => {
     setIsDragging(false);
@@ -147,11 +179,11 @@ export const Slider: React.FC<SliderProps> = ({
     const rect = sliderElement.getBoundingClientRect();
     const thumbCenterX = rect.left + (clampedPercentage / 100) * rect.width;
     const thumbCenterY = rect.top + rect.height / 2;
-    const withinX = Math.abs(clientX - thumbCenterX) <= halfThumb + 6;
+    const withinX = Math.abs(clientX - thumbCenterX) <= halfThumb + (compactThumb ? 7 : 6);
     const withinY = Math.abs(clientY - thumbCenterY) <= 14;
 
     setIsThumbHovered(withinX && withinY);
-  }, [clampedPercentage, disabled, halfThumb]);
+  }, [clampedPercentage, compactThumb, disabled, halfThumb]);
 
   React.useEffect(() => {
     if (!isDragging) return;
@@ -213,7 +245,22 @@ export const Slider: React.FC<SliderProps> = ({
     startDragging(clientX);
   }, [startDragging]);
 
-  const displayValue = formatValue ? formatValue(localValue) : localValue;
+  const commitValueInput = React.useCallback((nextInputValue?: string) => {
+    const resolvedInputValue = nextInputValue ?? valueInput;
+    const parsedValue = parseDisplayValue(resolvedInputValue);
+
+    if (parsedValue === null) {
+      setValueInput(formatDisplayValue(localValue));
+      setIsEditingValue(false);
+      return;
+    }
+
+    const nextValue = snapToStep(parsedValue);
+    handleChange(nextValue);
+    setValueInput(formatDisplayValue(nextValue));
+    setIsEditingValue(false);
+  }, [formatDisplayValue, handleChange, localValue, parseDisplayValue, snapToStep, valueInput]);
+
   const thumbBoxShadow = disabled
     ? 'var(--ui-slider-thumb-shadow)'
     : isDragging
@@ -224,22 +271,56 @@ export const Slider: React.FC<SliderProps> = ({
   const resolvedThumbBoxShadow = solidThumb
     ? `0 0 0 2px var(--ui-panel-bg), ${thumbBoxShadow}`
     : thumbBoxShadow;
+  const valueInputClassName = compactThumb
+    ? 'ml-2 h-5 w-12 shrink-0 rounded-md border border-transparent bg-transparent px-1 text-right text-[9px] font-mono tabular-nums text-text-secondary transition-colors focus:bg-input-bg focus:text-text-primary focus:outline-none focus:ring-2 focus:ring-system-blue/30 focus:border-border-black disabled:cursor-not-allowed disabled:opacity-50'
+    : 'ml-3 h-6 w-16 shrink-0 rounded-md border border-border-black bg-input-bg px-1.5 text-right text-[10px] font-mono tabular-nums text-text-tertiary transition-colors focus:outline-none focus:ring-2 focus:ring-system-blue/30 focus:border-system-blue disabled:cursor-not-allowed disabled:opacity-50';
   return (
     <div className={`w-full ${className} touch-none`}>
       {(label || showValue) && (
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             {icon && <span className="text-text-tertiary">{icon}</span>}
             {label && (
-              <span className={`text-xs font-medium text-text-primary ${labelClassName}`}>
+              <span className={`min-w-0 truncate text-xs font-medium text-text-primary ${labelClassName}`}>
                 {label}
               </span>
             )}
           </div>
           {showValue && (
-            <span className="text-[10px] font-mono text-text-tertiary tabular-nums bg-element-bg px-1.5 py-0.5 rounded-md">
-              {displayValue}
-            </span>
+            <input
+              data-testid="ui-slider-value-input"
+              type="text"
+              value={valueInput}
+              inputMode="decimal"
+              disabled={disabled}
+              aria-label={label ? `${label} value` : 'Slider value'}
+              className={valueInputClassName}
+              onFocus={(event) => {
+                setIsEditingValue(true);
+                event.currentTarget.select();
+              }}
+              onChange={(event) => {
+                setValueInput(event.currentTarget.value);
+              }}
+              onBlur={(event) => {
+                commitValueInput(event.currentTarget.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  event.currentTarget.blur();
+                  return;
+                }
+
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setValueInput(formatDisplayValue(localValue));
+                  setIsEditingValue(false);
+                  event.currentTarget.blur();
+                }
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+            />
           )}
         </div>
       )}
@@ -302,7 +383,7 @@ export const Slider: React.FC<SliderProps> = ({
               e.preventDefault();
             }}
             disabled={disabled}
-            className="pointer-events-none absolute -top-1.5 z-0 h-8 appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed [&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent"
+            className={`pointer-events-none absolute -top-1.5 z-0 h-8 appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed ${nativeThumbClassName}`}
             style={{
               left: `-${halfThumb}px`,
               width: `calc(100% + ${thumbWidth}px)`,
@@ -310,13 +391,15 @@ export const Slider: React.FC<SliderProps> = ({
           />
           {/* Thumb */}
           <div
-            className={`pointer-events-none absolute top-1/2 z-10 h-[18px] w-[18px] -translate-y-1/2 rounded-full transition-[transform,box-shadow] duration-150 ease-out group-focus-within:scale-105 group-focus-within:ring-4 group-focus-within:ring-system-blue/15 ${
+            className={`pointer-events-none absolute top-1/2 z-10 ${thumbClassName} -translate-y-1/2 rounded-full transition-[transform,box-shadow] duration-150 ease-out group-focus-within:scale-105 group-focus-within:ring-4 group-focus-within:ring-system-blue/15 ${
               disabled
                 ? 'opacity-60'
                 : isDragging
                   ? 'scale-110 ring-4 ring-system-blue/15'
                   : isThumbHovered
-                    ? 'scale-[1.04]'
+                    ? compactThumb
+                      ? 'scale-[1.08] ring-2 ring-system-blue/10'
+                      : 'scale-[1.04]'
                     : 'scale-100'
             }`}
             data-testid="ui-slider-thumb"

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import type { Group as ThreeGroup, Object3D as ThreeObject3D } from 'three';
 import { AlertCircle, FileCode, X } from 'lucide-react';
-import type { AppMode, InteractionSelection, RobotFile, RobotState, Theme } from '@/types';
+import type { AppMode, AssemblyState, InteractionSelection, RobotFile, RobotState, Theme } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { useResolvedTheme } from '@/shared/hooks';
@@ -26,7 +26,9 @@ import {
   type ViewerRobotDataResolution,
   type ViewerRobotSourceFormat,
   type ViewerResourceScope,
+  useResponsivePanelLayout,
 } from '@/features/urdf-viewer';
+import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
 import {
   createInitialUnifiedViewerMountState,
@@ -42,10 +44,13 @@ import {
 } from '@/app/utils/unifiedViewerOptionsRestore';
 import { buildUnifiedViewerSceneProps } from '@/app/utils/unifiedViewerSceneProps';
 import { buildUnifiedViewerResourceScopes } from '@/app/utils/unifiedViewerResourceScopes';
+import { resolveUnifiedViewerVisualizerRobot } from '@/app/utils/unifiedViewerSceneRobots';
 import { resolveUnifiedViewerViewportState } from '@/app/utils/unifiedViewerViewportState';
 import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
 import type { DocumentLoadState } from '@/store/assetsStore';
+import type { UpdateCommitOptions } from '@/app/hooks/usePendingHistoryCoordinator';
 import { setRegressionViewerResourceScope } from '@/shared/debug/regressionBridge';
 
 interface FilePreviewState {
@@ -55,6 +60,7 @@ interface FilePreviewState {
 
 interface UnifiedViewerProps {
   robot: RobotState;
+  visualizerRobot?: RobotState;
   mode: AppMode;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => void;
   onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
@@ -97,6 +103,29 @@ interface UnifiedViewerProps {
   onTransformPendingChange?: (pending: boolean) => void;
   onCollisionTransformPreview?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
   onCollisionTransform?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
+  assemblyState?: AssemblyState | null;
+  assemblyWorkspaceActive?: boolean;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: (transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { r: number; p: number; y: number };
+  }) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: {
+      position: { x: number; y: number; z: number };
+      rotation: { r: number; p: number; y: number };
+    },
+    options?: UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (
+    bridgeId: string,
+    origin: {
+      xyz: { x: number; y: number; z: number };
+      rpy: { r: number; p: number; y: number };
+      quatXyzw?: { x: number; y: number; z: number; w: number };
+    },
+  ) => void;
   filePreview?: FilePreviewState;
   onClosePreview?: () => void;
   pendingViewerToolMode?: ToolMode | null;
@@ -191,6 +220,53 @@ function FilePreviewError({ lang }: { lang: Language }) {
   );
 }
 
+function URDFViewerJointsPanel({
+  controller,
+  showJointPanel,
+  setShowJointPanel,
+  lang,
+}: {
+  controller: URDFViewerController;
+  showJointPanel: boolean;
+  setShowJointPanel?: (show: boolean) => void;
+  lang: Language;
+}) {
+  const t = translations[lang];
+  const { jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
+    containerRef: controller.containerRef,
+    optionsPanelRef: controller.optionsPanelRef,
+    jointPanelRef: controller.jointPanelRef,
+    showOptionsPanel: false,
+    showJointPanel,
+    showToolbar: false,
+  });
+
+  return (
+    <JointsPanel
+      showJointPanel={showJointPanel}
+      robot={controller.jointPanelRobot ?? controller.robot}
+      jointPanelRef={controller.jointPanelRef}
+      jointPanelPos={controller.jointPanelPos}
+      defaultPosition={jointsDefaultPosition}
+      maxHeight={jointsPanelMaxHeight}
+      onMouseDown={(event) => controller.handleMouseDown('joints', event)}
+      t={t}
+      handleResetJoints={controller.handleResetJoints}
+      angleUnit={controller.angleUnit}
+      setAngleUnit={controller.setAngleUnit}
+      isJointsCollapsed={controller.isJointsCollapsed}
+      toggleJointsCollapsed={controller.toggleJointsCollapsed}
+      setShowJointPanel={setShowJointPanel}
+      jointPanelStore={controller.jointPanelStore}
+      setActiveJoint={controller.setActiveJoint}
+      handleJointAngleChange={controller.handleJointAngleChange}
+      handleJointChangeCommit={controller.handleJointChangeCommit}
+      onSelect={controller.handleSelectWrapper}
+      onHover={controller.handleHoverWrapper}
+    />
+  );
+}
+
 interface ViewerSceneConnectorProps {
   controller: URDFViewerController;
   active: boolean;
@@ -205,7 +281,7 @@ interface ViewerSceneConnectorProps {
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   onSceneReadyForDisplay?: () => void;
   onRuntimeRobotLoaded?: (robot: ThreeObject3D) => void;
-  mode: 'detail';
+  mode: 'editor';
   selection?: UnifiedViewerProps['selection'];
   onHover?: UnifiedViewerProps['onHover'];
   onMeshSelect?: UnifiedViewerProps['onMeshSelect'];
@@ -285,6 +361,7 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
 
 export const UnifiedViewer = React.memo(({
   robot,
+  visualizerRobot: visualizerRobotInput,
   mode,
   onSelect,
   onMeshSelect,
@@ -321,6 +398,12 @@ export const UnifiedViewer = React.memo(({
   onTransformPendingChange,
   onCollisionTransformPreview,
   onCollisionTransform,
+  assemblyState,
+  assemblyWorkspaceActive = false,
+  assemblySelection,
+  onAssemblyTransform,
+  onComponentTransform,
+  onBridgeTransform,
   filePreview,
   onClosePreview,
   pendingViewerToolMode = null,
@@ -380,7 +463,13 @@ export const UnifiedViewer = React.memo(({
     }));
   }, [isPreviewing, mode, viewerToolSessionActive]);
 
-  const visualizerRobot = robot;
+  const visualizerRobot = React.useMemo(() => (
+    resolveUnifiedViewerVisualizerRobot({
+      robot: visualizerRobotInput ?? robot,
+      viewerRobot: robot,
+      assemblyWorkspaceActive,
+    })
+  ), [assemblyWorkspaceActive, robot, visualizerRobotInput]);
   const viewerRobotLinksScopeSignature = React.useMemo(
     () => buildViewerRobotLinksScopeSignature(activePreview ? undefined : robot.links),
     [activePreview, robot.links],
@@ -622,6 +711,7 @@ export const UnifiedViewer = React.memo(({
     robot: visualizerRobot,
     onUpdate,
     mode: visualizerRuntimeMode,
+    assemblyWorkspaceActive,
     propShowVisual: showVisual,
     propSetShowVisual: setShowVisual,
   });
@@ -908,25 +998,43 @@ export const UnifiedViewer = React.memo(({
             {!activePreview.urdfContent && <FilePreviewError lang={lang} />}
           </>
         ) : activeScene === 'viewer' ? (
-          <URDFViewerPanels
-            lang={lang}
-            controller={viewerController}
-            onUpdate={onUpdate}
-            showToolbar={showToolbar}
-            setShowToolbar={setShowToolbar}
-            showOptionsPanel={showOptionsPanel}
-            setShowOptionsPanel={setShowOptionsPanel}
-            showJointPanel={showJointPanel}
-            setShowJointPanel={setShowJointPanel}
-          />
+          <>
+            <URDFViewerPanels
+              lang={lang}
+              controller={viewerController}
+              onUpdate={onUpdate}
+              showToolbar={showToolbar}
+              setShowToolbar={setShowToolbar}
+              showOptionsPanel={showOptionsPanel}
+              setShowOptionsPanel={setShowOptionsPanel}
+              showJointPanel={false} // Handled outside now
+            />
+            {showJointPanel && (
+              <URDFViewerJointsPanel
+                controller={viewerController}
+                showJointPanel={true}
+                setShowJointPanel={setShowJointPanel}
+                lang={lang}
+              />
+            )}
+          </>
         ) : (
-          <VisualizerPanels
-            mode={visualizerRuntimeMode}
-            lang={lang}
-            showOptionsPanel={showVisualizerOptionsPanel}
-            setShowOptionsPanel={setShowVisualizerOptionsPanel}
-            controller={visualizerController}
-          />
+          <>
+            <VisualizerPanels
+              lang={lang}
+              showOptionsPanel={showVisualizerOptionsPanel}
+              setShowOptionsPanel={setShowVisualizerOptionsPanel}
+              controller={visualizerController}
+            />
+            {showJointPanel && isViewerMode && (
+              <URDFViewerJointsPanel
+                controller={viewerController}
+                showJointPanel={true}
+                setShowJointPanel={setShowJointPanel}
+                lang={lang}
+              />
+            )}
+          </>
         )
       }
     >
@@ -978,6 +1086,13 @@ export const UnifiedViewer = React.memo(({
             controller={visualizerController}
             active={visualizerVisible}
             onDocumentLoadEvent={!isViewerMode ? handleViewerDocumentLoadEvent : undefined}
+            assemblyState={assemblyState}
+            assemblyWorkspaceActive={assemblyWorkspaceActive}
+            assemblySelection={assemblySelection}
+            onAssemblyTransform={onAssemblyTransform}
+            onComponentTransform={onComponentTransform}
+            onBridgeTransform={onBridgeTransform}
+            onTransformPendingChange={onTransformPendingChange}
           />
         </group>
       ) : null}

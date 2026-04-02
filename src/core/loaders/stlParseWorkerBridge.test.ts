@@ -74,7 +74,7 @@ test('STL parse worker failures reject instead of silently reparsing on the main
   }
 });
 
-test('STL parse worker bridge fails fast when Worker is unavailable instead of using an inline fallback', async () => {
+test('STL parse worker bridge parses inline when Worker is unavailable', async () => {
   const originalWorker = globalThis.Worker;
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
@@ -86,13 +86,30 @@ test('STL parse worker bridge fails fast when Worker is unavailable instead of u
   });
   globalThis.fetch = (async () => {
     fetchCount += 1;
-    throw new Error('fetch should not run');
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      arrayBuffer: async () => new TextEncoder().encode([
+        'solid triangle',
+        'facet normal 0 0 1',
+        'outer loop',
+        'vertex 0 0 0',
+        'vertex 1 0 0',
+        'vertex 0 1 0',
+        'endloop',
+        'endfacet',
+        'endsolid triangle',
+      ].join('\n')).buffer,
+    } as Response;
   }) as typeof fetch;
 
   try {
     const client = createStlParseWorkerPoolClient();
-    await assert.rejects(client.load('/demo.stl'), /STL parse worker is unavailable in this environment/i);
-    assert.equal(fetchCount, 0);
+    const result = await client.load('/demo.stl');
+    assert.equal(fetchCount, 1);
+    assert.equal(new Float32Array(result.positions).length, 9);
+    assert.equal(result.maxDimension, 1);
   } finally {
     Object.defineProperty(globalThis, 'Worker', {
       configurable: true,

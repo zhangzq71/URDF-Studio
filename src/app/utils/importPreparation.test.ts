@@ -118,6 +118,37 @@ test('prepareImportPayload scans zip bundles off the main classification path an
   assert.equal(result.usdSourceFiles[0].blob.size > 0, true);
 });
 
+test('prepareImportPayload classifies motor-library.json as a library file', async () => {
+  const files = [
+    createLooseFile(
+      'motor-library.json',
+      JSON.stringify({
+        Unitree: [
+          {
+            name: 'Unitree-Custom-X',
+            armature: 0.1,
+            velocity: 20,
+            effort: 40,
+          },
+        ],
+      }),
+      'robot/motor-library.json',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.libraryFiles.map((file) => file.path),
+    ['robot/motor-library.json'],
+  );
+  assert.equal(result.robotFiles.length, 0);
+  assert.equal(result.assetFiles.length, 0);
+});
+
 test('prepareImportPayload keeps textual usd content available for downstream hydration', async () => {
   const usdText = `#usda 1.0
 def Xform "robot"
@@ -136,6 +167,119 @@ def Xform "robot"
   assert.equal(result.robotFiles[0].content, usdText);
   assert.equal(result.usdSourceFiles.length, 1);
   assert.equal(await result.usdSourceFiles[0].blob.text(), usdText);
+});
+
+test('prepareImportPayload keeps large USDA sidecars blob-backed instead of eagerly decoding them', async () => {
+  const rootUsdText = `#usda 1.0
+(
+    defaultPrim = "demo_robot"
+)
+
+def Xform "demo_robot"
+{
+    prepend references = @configuration/demo_base.usda@
+}`;
+  const largeBaseUsdText = `#usda 1.0\n${'def Mesh "part" {}\n'.repeat(80_000)}`;
+
+  const files = [
+    createLooseFile('demo_robot.usda', rootUsdText, 'robot/demo_robot.usda'),
+    createLooseFile('demo_base.usda', largeBaseUsdText, 'robot/configuration/demo_base.usda'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'robot/demo_robot.usda');
+  assert.equal(result.preResolvedImports.length, 1);
+  assert.equal(result.preResolvedImports[0]?.fileName, 'robot/demo_robot.usda');
+  assert.equal(result.preResolvedImports[0]?.result.status, 'needs_hydration');
+
+  const rootFile = result.robotFiles.find((file) => file.name === 'robot/demo_robot.usda');
+  const largeSidecarFile = result.robotFiles.find((file) => file.name === 'robot/configuration/demo_base.usda');
+
+  assert.ok(rootFile, 'expected root USDA file to be present');
+  assert.ok(largeSidecarFile, 'expected large USDA sidecar file to be present');
+  assert.equal(rootFile?.content, rootUsdText);
+  assert.equal(largeSidecarFile?.content, '');
+  assert.equal(result.usdSourceFiles.length, 2);
+});
+
+test('prepareImportPayload fast-open mode skips pre-resolving the preferred URDF candidate', async () => {
+  const files = [
+    createLooseFile(
+      'g1_29dof.urdf',
+      `<?xml version="1.0"?>
+<robot name="g1_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://g1_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'g1_description/g1_29dof.urdf',
+    ),
+    createLooseFile(
+      'g1_29dof_with_hand.urdf',
+      `<?xml version="1.0"?>
+<robot name="g1_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://g1_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'g1_description/g1_29dof_with_hand.urdf',
+    ),
+    createLooseFile('base_link.stl', 'solid demo', 'g1_description/meshes/base_link.stl'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'g1_description/g1_29dof.urdf');
+  assert.deepEqual(result.preResolvedImports, []);
+});
+
+test('prepareImportPayload fast-open mode picks the root USDA file without pre-resolving it', async () => {
+  const files = [
+    createLooseFile(
+      'go2_description.usda',
+      `#usda 1.0
+(
+    defaultPrim = "go2_description"
+)
+
+def Xform "go2_description"
+{
+    prepend references = @configuration/go2_description_base.usda@
+}`,
+      'go2_description/urdf/go2_description.usda',
+    ),
+    createLooseFile(
+      'go2_description_base.usda',
+      `#usda 1.0
+def Scope "configuration" {}`,
+      'go2_description/urdf/configuration/go2_description_base.usda',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'go2_description/urdf/go2_description.usda');
+  assert.deepEqual(result.preResolvedImports, []);
 });
 
 test('prepareImportPayload synthesizes a bundle root when loose robot folders arrive without their outer directory', async () => {
@@ -647,6 +791,38 @@ test('prepareImportPayload keeps gazebo material scripts as auxiliary text files
     result.assetFiles.map((file) => file.name).sort(),
     ['demo/materials/textures/demo.png'],
   );
+});
+
+test('prepareImportPayload skips gazebo material sidecars for usd-only bundles', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'demo/scene.usda',
+    `#usda 1.0
+(
+    defaultPrim = "demo"
+)
+
+def Xform "demo"
+{
+}`,
+  );
+  zip.file(
+    'demo/materials/scripts/demo.material',
+    `material Demo/Diffuse
+{
+}`,
+  );
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'bundle.zip', { type: 'application/zip' });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+  });
+
+  assert.deepEqual(result.textFiles, []);
+  assert.equal(result.preferredFileName, 'demo/scene.usda');
 });
 
 test('prepareImportPayload skips unrelated loose files that are neither robot definitions nor importable assets', async () => {

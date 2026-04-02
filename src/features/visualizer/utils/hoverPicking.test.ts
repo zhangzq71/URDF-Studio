@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
+import { clearMaterialCache, getCachedMaterial } from './materialCache.ts';
 import {
   createVisualizerHoverUserData,
   findNearestVisualizerHoverTarget,
@@ -76,6 +77,56 @@ function createTaggedMesh(
 
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
   mesh.position.set(0, 0, z);
+  wrapper.add(mesh);
+
+  return { wrapper, mesh };
+}
+
+function createTaggedSupportPlane(
+  target: VisualizerHoverTarget,
+  z: number,
+  options: {
+    interactionLayer?: 'visual' | 'collision' | 'origin-axes' | 'joint-axis' | 'center-of-mass' | 'inertia';
+  } = {},
+) {
+  const wrapper = new THREE.Group();
+  wrapper.name = 'floor';
+  wrapper.userData = {
+    ...wrapper.userData,
+    ...createVisualizerHoverUserData(target, options.interactionLayer),
+  };
+
+  const material = new THREE.MeshStandardMaterial({ color: 0x666666 });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), material);
+  mesh.position.set(0, 0, z);
+  wrapper.add(mesh);
+
+  return { wrapper, mesh };
+}
+
+function createTaggedReversedWindingTriangle(
+  target: VisualizerHoverTarget,
+  material: THREE.Material,
+  options: {
+    interactionLayer?: 'visual' | 'collision' | 'origin-axes' | 'joint-axis' | 'center-of-mass' | 'inertia';
+  } = {},
+) {
+  const wrapper = new THREE.Group();
+  wrapper.userData = {
+    ...wrapper.userData,
+    ...createVisualizerHoverUserData(target, options.interactionLayer),
+  };
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -1, -1, -5,
+    1, -1, -5,
+    0, 1, -5,
+  ]), 3));
+  geometry.setIndex([0, 2, 1]);
+  geometry.computeVertexNormals();
+
+  const mesh = new THREE.Mesh(geometry, material);
   wrapper.add(mesh);
 
   return { wrapper, mesh };
@@ -293,6 +344,44 @@ test('findNearestVisualizerHoverTarget prefers collision targets over visual tar
   });
 });
 
+test('findNearestVisualizerHoverTarget can hit reversed-winding collision meshes with the shared collision material', () => {
+  clearMaterialCache();
+
+  const root = new THREE.Group();
+  const material = getCachedMaterial({
+    finalColor: '#a855f7',
+    matOpacity: 0.3,
+    matWireframe: true,
+    isCollision: true,
+    emissiveColor: '#000000',
+    emissiveIntensity: 0,
+  });
+
+  const collision = createTaggedReversedWindingTriangle({
+    type: 'link',
+    id: 'torso_link',
+    subType: 'collision',
+    objectIndex: 0,
+  }, material, {
+    interactionLayer: 'collision',
+  });
+
+  root.add(collision.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
+    type: 'link',
+    id: 'torso_link',
+    subType: 'collision',
+    objectIndex: 0,
+  });
+});
+
 test('findNearestVisualizerHoverTarget honors explicit layer priority over legacy collision bias', () => {
   const root = new THREE.Group();
 
@@ -327,6 +416,82 @@ test('findNearestVisualizerHoverTarget honors explicit layer priority over legac
       type: 'link',
       id: 'shared_link',
       subType: 'visual',
+      objectIndex: 0,
+    },
+  );
+});
+
+test('findNearestVisualizerHoverTarget deprioritizes floor-like support planes beneath foreground geometry', () => {
+  const root = new THREE.Group();
+
+  const floor = createTaggedSupportPlane({
+    type: 'link',
+    id: 'floor_link',
+    subType: 'collision',
+    objectIndex: 0,
+  }, -2, {
+    interactionLayer: 'collision',
+  });
+
+  const foreground = createTaggedMesh({
+    type: 'link',
+    id: 'upper_link',
+    subType: 'visual',
+    objectIndex: 0,
+  }, -1.5, {
+    interactionLayer: 'visual',
+  });
+
+  root.add(floor.wrapper);
+  root.add(foreground.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  assert.deepEqual(
+    findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
+      interactionLayerPriority: ['collision', 'visual'],
+    }),
+    {
+      type: 'link',
+      id: 'upper_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+  );
+});
+
+test('findNearestVisualizerHoverTarget keeps floor-like support planes hoverable when no foreground target overlaps', () => {
+  const root = new THREE.Group();
+
+  const floor = createTaggedSupportPlane({
+    type: 'link',
+    id: 'floor_link',
+    subType: 'collision',
+    objectIndex: 0,
+  }, -2, {
+    interactionLayer: 'collision',
+  });
+
+  root.add(floor.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  assert.deepEqual(
+    findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
+      interactionLayerPriority: ['collision', 'visual'],
+    }),
+    {
+      type: 'link',
+      id: 'floor_link',
+      subType: 'collision',
       objectIndex: 0,
     },
   );
@@ -469,6 +634,46 @@ test('findNearestVisualizerHoverTarget returns joint targets when the joint help
   });
 });
 
+test('findNearestVisualizerHoverTarget keeps a nearer origin helper above farther collision geometry even when collision has higher layer priority', () => {
+  const root = new THREE.Group();
+
+  const originHelper = createTaggedMesh({
+    type: 'link',
+    id: 'base_link',
+  }, -1, {
+    isHelper: true,
+    interactionLayer: 'origin-axes',
+  });
+
+  const collision = createTaggedMesh({
+    type: 'link',
+    id: 'base_link',
+    subType: 'collision',
+    objectIndex: 0,
+  }, -3, {
+    interactionLayer: 'collision',
+  });
+
+  root.add(originHelper.wrapper);
+  root.add(collision.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+
+  assert.deepEqual(
+    findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
+      interactionLayerPriority: ['collision', 'origin-axes'],
+    }),
+    {
+      type: 'link',
+      id: 'base_link',
+    },
+  );
+});
+
 test('resolveGeometryHoverTargetFromHits promotes collision hover above overlapping visual geometry', () => {
   const root = new THREE.Group();
 
@@ -542,7 +747,48 @@ test('resolveGeometryHoverTargetFromHits honors explicit visual-first layer prio
   );
 });
 
-test('resolveGeometryHoverTargetFromHits keeps the local geometry target when no prioritized link hit exists', () => {
+test('resolveGeometryHoverTargetFromHits yields to a nearer link helper instead of forcing geometry hover', () => {
+  const root = new THREE.Group();
+
+  const helper = createTaggedMesh({
+    type: 'link',
+    id: 'shared_link',
+  }, -1, {
+    isHelper: true,
+    interactionLayer: 'origin-axes',
+  });
+
+  const collision = createTaggedMesh({
+    type: 'link',
+    id: 'shared_link',
+    subType: 'collision',
+    objectIndex: 0,
+  }, -3, {
+    interactionLayer: 'collision',
+  });
+
+  root.add(helper.wrapper);
+  root.add(collision.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 0, -1),
+  );
+  const hits = raycaster.intersectObject(root, true);
+  const fallbackTarget = createGeometryHoverTargetSelection('shared_link', 'collision', 0);
+
+  assert.equal(
+    resolveGeometryHoverTargetFromHitsWithOptions(
+      fallbackTarget,
+      hits,
+      { interactionLayerPriority: ['collision', 'origin-axes'] },
+    ),
+    null,
+  );
+});
+
+test('resolveGeometryHoverTargetFromHits yields to a nearer joint helper instead of forcing geometry hover', () => {
   const root = new THREE.Group();
 
   const jointHelper = createTaggedMesh({
@@ -564,8 +810,8 @@ test('resolveGeometryHoverTargetFromHits keeps the local geometry target when no
   const hits = raycaster.intersectObject(root, true);
   const fallbackTarget = createGeometryHoverTargetSelection('shared_link', 'visual', 0);
 
-  assert.deepEqual(
+  assert.equal(
     resolveGeometryHoverTargetFromHits(fallbackTarget, hits),
-    fallbackTarget,
+    null,
   );
 });

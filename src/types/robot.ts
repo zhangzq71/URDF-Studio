@@ -3,7 +3,7 @@
  */
 
 import type { UsdSceneMaterialRecord } from './usd';
-import type { QuaternionXYZW, UrdfOrigin, UrdfVisual, Vector3 } from './geometry';
+import type { Euler, QuaternionXYZW, UrdfOrigin, UrdfVisual, Vector3 } from './geometry';
 import type { InteractionSelection } from './ui';
 
 export enum JointType {
@@ -175,12 +175,18 @@ export interface RobotData {
   inspectionContext?: RobotInspectionContext;
 }
 
+export interface AssemblyTransform {
+  position: Vector3;
+  rotation: Euler;
+}
+
 /** Assembly component: a URDF parsed into RobotData with namespace */
 export interface AssemblyComponent {
   id: string;
   name: string;
   sourceFile: string;
   robot: RobotData;
+  transform?: AssemblyTransform;
   visible?: boolean;
 }
 
@@ -198,6 +204,7 @@ export interface BridgeJoint {
 /** Assembly state for multi-URDF composition */
 export interface AssemblyState {
   name: string;
+  transform?: AssemblyTransform;
   components: Record<string, AssemblyComponent>;
   bridges: Record<string, BridgeJoint>;
 }

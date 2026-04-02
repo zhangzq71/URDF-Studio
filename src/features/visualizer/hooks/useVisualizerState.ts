@@ -97,12 +97,21 @@ export function useVisualizerState({
   propShowVisual,
   propSetShowVisual,
 }: UseVisualizerStateProps = {}): VisualizerState {
-  const modelOpacity = useUIStore((state) => state.viewOptions.modelOpacity);
+  const viewOptions = useUIStore((state) => state.viewOptions);
   const setViewOption = useUIStore((state) => state.setViewOption);
+
+  const {
+    showJointAxes,
+    showInertia,
+    showCenterOfMass,
+    showCollision,
+    modelOpacity,
+  } = viewOptions;
+
   const [showGeometry, setShowGeometry] = useState(() => readStoredBoolean(SHOW_GEOMETRY_STORAGE_KEY, false));
   const [showOrigin, setShowOrigin] = useState(() => readStoredBoolean(SHOW_ORIGIN_STORAGE_KEY, true));
   const [showLabels, setShowLabels] = useState(() => readStoredBoolean(SHOW_LABELS_STORAGE_KEY, false));
-  const [showJointAxes, setShowJointAxes] = useState(() => readStoredBoolean(SHOW_JOINT_AXES_STORAGE_KEY, false));
+  
   const [jointAxisSize, setJointAxisSize] = useState(() => readStoredNumber(
     JOINT_AXIS_SIZE_STORAGE_KEY,
     0.35,
@@ -133,14 +142,10 @@ export function useVisualizerState({
     DEFAULT_VISUALIZER_INTERACTION_ACTIVATION_ORDER,
   );
 
-  const [showCollision, setShowCollision] = useState(() => readStoredBoolean(SHOW_COLLISION_STORAGE_KEY, false));
-
   // Handle showVisual (controlled or uncontrolled)
   const [localShowVisual, setLocalShowVisual] = useState(true);
   const showVisual = propShowVisual !== undefined ? propShowVisual : localShowVisual;
 
-  const [showInertia, setShowInertia] = useState(() => readStoredBoolean(SHOW_INERTIA_STORAGE_KEY, false));
-  const [showCenterOfMass, setShowCenterOfMass] = useState(() => readStoredBoolean(SHOW_CENTER_OF_MASS_STORAGE_KEY, false));
   const bumpInteractionLayer = (layer: VisualizerInteractiveLayer) => {
     setInteractionActivationOrder((previous) => {
       const nextOrder = Math.max(...Object.values(previous)) + 1;
@@ -171,7 +176,7 @@ export function useVisualizerState({
   };
   const setShowCollisionTracked = (nextValue: boolean | ((current: boolean) => boolean)) => {
     const resolvedValue = typeof nextValue === 'function' ? nextValue(showCollision) : nextValue;
-    setShowCollision(resolvedValue);
+    setViewOption('showCollision', resolvedValue);
     if (resolvedValue) {
       bumpInteractionLayer('collision');
     }
@@ -185,21 +190,21 @@ export function useVisualizerState({
   };
   const setShowJointAxesTracked = (nextValue: boolean | ((current: boolean) => boolean)) => {
     const resolvedValue = typeof nextValue === 'function' ? nextValue(showJointAxes) : nextValue;
-    setShowJointAxes(resolvedValue);
+    setViewOption('showJointAxes', resolvedValue);
     if (resolvedValue) {
       bumpInteractionLayer('joint-axis');
     }
   };
   const setShowInertiaTracked = (nextValue: boolean | ((current: boolean) => boolean)) => {
     const resolvedValue = typeof nextValue === 'function' ? nextValue(showInertia) : nextValue;
-    setShowInertia(resolvedValue);
+    setViewOption('showInertia', resolvedValue);
     if (resolvedValue) {
       bumpInteractionLayer('inertia');
     }
   };
   const setShowCenterOfMassTracked = (nextValue: boolean | ((current: boolean) => boolean)) => {
     const resolvedValue = typeof nextValue === 'function' ? nextValue(showCenterOfMass) : nextValue;
-    setShowCenterOfMass(resolvedValue);
+    setViewOption('showCenterOfMass', resolvedValue);
     if (resolvedValue) {
       bumpInteractionLayer('center-of-mass');
     }

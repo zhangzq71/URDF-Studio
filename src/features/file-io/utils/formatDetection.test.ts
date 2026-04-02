@@ -5,6 +5,7 @@ import {
   detectFormat,
   isAssetFile,
   isMeshFile,
+  isMotorLibraryFile,
   isRobotDefinitionFile,
 } from './formatDetection.ts';
 
@@ -30,4 +31,11 @@ test('asset and mesh classification includes gltf bundles used by folder imports
   assert.equal(isMeshFile('robot/meshes/base.glb'), true);
   assert.equal(isMeshFile('robot/meshes/base.vtk'), true);
   assert.equal(isMeshFile('robot/meshes/base.bin'), false);
+});
+
+test('motor library classification accepts legacy folders and single catalog json files', () => {
+  assert.equal(isMotorLibraryFile('robot/motor library/Acme/M1.txt'), true);
+  assert.equal(isMotorLibraryFile('robot/motor library/Acme/M1.json'), true);
+  assert.equal(isMotorLibraryFile('robot/motor-library.json'), true);
+  assert.equal(isMotorLibraryFile('robot/assets/motor.txt'), false);
 });

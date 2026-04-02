@@ -13,6 +13,7 @@ test('createEmbeddedUsdViewerLoadParams keeps USD auto-fit aligned with the work
   assert.equal(params.get('nonBlockingLoad'), '0');
   assert.equal(params.get('aggressiveInitialDraw'), '1');
   assert.equal(params.get('strictOneShot'), '1');
+  assert.equal(params.get('yieldDuringLoad'), '0');
   assert.equal(params.get('resolveRobotMetadataBeforeReady'), '1');
   assert.equal(params.get('requireCompleteRobotMetadata'), '1');
   assert.equal(params.get('warmupRuntimeBridge'), '1');
@@ -30,6 +31,7 @@ test('createEmbeddedUsdViewerLoadParams prioritizes fast interactive readiness f
   assert.equal(params.get('nonBlockingLoad'), '0');
   assert.equal(params.get('strictOneShot'), '1');
   assert.equal(params.get('aggressiveInitialDraw'), '1');
+  assert.equal(params.get('yieldDuringLoad'), '0');
   assert.equal(params.get('resolveRobotMetadataBeforeReady'), '1');
   assert.equal(params.get('requireCompleteRobotMetadata'), '1');
   assert.equal(params.get('warmupRuntimeBridge'), '1');
@@ -45,7 +47,17 @@ test('createEmbeddedUsdViewerLoadParams can defer robot metadata readiness to a 
   assert.equal(params.get('nonBlockingLoad'), '1');
   assert.equal(params.get('aggressiveInitialDraw'), '0');
   assert.equal(params.get('strictOneShot'), '0');
+  assert.equal(params.get('yieldDuringLoad'), '0');
   assert.equal(params.get('resolveRobotMetadataBeforeReady'), '0');
   assert.equal(params.get('requireCompleteRobotMetadata'), '0');
   assert.equal(params.get('warmupRuntimeBridge'), '1');
+});
+
+test('createEmbeddedUsdViewerLoadParams can skip vendored dependency preload when stage files are already in WASM FS', () => {
+  const params = createEmbeddedUsdViewerLoadParams(4, {
+    dependenciesPreloadedToVirtualFs: true,
+  });
+
+  assert.equal(params.get('dependenciesPreloadedToVirtualFs'), '1');
+  assert.equal(params.get('autoLoadDependencies'), '0');
 });

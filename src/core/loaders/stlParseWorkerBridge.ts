@@ -1,4 +1,4 @@
-import type { SerializedStlGeometryData } from './stlGeometryData';
+import { parseStlGeometryData, type SerializedStlGeometryData } from './stlGeometryData';
 import type { ParseStlWorkerRequest, StlParseWorkerResponse } from './stlParseWorkerProtocol';
 
 interface WorkerLike {
@@ -33,6 +33,15 @@ interface StlParseWorkerPoolClient {
 }
 
 const DEFAULT_CACHE_LIMIT = 48;
+
+async function loadSerializedStlGeometryDataInline(assetUrl: string): Promise<SerializedStlGeometryData> {
+    const response = await fetch(assetUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch STL asset: ${response.status} ${response.statusText}`);
+    }
+
+    return parseStlGeometryData(await response.arrayBuffer());
+}
 
 function createWorkerError(event: ErrorEvent | { error?: unknown; message?: string }): Error {
     if (event.error instanceof Error) {
@@ -172,10 +181,6 @@ export function createStlParseWorkerPoolClient(
             throw new Error('STL parse worker is unavailable');
         }
 
-        if (!canUseWorker()) {
-            throw new Error('STL parse worker is unavailable in this environment');
-        }
-
         const pool = ensureWorkerPool();
         const workerEntry = pool.reduce((bestEntry, entry) => (
             entry.pendingCount < bestEntry.pendingCount ? entry : bestEntry
@@ -217,7 +222,9 @@ export function createStlParseWorkerPoolClient(
             return await pendingLoad;
         }
 
-        const nextLoad = dispatchToWorkerPool(assetUrl)
+        const nextLoad = (canUseWorker()
+            ? dispatchToWorkerPool(assetUrl)
+            : loadSerializedStlGeometryDataInline(assetUrl))
             .then((result) => {
                 touchResolvedCache(assetUrl, result);
                 return result;

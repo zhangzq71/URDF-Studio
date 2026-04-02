@@ -16,7 +16,7 @@ function createDocumentLoadState(overrides: Partial<DocumentLoadState> = {}): Do
 
 test('resolveUnifiedViewerViewportState follows direct viewer ownership when handoff is disabled', () => {
   const state = resolveUnifiedViewerViewportState({
-    mode: 'detail',
+    mode: 'editor',
     isViewerMode: true,
     isPreviewing: false,
     mountState: {
@@ -46,12 +46,12 @@ test('resolveUnifiedViewerViewportState follows direct viewer ownership when han
   assert.equal(state.shouldRenderVisualizerScene, false);
   assert.equal(state.activeScene, 'viewer');
   assert.equal(state.useViewerCanvasPresentation, true);
-  assert.equal(state.visualizerRuntimeMode, 'detail');
+  assert.equal(state.visualizerRuntimeMode, 'editor');
 });
 
 test('resolveUnifiedViewerViewportState keeps visualizer presentation during active handoff when enabled', () => {
   const state = resolveUnifiedViewerViewportState({
-    mode: 'hardware',
+    mode: 'editor',
     isViewerMode: true,
     isPreviewing: false,
     mountState: {
@@ -82,12 +82,12 @@ test('resolveUnifiedViewerViewportState keeps visualizer presentation during act
   assert.equal(state.shouldRenderVisualizerScene, true);
   assert.equal(state.activeScene, 'visualizer');
   assert.equal(state.useViewerCanvasPresentation, true);
-  assert.equal(state.visualizerRuntimeMode, 'detail');
+  assert.equal(state.visualizerRuntimeMode, 'editor');
 });
 
 test('resolveUnifiedViewerViewportState falls back to visualizer ownership outside viewer mode', () => {
   const state = resolveUnifiedViewerViewportState({
-    mode: 'skeleton',
+    mode: 'editor',
     isViewerMode: false,
     isPreviewing: false,
     mountState: {
@@ -109,5 +109,5 @@ test('resolveUnifiedViewerViewportState falls back to visualizer ownership outsi
   assert.equal(state.shouldRenderVisualizerScene, true);
   assert.equal(state.activeScene, 'visualizer');
   assert.equal(state.useViewerCanvasPresentation, false);
-  assert.equal(state.visualizerRuntimeMode, 'skeleton');
+  assert.equal(state.visualizerRuntimeMode, 'editor');
 });

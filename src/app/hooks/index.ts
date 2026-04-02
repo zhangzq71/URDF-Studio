@@ -13,6 +13,7 @@ export { useFileImport } from './useFileImport';
 export { useFileExport } from './useFileExport';
 export { useImportInputBinding } from './useImportInputBinding';
 export { usePreparedUsdViewerAssets } from './usePreparedUsdViewerAssets';
+export { useUnsavedChangesPrompt } from './useUnsavedChangesPrompt';
 export { useViewerOrchestration } from './useViewerOrchestration';
 export { useWorkspaceSourceSync } from './useWorkspaceSourceSync';
 export { useWorkspaceMutations } from './useWorkspaceMutations';

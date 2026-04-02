@@ -35,16 +35,24 @@ export function resolveGeometryHoverTargetFromHits(
   options: {
     interactionLayerPriority?: readonly VisualizerInteractiveLayer[];
   } = {},
-): GeometryHoverTargetSelection {
-  const nearestTarget = findNearestVisualizerTargetFromHits(hits, options);
-  if (!nearestTarget || nearestTarget.type !== 'link' || !nearestTarget.subType) {
+): GeometryHoverTargetSelection | null {
+  const prioritizedTarget = findNearestVisualizerTargetFromHits(hits, {
+    ...options,
+    deprioritizeSupportSurfaces: true,
+  });
+
+  if (!prioritizedTarget) {
     return fallbackTarget;
   }
 
+  if (prioritizedTarget.type !== 'link' || !prioritizedTarget.subType) {
+    return null;
+  }
+
   return createGeometryHoverTargetSelection(
-    nearestTarget.id,
-    nearestTarget.subType,
-    nearestTarget.objectIndex,
+    prioritizedTarget.id,
+    prioritizedTarget.subType,
+    prioritizedTarget.objectIndex,
   );
 }
 

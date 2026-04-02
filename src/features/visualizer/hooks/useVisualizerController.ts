@@ -18,6 +18,7 @@ interface UseVisualizerControllerProps {
   robot: RobotState;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   mode: AppMode;
+  assemblyWorkspaceActive?: boolean;
   propShowVisual?: boolean;
   propSetShowVisual?: (show: boolean) => void;
 }
@@ -26,6 +27,7 @@ export const useVisualizerController = ({
   robot,
   onUpdate,
   mode,
+  assemblyWorkspaceActive = false,
   propShowVisual,
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
@@ -63,7 +65,9 @@ export const useVisualizerController = ({
     jointPivots,
     jointMotions,
   });
-  const jointTransformControlsEnabled = shouldEnableMergedVisualizerJointTransformControls(mode);
+  const jointTransformControlsEnabled = shouldEnableMergedVisualizerJointTransformControls(mode, {
+    assemblyWorkspaceActive,
+  });
 
   const transformControlsState = useTransformControls(
     selectedJointPivot,
@@ -73,9 +77,7 @@ export const useVisualizerController = ({
     mode,
     {
       onPreviewObjectChange: closedLoopDragSync.previewConstraintCompensation,
-      onPreviewRotateChange: closedLoopDragSync.previewConstraintMotionCompensation,
       onResetPreview: closedLoopDragSync.resetConstraintPreview,
-      selectedRotateObject: selectedJointMotion,
     }
   );
 
@@ -179,6 +181,7 @@ export const useVisualizerController = ({
     robotRootRef,
     state,
     panel,
+    jointPivots,
     selectedJointPivot,
     selectedJointMotion,
     selectedCollisionRef,

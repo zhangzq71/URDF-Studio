@@ -6,8 +6,8 @@ import {
   resolveUsdStageJointRotationRuntime,
 } from './usdInteractionPolicy.ts';
 
-test('uses direct mesh selection when mode is `detail` so USD matches URDF/MJCF picking behavior', () => {
-  assert.deepEqual(resolveUsdStageInteractionPolicy('detail'), {
+test('uses direct mesh selection when mode is `editor` so USD matches URDF/MJCF picking behavior', () => {
+  assert.deepEqual(resolveUsdStageInteractionPolicy('editor'), {
     enableContinuousHover: true,
     enableJointRotation: true,
     enableMeshSelection: true,
@@ -15,7 +15,7 @@ test('uses direct mesh selection when mode is `detail` so USD matches URDF/MJCF 
 });
 
 test('detail keeps the merged edit interaction policy when tool mode is omitted', () => {
-  assert.deepEqual(resolveUsdStageInteractionPolicy('detail'), {
+  assert.deepEqual(resolveUsdStageInteractionPolicy('editor'), {
     enableContinuousHover: true,
     enableJointRotation: true,
     enableMeshSelection: true,
@@ -23,7 +23,7 @@ test('detail keeps the merged edit interaction policy when tool mode is omitted'
 });
 
 test('disables continuous hover in pure view mode so pointer browsing stays read-only', () => {
-  assert.deepEqual(resolveUsdStageInteractionPolicy('detail', 'view'), {
+  assert.deepEqual(resolveUsdStageInteractionPolicy('editor', 'view'), {
     enableContinuousHover: false,
     enableJointRotation: false,
     enableMeshSelection: false,
@@ -32,7 +32,7 @@ test('disables continuous hover in pure view mode so pointer browsing stays read
 
 test('disables USD joint rotation in pure view mode so clicking stays read-only', () => {
   assert.deepEqual(resolveUsdStageJointRotationRuntime({
-    mode: 'detail',
+    mode: 'editor',
     showVisual: true,
     showCollision: false,
     toolMode: 'view',
@@ -44,7 +44,7 @@ test('disables USD joint rotation in pure view mode so clicking stays read-only'
 
 test('enables USD joint rotation in merged edit mode when visual meshes are the active interaction target', () => {
   assert.deepEqual(resolveUsdStageJointRotationRuntime({
-    mode: 'detail',
+    mode: 'editor',
     showVisual: true,
     showCollision: true,
     showCollisionAlwaysOnTop: false,
@@ -57,7 +57,7 @@ test('enables USD joint rotation in merged edit mode when visual meshes are the 
 
 test('disables USD joint rotation when collision meshes are the active interaction target', () => {
   assert.deepEqual(resolveUsdStageJointRotationRuntime({
-    mode: 'detail',
+    mode: 'editor',
     showVisual: true,
     showCollision: true,
     showCollisionAlwaysOnTop: true,
@@ -70,7 +70,7 @@ test('disables USD joint rotation when collision meshes are the active interacti
 
 test('disables USD joint rotation when interactionLayerPriority promotes collision over visual', () => {
   assert.deepEqual(resolveUsdStageJointRotationRuntime({
-    mode: 'detail',
+    mode: 'editor',
     showVisual: true,
     showCollision: true,
     showCollisionAlwaysOnTop: false,
@@ -84,7 +84,7 @@ test('disables USD joint rotation when interactionLayerPriority promotes collisi
 
 test('disables USD joint rotation while the measure tool is active', () => {
   assert.deepEqual(resolveUsdStageJointRotationRuntime({
-    mode: 'detail',
+    mode: 'editor',
     showVisual: true,
     showCollision: false,
     toolMode: 'measure',

@@ -31,6 +31,7 @@ interface TreeEditorStructureSectionProps {
   onAddCollisionBody: (parentId: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  onRenameAssembly?: (name: string) => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
@@ -64,6 +65,7 @@ export function TreeEditorStructureSection({
   onAddCollisionBody,
   onDelete,
   onUpdate,
+  onRenameAssembly,
   onRemoveComponent,
   onRemoveBridge,
   onRenameComponent,
@@ -71,6 +73,8 @@ export function TreeEditorStructureSection({
   onToggleComponentVisibility,
   isReadOnly = false,
 }: TreeEditorStructureSectionProps) {
+  const useStoreDrivenTree = !isAssemblyView && !isReadOnly;
+
   return (
     <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}>
       <div
@@ -179,6 +183,7 @@ export function TreeEditorStructureSection({
                   onAddCollisionBody={onAddCollisionBody}
                   onDelete={onDelete}
                   onUpdate={onUpdate}
+                  onRenameAssembly={onRenameAssembly}
                   onRemoveComponent={onRemoveComponent}
                   onRemoveBridge={onRemoveBridge}
                   onRenameComponent={onRenameComponent}
@@ -195,10 +200,10 @@ export function TreeEditorStructureSection({
                   >
                     <TreeNode
                       linkId={treeRootLinkId}
-                      robot={robot}
+                      robot={useStoreDrivenTree ? undefined : robot}
                       showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
-                      childJointsByParent={childJointsByParent}
-                      selectionBranchLinkIds={selectionBranchLinkIds}
+                      childJointsByParent={useStoreDrivenTree ? undefined : childJointsByParent}
+                      selectionBranchLinkIds={useStoreDrivenTree ? undefined : selectionBranchLinkIds}
                       onSelect={onSelect}
                       onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}
@@ -209,6 +214,7 @@ export function TreeEditorStructureSection({
                       mode={mode}
                       t={t}
                       readOnly={isReadOnly}
+                      storeDriven={useStoreDrivenTree}
                     />
                   </div>
                 ))

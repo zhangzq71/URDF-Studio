@@ -74,7 +74,7 @@ test('OBJ parse worker failures reject instead of silently reparsing on the main
   }
 });
 
-test('OBJ parse worker bridge fails fast when Worker is unavailable instead of using an inline fallback', async () => {
+test('OBJ parse worker bridge parses inline when Worker is unavailable', async () => {
   const originalWorker = globalThis.Worker;
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
@@ -86,13 +86,20 @@ test('OBJ parse worker bridge fails fast when Worker is unavailable instead of u
   });
   globalThis.fetch = (async () => {
     fetchCount += 1;
-    throw new Error('fetch should not run');
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n',
+    } as Response;
   }) as typeof fetch;
 
   try {
     const client = createObjParseWorkerPoolClient();
-    await assert.rejects(client.load('/demo.obj'), /OBJ parse worker is unavailable in this environment/i);
-    assert.equal(fetchCount, 0);
+    const result = await client.load('/demo.obj');
+    assert.equal(fetchCount, 1);
+    assert.equal(result.children.length, 1);
+    assert.equal(result.children[0]?.geometry.position.itemSize, 3);
   } finally {
     Object.defineProperty(globalThis, 'Worker', {
       configurable: true,

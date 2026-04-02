@@ -13,6 +13,14 @@ interface ScheduleSelectionMissGuardResetOptions {
   onReset?: () => void;
 }
 
+interface ResolveSelectionMissGuardPointerMoveOptions {
+  justSelected: boolean;
+  pointerButtons: number;
+  dragging: boolean;
+  hasPendingSelection: boolean;
+  hasResetTimer: boolean;
+}
+
 const DEFAULT_SELECTION_SETTLE_MS = 100;
 
 export function armSelectionMissGuard(justSelectedRef?: SelectionMissGuardRef | null): void {
@@ -51,4 +59,18 @@ export function scheduleSelectionMissGuardReset({
     timerRef.current = null;
     onReset?.();
   }, delayMs);
+}
+
+export function shouldDisarmSelectionMissGuardOnPointerMove({
+  justSelected,
+  pointerButtons,
+  dragging,
+  hasPendingSelection,
+  hasResetTimer,
+}: ResolveSelectionMissGuardPointerMoveOptions): boolean {
+  return justSelected
+    && pointerButtons === 0
+    && !dragging
+    && !hasPendingSelection
+    && !hasResetTimer;
 }

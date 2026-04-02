@@ -74,6 +74,7 @@ export function useTransformControls(
     selectedRotateObject,
   } = options;
   const jointTransformControlsEnabled = shouldEnableMergedVisualizerJointTransformControls(mode);
+  const rotateEditsJointMotion = Boolean(selectedRotateObject && selectedRotateObject !== selectedObject);
 
   const getObjectRPY = useCallback((object: THREE.Object3D) => {
     const rotation = tempEulerRef.current.setFromQuaternion(object.quaternion, 'ZYX');
@@ -302,6 +303,11 @@ export function useTransformControls(
   }, [jointTransformControlsEnabled, onPreviewObjectChange, robot.selection.id, robot.selection.type, selectedObject]);
 
   const handleRotateObjectChange = useCallback(() => {
+    if (!rotateEditsJointMotion) {
+      handleObjectChange();
+      return;
+    }
+
     const selectedJointEntry = getSelectedJoint();
     const nextAngle = extractSelectedJointAngle();
     if (!selectedJointEntry || nextAngle === null) {
@@ -317,7 +323,13 @@ export function useTransformControls(
 
     lastPreviewAngleRef.current = nextAngle;
     onPreviewRotateChange?.(selectedJointEntry.id, nextAngle);
-  }, [extractSelectedJointAngle, getSelectedJoint, onPreviewRotateChange]);
+  }, [
+    extractSelectedJointAngle,
+    getSelectedJoint,
+    handleObjectChange,
+    onPreviewRotateChange,
+    rotateEditsJointMotion,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -403,6 +415,15 @@ export function useTransformControls(
       const handleDraggingChange = (event: any) => {
         setHoverFrozen(Boolean(event.value));
         if (event.value) {
+          if (!rotateEditsJointMotion && selectedObject) {
+            originalPositionRef.current.copy(selectedObject.position);
+            originalQuaternionRef.current.copy(selectedObject.quaternion);
+          }
+          return;
+        }
+
+        if (!rotateEditsJointMotion) {
+          persistSelectedObject();
           return;
         }
 
@@ -433,6 +454,7 @@ export function useTransformControls(
     getSelectedJoint,
     jointTransformControlsEnabled,
     persistSelectedObject,
+    rotateEditsJointMotion,
     selectedObject,
     selectedRotateObject,
     setJointAngle,

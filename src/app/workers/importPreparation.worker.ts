@@ -20,6 +20,7 @@ workerScope.addEventListener('message', async (event: MessageEvent<PrepareImport
     const payload = await prepareImportPayload({
       files: message.files,
       existingPaths: message.existingPaths,
+      preResolvePreferredImport: message.preResolvePreferredImport,
     });
     const response: PrepareImportWorkerResponse = {
       type: 'prepare-import-result',

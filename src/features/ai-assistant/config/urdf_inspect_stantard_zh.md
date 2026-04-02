@@ -13,6 +13,7 @@ URDF 机器人检查标准 (详细版)
 0. URDF 规范合规 (URDF Spec Compliance)
 
 章节ID: spec
+章节权重: 0.20
 
 0.1 机器人根节点契约 (Robot Root Contract)
 
@@ -81,6 +82,7 @@ axis、limit、mimic、calibration 与安全相关标签必须符合对应关节
 1. 物理合理性 (Physical Plausibility)
 
 章节ID: physical
+章节权重: 0.20
 
 1.1 质量与惯性有效性 (Mass & Inertia)
 
@@ -123,6 +125,7 @@ axis、limit、mimic、calibration 与安全相关标签必须符合对应关节
 2. 坐标系位置与朝向 (Link Frames)
 
 章节ID: frames
+章节权重: 0.15
 
 2.1 关节原点共线关系 (Joint Collinearity)
 
@@ -165,6 +168,7 @@ axis、limit、mimic、calibration 与安全相关标签必须符合对应关节
 3. 装配逻辑合理性 (Assembly Logic)
 
 章节ID: assembly
+章节权重: 0.10
 
 3.1 驱动器质量归属 (Actuator Attribution)
 
@@ -193,6 +197,7 @@ axis、limit、mimic、calibration 与安全相关标签必须符合对应关节
 4. 运动学与仿真属性 (Kinematics & Simulation)
 
 章节ID: simulation
+章节权重: 0.15
 
 4.1 树状结构验证 (Topology)
 
@@ -221,6 +226,7 @@ axis、limit、mimic、calibration 与安全相关标签必须符合对应关节
 5. 硬件参数配置 (Hardware)
 
 章节ID: hardware
+章节权重: 0.10
 
 5.1 电机力矩与速度限位 (Motor Specs)
 
@@ -241,6 +247,7 @@ axis、limit、mimic、calibration 与安全相关标签必须符合对应关节
 6. 命名规范 (Naming)
 
 章节ID: naming
+章节权重: 0.10
 
 6.1 唯一性与描述性
 

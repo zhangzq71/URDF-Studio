@@ -14,4 +14,5 @@ export { URDFViewerScene } from './components/URDFViewerScene';
 
 export * from './types';
 export * from './utils';
-export { useURDFViewerController } from './hooks';
+export { useURDFViewerController, useResponsivePanelLayout } from './hooks';
+export type { URDFViewerController } from './hooks';

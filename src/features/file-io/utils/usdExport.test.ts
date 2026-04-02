@@ -338,6 +338,38 @@ test('exports robot state into a layered USD package', async () => {
   assert.match(payload.content, /prepend payload = @configuration\/two_link_robot_description_sensor\.usd@/);
 });
 
+test('isaacsim USDA export keeps root stem without forcing _description sidecar names', async () => {
+  const payload = await exportRobotToUsd({
+    robot: createTwoLinkRobot(),
+    exportName: 'go1',
+    assets: createTwoLinkAssets(),
+    fileFormat: 'usda',
+    layoutProfile: 'isaacsim',
+  });
+
+  assert.equal(payload.downloadFileName, 'go1.usda');
+  assert.equal(payload.archiveFileName, 'go1_usda.zip');
+  assert.equal(payload.rootLayerPath, 'go1/go1.usda');
+  assert.deepEqual(
+    Array.from(payload.archiveFiles.keys()).sort(),
+    [
+      'go1/assets/base_color.png',
+      'go1/configuration/go1_base.usda',
+      'go1/configuration/go1_physics.usda',
+      'go1/configuration/go1_robot.usda',
+      'go1/configuration/go1_sensor.usda',
+      'go1/go1.usda',
+    ],
+  );
+
+  assert.match(payload.content, /defaultPrim = "go1"/);
+  assert.match(payload.content, /prepend variantSets = \["Physics", "Sensor", "Robot"\]/);
+  assert.match(payload.content, /prepend references = @configuration\/go1_base\.usda@/);
+  assert.match(payload.content, /prepend payload = @configuration\/go1_physics\.usda@/);
+  assert.match(payload.content, /prepend payload = @configuration\/go1_sensor\.usda@/);
+  assert.match(payload.content, /prepend payload = @configuration\/go1_robot\.usda@/);
+});
+
 test('preserves link transforms and writes physics joints into separate USD layers', async () => {
   const payload = await exportRobotToUsd({
     robot: createTwoLinkRobot(),

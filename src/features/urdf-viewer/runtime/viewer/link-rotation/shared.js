@@ -585,7 +585,7 @@ export function extractPhysicsPayloadAssetPathsFromLayerText(layerText) {
     if (!layerText)
         return [];
     const paths = new Set();
-    const payloadRegex = /payload\s*=\s*@([^@]*physics[^@]*\.usd)@/gi;
+    const payloadRegex = /payload\s*=\s*@([^@]*physics[^@]*\.usd[a-z]?)@/gi;
     let match = null;
     while ((match = payloadRegex.exec(layerText))) {
         const rawPath = String(match[1] || "").trim();

@@ -9,7 +9,8 @@ import { getPrimaryTreeRenderRootLinkId, getTreeRenderRootLinkIds } from '@/core
 import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import { Button, Dialog } from '@/shared/components/ui';
-import { useAssemblyStore, useUIStore, type Language } from '@/store';
+import { isLibraryRobotExportableFormat } from '@/shared/utils';
+import { useAssemblyStore, useSelectionStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
 import { buildChildJointsByParent, buildParentLinkByChild } from '../utils/treeSelectionScope';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
@@ -50,12 +51,14 @@ export interface TreeEditorProps {
   onDeleteAllLibraryFiles?: () => void;
   onExportLibraryFile?: (file: RobotFile) => void | Promise<void>;
   onCreateBridge?: () => void;
+  onRenameAssembly?: (name: string) => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
-  onPreviewFile?: (file: RobotFile) => void;
   onSwitchToProMode?: () => void;
-  previewFileName?: string;
+  onRequestSwitchToStructure?: (
+    intent: 'direct' | 'generate' | 'skip-generate',
+  ) => Promise<'switched' | 'needs-generate-confirm' | 'blocked'> | 'switched' | 'needs-generate-confirm' | 'blocked';
   isReadOnly?: boolean;
 }
 
@@ -87,12 +90,12 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   onDeleteAllLibraryFiles,
   onExportLibraryFile,
   onCreateBridge,
+  onRenameAssembly,
   onRemoveComponent,
   onRemoveBridge,
   onRenameComponent,
-  onPreviewFile,
   onSwitchToProMode,
-  previewFileName,
+  onRequestSwitchToStructure,
   isReadOnly = false,
 }) => {
   const t = translations[lang];
@@ -154,12 +157,14 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     target: LibraryDeleteTarget;
   } | null>(null);
   const [isDeleteAllLibraryDialogOpen, setIsDeleteAllLibraryDialogOpen] = useState(false);
+  const [isGenerateSwitchDialogOpen, setIsGenerateSwitchDialogOpen] = useState(false);
+  const [isStructureSwitchPending, setIsStructureSwitchPending] = useState(false);
 
   const nameLabel = sidebarTab === 'workspace' && assemblyState ? t.projectName : t.robotName;
   const currentName = sidebarTab === 'workspace' && assemblyState ? assemblyState.name : robot.name;
   const namePlaceholder = sidebarTab === 'workspace' && assemblyState ? t.enterProjectName : t.enterRobotName;
   const showStructureFilePath = Boolean(currentFileName && (sidebarTab === 'structure' || isReadOnly));
-  const robotSelection = robot.selection ?? { type: null as const, id: null as const };
+  const robotSelection = useSelectionStore((state) => state.selection);
 
   const fileTree = useMemo(() => buildFileTree(availableFiles), [availableFiles]);
   const treeRobot = useMemo<RobotState>(() => {
@@ -364,15 +369,11 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     setIsEditingName(false);
   }, [currentName, nameDraft, onNameChange]);
 
-  const handlePreviewFile = useCallback((file: RobotFile) => {
-    onPreviewFile?.(file);
-  }, [onPreviewFile]);
-
   const handleFileContextMenu = useCallback((event: React.MouseEvent, file: RobotFile) => {
     event.preventDefault();
     event.stopPropagation();
 
-    const supportsExport = file.format === 'urdf' || file.format === 'mjcf';
+    const supportsExport = isLibraryRobotExportableFormat(file.format);
     const actionCount = (isProMode ? 1 : 0) + (supportsExport ? 1 : 0) + (onDeleteLibraryFile ? 1 : 0);
     if (actionCount === 0) return;
 
@@ -482,6 +483,33 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     setIsDeleteAllLibraryDialogOpen(false);
   }, [availableFiles.length, onDeleteAllLibraryFiles]);
 
+  const handleRequestStructureSwitch = useCallback(async (
+    intent: 'direct' | 'generate' | 'skip-generate',
+  ) => {
+    if (!onRequestSwitchToStructure) {
+      if (intent !== 'direct') {
+        setIsGenerateSwitchDialogOpen(false);
+      }
+      setSidebarTab('structure');
+      return;
+    }
+
+    setIsStructureSwitchPending(true);
+    try {
+      const result = await onRequestSwitchToStructure(intent);
+      if (result === 'needs-generate-confirm') {
+        setIsGenerateSwitchDialogOpen(true);
+        return;
+      }
+
+      if (result === 'switched') {
+        setIsGenerateSwitchDialogOpen(false);
+      }
+    } finally {
+      setIsStructureSwitchPending(false);
+    }
+  }, [onRequestSwitchToStructure, setSidebarTab]);
+
   const actualWidth = collapsed ? 0 : width;
   const shouldFileBrowserFillSpace = isFileBrowserOpen && !isStructureOpen;
   const canDeleteAllLibraryFiles = Boolean(onDeleteAllLibraryFiles && availableFiles.length > 0);
@@ -510,7 +538,9 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
         isEditingName={isEditingName}
         nameDraft={nameDraft}
         nameInputRef={nameInputRef}
-        onSwitchToStructure={() => setSidebarTab('structure')}
+        onSwitchToStructure={() => {
+          void handleRequestStructureSwitch('direct');
+        }}
         onSwitchToWorkspace={handleSwitchToProMode}
         onNameDraftChange={setNameDraft}
         onStartNameEditing={startNameEditing}
@@ -529,7 +559,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             availableFiles={availableFiles}
             fileTree={fileTree}
             expandedFolders={expandedFolders}
-            previewFileName={previewFileName}
             editingFolderPath={editingFolderPath}
             folderRenameDraft={folderRenameDraft}
             folderRenameInputRef={folderRenameInputRef}
@@ -544,7 +573,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             onCommitFolderRename={handleCommitFolderRename}
             onCancelFolderRename={handleCancelFolderRename}
             onLoadRobot={onLoadRobot}
-            onPreviewFile={handlePreviewFile}
             onAddComponent={onAddComponent}
             onDeleteFromLibrary={
               onDeleteLibraryFile || onDeleteLibraryFolder ? handleDeleteFromLibrary : undefined
@@ -597,6 +625,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             onAddCollisionBody={onAddCollisionBody}
             onDelete={onDelete}
             onUpdate={onUpdate}
+            onRenameAssembly={onRenameAssembly ?? onNameChange}
             onRemoveComponent={onRemoveComponent}
             onRemoveBridge={onRemoveBridge}
             onRenameComponent={onRenameComponent}
@@ -625,7 +654,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
         showRenameAction={Boolean(fileContextMenu?.target.type === 'folder' && onRenameLibraryFolder)}
         showExportAction={
           fileContextMenu?.target.type === 'file'
-          && (fileContextMenu.target.file.format === 'urdf' || fileContextMenu.target.file.format === 'mjcf')
+          && isLibraryRobotExportableFormat(fileContextMenu.target.file.format)
         }
         showDeleteAction={Boolean(
           (fileContextMenu?.target.type === 'folder' && onDeleteLibraryFolder)
@@ -656,6 +685,52 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       >
         <p className="text-sm leading-6 text-text-secondary">
           {t.deleteAllLibraryFilesConfirmMessage}
+        </p>
+      </Dialog>
+
+      <Dialog
+        isOpen={isGenerateSwitchDialogOpen}
+        onClose={() => {
+          if (!isStructureSwitchPending) {
+            setIsGenerateSwitchDialogOpen(false);
+          }
+        }}
+        title={t.generateWorkspaceUrdfConfirmTitle}
+        width="w-[460px]"
+        footer={(
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setIsGenerateSwitchDialogOpen(false)}
+              disabled={isStructureSwitchPending}
+            >
+              {t.cancel}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                void handleRequestStructureSwitch('skip-generate');
+              }}
+              disabled={isStructureSwitchPending}
+            >
+              {t.switchToSimpleWithoutGenerate}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                void handleRequestStructureSwitch('generate');
+              }}
+              isLoading={isStructureSwitchPending}
+            >
+              {t.generateAndSwitchToSimpleMode}
+            </Button>
+          </div>
+        )}
+      >
+        <p className="text-sm leading-6 text-text-secondary">
+          {t.generateWorkspaceUrdfConfirmMessage}
         </p>
       </Dialog>
     </div>

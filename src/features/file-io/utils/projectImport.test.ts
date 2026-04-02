@@ -29,6 +29,22 @@ function createDemoRobot(): RobotData {
   };
 }
 
+function createAssemblyComponentRobot(): RobotData {
+  return {
+    name: 'left_arm',
+    rootLinkId: 'comp_left_base_link',
+    links: {
+      comp_left_base_link: {
+        ...DEFAULT_LINK,
+        id: 'comp_left_base_link',
+        name: 'left_arm',
+        visible: true,
+      },
+    },
+    joints: {},
+  };
+}
+
 async function buildProjectZip(): Promise<JSZip> {
   const robot = createDemoRobot();
   const sourcePath = 'robots/demo/demo.urdf';
@@ -37,7 +53,7 @@ async function buildProjectZip(): Promise<JSZip> {
   const exportResult = await exportProject({
     name: 'demo_project',
     uiState: {
-      appMode: 'detail',
+      appMode: 'editor',
       lang: 'en',
     },
     assetsState: {
@@ -108,7 +124,7 @@ test('importProject preserves blob-backed USD library files even when their inli
   const exportResult = await exportProject({
     name: 'demo_project_with_usd_dependency',
     uiState: {
-      appMode: 'detail',
+      appMode: 'editor',
       lang: 'en',
     },
     assetsState: {
@@ -160,4 +176,79 @@ test('importProject preserves blob-backed USD library files even when their inli
   assert.ok(importedUsdFile, 'expected blob-backed USD dependency to roundtrip through project import');
   assert.equal(importedUsdFile.content, '');
   assert.match(importedUsdFile.blobUrl ?? '', /^blob:/);
+});
+
+test('importProject preserves assembly and component transforms from exported project history', async () => {
+  const sourcePath = 'robots/left_arm.urdf';
+  const sourceContent = '<robot name="left_arm"><link name="base_link" /></robot>';
+  const componentRobot = createAssemblyComponentRobot();
+  const assemblyState = {
+    name: 'demo_workspace',
+    transform: {
+      position: { x: 4, y: -1, z: 2 },
+      rotation: { r: 0.2, p: -0.1, y: 0.4 },
+    },
+    components: {
+      comp_left: {
+        id: 'comp_left',
+        name: 'left_arm',
+        sourceFile: sourcePath,
+        visible: true,
+        transform: {
+          position: { x: -0.5, y: 0.75, z: 1.25 },
+          rotation: { r: -0.3, p: 0.15, y: -0.25 },
+        },
+        robot: componentRobot,
+      },
+    },
+    bridges: {},
+  };
+
+  const exportResult = await exportProject({
+    name: 'demo_project_with_transforms',
+    uiState: {
+      appMode: 'editor',
+      lang: 'en',
+    },
+    assetsState: {
+      availableFiles: [
+        {
+          name: sourcePath,
+          format: 'urdf',
+          content: sourceContent,
+        },
+      ],
+      assets: {},
+      allFileContents: {
+        [sourcePath]: sourceContent,
+      },
+      motorLibrary: {},
+      selectedFileName: sourcePath,
+      originalUrdfContent: sourceContent,
+      originalFileFormat: 'urdf',
+      usdPreparedExportCaches: {},
+    },
+    robotState: {
+      present: componentRobot,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    assemblyState: {
+      present: assemblyState,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    getMergedRobotData: () => componentRobot,
+  });
+
+  const imported = await importProject(
+    new Uint8Array(await exportResult.blob.arrayBuffer()) as unknown as File,
+    'en',
+  );
+
+  assert.deepEqual(imported.assemblyState?.transform, assemblyState.transform);
+  assert.deepEqual(
+    imported.assemblyState?.components.comp_left.transform,
+    assemblyState.components.comp_left.transform,
+  );
 });

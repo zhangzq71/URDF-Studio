@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { VisualizerInteractiveLayer } from './interactiveLayerPriority';
+import { isHoverSupportSurface } from '@/shared/utils/three/hoverSupportSurface';
 
 export interface VisualizerHoverTarget {
   type: 'link' | 'joint';
@@ -15,13 +16,27 @@ type VisualizerObjectHit = Pick<THREE.Intersection<THREE.Object3D>, 'object' | '
 
 interface VisualizerHoverResolutionOptions {
   interactionLayerPriority?: readonly VisualizerInteractiveLayer[];
+  deprioritizeSupportSurfaces?: boolean;
 }
 
 interface VisualizerHitCandidate {
   distance: number;
   layerScore: number;
+  isHelper: boolean;
   target: VisualizerHoverTarget;
 }
+
+interface ResolvedVisualizerHit {
+  distance: number;
+  object: THREE.Object3D;
+  isHelper: boolean;
+  target: VisualizerHoverTarget;
+  isSupportSurface: boolean;
+}
+
+const SUPPORT_SURFACE_HOVER_PENALTY = 10_000_000;
+const SUPPORT_SURFACE_FOREGROUND_DISTANCE_EPSILON = 1e-3;
+const HELPER_FOREGROUND_DISTANCE_EPSILON = 1e-3;
 
 function hasPickableMaterial(material: THREE.Material | THREE.Material[] | undefined): boolean {
   if (!material) {
@@ -158,6 +173,7 @@ function getTargetLayerScore(
   object: THREE.Object3D | null,
   target: VisualizerHoverTarget,
   options: VisualizerHoverResolutionOptions,
+  supportSurfacePenalty = 0,
 ): number {
   const renderOrder = getEffectiveRenderOrder(object);
   const overlayBias = hasOverlayPresentation(object) ? 100_000 : 0;
@@ -169,7 +185,7 @@ function getTargetLayerScore(
   );
   const collisionBias = interactionLayerBias === 0 && target.subType === 'collision' ? 10_000 : 0;
 
-  return overlayBias + interactionLayerBias + collisionBias + helperBias + renderOrder;
+  return overlayBias + interactionLayerBias + collisionBias + helperBias + renderOrder - supportSurfacePenalty;
 }
 
 function preferVisualizerHitCandidate(
@@ -178,6 +194,20 @@ function preferVisualizerHitCandidate(
 ): VisualizerHitCandidate {
   if (!current) {
     return next;
+  }
+
+  if (current.isHelper !== next.isHelper) {
+    const nextHelperInForeground = next.isHelper
+      && next.distance + HELPER_FOREGROUND_DISTANCE_EPSILON < current.distance;
+    if (nextHelperInForeground) {
+      return next;
+    }
+
+    const currentHelperInForeground = current.isHelper
+      && current.distance + HELPER_FOREGROUND_DISTANCE_EPSILON < next.distance;
+    if (currentHelperInForeground) {
+      return current;
+    }
   }
 
   const layerDelta = next.layerScore - current.layerScore;
@@ -204,6 +234,54 @@ function isVisibleInHierarchy(object: THREE.Object3D | null): boolean {
   }
 
   return true;
+}
+
+function collectResolvedVisualizerHits(
+  hits: readonly VisualizerObjectHit[],
+): ResolvedVisualizerHit[] {
+  const resolvedHits: ResolvedVisualizerHit[] = [];
+
+  for (const hit of hits) {
+    const hitObject = hit.object;
+    if (!isVisibleInHierarchy(hitObject)) {
+      continue;
+    }
+
+    if ((hitObject as THREE.Mesh).isMesh && !hasPickableMaterial((hitObject as THREE.Mesh).material)) {
+      continue;
+    }
+
+    const target = getVisualizerHoverTarget(hitObject);
+    if (!target) {
+      continue;
+    }
+
+    resolvedHits.push({
+      distance: hit.distance,
+      object: hitObject,
+      isHelper: hasHelperAncestor(hitObject),
+      target,
+      isSupportSurface: isHoverSupportSurface(hitObject),
+    });
+  }
+
+  return resolvedHits;
+}
+
+function shouldDeprioritizeSupportSurfaceHit(
+  hit: ResolvedVisualizerHit,
+  resolvedHits: readonly ResolvedVisualizerHit[],
+  options: VisualizerHoverResolutionOptions,
+): boolean {
+  if (!options.deprioritizeSupportSurfaces || !hit.isSupportSurface) {
+    return false;
+  }
+
+  return resolvedHits.some((otherHit) =>
+    otherHit !== hit
+    && !otherHit.isSupportSurface
+    && otherHit.distance + SUPPORT_SURFACE_FOREGROUND_DISTANCE_EPSILON < hit.distance,
+  );
 }
 
 export function getVisualizerHoverTarget(object: THREE.Object3D | null): VisualizerHoverTarget | null {
@@ -237,25 +315,18 @@ export function findNearestVisualizerTargetFromHits(
   options: VisualizerHoverResolutionOptions = {},
 ): VisualizerHoverTarget | null {
   let bestCandidate: VisualizerHitCandidate | null = null;
+  const resolvedHits = collectResolvedVisualizerHits(hits);
 
-  for (const hit of hits) {
-    const hitObject = hit.object;
-    if (!isVisibleInHierarchy(hitObject)) {
-      continue;
-    }
-
-    if ((hitObject as THREE.Mesh).isMesh && !hasPickableMaterial((hitObject as THREE.Mesh).material)) {
-      continue;
-    }
-
-    const target = getVisualizerHoverTarget(hitObject);
-    if (target) {
-      bestCandidate = preferVisualizerHitCandidate(bestCandidate, {
-        distance: hit.distance,
-        layerScore: getTargetLayerScore(hitObject, target, options),
-        target,
-      });
-    }
+  for (const hit of resolvedHits) {
+    const supportSurfacePenalty = shouldDeprioritizeSupportSurfaceHit(hit, resolvedHits, options)
+      ? SUPPORT_SURFACE_HOVER_PENALTY
+      : 0;
+    bestCandidate = preferVisualizerHitCandidate(bestCandidate, {
+      distance: hit.distance,
+      layerScore: getTargetLayerScore(hit.object, hit.target, options, supportSurfacePenalty),
+      isHelper: hit.isHelper,
+      target: hit.target,
+    });
   }
 
   return bestCandidate?.target ?? null;
@@ -284,5 +355,8 @@ export function findNearestVisualizerHoverTarget(
   }
 
   const hits = raycaster.intersectObject(root, true);
-  return findNearestVisualizerTargetFromHits(hits, options);
+  return findNearestVisualizerTargetFromHits(hits, {
+    ...options,
+    deprioritizeSupportSurfaces: true,
+  });
 }

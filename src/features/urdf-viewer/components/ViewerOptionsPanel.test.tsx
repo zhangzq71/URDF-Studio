@@ -47,7 +47,11 @@ function createComponentRoot() {
   return { dom, container, root };
 }
 
-async function renderPanel(root: Root, readOnly: boolean) {
+async function renderPanel(
+  root: Root,
+  readOnly: boolean,
+  overrides: Partial<React.ComponentProps<typeof ViewerOptionsPanel>> = {},
+) {
   await act(async () => {
     root.render(
       React.createElement(ViewerOptionsPanel, {
@@ -107,6 +111,7 @@ async function renderPanel(root: Root, readOnly: boolean) {
         groundPlaneOffset: 0.25,
         groundPlaneOffsetReadOnly: readOnly,
         setGroundPlaneOffset: () => {},
+        ...overrides,
       }),
     );
   });
@@ -124,6 +129,31 @@ test('ViewerOptionsPanel disables ground plane controls when the offset is exter
   const disabledButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('button[disabled]'));
   assert.equal(disabledButtons.some((button) => button.textContent?.includes('Auto Fit Ground')), true);
   assert.equal(disabledButtons.some((button) => button.textContent?.includes('Reset')), true);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('viewer size sliders use the same full-width layout as opacity and ground offset', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderPanel(root, false, {
+    showOrigins: true,
+    showJointAxes: true,
+  });
+
+  const sliderTracks = Array.from(container.querySelectorAll<HTMLDivElement>('[data-testid="ui-slider-track"]'));
+  assert.ok(sliderTracks.length >= 4, 'viewer panel should render size, opacity, and ground offset sliders');
+
+  const originWrapper = sliderTracks[0].parentElement?.parentElement?.parentElement as HTMLDivElement | null;
+  const jointAxisWrapper = sliderTracks[1].parentElement?.parentElement?.parentElement as HTMLDivElement | null;
+
+  assert.ok(originWrapper, 'origin size slider wrapper should render');
+  assert.ok(jointAxisWrapper, 'joint axis size slider wrapper should render');
+  assert.equal(/\bpl-(2\.5|4)\b/.test(originWrapper.className), false);
+  assert.equal(/\bpl-(2\.5|4)\b/.test(jointAxisWrapper.className), false);
 
   await act(async () => {
     root.unmount();

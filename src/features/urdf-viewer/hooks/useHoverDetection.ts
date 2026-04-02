@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { setRegressionProjectedInteractionTargetsProvider } from '@/shared/debug/regressionBridge';
 import { highlightFaceMaterial } from '../utils/materials';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import {
@@ -18,6 +19,12 @@ import {
     resolveTopLayerInteractionSubType,
     resolveTopLayerInteractionSubTypeFromHits
 } from '../utils/interactionMode';
+import { collectRegressionProjectedInteractionTargets } from '../utils/regressionProjectionTargets';
+import {
+    collectProjectedHelperInteractionTargets,
+    resolveScreenSpaceHelperInteraction,
+    type ProjectedHelperInteractionTarget,
+} from '../utils/screenSpaceHelperInteraction';
 import type {
     ToolMode,
     URDFViewerProps,
@@ -92,11 +99,15 @@ export function useHoverDetection({
     rayIntersectsBoundingBox,
     highlightGeometry
 }: UseHoverDetectionOptions): UseHoverDetectionResult {
-    const { scene, camera } = useThree();
+    const { scene, camera, gl } = useThree();
     type PickTargetCacheEntry = {
         key: string;
         updatedAt: number;
         targets: THREE.Object3D[];
+    };
+    type ProjectedHelperCacheEntry = {
+        key: string;
+        targets: ProjectedHelperInteractionTarget[];
     };
 
     const [highlightedFace, setHighlightedFace] = useState<{ mesh: THREE.Mesh; faceIndex: number } | null>(null);
@@ -111,6 +122,10 @@ export function useHoverDetection({
     const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
     const gizmoTargetsCacheKeyRef = useRef('');
     const gizmoTargetsUpdatedAtRef = useRef(0);
+    const projectedHelperCacheRef = useRef<ProjectedHelperCacheEntry>({
+        key: '',
+        targets: [],
+    });
     const pickTargetCachesRef = useRef<Record<PickTargetMode, PickTargetCacheEntry>>({
         all: { key: '', updatedAt: 0, targets: [] },
         visual: { key: '', updatedAt: 0, targets: [] },
@@ -124,11 +139,16 @@ export function useHoverDetection({
     const lastToolModeRef = useRef(toolMode);
     const hoverSuppressedByDragRef = useRef(false);
     const useExternalHover = typeof onHover === 'function';
+    const regressionDebugEnabled = import.meta.env.DEV
+        || (typeof window !== 'undefined'
+            && new URLSearchParams(window.location.search).get('regressionDebug') === '1');
 
     const clearRaycastTargetCaches = useCallback(() => {
         gizmoTargetsRef.current = [];
         gizmoTargetsCacheKeyRef.current = '';
         gizmoTargetsUpdatedAtRef.current = 0;
+        projectedHelperCacheRef.current.key = '';
+        projectedHelperCacheRef.current.targets = [];
 
         pickTargetCachesRef.current.all.key = '';
         pickTargetCachesRef.current.all.updatedAt = 0;
@@ -157,6 +177,35 @@ export function useHoverDetection({
         }
 
         return gizmoTargetsRef.current;
+    };
+
+    const getProjectedHelperTargets = (forceRefresh = false) => {
+        if (!robot) {
+            projectedHelperCacheRef.current.key = '';
+            projectedHelperCacheRef.current.targets = [];
+            return projectedHelperCacheRef.current.targets;
+        }
+
+        const canvasRect = gl.domElement.getBoundingClientRect();
+        const nextCacheKey = [
+            robotVersion,
+            interactionLayerPriority.join(','),
+            canvasRect.x,
+            canvasRect.y,
+            canvasRect.width,
+            canvasRect.height,
+        ].join(':');
+
+        if (forceRefresh || projectedHelperCacheRef.current.key !== nextCacheKey) {
+            projectedHelperCacheRef.current.targets = collectProjectedHelperInteractionTargets({
+                robot,
+                camera,
+                canvasRect,
+            });
+            projectedHelperCacheRef.current.key = nextCacheKey;
+        }
+
+        return projectedHelperCacheRef.current.targets;
     };
 
     const emitHoverSelection = (
@@ -277,6 +326,90 @@ export function useHoverDetection({
         showCollisionAlwaysOnTop,
         showVisual,
     ]);
+
+    useEffect(() => {
+        if (!regressionDebugEnabled || !robot) {
+            return;
+        }
+
+        setRegressionProjectedInteractionTargetsProvider(() => {
+            const canvasRect = gl.domElement.getBoundingClientRect();
+            const candidates: Array<{
+                object: THREE.Object3D;
+                selection: {
+                    type: 'link' | 'joint';
+                    id: string;
+                    subType?: 'visual' | 'collision';
+                    objectIndex?: number;
+                    helperKind?: ViewerHelperKind;
+                };
+            }> = [];
+
+            linkMeshMapRef.current.forEach((meshes, mapKey) => {
+                const keyMatch = /^(.*):(visual|collision)$/.exec(mapKey);
+                if (!keyMatch) {
+                    return;
+                }
+
+                const [, linkId, subType] = keyMatch;
+                meshes.forEach((mesh, objectIndex) => {
+                    if (!mesh?.visible) {
+                        return;
+                    }
+
+                    candidates.push({
+                        object: mesh,
+                        selection: {
+                            type: 'link',
+                            id: linkId,
+                            subType,
+                            objectIndex,
+                        },
+                    });
+                });
+            });
+
+            robot.traverseVisible((object) => {
+                const explicitHelperKind = object.userData?.viewerHelperKind;
+                const isHelperRoot = explicitHelperKind === 'center-of-mass'
+                    || explicitHelperKind === 'inertia'
+                    || explicitHelperKind === 'origin-axes'
+                    || explicitHelperKind === 'joint-axis'
+                    || object.name === '__com_visual__'
+                    || object.name === '__inertia_box__'
+                    || object.name === '__origin_axes__'
+                    || object.name === '__joint_axis__'
+                    || object.name === '__joint_axis_helper__';
+                if (!isHelperRoot) {
+                    return;
+                }
+
+                const resolved = resolveInteractionSelectionHit(robot, object);
+                if (!resolved || resolved.targetKind !== 'helper') {
+                    return;
+                }
+
+                candidates.push({
+                    object,
+                    selection: {
+                        type: resolved.type,
+                        id: resolved.id,
+                        helperKind: resolved.helperKind,
+                    },
+                });
+            });
+
+            return collectRegressionProjectedInteractionTargets({
+                camera,
+                canvasRect,
+                candidates,
+            });
+        });
+
+        return () => {
+            setRegressionProjectedInteractionTargetsProvider(null);
+        };
+    }, [camera, gl, regressionDebugEnabled, robot]);
 
     // Update face highlight mesh
     useEffect(() => {
@@ -419,6 +552,42 @@ export function useHoverDetection({
             showCollision,
             collisionAlwaysOnTop: showCollisionAlwaysOnTop,
         });
+        const canvasRect = gl.domElement.getBoundingClientRect();
+        const pointerClientX = canvasRect.x + ((mouseRef.current.x + 1) * 0.5) * canvasRect.width;
+        const pointerClientY = canvasRect.y + ((1 - mouseRef.current.y) * 0.5) * canvasRect.height;
+        let projectedHelperInteraction: ResolvedHoverInteractionCandidate | null | undefined;
+        const getProjectedHelperInteraction = () => {
+            if (projectedHelperInteraction !== undefined) {
+                return projectedHelperInteraction;
+            }
+
+            projectedHelperInteraction = resolveScreenSpaceHelperInteraction({
+                pointerClientX,
+                pointerClientY,
+                projectedHelpers: getProjectedHelperTargets(cameraMoved || cameraRotated),
+                interactionLayerPriority,
+            });
+            return projectedHelperInteraction;
+        };
+        const applyHelperHoverInteraction = (
+            helperInteraction: ResolvedHoverInteractionCandidate,
+        ) => {
+            if (hoveredLinkRef.current) {
+                clearHoverHighlight();
+            }
+
+            hoveredLinkRef.current = null;
+            (hoveredLinkRef as any).currentMesh = null;
+            (hoveredLinkRef as any).currentObjectIndex = null;
+            (hoveredLinkRef as any).currentSubType = null;
+            emitHoverSelection(
+                helperInteraction.type,
+                helperInteraction.id,
+                undefined,
+                undefined,
+                helperInteraction.helperKind,
+            );
+        };
 
         if (isSelectionLockedRef?.current) {
             resetHoverState();
@@ -522,7 +691,12 @@ export function useHoverDetection({
 
         // PERFORMANCE: Two-phase detection - check bounding box first
         if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current)) {
-            // Ray misses robot entirely - clear hover state if needed
+            const helperInteraction = getProjectedHelperInteraction();
+            if (helperInteraction) {
+                applyHelperHoverInteraction(helperInteraction);
+                return;
+            }
+
             resetHoverState();
             return;
         }
@@ -549,26 +723,16 @@ export function useHoverDetection({
 
             return candidates;
         })();
+        const helperInteraction = getProjectedHelperInteraction();
         const {
             primaryInteraction: resolvedInteraction,
-        } = resolveHoverInteractionResolution(resolvedCandidates);
+        } = resolveHoverInteractionResolution(
+            helperInteraction ? resolvedCandidates.concat(helperInteraction) : resolvedCandidates,
+            interactionLayerPriority,
+        );
 
         if (resolvedInteraction?.targetKind === 'helper') {
-            if (hoveredLinkRef.current) {
-                clearHoverHighlight();
-            }
-
-            hoveredLinkRef.current = null;
-            (hoveredLinkRef as any).currentMesh = null;
-            (hoveredLinkRef as any).currentObjectIndex = null;
-            (hoveredLinkRef as any).currentSubType = null;
-            emitHoverSelection(
-                resolvedInteraction.type,
-                resolvedInteraction.id,
-                undefined,
-                undefined,
-                resolvedInteraction.helperKind,
-            );
+            applyHelperHoverInteraction(resolvedInteraction);
             return;
         }
 

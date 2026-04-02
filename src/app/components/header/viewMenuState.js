@@ -4,42 +4,34 @@
  */
 
 /**
- * View menu entries are treated as "show/open" actions.
- * Floating panels can still be closed from their own close buttons, which avoids
- * the current UX trap where clicking an already-checked label immediately hides it.
+ * Toggle visibility of a view panel.
  *
  * @param {HeaderViewConfig} current
  * @param {ViewConfigKey} key
  * @returns {HeaderViewConfig}
  */
-export function ensureViewPanelVisible(current, key) {
-  if (current[key]) {
-    return current;
-  }
-
+export function toggleViewPanel(current, key) {
   return {
     ...current,
-    [key]: true,
+    [key]: !current[key],
   };
 }
 
 /**
  * In the merged-mode workspace, view options are no longer scene-specific.
- * Opening the options entry should expose both the viewer and visualizer
+ * Toggling the options entry should update both the viewer and visualizer
  * option panels so the user never needs to think about which runtime owns
  * the current canvas.
  *
  * @param {HeaderViewConfig} current
  * @returns {HeaderViewConfig}
  */
-export function ensureOptionsPanelsVisible(current) {
-  if (current.showOptionsPanel && current.showVisualizerOptionsPanel) {
-    return current;
-  }
+export function toggleOptionsPanels(current) {
+  const nextVisible = !(current.showOptionsPanel || current.showVisualizerOptionsPanel);
 
   return {
     ...current,
-    showOptionsPanel: true,
-    showVisualizerOptionsPanel: true,
+    showOptionsPanel: nextVisible,
+    showVisualizerOptionsPanel: nextVisible,
   };
 }

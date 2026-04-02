@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import type { RobotFile } from '@/types';
 import {
+  buildPreparedUsdStageOpenCacheKey,
   clearPreparedUsdStageOpenCache,
   loadPreparedUsdStageOpenDataFromWorker,
   loadPreparedUsdStageOpenDataCached,
@@ -184,6 +185,57 @@ test('loadPreparedUsdStageOpenDataCached reuses semantically identical inputs ev
   assert.strictEqual(secondResult, firstResult);
 });
 
+test('buildPreparedUsdStageOpenCacheKey ignores unrelated sibling USD files and assets', () => {
+  const sourceFile = {
+    name: 'robots/go2/usd/go2.usd',
+    content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
+    blobUrl: undefined,
+  };
+
+  const narrowKey = buildPreparedUsdStageOpenCacheKey(
+    sourceFile,
+    [
+      {
+        name: 'robots/go2/usd/configuration/go2_description_base.usd',
+        content: '#usda 1.0',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+    ],
+    {},
+  );
+
+  const wideKey = buildPreparedUsdStageOpenCacheKey(
+    sourceFile,
+    [
+      {
+        name: 'robots/go2/usd/configuration/go2_description_base.usd',
+        content: '#usda 1.0',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+      {
+        name: 'robots/go2/usd/go2_alt.usd',
+        content: '#usda 1.0',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+      {
+        name: 'robots/alien/usd/alien.usd',
+        content: '#usda 1.0',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+    ],
+    {
+      'robots/go2/textures/body.png': 'blob:go2-texture',
+      'robots/alien/textures/body.png': 'blob:alien-texture',
+    },
+  );
+
+  assert.equal(wideKey, narrowKey);
+});
+
 test('loadPreparedUsdStageOpenDataFromWorker rejects when worker preparation fails', async () => {
   let prepareCallCount = 0;
 
@@ -228,4 +280,40 @@ test('loadPreparedUsdStageOpenDataFromWorker rejects incomplete worker payloads 
   );
 
   assert.equal(prepareCallCount, 1);
+});
+
+test('buildPreparedUsdStageOpenCacheKey samples blob-backed large USDA text instead of depending on the full content string', () => {
+  const largeA = 'A'.repeat(1024 * 1024 + 64);
+  const largeB = 'B'.repeat(1024 * 1024 + 64);
+
+  const keyA = buildPreparedUsdStageOpenCacheKey(
+    {
+      name: 'robots/go2/usd/configuration/go2_description_base.usda',
+      content: largeA,
+      blobUrl: 'blob:go2-base',
+    },
+    [],
+    {},
+  );
+  const keyB = buildPreparedUsdStageOpenCacheKey(
+    {
+      name: 'robots/go2/usd/configuration/go2_description_base.usda',
+      content: largeB,
+      blobUrl: 'blob:go2-base',
+    },
+    [],
+    {},
+  );
+  const keyWithDifferentBlobUrl = buildPreparedUsdStageOpenCacheKey(
+    {
+      name: 'robots/go2/usd/configuration/go2_description_base.usda',
+      content: largeA,
+      blobUrl: 'blob:go2-base-2',
+    },
+    [],
+    {},
+  );
+
+  assert.notEqual(keyA, keyB);
+  assert.notEqual(keyA, keyWithDifferentBlobUrl);
 });

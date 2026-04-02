@@ -123,7 +123,7 @@ function installDomEnvironment() {
 function resetStoresToBaseline() {
   useUIStore.setState({
     lang: 'en',
-    appMode: 'detail',
+    appMode: 'editor',
     sidebarTab: 'structure',
   });
 
@@ -368,7 +368,13 @@ test('useFileImport reports folder preparation state before handing off the firs
 
   useAssetsStore.getState().setAvailableFiles([existingFile]);
 
-  const overlayStates: Array<{ label: string; detail?: string } | null> = [];
+  const overlayStates: Array<{
+    label: string;
+    detail?: string;
+    progress?: number | null;
+    statusLabel?: string | null;
+    stageLabel?: string | null;
+  } | null> = [];
   const loadCalls: RobotFile[] = [];
   const rendered = renderHook({
     onLoadRobot: (file) => {
@@ -390,6 +396,16 @@ test('useFileImport reports folder preparation state before handing off the firs
       {
         label: translations.en.importPreparationLoadingTitle,
         detail: translations.en.importPreparationLoadingDetail,
+        progress: 0.34,
+        statusLabel: '1/2',
+        stageLabel: translations.en.importPreparationLoadingTitle,
+      },
+      {
+        label: translations.en.importPreparationLoadingTitle,
+        detail: translations.en.loadingRobotPreparing,
+        progress: 0.72,
+        statusLabel: '2/2',
+        stageLabel: translations.en.loadingRobotPreparing,
       },
       null,
     ]);
@@ -402,9 +418,9 @@ test('useFileImport reports folder preparation state before handing off the firs
   }
 });
 
-test('useFileImport keeps the hardware scene active after importing the first robot', async () => {
+test('useFileImport keeps editor mode active after importing the first robot', async () => {
   resetStoresToBaseline();
-  useUIStore.setState({ appMode: 'hardware' });
+  useUIStore.setState({ appMode: 'editor' });
   const domEnvironment = installDomEnvironment();
   const workerMock = installRobotImportWorkerMock();
 
@@ -422,7 +438,7 @@ test('useFileImport keeps the hardware scene active after importing the first ro
     await rendered.hook.handleImport([importedFile] as unknown as FileList);
 
     assert.equal(useAssetsStore.getState().availableFiles[0]?.name, 'demo.urdf');
-    assert.equal(useUIStore.getState().appMode, 'hardware');
+    assert.equal(useUIStore.getState().appMode, 'editor');
   } finally {
     rendered.cleanup();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -432,9 +448,9 @@ test('useFileImport keeps the hardware scene active after importing the first ro
   }
 });
 
-test('useFileImport keeps the skeleton scene active after importing the first robot', async () => {
+test('useFileImport keeps editor mode active across repeated imports', async () => {
   resetStoresToBaseline();
-  useUIStore.setState({ appMode: 'skeleton' });
+  useUIStore.setState({ appMode: 'editor' });
   const domEnvironment = installDomEnvironment();
   const workerMock = installRobotImportWorkerMock();
 
@@ -452,7 +468,7 @@ test('useFileImport keeps the skeleton scene active after importing the first ro
     await rendered.hook.handleImport([importedFile] as unknown as FileList);
 
     assert.equal(useAssetsStore.getState().availableFiles[0]?.name, 'demo.urdf');
-    assert.equal(useUIStore.getState().appMode, 'skeleton');
+    assert.equal(useUIStore.getState().appMode, 'editor');
   } finally {
     rendered.cleanup();
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -462,9 +478,9 @@ test('useFileImport keeps the skeleton scene active after importing the first ro
   }
 });
 
-test('useFileImport keeps the current app mode when importing a project archive with a stale manifest mode', async () => {
+test('useFileImport keeps editor mode when importing a project archive', async () => {
   resetStoresToBaseline();
-  useUIStore.setState({ appMode: 'skeleton' });
+  useUIStore.setState({ appMode: 'editor' });
   const domEnvironment = installDomEnvironment();
   const workerMock = installRobotImportWorkerMock();
   let importerCallCount = 0;
@@ -490,7 +506,7 @@ test('useFileImport keeps the current app mode when importing a project archive 
           ],
           selectedFileName: 'robots/demo.urdf',
           ui: {
-            appMode: 'hardware',
+            appMode: 'editor',
           },
           robotState: null,
           assemblyState: null,
@@ -524,7 +540,7 @@ test('useFileImport keeps the current app mode when importing a project archive 
 
     assert.equal(importerCallCount, 1);
     assert.equal(useAssetsStore.getState().availableFiles[0]?.name, 'robots/demo.urdf');
-    assert.equal(useUIStore.getState().appMode, 'skeleton');
+    assert.equal(useUIStore.getState().appMode, 'editor');
   } finally {
     rendered.cleanup();
     await new Promise((resolve) => setTimeout(resolve, 20));

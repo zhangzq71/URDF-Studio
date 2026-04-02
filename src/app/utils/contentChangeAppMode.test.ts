@@ -3,8 +3,6 @@ import test from 'node:test';
 
 import { resolveAppModeAfterRobotContentChange } from './contentChangeAppMode.ts';
 
-test('resolveAppModeAfterRobotContentChange normalizes every legacy mode into the merged edit view', () => {
-  assert.equal(resolveAppModeAfterRobotContentChange('skeleton'), 'detail');
-  assert.equal(resolveAppModeAfterRobotContentChange('detail'), 'detail');
-  assert.equal(resolveAppModeAfterRobotContentChange('hardware'), 'detail');
+test('resolveAppModeAfterRobotContentChange preserves the single editor mode', () => {
+  assert.equal(resolveAppModeAfterRobotContentChange('editor'), 'editor');
 });

@@ -7,9 +7,7 @@ export type Language = 'en' | 'zh';
 export interface TranslationKeys {
   // Header
   appName: string;
-  skeleton: string;
-  detail: string;
-  hardware: string;
+  editor: string;
   aiAssistant: string;
   file: string;
   import: string;
@@ -79,6 +77,8 @@ export interface TranslationKeys {
   bridgePickParent: string;
   bridgePickChild: string;
   add: string;
+  bridgedComponent: string;
+  bridgedComponentLockedHint: string;
 
   // Property Editor
   properties: string;
@@ -259,6 +259,7 @@ export interface TranslationKeys {
   showInertia: string;
   jointControls: string;
   joints: string;
+  jointsPanel: string;
   viewOptions: string;
   loadingRobot: string;
   loadingRobotPreparing: string;
@@ -266,6 +267,7 @@ export interface TranslationKeys {
   loadingRobotPreloadingDependencies: string;
   loadingRobotInitializingRenderer: string;
   loadingRobotStreamingMeshes: string;
+  loadingRobotParsingInitialMeshes: string;
   loadingRobotApplyingStageFixes: string;
   loadingRobotResolvingMetadata: string;
   loadingRobotFinalizingScene: string;
@@ -280,6 +282,7 @@ export interface TranslationKeys {
   toolbox: string;
   toolboxHoverHint: string;
   robotRedirect: string;
+  motrix: string;
   trajectoryEditing: string;
   featureInDevelopment: string;
   transformMode: string;
@@ -296,6 +299,7 @@ export interface TranslationKeys {
   aiAssistantDesc: string;
   measureToolboxDesc: string;
   motionTrackingDesc: string;
+  motrixDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
   bridgedpEngineDesc: string;
@@ -359,6 +363,14 @@ export interface TranslationKeys {
   deleteAllLibraryFilesConfirmMessage: string;
   rightClickToRename: string;
   rightClickForActions: string;
+  generateWorkspaceUrdf: string;
+  generateWorkspaceUrdfConfirmTitle: string;
+  generateWorkspaceUrdfConfirmMessage: string;
+  generateWorkspaceUrdfSuccess: string;
+  generateWorkspaceUrdfUnavailable: string;
+  generateWorkspaceUrdfDisconnected: string;
+  generateAndSwitchToSimpleMode: string;
+  switchToSimpleWithoutGenerate: string;
 
   // App Shell
   edit: string;
@@ -378,6 +390,7 @@ export interface TranslationKeys {
   dark: string;
   system: string;
   importWarning: string;
+  sourceCodeAutoApply: string;
   fontSize: string;
   small: string;
   medium: string;
@@ -390,6 +403,9 @@ export interface TranslationKeys {
   loadingBridgeDialog: string;
   importPreparationLoadingTitle: string;
   importPreparationLoadingDetail: string;
+  preparingAssemblyComponent: string;
+  addingAssemblyComponentToWorkspace: string;
+  groundingAssemblyComponent: string;
   failedToParseFormat: string;
   xacroSourceOnlyPreviewHint: string;
   usdPreviewRequiresOpen: string;
@@ -523,12 +539,17 @@ export interface TranslationKeys {
   // Export Dialog
   exportDialog: string;
   exportFormat: string;
+  exportFormatProject: string;
   exportFormatMJCF: string;
   exportFormatURDF: string;
   exportFormatXacro: string;
   exportFormatSDF: string;
   exportFormatUSD: string;
   exportComingSoon: string;
+  exportUsdFileFormat: string;
+  exportUsdFileFormatDesc: string;
+  exportUsdFileFormatUsd: string;
+  exportUsdFileFormatUsda: string;
   exportCompressMeshes: string;
   exportCompressMeshesDesc: string;
   simulatorPreset: string;
@@ -558,6 +579,14 @@ export interface TranslationKeys {
   exportOutputSection: string;
   exportOptionsSection: string;
   exportDoExport: string;
+  exportDoExportProject: string;
+  exportProjectWorkspaceSummary: string;
+  exportProjectWorkspaceSummaryDesc: string;
+  disconnectedWorkspaceUrdfExportTitle: string;
+  disconnectedWorkspaceUrdfExportMessage: string;
+  exportMultipleUrdfs: string;
+  continueEditing: string;
+  exportFooterProjectArchive: string;
   exportProgressTitle: string;
   exportProgressKeepWindowOpen: string;
   exportProgressStepCounter: string;

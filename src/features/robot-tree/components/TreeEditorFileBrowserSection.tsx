@@ -23,7 +23,6 @@ interface TreeEditorFileBrowserSectionProps {
   onOpenDeleteAllDialog: () => void;
   onResizeMouseDown: (event: ReactMouseEvent) => void;
   onToggleOpen: () => void;
-  previewFileName?: string;
   shouldFillSpace: boolean;
   t: TreeEditorTranslations;
   toggleFolder: (path: string) => void;
@@ -47,7 +46,6 @@ export function TreeEditorFileBrowserSection({
   onOpenDeleteAllDialog,
   onResizeMouseDown,
   onToggleOpen,
-  previewFileName,
   shouldFillSpace,
   t,
   toggleFolder,
@@ -70,7 +68,6 @@ export function TreeEditorFileBrowserSection({
         onFileContextMenu={onFileContextMenu}
         onFolderContextMenu={onFolderContextMenu}
         onToggleOpen={onToggleOpen}
-        previewFileName={previewFileName}
         shouldFillSpace={shouldFillSpace}
         t={t}
         toggleFolder={toggleFolder}

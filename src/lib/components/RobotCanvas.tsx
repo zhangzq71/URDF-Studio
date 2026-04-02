@@ -26,7 +26,7 @@ export const RobotCanvas = memo(function RobotCanvas({
   assets = {},
   lang = 'en',
   theme = 'system',
-  mode = 'detail',
+  mode = 'editor',
   className,
   style,
   selection,

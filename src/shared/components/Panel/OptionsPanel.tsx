@@ -117,6 +117,29 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   const paddingClass = compact
     ? `${indent ? 'pl-2.5' : ''} pr-1.5 pb-1`
     : `${indent ? 'pl-4' : ''} pr-1.5 pb-1.5`;
+  const formatSliderValue = React.useCallback(
+    (nextValue: number) => (showPercentage ? `${Math.round(nextValue * 100)}%` : nextValue.toFixed(decimals)),
+    [decimals, showPercentage],
+  );
+  const parseSliderValue = React.useCallback((input: string) => {
+    const normalized = input.trim().replace(/,/g, '');
+    if (!normalized) {
+      return null;
+    }
+
+    const numericValue = Number.parseFloat(normalized.replace(/[^0-9eE+.-]/g, ''));
+    if (!Number.isFinite(numericValue)) {
+      return null;
+    }
+
+    if (!showPercentage) {
+      return numericValue;
+    }
+
+    const hasPercentSign = normalized.includes('%');
+    const looksLikeRawRatio = !hasPercentSign && normalized.includes('.') && Math.abs(numericValue) <= 1;
+    return looksLikeRawRatio ? numericValue : numericValue / 100;
+  }, [showPercentage]);
 
   return (
     <div className={paddingClass}>
@@ -129,8 +152,10 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         label={label}
         icon={icon}
         showValue={true}
-        formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
+        formatValue={formatSliderValue}
+        parseValue={parseSliderValue}
         labelClassName={`text-[10px] text-text-tertiary mb-1 ${labelClassName}`}
+        compactThumb={compact}
         disabled={disabled}
       />
     </div>
@@ -393,16 +418,16 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
 }) => {
   return (
     <div
-      className="text-[9px] text-text-tertiary uppercase font-bold tracking-wide px-2 py-1 cursor-move bg-element-bg hover:bg-element-hover select-none flex min-w-0 items-center justify-between gap-1 shrink-0 border-b border-border-black/60 transition-colors"
+      className="group flex min-w-0 shrink-0 select-none touch-none items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg px-2.5 py-2 text-[10px] uppercase tracking-[0.08em] transition-colors cursor-grab active:cursor-grabbing hover:bg-element-hover"
       onMouseDown={onMouseDown}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1">
-        <span className="hidden shrink-0 @[220px]:inline-flex">
-          <DragGripIcon />
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border-black/60 bg-panel-bg text-text-tertiary shadow-sm transition-colors group-hover:border-system-blue/20 group-hover:text-system-blue">
+          <DragGripIcon className="w-3.5 h-3.5" />
         </span>
-        <span className="truncate whitespace-nowrap leading-tight">{title}</span>
+        <span className="truncate whitespace-nowrap font-semibold leading-none text-text-secondary group-hover:text-text-primary">{title}</span>
       </div>
-      <div className="flex min-w-fit shrink-0 items-center gap-0.5">
+      <div className="flex min-w-fit shrink-0 items-center gap-1">
         {additionalControls}
         {showCollapseButton && (
           <button
@@ -411,7 +436,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               e.stopPropagation();
               onToggleCollapse();
             }}
-            className="rounded-md p-0 hover:bg-element-hover transition-colors"
+            className="rounded-md p-0.5 text-text-tertiary transition-colors hover:bg-panel-bg hover:text-text-primary"
             title={isCollapsed ? expandText : collapseText}
           >
             {isCollapsed ? <ChevronDown /> : <ChevronUp />}
@@ -425,7 +450,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               onClose();
             }}
             size="sm"
-            className="p-0"
+            className="p-0.5"
             variant="close"
             title={closeText}
           >
@@ -748,6 +773,8 @@ interface OptionsPanelProps {
   additionalControls?: ReactNode;
   resizeTitle?: string;
   panelClassName?: string;
+  onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+  onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
 }
 
 export const OptionsPanel: React.FC<OptionsPanelProps> = ({
@@ -769,6 +796,8 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
   additionalControls,
   resizeTitle,
   panelClassName = '',
+  onMouseEnter,
+  onMouseLeave,
 }) => {
   if (!show) return null;
 
@@ -790,6 +819,8 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
       onClick={stopPanelEventPropagation}
       onContextMenu={stopPanelEventPropagation}
       onDoubleClick={stopPanelEventPropagation}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       onPointerDown={stopPanelEventPropagation}
       onWheel={stopPanelEventPropagation}
     >

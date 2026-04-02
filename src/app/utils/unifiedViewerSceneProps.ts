@@ -30,7 +30,7 @@ interface BuildUnifiedViewerScenePropsArgs {
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
   onSceneReadyForDisplay?: () => void;
   onRuntimeRobotLoaded?: (robot: ThreeObject3D) => void;
-  mode: 'detail';
+  mode: 'editor';
   selection?: URDFViewerProps['selection'];
   onHover?: URDFViewerProps['onHover'];
   onMeshSelect?: URDFViewerProps['onMeshSelect'];
@@ -84,7 +84,7 @@ export function buildUnifiedViewerSceneProps({
     retainedRobot,
     onRuntimeRobotLoaded,
     sourceFilePath: effectiveSourceFilePath,
-    mode: hasActivePreview ? 'detail' : mode,
+    mode: hasActivePreview ? 'editor' : mode,
     selection: hasActivePreview ? EMPTY_VIEWER_SELECTION : selection,
     hoveredSelection: hasActivePreview ? undefined : hoveredSelection,
     hoverSelectionEnabled: !previewBlocksInteraction,

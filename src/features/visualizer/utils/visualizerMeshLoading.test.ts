@@ -55,7 +55,7 @@ test('collectVisualizerMeshLoadKeys keeps mesh loads even when geometry is hidde
 
   const keys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: false,
     showCollision: false,
     assets: {
@@ -78,7 +78,7 @@ test('collectVisualizerMeshLoadKeys skips invisible visual links', () => {
 
   const keys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: true,
     showCollision: false,
     assets: {
@@ -96,7 +96,7 @@ test('collectVisualizerMeshLoadKeys skips hidden detail collisions until collisi
 
   const hiddenKeys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: true,
     showCollision: false,
     assets: {
@@ -107,7 +107,7 @@ test('collectVisualizerMeshLoadKeys skips hidden detail collisions until collisi
 
   const visibleKeys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: true,
     showCollision: true,
     assets: {
@@ -125,7 +125,7 @@ test('collectVisualizerMeshLoadKeys includes gltf/glb assets in supported mesh p
 
   const keys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: true,
     showCollision: true,
     assets: {
@@ -148,7 +148,7 @@ test('collectVisualizerMeshLoadKeys ignores missing or unsupported mesh assets',
 
   const keys = collectVisualizerMeshLoadKeys({
     robot,
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: true,
     showCollision: true,
     assets: {

@@ -1,8 +1,10 @@
 /// <reference lib="webworker" />
 
 import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
+import { prepareAssemblyRobotData } from '@/core/robot/assemblyComponentPreparation';
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
 import type {
+  PrepareAssemblyComponentWorkerResponse,
   RobotImportWorkerContextSnapshot,
   ResolveRobotImportWorkerResponse,
   ParseEditableRobotSourceWorkerResponse,
@@ -88,6 +90,42 @@ workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRe
       return;
     }
 
+    if (message.type === 'prepare-assembly-component') {
+      const resolvedImportResult = resolveRobotFileData(
+        message.file,
+        applyWorkerContextSnapshot(message.options, message.contextId),
+      );
+
+      if (resolvedImportResult.status !== 'ready') {
+        const response: PrepareAssemblyComponentWorkerResponse = {
+          type: 'prepare-assembly-component-error',
+          requestId: message.requestId,
+          error: `Failed to prepare assembly component from "${message.file.name}".`,
+        };
+        workerScope.postMessage(response);
+        return;
+      }
+
+      const response: PrepareAssemblyComponentWorkerResponse = {
+        type: 'prepare-assembly-component-result',
+        requestId: message.requestId,
+        result: {
+          componentId: message.componentId,
+          displayName: message.rootName,
+          robotData: prepareAssemblyRobotData(resolvedImportResult.robotData, {
+            componentId: message.componentId,
+            rootName: message.rootName,
+            sourceFilePath: message.file.name,
+            sourceFormat: message.file.format,
+          }),
+          resolvedUrdfContent: resolvedImportResult.resolvedUrdfContent,
+          resolvedUrdfSourceFilePath: resolvedImportResult.resolvedUrdfSourceFilePath,
+        },
+      };
+      workerScope.postMessage(response);
+      return;
+    }
+
     if (message.type === 'parse-editable-robot-source') {
       const result = parseEditableRobotSource(
         applyWorkerContextSnapshot(message.options, message.contextId),
@@ -104,13 +142,19 @@ workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRe
       return;
     }
 
-    const response: ResolveRobotImportWorkerResponse | ParseEditableRobotSourceWorkerResponse =
+    const response: ResolveRobotImportWorkerResponse | ParseEditableRobotSourceWorkerResponse | PrepareAssemblyComponentWorkerResponse =
       message.type === 'parse-editable-robot-source'
         ? {
           type: 'parse-editable-robot-source-error',
           requestId: message.requestId,
           error: error instanceof Error ? error.message : 'Editable source parse worker failed',
         }
+        : message.type === 'prepare-assembly-component'
+          ? {
+            type: 'prepare-assembly-component-error',
+            requestId: message.requestId,
+            error: error instanceof Error ? error.message : 'Assembly component worker failed',
+          }
         : {
           type: 'resolve-robot-file-error',
           requestId: message.requestId,

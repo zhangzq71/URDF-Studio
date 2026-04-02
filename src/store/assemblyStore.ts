@@ -4,9 +4,16 @@
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import {
+  applyPatches,
+  enablePatches,
+  produceWithPatches,
+  type Patch,
+} from 'immer';
 import type {
   AssemblyState,
   AssemblyComponent,
+  AssemblyTransform,
   BridgeJoint,
   RobotClosedLoopConstraint,
   RobotData,
@@ -16,10 +23,18 @@ import type {
 } from '@/types';
 import { DEFAULT_JOINT, JointType } from '@/types';
 import { resolveRobotFileData } from '@/core/parsers';
-import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
+import {
+  buildAssemblyComponentIdentity,
+  prepareAssemblyRobotData,
+} from '@/core/robot/assemblyComponentPreparation';
+import { buildDefaultAssemblyComponentPlacementTransform } from '@/core/robot/assemblyPlacement';
+import {
+  cloneAssemblyTransform,
+  IDENTITY_ASSEMBLY_TRANSFORM,
+} from '@/core/robot/assemblyTransforms';
 import { failFastInDev } from '@/core/utils/runtimeDiagnostics';
 
 interface AssemblyContext {
@@ -28,6 +43,11 @@ interface AssemblyContext {
   allFileContents?: Record<string, string>;
   preResolvedImportResult?: RobotImportResult | null;
   preResolvedRobotData?: RobotData | null;
+  preparedComponent?: {
+    componentId: string;
+    displayName: string;
+    robotData: RobotData;
+  } | null;
 }
 
 interface UpdateOptions {
@@ -35,104 +55,7 @@ interface UpdateOptions {
   label?: string;
 }
 
-function applyPrefix(
-  data: RobotData,
-  options: { idPrefix: string; rootName: string }
-): RobotData {
-  const { idPrefix, rootName } = options;
-  const linkIdMap: Record<string, string> = {};
-  const linkNameMap: Record<string, string> = {};
-  const links: Record<string, UrdfLink> = {};
-  const joints: Record<string, UrdfJoint> = {};
-  const closedLoopConstraints: RobotClosedLoopConstraint[] = [];
-  const materials: NonNullable<RobotData['materials']> = {};
-
-  // Find the asset prefix used during import (from useFileImport)
-  // We can't easily get the timestamp here, so we'll use a prefixing strategy
-  // that matches what we do in useFileImport or ensures the visualization can find it.
-
-  for (const [id, link] of Object.entries(data.links)) {
-    const newId = idPrefix + id;
-    linkIdMap[id] = newId;
-    const originalName = link.name?.trim() || id;
-    const isRootLink = id === data.rootLinkId;
-    const newName = isRootLink ? rootName : `${rootName}_${originalName}`;
-    linkNameMap[originalName] = newId;
-    
-    // Create namespaced link
-    links[newId] = {
-      ...link,
-      id: newId,
-      name: newName,
-    };
-  }
-
-  Object.entries(data.materials || {}).forEach(([key, material]) => {
-    const targetLinkId = linkIdMap[key] || linkNameMap[key] || key;
-    materials[targetLinkId] = { ...material };
-  });
-
-  for (const [id, joint] of Object.entries(data.joints)) {
-    const newId = idPrefix + id;
-    const parentId = linkIdMap[joint.parentLinkId] ?? idPrefix + joint.parentLinkId;
-    const childId = linkIdMap[joint.childLinkId] ?? idPrefix + joint.childLinkId;
-    const originalName = joint.name?.trim() || id;
-    joints[newId] = {
-      ...joint,
-      id: newId,
-      name: `${rootName}_${originalName}`,
-      parentLinkId: parentId,
-      childLinkId: childId,
-    };
-  }
-
-  const rootLinkId = linkIdMap[data.rootLinkId] ?? idPrefix + data.rootLinkId;
-
-  (data.closedLoopConstraints || []).forEach((constraint) => {
-    closedLoopConstraints.push({
-      ...constraint,
-      id: `${idPrefix}${constraint.id}`,
-      linkAId: linkIdMap[constraint.linkAId] ?? idPrefix + constraint.linkAId,
-      linkBId: linkIdMap[constraint.linkBId] ?? idPrefix + constraint.linkBId,
-      source: constraint.source
-        ? {
-            ...constraint.source,
-            body1Name: `${rootName}_${constraint.source.body1Name}`,
-            body2Name: `${rootName}_${constraint.source.body2Name}`,
-          }
-        : undefined,
-    });
-  });
-
-  return {
-    name: data.name,
-    links,
-    joints,
-    rootLinkId,
-    materials: Object.keys(materials).length > 0 ? materials : undefined,
-    closedLoopConstraints: closedLoopConstraints.length > 0 ? closedLoopConstraints : undefined,
-  };
-}
-
-export function sanitizeComponentId(filename: string): string {
-  const base = filename.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'robot';
-  const sanitized = base.replace(/[^a-zA-Z0-9_]/g, '_');
-  return sanitized || 'robot';
-}
-
-function createUniqueComponentName(baseName: string, existingNames: Set<string>): string {
-  if (!existingNames.has(baseName)) {
-    return baseName;
-  }
-
-  let suffix = 1;
-  let candidate = `${baseName}_${suffix}`;
-  while (existingNames.has(candidate)) {
-    suffix += 1;
-    candidate = `${baseName}_${suffix}`;
-  }
-  return candidate;
-}
+enablePatches();
 
 function normalizeAssemblySourcePath(path: string): string {
   return path.trim().replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
@@ -180,8 +103,10 @@ interface AssemblyActions {
   removeComponent: (id: string) => void;
   renameComponentSourceFolder: (fromPath: string, toPath: string, options?: UpdateOptions) => void;
   updateComponentName: (id: string, name: string, options?: UpdateOptions) => void;
+  updateComponentTransform: (id: string, transform: AssemblyTransform, options?: UpdateOptions) => void;
   updateComponentRobot: (id: string, robot: Partial<RobotData>, options?: UpdateOptions) => void;
   toggleComponentVisibility: (id: string, visible?: boolean) => void;
+  updateAssemblyTransform: (transform: AssemblyTransform, options?: UpdateOptions) => void;
 
   addBridge: (params: {
     name: string;
@@ -206,9 +131,27 @@ interface AssemblyActions {
 
 type AssemblySnapshot = AssemblyState | null;
 
+type AssemblyHistoryPatchEntry = {
+  kind: 'patch';
+  redoPatches: Patch[];
+  undoPatches: Patch[];
+};
+
+type AssemblyHistorySnapshotEntry = {
+  kind: 'snapshot';
+  snapshot: AssemblySnapshot;
+};
+
+type AssemblyHistoryEntry =
+  | AssemblySnapshot
+  | AssemblyHistoryPatchEntry
+  | AssemblyHistorySnapshotEntry;
+
+type AssemblyMutationRecipe = (draft: AssemblyState | null) => AssemblyState | null | void;
+
 interface AssemblyHistoryState {
-  past: AssemblySnapshot[];
-  future: AssemblySnapshot[];
+  past: AssemblyHistoryEntry[];
+  future: AssemblyHistoryEntry[];
 }
 
 interface ChangeLogEntry {
@@ -228,9 +171,67 @@ const createChangeLogEntry = (label: string): ChangeLogEntry => ({
   label,
 });
 
+function createAssemblyHistorySnapshotEntry(snapshot: AssemblySnapshot): AssemblyHistorySnapshotEntry {
+  return {
+    kind: 'snapshot',
+    snapshot: cloneAssemblySnapshot(snapshot),
+  };
+}
+
+function createAssemblyHistoryPatchEntry(
+  redoPatches: Patch[],
+  undoPatches: Patch[],
+): AssemblyHistoryPatchEntry {
+  return {
+    kind: 'patch',
+    redoPatches: structuredClone(redoPatches),
+    undoPatches: structuredClone(undoPatches),
+  };
+}
+
+function isAssemblyHistoryPatchEntry(entry: AssemblyHistoryEntry): entry is AssemblyHistoryPatchEntry {
+  return Boolean(entry && typeof entry === 'object' && 'kind' in entry && entry.kind === 'patch');
+}
+
+function isAssemblyHistorySnapshotEntry(entry: AssemblyHistoryEntry): entry is AssemblyHistorySnapshotEntry {
+  return Boolean(entry && typeof entry === 'object' && 'kind' in entry && entry.kind === 'snapshot');
+}
+
+function cloneAssemblyHistoryEntry(entry: AssemblyHistoryEntry): AssemblyHistoryEntry {
+  if (isAssemblyHistoryPatchEntry(entry)) {
+    return createAssemblyHistoryPatchEntry(entry.redoPatches, entry.undoPatches);
+  }
+
+  if (isAssemblyHistorySnapshotEntry(entry)) {
+    return createAssemblyHistorySnapshotEntry(entry.snapshot);
+  }
+
+  return cloneAssemblySnapshot(entry);
+}
+
+function applyAssemblyHistoryEntry(
+  currentState: AssemblySnapshot,
+  entry: AssemblyHistoryEntry,
+  direction: 'undo' | 'redo',
+): AssemblySnapshot {
+  if (isAssemblyHistoryPatchEntry(entry)) {
+    return applyPatches(
+      currentState,
+      direction === 'undo' ? entry.undoPatches : entry.redoPatches,
+    ) as AssemblySnapshot;
+  }
+
+  if (isAssemblyHistorySnapshotEntry(entry)) {
+    return cloneAssemblySnapshot(entry.snapshot);
+  }
+
+  return cloneAssemblySnapshot(entry);
+}
+
 export const useAssemblyStore = create<
   {
     assemblyState: AssemblyState | null;
+    assemblyRevision: number;
     _history: AssemblyHistoryState;
     _activity: ChangeLogEntry[];
   } & AssemblyActions
@@ -238,121 +239,161 @@ export const useAssemblyStore = create<
   immer((set, get) => {
     let cachedAssemblyState: AssemblyState | null | undefined;
     let cachedMergedRobotData: RobotData | null = null;
-    const appendHistorySnapshot = (snapshot: AssemblySnapshot, label: string) => {
+    const appendHistoryEntry = (entry: AssemblyHistoryEntry, label: string) => {
       set((state) => {
-        state._history.past = [...state._history.past, cloneAssemblySnapshot(snapshot)].slice(-MAX_HISTORY);
+        state._history.past = [...state._history.past, cloneAssemblyHistoryEntry(entry)].slice(-MAX_HISTORY);
         state._history.future = [];
         state._activity = [...state._activity, createChangeLogEntry(label)].slice(-MAX_ACTIVITY_LOG);
       });
     };
+    const appendHistorySnapshot = (snapshot: AssemblySnapshot, label: string) => {
+      appendHistoryEntry(createAssemblyHistorySnapshotEntry(snapshot), label);
+    };
 
-    const saveToHistory = (label: string) => {
-      appendHistorySnapshot(get().assemblyState, label);
+    const applyAssemblyMutation = (
+      label: string,
+      recipe: AssemblyMutationRecipe,
+      options?: { skipHistory?: boolean },
+    ): boolean => {
+      const currentAssemblyState = get().assemblyState;
+      const [nextAssemblyState, redoPatches, undoPatches] = produceWithPatches(
+        currentAssemblyState,
+        recipe,
+      );
+
+      if (redoPatches.length === 0) {
+        return false;
+      }
+
+      const historyEntry = createAssemblyHistoryPatchEntry(redoPatches, undoPatches);
+      set((state) => {
+        state.assemblyState = nextAssemblyState;
+        if (!options?.skipHistory) {
+          state._history.past = [...state._history.past, historyEntry].slice(-MAX_HISTORY);
+          state._history.future = [];
+          state._activity = [...state._activity, createChangeLogEntry(label)].slice(-MAX_ACTIVITY_LOG);
+        }
+        state.assemblyRevision += 1;
+      });
+      return true;
     };
 
     return {
       assemblyState: null,
+      assemblyRevision: 0,
       _history: { past: [], future: [] },
       _activity: [],
 
       setAssembly: (state) => {
-        saveToHistory('Load assembly state');
-        set({ assemblyState: cloneAssemblySnapshot(state) });
+        applyAssemblyMutation('Load assembly state', () => cloneAssemblySnapshot(state));
       },
 
       initAssembly: (name = 'assembly') => {
-        saveToHistory('Initialize assembly');
-        set({
-          assemblyState: {
-            name,
-            components: {},
-            bridges: {},
-          },
-        });
+        applyAssemblyMutation('Initialize assembly', () => ({
+          name,
+          transform: cloneAssemblyTransform(IDENTITY_ASSEMBLY_TRANSFORM),
+          components: {},
+          bridges: {},
+        }));
       },
 
       exitAssembly: () => {
-        saveToHistory('Exit assembly');
-        set({ assemblyState: null });
+        applyAssemblyMutation('Exit assembly', () => null);
       },
 
       addComponent: (file, context = {}) => {
-        const importResult = (
-          context.preResolvedImportResult?.status === 'ready'
-          && context.preResolvedImportResult.format === file.format
-          ? context.preResolvedImportResult
-          : resolveRobotFileData(file, {
-            availableFiles: context.availableFiles,
-            assets: context.assets,
-            allFileContents: context.allFileContents,
-            usdRobotData: context.preResolvedRobotData ?? null,
-          })
-        );
+        const state = get().assemblyState;
+        const preparedComponent = context.preparedComponent;
+        const existingComponentIds = state ? Object.keys(state.components) : [];
+        const existingComponentNames = state ? Object.values(state.components).map((component) => component.name) : [];
+        const canUsePreparedComponent = Boolean(preparedComponent)
+          && !existingComponentIds.includes(preparedComponent.componentId)
+          && !existingComponentNames.includes(preparedComponent.displayName);
+        const identity = canUsePreparedComponent && preparedComponent
+          ? {
+            componentId: preparedComponent.componentId,
+            displayName: preparedComponent.displayName,
+          }
+          : buildAssemblyComponentIdentity({
+            fileName: file.name,
+            existingComponentIds,
+            existingComponentNames,
+          });
 
-        if (importResult.status !== 'ready') {
-          failFastInDev(
-            'AssemblyStore:addComponent',
-            buildAssemblyComponentImportError(file, importResult),
+        const namespacedRobot = (() => {
+          if (canUsePreparedComponent && preparedComponent) {
+            return preparedComponent.robotData;
+          }
+
+          const importResult = (
+            context.preResolvedImportResult?.status === 'ready'
+            && context.preResolvedImportResult.format === file.format
+            ? context.preResolvedImportResult
+            : resolveRobotFileData(file, {
+              availableFiles: context.availableFiles,
+              assets: context.assets,
+              allFileContents: context.allFileContents,
+              usdRobotData: context.preResolvedRobotData ?? null,
+            })
           );
+
+          if (importResult.status !== 'ready') {
+            failFastInDev(
+              'AssemblyStore:addComponent',
+              buildAssemblyComponentImportError(file, importResult),
+            );
+            return null;
+          }
+
+          return prepareAssemblyRobotData(importResult.robotData, {
+            componentId: identity.componentId,
+            rootName: identity.displayName,
+            sourceFilePath: file.name,
+            sourceFormat: file.format,
+          });
+        })();
+
+        if (!namespacedRobot) {
           return null;
         }
 
-        const robotData = file.format === 'usd'
-          ? rewriteRobotMeshPathsForSource(importResult.robotData, file.name)
-          : importResult.robotData;
-
-        const baseId = sanitizeComponentId(file.name);
-        const state = get().assemblyState;
-        const existingNames = new Set(
-          state ? Object.values(state.components).map((component) => component.name) : []
-        );
-        const displayName = createUniqueComponentName(baseId, existingNames);
-
-        let compId = `comp_${displayName}`;
-        let suffix = 1;
-        if (state) {
-          while (state.components[compId]) {
-            compId = `comp_${displayName}_${suffix++}`;
-          }
-        }
-
-        const namespacedRobot = applyPrefix(robotData, {
-          idPrefix: `${compId}_`,
-          rootName: displayName,
-        });
-
         const component: AssemblyComponent = {
-          id: compId,
-          name: displayName,
+          id: identity.componentId,
+          name: identity.displayName,
           sourceFile: file.name,
           robot: namespacedRobot,
+          transform: buildDefaultAssemblyComponentPlacementTransform({
+            robot: namespacedRobot,
+            existingComponents: Object.values(state?.components ?? {}),
+          }),
           visible: true,
         };
 
-        saveToHistory('Add assembly component');
-        set((s) => {
-          if (!s.assemblyState) {
-            s.assemblyState = {
-              name: 'assembly',
-              components: {},
-              bridges: {},
-            };
-          }
-          s.assemblyState.components[compId] = component;
+        applyAssemblyMutation('Add assembly component', (draft) => {
+          const nextDraft = draft ?? {
+            name: 'assembly',
+            transform: cloneAssemblyTransform(IDENTITY_ASSEMBLY_TRANSFORM),
+            components: {},
+            bridges: {},
+          };
+          nextDraft.components[identity.componentId] = component;
+          return draft ? undefined : nextDraft;
         });
 
         return component;
       },
 
       removeComponent: (id) => {
-        saveToHistory('Remove assembly component');
-        set((s) => {
-          if (!s.assemblyState) return;
-          delete s.assemblyState.components[id];
-          Object.keys(s.assemblyState.bridges).forEach((bridgeId) => {
-            const bridge = s.assemblyState!.bridges[bridgeId];
+        applyAssemblyMutation('Remove assembly component', (draft) => {
+          if (!draft) {
+            return;
+          }
+
+          delete draft.components[id];
+          Object.keys(draft.bridges).forEach((bridgeId) => {
+            const bridge = draft.bridges[bridgeId];
             if (bridge.parentComponentId === id || bridge.childComponentId === id) {
-              delete s.assemblyState!.bridges[bridgeId];
+              delete draft.bridges[bridgeId];
             }
           });
         });
@@ -379,43 +420,61 @@ export const useAssemblyStore = create<
           return;
         }
 
-        if (!options?.skipHistory) {
-          saveToHistory(options?.label ?? 'Rename assembly component sources');
-        }
+        applyAssemblyMutation(
+          options?.label ?? 'Rename assembly component sources',
+          (draft) => {
+            const components = draft?.components;
+            if (!components) return;
 
-        set((s) => {
-          const components = s.assemblyState?.components;
-          if (!components) return;
-
-          Object.values(components).forEach((component) => {
-            if (isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)) {
-              component.sourceFile = replaceAssemblySourcePathPrefix(
-                component.sourceFile,
-                normalizedFromPath,
-                normalizedToPath,
-              );
-            }
-          });
-        });
+            Object.values(components).forEach((component) => {
+              if (isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)) {
+                component.sourceFile = replaceAssemblySourcePathPrefix(
+                  component.sourceFile,
+                  normalizedFromPath,
+                  normalizedToPath,
+                );
+              }
+            });
+          },
+          { skipHistory: options?.skipHistory },
+        );
       },
 
       updateComponentName: (id, name, options) => {
-        if (!options?.skipHistory) {
-          saveToHistory(options?.label ?? 'Rename assembly component');
-        }
-        set((s) => {
-          const component = s.assemblyState?.components[id];
-          if (component) component.name = name;
-        });
+        applyAssemblyMutation(
+          options?.label ?? 'Rename assembly component',
+          (draft) => {
+            const component = draft?.components[id];
+            if (component) {
+              component.name = name;
+            }
+          },
+          { skipHistory: options?.skipHistory },
+        );
+      },
+
+      updateComponentTransform: (id, transform, options) => {
+        applyAssemblyMutation(
+          options?.label ?? 'Transform assembly component',
+          (draft) => {
+            const component = draft?.components[id];
+            if (component) {
+              component.transform = cloneAssemblyTransform(transform);
+            }
+          },
+          { skipHistory: options?.skipHistory },
+        );
       },
 
       updateComponentRobot: (id, robotUpdates, options) => {
-        if (!options?.skipHistory) {
-          saveToHistory(options?.label ?? 'Update assembly component');
-        }
-        set((s) => {
-          const component = s.assemblyState?.components[id];
-          if (component) {
+        applyAssemblyMutation(
+          options?.label ?? 'Update assembly component',
+          (draft) => {
+            const component = draft?.components[id];
+            if (!component) {
+              return;
+            }
+
             const hasExplicitMaterials = Object.prototype.hasOwnProperty.call(robotUpdates, 'materials');
             let nextMaterials = hasExplicitMaterials
               ? robotUpdates.materials
@@ -441,18 +500,32 @@ export const useAssemblyStore = create<
             if (!hasExplicitMaterials && nextMaterials !== component.robot.materials) {
               component.robot.materials = nextMaterials;
             }
-          }
-        });
+          },
+          { skipHistory: options?.skipHistory },
+        );
       },
 
       toggleComponentVisibility: (id, visible) => {
-        saveToHistory('Toggle component visibility');
-        set((s) => {
-          const component = s.assemblyState?.components[id];
+        applyAssemblyMutation('Toggle component visibility', (draft) => {
+          const component = draft?.components[id];
           if (component) {
             component.visible = visible !== undefined ? visible : !component.visible;
           }
         });
+      },
+
+      updateAssemblyTransform: (transform, options) => {
+        applyAssemblyMutation(
+          options?.label ?? 'Transform assembly',
+          (draft) => {
+            if (!draft) {
+              return;
+            }
+
+            draft.transform = cloneAssemblyTransform(transform);
+          },
+          { skipHistory: options?.skipHistory },
+        );
       },
 
       addBridge: (params) => {
@@ -484,45 +557,59 @@ export const useAssemblyStore = create<
           joint: fullJoint,
         };
 
-        saveToHistory('Add bridge joint');
-        set((s) => {
-          if (!s.assemblyState) {
-            s.assemblyState = { name: 'assembly', components: {}, bridges: {} };
-          }
-          s.assemblyState.bridges[id] = bridge;
+        applyAssemblyMutation('Add bridge joint', (draft) => {
+          const nextDraft = draft ?? {
+            name: 'assembly',
+            transform: cloneAssemblyTransform(IDENTITY_ASSEMBLY_TRANSFORM),
+            components: {},
+            bridges: {},
+          };
+          nextDraft.bridges[id] = bridge;
+          return draft ? undefined : nextDraft;
         });
 
         return bridge;
       },
 
       removeBridge: (id) => {
-        saveToHistory('Remove bridge joint');
-        set((s) => {
-          if (s.assemblyState) delete s.assemblyState.bridges[id];
+        applyAssemblyMutation('Remove bridge joint', (draft) => {
+          if (draft?.bridges[id]) {
+            delete draft.bridges[id];
+          }
         });
       },
 
       updateBridge: (id, updates, options) => {
-        if (!options?.skipHistory) {
-          saveToHistory(options?.label ?? 'Update bridge joint');
-        }
-        set((s) => {
-          const bridge = s.assemblyState?.bridges[id];
-          if (bridge) Object.assign(bridge, updates);
-        });
+        applyAssemblyMutation(
+          options?.label ?? 'Update bridge joint',
+          (draft) => {
+            const bridge = draft?.bridges[id];
+            if (bridge) {
+              Object.assign(bridge, updates);
+              if (!updates.name && updates.joint?.name) {
+                bridge.name = updates.joint.name;
+              }
+            }
+          },
+          { skipHistory: options?.skipHistory },
+        );
       },
 
       undo: () => {
         const { _history, assemblyState } = get();
         if (_history.past.length === 0) return;
 
-        const previous = cloneAssemblySnapshot(_history.past[_history.past.length - 1]);
-        const currentSnapshot = cloneAssemblySnapshot(assemblyState);
+        const previousEntry = _history.past[_history.past.length - 1];
+        const previous = applyAssemblyHistoryEntry(assemblyState, previousEntry, 'undo');
+        const futureEntry = isAssemblyHistoryPatchEntry(previousEntry)
+          ? cloneAssemblyHistoryEntry(previousEntry)
+          : createAssemblyHistorySnapshotEntry(assemblyState);
 
         set((state) => {
           state.assemblyState = previous;
           state._history.past = state._history.past.slice(-(MAX_HISTORY + 1), -1);
-          state._history.future = [currentSnapshot, ...state._history.future].slice(0, MAX_HISTORY);
+          state._history.future = [futureEntry, ...state._history.future].slice(0, MAX_HISTORY);
+          state.assemblyRevision += 1;
         });
       },
 
@@ -530,13 +617,17 @@ export const useAssemblyStore = create<
         const { _history, assemblyState } = get();
         if (_history.future.length === 0) return;
 
-        const next = cloneAssemblySnapshot(_history.future[0]);
-        const currentSnapshot = cloneAssemblySnapshot(assemblyState);
+        const nextEntry = _history.future[0];
+        const next = applyAssemblyHistoryEntry(assemblyState, nextEntry, 'redo');
+        const pastEntry = isAssemblyHistoryPatchEntry(nextEntry)
+          ? cloneAssemblyHistoryEntry(nextEntry)
+          : createAssemblyHistorySnapshotEntry(assemblyState);
 
         set((state) => {
           state.assemblyState = next;
-          state._history.past = [...state._history.past, currentSnapshot].slice(-MAX_HISTORY);
+          state._history.past = [...state._history.past, pastEntry].slice(-MAX_HISTORY);
           state._history.future = state._history.future.slice(1, MAX_HISTORY + 1);
+          state.assemblyRevision += 1;
         });
       },
 

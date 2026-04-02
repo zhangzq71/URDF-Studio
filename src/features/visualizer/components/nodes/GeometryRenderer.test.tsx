@@ -60,7 +60,7 @@ function createLink(): UrdfLink {
   };
 }
 
-test('GeometryRenderer renders skeleton visual geometry without unresolved skeleton-style refs', () => {
+test('GeometryRenderer renders editor visual geometry without unresolved legacy refs', () => {
   useSelectionStore.getState().clearHover();
   useSelectionStore.getState().clearSelection();
 
@@ -68,7 +68,7 @@ test('GeometryRenderer renders skeleton visual geometry without unresolved skele
     React.createElement(GeometryRenderer, {
       isCollision: false,
       link: createLink(),
-      mode: 'skeleton',
+      mode: 'editor',
       showGeometry: true,
       showCollision: true,
       modelOpacity: 1,

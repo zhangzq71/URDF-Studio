@@ -26,6 +26,7 @@ export type UsdPackageLayerContents = {
   baseLayerContent: string;
   physicsLayerContent: string;
   sensorLayerContent: string;
+  robotLayerContent?: string;
 };
 
 export type UsdArchivePackage = {
@@ -34,8 +35,32 @@ export type UsdArchivePackage = {
   archiveFiles: Map<string, Blob>;
 };
 
+export type UsdPackageLayoutProfile = 'legacy' | 'isaacsim';
+export type UsdLayerFileFormat = 'usd' | 'usda';
+
+export interface UsdPackageLayoutOptions {
+  layoutProfile?: UsdPackageLayoutProfile;
+  fileFormat?: UsdLayerFileFormat;
+}
+
 const createIdentityBlob = (content: string): Blob => {
   return new Blob([content], { type: 'text/plain;charset=utf-8' });
+};
+
+const getUsdLayerExtension = (fileFormat: UsdLayerFileFormat = 'usd'): 'usd' | 'usda' => {
+  return fileFormat === 'usda' ? 'usda' : 'usd';
+};
+
+const resolveUsdConfigStem = (
+  packageRoot: string,
+  options: UsdPackageLayoutOptions = {},
+): string => {
+  const layoutProfile = options.layoutProfile ?? 'legacy';
+  if (layoutProfile === 'isaacsim') {
+    // Isaac Sim exports keep sidecar stems aligned with the root prim name.
+    return packageRoot;
+  }
+  return `${packageRoot}${packageRoot.includes('description') ? '' : '_description'}`;
 };
 
 const rpyToQuaternion = (r: number, p: number, y: number): THREE.Quaternion => {
@@ -266,14 +291,16 @@ export const buildUsdPhysicsLayerContent = (
   pathMaps: UsdLinkPathMaps,
   rootPrimName: string,
   configStem: string,
+  options: UsdPackageLayoutOptions = {},
 ): string => {
+  const layerExtension = getUsdLayerExtension(options.fileFormat);
   const lines = [
     '#usda 1.0',
     '(',
     `    defaultPrim = "${rootPrimName}"`,
     '    metersPerUnit = 1',
     '    subLayers = [',
-    `        @${configStem}_base.usd@`,
+    `        @${configStem}_base.${layerExtension}@`,
     '    ]',
     '    upAxis = "Z"',
     ')',
@@ -330,7 +357,71 @@ export const buildUsdSensorLayerContent = (rootPrimName: string): string => {
 export const buildUsdRootLayerContent = (
   rootPrimName: string,
   configStem: string,
+  options: UsdPackageLayoutOptions = {},
 ): string => {
+  const layoutProfile = options.layoutProfile ?? 'legacy';
+  const layerExtension = getUsdLayerExtension(options.fileFormat);
+
+  if (layoutProfile === 'isaacsim') {
+    return [
+      '#usda 1.0',
+      '(',
+      `    defaultPrim = "${rootPrimName}"`,
+      '    metersPerUnit = 1',
+      '    upAxis = "Z"',
+      ')',
+      '',
+      `def Xform "${rootPrimName}" (`,
+      '    variants = {',
+      '        string Physics = "PhysX"',
+      '        string Robot = "Robot"',
+      '        string Sensor = "Sensors"',
+      '    }',
+      '    prepend variantSets = ["Physics", "Sensor", "Robot"]',
+      ')',
+      '{',
+      '    variantSet "Physics" = {',
+      '        "None" (',
+      `            prepend references = @configuration/${configStem}_base.${layerExtension}@`,
+      '        ) {',
+      '            over "joints" (',
+      '                active = false',
+      '            )',
+      '            {',
+      '            }',
+      '',
+      '        }',
+      '        "PhysX" (',
+      `            prepend payload = @configuration/${configStem}_physics.${layerExtension}@`,
+      '        ) {',
+      '',
+      '        }',
+      '    }',
+      '    variantSet "Sensor" = {',
+      '        "None" {',
+      '',
+      '        }',
+      '        "Sensors" (',
+      `            prepend payload = @configuration/${configStem}_sensor.${layerExtension}@`,
+      '        ) {',
+      '',
+      '        }',
+      '    }',
+      '    variantSet "Robot" = {',
+      '        "None" {',
+      '',
+      '        }',
+      '        "Robot" (',
+      `            prepend payload = @configuration/${configStem}_robot.${layerExtension}@`,
+      '        ) {',
+      '',
+      '        }',
+      '    }',
+      '}',
+      '',
+    ].join('\n');
+  }
+
   return [
     '#usda 1.0',
     '(',
@@ -353,7 +444,7 @@ export const buildUsdRootLayerContent = (
     '    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]',
     '    variantSet "Physics" = {',
     '        "None" (',
-    `            prepend references = @configuration/${configStem}_base.usd@`,
+    `            prepend references = @configuration/${configStem}_base.${layerExtension}@`,
     '        ) {',
     '            over "joints" (',
     '                active = false',
@@ -363,7 +454,7 @@ export const buildUsdRootLayerContent = (
     '',
     '        }',
     '        "PhysX" (',
-    `            prepend payload = @configuration/${configStem}_physics.usd@`,
+    `            prepend payload = @configuration/${configStem}_physics.${layerExtension}@`,
     '        ) {',
     '',
     '        }',
@@ -373,7 +464,7 @@ export const buildUsdRootLayerContent = (
     '',
     '        }',
     '        "Sensors" (',
-    `            prepend payload = @configuration/${configStem}_sensor.usd@`,
+    `            prepend payload = @configuration/${configStem}_sensor.${layerExtension}@`,
     '        ) {',
     '',
     '        }',
@@ -383,25 +474,143 @@ export const buildUsdRootLayerContent = (
   ].join('\n');
 };
 
+const serializeIsaacLinkOverrides = (
+  linkId: string,
+  robot: RobotState,
+  childIdsByParent: Map<string, string[]>,
+  lines: string[],
+  depth: number,
+): void => {
+  const link = robot.links[linkId];
+  if (!link) {
+    return;
+  }
+
+  const indent = makeUsdIndent(depth);
+  const childIndent = makeUsdIndent(depth + 1);
+
+  serializeUsdPrimSpecWithMetadata(
+    lines,
+    depth,
+    `over "${sanitizeUsdIdentifier(linkId)}"`,
+    ['prepend apiSchemas = ["IsaacLinkAPI"]'],
+  );
+  lines.push(`${indent}{`);
+  lines.push(`${childIndent}string isaac:nameOverride`);
+
+  (childIdsByParent.get(linkId) || []).forEach((childLinkId) => {
+    serializeIsaacLinkOverrides(childLinkId, robot, childIdsByParent, lines, depth + 1);
+  });
+
+  lines.push(`${indent}}`);
+};
+
+export const buildUsdRobotLayerContent = (
+  robot: RobotState,
+  pathMaps: UsdLinkPathMaps,
+  rootPrimName: string,
+): string => {
+  const lines = [
+    '#usda 1.0',
+    '(',
+    `    defaultPrim = "${rootPrimName}"`,
+    '    metersPerUnit = 1',
+    '    upAxis = "Z"',
+    ')',
+    '',
+  ];
+
+  const rootLinkPaths = Array.from(pathMaps.linkPaths.values()).map((linkPath) => `        <${linkPath}>,`);
+  const jointPaths = Object.values(robot.joints).map((joint) => (
+    `        </${rootPrimName}/joints/${sanitizeUsdIdentifier(joint.id || joint.name || 'joint')}>,`
+  ));
+
+  serializeUsdPrimSpecWithMetadata(
+    lines,
+    0,
+    `def Xform "${rootPrimName}"`,
+    ['prepend apiSchemas = ["IsaacRobotAPI"]'],
+  );
+  lines.push('{');
+  lines.push('    string isaac:description');
+  lines.push('    string isaac:namespace');
+  lines.push('    prepend rel isaac:physics:robotJoints = [');
+  jointPaths.forEach((jointPath) => lines.push(jointPath));
+  lines.push('    ]');
+  lines.push('    prepend rel isaac:physics:robotLinks = [');
+  rootLinkPaths.forEach((linkPath) => lines.push(linkPath));
+  lines.push('    ]');
+  lines.push('');
+
+  serializeIsaacLinkOverrides(robot.rootLinkId, robot, pathMaps.childIdsByParent, lines, 1);
+  lines.push('');
+  lines.push('    over "joints"');
+  lines.push('    {');
+
+  Object.values(robot.joints).forEach((joint, index) => {
+    const jointName = sanitizeUsdIdentifier(joint.id || joint.name || 'joint');
+    serializeUsdPrimSpecWithMetadata(
+      lines,
+      2,
+      `over "${jointName}"`,
+      ['prepend apiSchemas = ["IsaacJointAPI"]'],
+    );
+    lines.push('        {');
+    lines.push('            string isaac:nameOverride');
+    lines.push('            float[] isaac:physics:AccelerationLimit');
+    lines.push(`            int isaac:physics:index = ${index}`);
+    lines.push('            float[] isaac:physics:JerkLimit');
+    lines.push('            int isaac:physics:Rot_X:DofOffset');
+    lines.push('            int isaac:physics:Rot_Y:DofOffset');
+    lines.push('            int isaac:physics:Rot_Z:DofOffset');
+    lines.push('            int isaac:physics:Tr_X:DofOffset');
+    lines.push('            int isaac:physics:Tr_Y:DofOffset');
+    lines.push('            int isaac:physics:Tr_Z:DofOffset');
+    lines.push('        }');
+    lines.push('');
+  });
+
+  lines.push('    }');
+  lines.push('}');
+  lines.push('');
+  return lines.join('\n');
+};
+
 export const createUsdArchivePackage = (
   exportName: string,
   layerContents: UsdPackageLayerContents,
   assetFiles: Map<string, Blob> = new Map(),
+  options: UsdPackageLayoutOptions = {},
 ): UsdArchivePackage => {
+  const layoutProfile = options.layoutProfile ?? 'legacy';
+  const layerExtension = getUsdLayerExtension(options.fileFormat);
   const packageRoot = sanitizeUsdIdentifier(exportName || 'robot');
-  const configStemBase = `${packageRoot}${packageRoot.includes('description') ? '' : '_description'}`;
-  const usdRoot = `${packageRoot}/usd`;
+  const configStemBase = resolveUsdConfigStem(packageRoot, options);
+  const usdRoot = layoutProfile === 'isaacsim'
+    ? packageRoot
+    : `${packageRoot}/usd`;
   const configurationRoot = `${usdRoot}/configuration`;
-  const rootLayerPath = `${usdRoot}/${packageRoot}.usd`;
+  const rootLayerPath = `${usdRoot}/${packageRoot}.${layerExtension}`;
+
+  const layerFiles: Array<[string, Blob]> = [
+    [rootLayerPath, createIdentityBlob(layerContents.rootLayerContent)],
+    [`${configurationRoot}/${configStemBase}_base.${layerExtension}`, createIdentityBlob(layerContents.baseLayerContent)],
+    [`${configurationRoot}/${configStemBase}_physics.${layerExtension}`, createIdentityBlob(layerContents.physicsLayerContent)],
+    [`${configurationRoot}/${configStemBase}_sensor.${layerExtension}`, createIdentityBlob(layerContents.sensorLayerContent)],
+  ];
+
+  if (layerContents.robotLayerContent) {
+    layerFiles.push([
+      `${configurationRoot}/${configStemBase}_robot.${layerExtension}`,
+      createIdentityBlob(layerContents.robotLayerContent),
+    ]);
+  }
 
   return {
-    archiveFileName: `${packageRoot}_usd.zip`,
+    archiveFileName: `${packageRoot}_${layerExtension}.zip`,
     rootLayerPath,
     archiveFiles: new Map<string, Blob>([
-      [rootLayerPath, createIdentityBlob(layerContents.rootLayerContent)],
-      [`${configurationRoot}/${configStemBase}_base.usd`, createIdentityBlob(layerContents.baseLayerContent)],
-      [`${configurationRoot}/${configStemBase}_physics.usd`, createIdentityBlob(layerContents.physicsLayerContent)],
-      [`${configurationRoot}/${configStemBase}_sensor.usd`, createIdentityBlob(layerContents.sensorLayerContent)],
+      ...layerFiles,
       ...Array.from(assetFiles.entries()).map(([relativePath, blob]) => [`${usdRoot}/${relativePath}`, blob] as const),
     ]),
   };

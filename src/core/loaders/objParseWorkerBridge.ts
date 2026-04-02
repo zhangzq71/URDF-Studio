@@ -1,4 +1,8 @@
-import { createObjectFromSerializedObjData, type SerializedObjModelData } from './objModelData';
+import {
+    createObjectFromSerializedObjData,
+    parseObjModelData,
+    type SerializedObjModelData,
+} from './objModelData';
 import type { ObjParseWorkerResponse, ParseObjWorkerRequest } from './objParseWorkerProtocol';
 
 interface WorkerLike {
@@ -33,6 +37,15 @@ interface ObjParseWorkerPoolClient {
 }
 
 const DEFAULT_CACHE_LIMIT = 24;
+
+async function loadSerializedObjModelDataInline(assetUrl: string): Promise<SerializedObjModelData> {
+    const response = await fetch(assetUrl);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch OBJ asset: ${response.status} ${response.statusText}`);
+    }
+
+    return parseObjModelData(await response.text());
+}
 
 function createWorkerError(event: ErrorEvent | { error?: unknown; message?: string }): Error {
     if (event.error instanceof Error) {
@@ -164,10 +177,6 @@ export function createObjParseWorkerPoolClient(
             throw new Error('OBJ parse worker is unavailable');
         }
 
-        if (!canUseWorker()) {
-            throw new Error('OBJ parse worker is unavailable in this environment');
-        }
-
         const pool = ensureWorkerPool();
         const workerEntry = pool.reduce((bestEntry, entry) => (
             entry.pendingCount < bestEntry.pendingCount ? entry : bestEntry
@@ -209,7 +218,9 @@ export function createObjParseWorkerPoolClient(
             return await pendingLoad;
         }
 
-        const nextLoad = dispatchToWorkerPool(assetUrl)
+        const nextLoad = (canUseWorker()
+            ? dispatchToWorkerPool(assetUrl)
+            : loadSerializedObjModelDataInline(assetUrl))
             .then((result) => {
                 touchResolvedCache(assetUrl, result);
                 return result;

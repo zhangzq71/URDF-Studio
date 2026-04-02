@@ -140,9 +140,40 @@ test('syncJointHelperInteractionStateForJoints promotes hovered joint-axis helpe
   });
 
   assert.equal(changed, true);
-  assert.ok(helper.scale.x > 1);
+  assert.equal(helper.scale.x, 1);
+  assert.equal(helper.scale.y, 1);
+  assert.equal(helper.scale.z, 1);
   assert.ok(mesh.renderOrder > baseRenderOrder);
   assert.equal((mesh.material as THREE.MeshBasicMaterial).color.getHex(), 0xfbbf24);
+});
+
+test('syncLinkHelperInteractionStateForLinks keeps hovered origin axes at a stable scale', () => {
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'base_link';
+
+  syncOriginAxesVisualizationForLinks({
+    links: [link],
+    showOrigins: true,
+    showOriginsOverlay: true,
+    originSize: 0.2,
+  });
+
+  const originAxes = link.userData.__originAxes as THREE.Object3D;
+  const originMesh = originAxes.children.find((child: any) => child.isMesh) as THREE.Mesh;
+  const baseRenderOrder = originMesh.renderOrder;
+
+  const changed = syncLinkHelperInteractionStateForLinks({
+    links: [link],
+    hoveredLinkId: 'base_link',
+    hoveredHelperKind: 'origin-axes',
+  });
+
+  assert.equal(changed, true);
+  assert.equal(originAxes.scale.x, 1);
+  assert.equal(originAxes.scale.y, 1);
+  assert.equal(originAxes.scale.z, 1);
+  assert.ok(originMesh.renderOrder > baseRenderOrder);
 });
 
 test('syncLinkHelperInteractionStateForLinks boosts hovered inertia helpers', () => {

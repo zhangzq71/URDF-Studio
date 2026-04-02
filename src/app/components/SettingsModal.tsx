@@ -3,7 +3,7 @@
  * Draggable settings panel for UI configuration (Theme, Language, Text Size)
  */
 import React from 'react';
-import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle, Code } from 'lucide-react';
 import { useUIStore } from '@/store';
 import { useShallow } from 'zustand/react/shallow';
 import { translations } from '@/shared/i18n';
@@ -73,6 +73,8 @@ export function SettingsModal() {
     setViewOption,
     fontSize,
     setFontSize,
+    sourceCodeAutoApply,
+    setSourceCodeAutoApply,
   } = useUIStore(
     useShallow((state) => ({
       isSettingsOpen: state.isSettingsOpen,
@@ -90,6 +92,8 @@ export function SettingsModal() {
       setViewOption: state.setViewOption,
       fontSize: state.fontSize,
       setFontSize: state.setFontSize,
+      sourceCodeAutoApply: state.sourceCodeAutoApply,
+      setSourceCodeAutoApply: state.setSourceCodeAutoApply,
     })),
   );
   const t = translations[lang];
@@ -310,6 +314,17 @@ export function SettingsModal() {
               onChange={setShowImportWarning}
             />
           </div>
+
+          <SettingsSection
+            icon={<Code className="h-3 w-3" />}
+            title={t.sourceCode}
+          >
+            <ToggleRow
+              label={t.sourceCodeAutoApply}
+              checked={sourceCodeAutoApply}
+              onChange={setSourceCodeAutoApply}
+            />
+          </SettingsSection>
 
           <SettingsSection
             icon={<Monitor className="h-3 w-3" />}

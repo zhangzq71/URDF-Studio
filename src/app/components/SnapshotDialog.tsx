@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   Select,
+  SegmentedControl,
   Slider,
   type SelectOption,
   type SliderMark,
@@ -27,7 +28,7 @@ const SNAPSHOT_RESOLUTION_OPTIONS = [
   { value: '7680', label: '8K' },
 ] as const;
 
-const FIELD_SELECT_CLASS_NAME = 'h-8 rounded-lg px-2.5 pr-8 text-[11px] leading-tight';
+const FIELD_SELECT_CLASS_NAME = 'h-7 rounded-lg px-2.5 pr-8 text-[11px] leading-tight';
 const FIELD_SELECT_LABEL_CLASS_NAME = 'mb-1 text-[10px] font-semibold tracking-[0.01em] text-text-secondary';
 
 interface SnapshotDialogProps {
@@ -80,8 +81,8 @@ export function SnapshotDialog({
 
   const windowState = useDraggableWindow({
     isOpen,
-    defaultSize: { width: 420, height: 456 },
-    minSize: { width: 396, height: 408 },
+    defaultSize: { width: 340, height: 400 },
+    minSize: { width: 320, height: 380 },
     centerOnMount: true,
     enableMinimize: false,
     enableMaximize: false,
@@ -224,13 +225,6 @@ export function SnapshotDialog({
     0,
     antialiasOptions.findIndex((option) => option.value === detailLevel),
   );
-  const antialiasMarks = useMemo<SliderMark[]>(
-    () => antialiasOptions.map((option, index) => ({
-      value: index,
-      label: option.label,
-    })),
-    [antialiasOptions],
-  );
 
   const selectedAntialiasOption = antialiasOptions[antialiasIndex] ?? antialiasOptions[1];
   const selectedResolutionLabel = SNAPSHOT_RESOLUTION_OPTIONS.find((option) => option.value === resolutionPreset)?.label ?? `${resolutionPreset}px`;
@@ -320,23 +314,15 @@ export function SnapshotDialog({
 
           <SnapshotSection className="space-y-3.5">
             <div>
-              <Slider
-                value={antialiasIndex}
-                min={0}
-                max={antialiasOptions.length - 1}
-                step={1}
-                label={t.snapshotAAMode}
-                solidThumb
-                marks={antialiasMarks}
-                snapToMarks
+              <div className={FIELD_SELECT_LABEL_CLASS_NAME}>
+                {t.snapshotAAMode}
+              </div>
+              <SegmentedControl
+                value={detailLevel}
+                options={antialiasOptions.map(opt => ({ value: opt.value, label: opt.label }))}
+                onChange={(value) => setDetailLevel(value as SnapshotCaptureOptions['detailLevel'])}
                 disabled={isCapturing}
-                formatValue={(value) => antialiasOptions[Math.round(value)]?.label ?? selectedAntialiasOption.label}
-                onChange={(value) => {
-                  const nextOption = antialiasOptions[Math.round(value)];
-                  if (nextOption) {
-                    setDetailLevel(nextOption.value);
-                  }
-                }}
+                size="xs"
               />
               <div className="mt-2 text-[10px] leading-4 text-text-tertiary">
                 {selectedAntialiasOption.hint}
@@ -344,25 +330,30 @@ export function SnapshotDialog({
             </div>
 
             <div>
-              <Slider
-                value={imageQuality}
-                min={SNAPSHOT_IMAGE_QUALITY_MIN}
-                max={SNAPSHOT_IMAGE_QUALITY_MAX}
-                step={SNAPSHOT_IMAGE_QUALITY_STEP}
-                label={t.snapshotCompressionQuality}
-                solidThumb
-                disabled={!supportsLossyCompression || isCapturing}
-                formatValue={(value) => (supportsLossyCompression ? `${Math.round(value)}%` : t.snapshotCompressionLossless)}
-                onChange={(value) => setImageQuality(Math.round(value))}
+              <div className={FIELD_SELECT_LABEL_CLASS_NAME}>
+                {t.snapshotCompressionQuality}
+              </div>
+              <SegmentedControl
+                value={supportsLossyCompression ? (imageQuality >= 90 ? 96 : imageQuality >= 70 ? 80 : 60) : 'lossless'}
+                options={supportsLossyCompression ? [
+                  { value: 60, label: t.compressionLevelCompact },
+                  { value: 80, label: t.compressionLevelBalanced },
+                  { value: 96, label: t.compressionLevelPreserve },
+                ] : [
+                  { value: 'lossless', label: t.snapshotCompressionLossless, disabled: true },
+                ]}
+                onChange={(value) => {
+                  if (typeof value === 'number') {
+                    setImageQuality(value);
+                  }
+                }}
+                disabled={isCapturing || !supportsLossyCompression}
+                size="xs"
               />
-              {supportsLossyCompression ? (
+              {supportsLossyCompression && (
                 <div className="mt-1.5 flex items-center justify-between text-[10px] text-text-tertiary">
                   <span>{t.compressionSmallerFile}</span>
                   <span>{t.compressionMoreDetail}</span>
-                </div>
-              ) : (
-                <div className="mt-1.5 text-[10px] text-text-tertiary">
-                  {t.snapshotCompressionLossless}
                 </div>
               )}
             </div>
@@ -453,7 +444,7 @@ export function SnapshotDialog({
                 variant="secondary"
                 onClick={onClose}
                 disabled={isCapturing}
-                className="h-[30px] px-2.5 text-[12px]"
+                className="h-[26px] px-2.5 text-[11px]"
               >
                 {t.close}
               </Button>
@@ -462,8 +453,8 @@ export function SnapshotDialog({
                 onClick={() => void onCapture(resolvedOptions)}
                 isLoading={isCapturing}
                 disabled={isCapturing}
-                icon={<Camera className="h-3.5 w-3.5" />}
-                className="h-[30px] min-w-28 px-3 text-[12px]"
+                icon={<Camera className="h-3 w-3" />}
+                className="h-[26px] min-w-20 px-3 text-[11px]"
               >
                 {isCapturing ? t.snapshotCapturing : t.snapshotCapture}
               </Button>

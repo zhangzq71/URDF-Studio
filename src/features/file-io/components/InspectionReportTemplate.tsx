@@ -39,11 +39,12 @@ export function InspectionReportTemplate({
 
   // Group issues by category
   const issuesByCategory: Record<string, typeof inspectionReport.issues> = {};
+  const defaultCategoryId = INSPECTION_CRITERIA[0]?.id || 'spec';
   INSPECTION_CRITERIA.forEach((category) => {
     issuesByCategory[category.id] = [];
   });
   inspectionReport.issues.forEach((issue) => {
-    const categoryId = issue.category || 'physical';
+    const categoryId = issue.category || defaultCategoryId;
     if (!issuesByCategory[categoryId]) issuesByCategory[categoryId] = [];
     issuesByCategory[categoryId].push(issue);
   });

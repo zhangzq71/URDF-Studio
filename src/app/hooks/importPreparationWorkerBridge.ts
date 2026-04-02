@@ -133,6 +133,7 @@ export async function prepareImportPayloadWithWorker(
       requestId,
       files,
       existingPaths: [...args.existingPaths],
+      preResolvePreferredImport: args.preResolvePreferredImport,
     };
 
     pendingWorkerRequests.set(requestId, { resolve, reject });

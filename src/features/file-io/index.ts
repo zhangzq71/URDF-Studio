@@ -71,3 +71,4 @@ export {
 
 export { ExportDialog } from './components/ExportDialog';
 export { ExportProgressDialog } from './components/ExportProgressDialog';
+export { DisconnectedWorkspaceUrdfExportDialog } from './components/DisconnectedWorkspaceUrdfExportDialog';

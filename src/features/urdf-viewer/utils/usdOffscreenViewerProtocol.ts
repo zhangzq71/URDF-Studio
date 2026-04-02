@@ -1,9 +1,18 @@
-import type { RobotFile } from '@/types';
-import type { ViewerDocumentLoadEvent, UsdLoadingProgress } from '../types';
+import type { InteractionSelection, RobotFile } from '@/types';
+import type {
+  ToolMode,
+  ViewerDocumentLoadEvent,
+  ViewerInteractiveLayer,
+  UsdLoadingProgress,
+} from '../types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
 
 type OffscreenViewerSourceFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
 type OffscreenViewerAvailableFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
+export type OffscreenViewerInteractionSelection = Pick<
+  InteractionSelection,
+  'type' | 'id' | 'subType' | 'objectIndex' | 'helperKind'
+>;
 
 export interface UsdOffscreenViewerInitRequest {
   type: 'init';
@@ -32,24 +41,28 @@ export interface UsdOffscreenViewerPointerDownRequest {
   type: 'pointer-down';
   pointerId: number;
   button: number;
-  clientX: number;
-  clientY: number;
+  localX: number;
+  localY: number;
 }
 
 export interface UsdOffscreenViewerPointerMoveRequest {
   type: 'pointer-move';
   pointerId: number;
   buttons: number;
-  clientX: number;
-  clientY: number;
+  localX: number;
+  localY: number;
 }
 
 export interface UsdOffscreenViewerPointerUpRequest {
   type: 'pointer-up';
   pointerId: number;
   buttons: number;
-  clientX: number;
-  clientY: number;
+  localX: number;
+  localY: number;
+}
+
+export interface UsdOffscreenViewerPointerLeaveRequest {
+  type: 'pointer-leave';
 }
 
 export interface UsdOffscreenViewerWheelRequest {
@@ -74,6 +87,21 @@ export interface UsdOffscreenViewerSetActiveRequest {
   active: boolean;
 }
 
+export interface UsdOffscreenViewerSetInteractionStateRequest {
+  type: 'set-interaction-state';
+  toolMode: ToolMode;
+  selection: OffscreenViewerInteractionSelection | null;
+  hoveredSelection: OffscreenViewerInteractionSelection | null;
+  hoverSelectionEnabled: boolean;
+  interactionLayerPriority: ViewerInteractiveLayer[];
+}
+
+export interface UsdOffscreenViewerSetJointAngleRequest {
+  type: 'set-joint-angle';
+  jointId: string;
+  angleRad: number;
+}
+
 export interface UsdOffscreenViewerDisposeRequest {
   type: 'dispose';
 }
@@ -84,10 +112,13 @@ export type UsdOffscreenViewerWorkerRequest =
   | UsdOffscreenViewerPointerDownRequest
   | UsdOffscreenViewerPointerMoveRequest
   | UsdOffscreenViewerPointerUpRequest
+  | UsdOffscreenViewerPointerLeaveRequest
   | UsdOffscreenViewerWheelRequest
   | UsdOffscreenViewerSetVisibilityRequest
   | UsdOffscreenViewerSetGroundOffsetRequest
   | UsdOffscreenViewerSetActiveRequest
+  | UsdOffscreenViewerSetInteractionStateRequest
+  | UsdOffscreenViewerSetJointAngleRequest
   | UsdOffscreenViewerDisposeRequest;
 
 export interface UsdOffscreenViewerProgressResponse {
@@ -103,6 +134,26 @@ export interface UsdOffscreenViewerDocumentLoadResponse {
 export interface UsdOffscreenViewerRobotDataResponse {
   type: 'robot-data';
   resolution: ViewerRobotDataResolution;
+}
+
+export interface UsdOffscreenViewerSelectionChangeResponse {
+  type: 'selection-change';
+  selection: OffscreenViewerInteractionSelection | null;
+  meshSelection: {
+    linkId: string;
+    objectIndex: number;
+    objectType: 'visual' | 'collision';
+  } | null;
+}
+
+export interface UsdOffscreenViewerHoverChangeResponse {
+  type: 'hover-change';
+  hoveredSelection: OffscreenViewerInteractionSelection | null;
+}
+
+export interface UsdOffscreenViewerJointAnglesChangeResponse {
+  type: 'joint-angles-change';
+  jointAngles: Record<string, number>;
 }
 
 export interface UsdOffscreenViewerFatalErrorResponse {
@@ -130,5 +181,8 @@ export type UsdOffscreenViewerWorkerResponse =
   | UsdOffscreenViewerProgressResponse
   | UsdOffscreenViewerDocumentLoadResponse
   | UsdOffscreenViewerRobotDataResponse
+  | UsdOffscreenViewerSelectionChangeResponse
+  | UsdOffscreenViewerHoverChangeResponse
+  | UsdOffscreenViewerJointAnglesChangeResponse
   | UsdOffscreenViewerFatalErrorResponse
   | UsdOffscreenViewerLoadDebugResponse;

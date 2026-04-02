@@ -136,7 +136,7 @@ function OverlayToggleOption({
                 step: sliderConfig.step,
                 decimals: sliderConfig.decimals,
                 compact: true,
-                indent: true,
+                indent: false,
             } : undefined}
         />
     );

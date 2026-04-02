@@ -103,6 +103,14 @@ test('inspection prompt templates live in a standalone config module', () => {
   );
 });
 
+test('inspection prompt examples stay aligned with the editable inspection markdown categories', () => {
+  assert.match(INSPECTION_SYSTEM_PROMPT_TEMPLATES.en, /'frames'/);
+  assert.match(INSPECTION_SYSTEM_PROMPT_TEMPLATES.en, /'assembly'/);
+  assert.match(INSPECTION_SYSTEM_PROMPT_TEMPLATES.en, /'simulation'/);
+  assert.doesNotMatch(INSPECTION_SYSTEM_PROMPT_TEMPLATES.en, /'kinematics'/);
+  assert.doesNotMatch(INSPECTION_SYSTEM_PROMPT_TEMPLATES.en, /'symmetry'/);
+});
+
 test('getInspectionSystemPrompt injects english criteria without changing the JSON contract', () => {
   const criteriaDescription = 'spec.robot_root_contract';
   const inspectionNotes = '**Source-Format Notes:**\n- MJCF summary: 2 sites';

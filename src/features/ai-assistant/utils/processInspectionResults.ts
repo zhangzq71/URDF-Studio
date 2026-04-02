@@ -17,20 +17,28 @@ interface ParsedInspectionResult {
 const issueIncludesAny = (text: string, patterns: string[]) => patterns.some(pattern => text.includes(pattern))
 
 const inferIssueCategory = (text: string) => {
-  if (issueIncludesAny(text, ['mass', 'inertia', '质量', '惯性'])) {
+  if (issueIncludesAny(text, ['root', '<robot>', 'mimic', 'calibration', 'gazebo', 'sensor', 'transmission', 'extension', '根节点', '语义', '扩展', '传感器'])) {
+    return 'spec'
+  }
+
+  if (issueIncludesAny(text, ['mass', 'inertia', '质量', '惯性', 'symmetry', 'mirror', '对称', '镜像'])) {
     return 'physical'
   }
 
-  if (issueIncludesAny(text, ['frame', 'origin', 'axis', 'joint', '坐标', '原点', '轴', '关节'])) {
-    return 'kinematics'
+  if (issueIncludesAny(text, ['frame', 'origin', 'axis', 'waist', 'coordinate', '坐标', '原点', '轴', '腰部'])) {
+    return 'frames'
+  }
+
+  if (issueIncludesAny(text, ['placement', 'attribution', 'transmission component', 'linkage', 'drive linkage', '归属', '传动件', '连杆'])) {
+    return 'assembly'
+  }
+
+  if (issueIncludesAny(text, ['topology', 'closed loop', 'collision', 'limit', 'orphan', '仿真', '拓扑', '闭环', '碰撞', '限位', '孤立'])) {
+    return 'simulation'
   }
 
   if (issueIncludesAny(text, ['name', '命名', '名称'])) {
     return 'naming'
-  }
-
-  if (issueIncludesAny(text, ['symmetry', 'left', 'right', '对称', '左右'])) {
-    return 'symmetry'
   }
 
   if (issueIncludesAny(text, ['motor', 'hardware', 'armature', 'torque', 'velocity', '电机', '硬件', '电枢', '力矩', '速度'])) {
@@ -52,11 +60,19 @@ const inferIssueItemId = (
   const selectedItemIds = new Set(selectedItems[categoryId])
 
   if (
-    categoryId === 'kinematics' &&
+    categoryId === 'frames' &&
     selectedItemIds.has('frame_alignment') &&
     issueIncludesAny(text, ['frame', 'origin', 'coordinate', 'collinear', '坐标', '原点', '共线'])
   ) {
     return 'frame_alignment'
+  }
+
+  if (
+    categoryId === 'simulation' &&
+    selectedItemIds.has('tree_connectivity') &&
+    issueIncludesAny(text, ['topology', 'closed loop', 'root', 'orphan', '拓扑', '闭环', '根节点', '孤立'])
+  ) {
+    return 'tree_connectivity'
   }
 
   if (
@@ -85,6 +101,7 @@ export function processInspectionResults(
 ): InspectionReport {
   const t = translations[lang]
   const parsedResult = (rawResults || {}) as ParsedInspectionResult
+  const defaultCategoryId = INSPECTION_CRITERIA[0]?.id || 'spec'
 
   const issues = ((parsedResult.issues || []) as Record<string, unknown>[]).map(issue => {
     const issueText = `${String(issue.title || '').toLowerCase()} ${String(issue.description || '').toLowerCase()}`
@@ -95,6 +112,10 @@ export function processInspectionResults(
 
     if (!issue.category) {
       issue.category = inferIssueCategory(issueText)
+    }
+
+    if (!issue.category) {
+      issue.category = defaultCategoryId
     }
 
     if (!issue.itemId) {

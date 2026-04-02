@@ -24,7 +24,7 @@ import { RobotCanvas } from '@/lib';
   assets={assetMap}
   lang="en"
   theme="dark"
-  mode="detail"
+  mode="editor"
   groundPlaneOffset={0}
   display={{
     showVisual: true,

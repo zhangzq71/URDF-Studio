@@ -5,6 +5,7 @@ const EMBEDDED_USD_VIEWER_SAFE_LOAD_FLAGS = {
   nonBlockingLoad: '0',
   aggressiveInitialDraw: '1',
   strictOneShot: '1',
+  yieldDuringLoad: '0',
   // Keep the viewer blocked until the runtime has authored joint/dynamics
   // metadata for the stage. Large quadrupeds such as Unitree B2 collapse into
   // a zero-pose fallback if interactive mode begins before this data is ready.
@@ -15,6 +16,7 @@ const EMBEDDED_USD_VIEWER_SAFE_LOAD_FLAGS = {
 
 export interface CreateEmbeddedUsdViewerLoadParamsOptions {
   preferWorkerResolvedRobotData?: boolean;
+  dependenciesPreloadedToVirtualFs?: boolean;
 }
 
 export function createEmbeddedUsdViewerLoadParams(
@@ -36,6 +38,11 @@ export function createEmbeddedUsdViewerLoadParams(
     safeLoadFlags.strictOneShot = '0';
     safeLoadFlags.resolveRobotMetadataBeforeReady = '0';
     safeLoadFlags.requireCompleteRobotMetadata = '0';
+  }
+
+  if (options.dependenciesPreloadedToVirtualFs) {
+    safeLoadFlags.dependenciesPreloadedToVirtualFs = '1';
+    safeLoadFlags.autoLoadDependencies = '0';
   }
 
   params.set('threads', String(threadCount));

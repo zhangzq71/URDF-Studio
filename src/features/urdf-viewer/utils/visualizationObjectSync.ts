@@ -639,7 +639,11 @@ export function syncLinkHelperInteractionStateForLinks({
         ? getHelperScaleMultiplier(state, 1.16, 1.08)
         : helperName === '__inertia_box__'
           ? getHelperScaleMultiplier(state, 1.02, 1.01)
-          : getHelperScaleMultiplier(state, 1.14, 1.05);
+          // Thin axis helpers should not change their hit footprint on hover,
+          // otherwise the cursor can oscillate between hit/miss on dense scenes.
+          : helperName === '__origin_axes__'
+            ? 1
+            : getHelperScaleMultiplier(state, 1.14, 1.05);
       const renderOrderOffset = getHelperRenderOrderOffset(state);
 
       changed = updateInteractionScale(helperObject, scaleMultiplier) || changed;
@@ -693,10 +697,7 @@ export function syncJointHelperInteractionStateForJoints({
         : undefined;
 
     helperObjects.forEach((helperObject) => {
-      changed = updateInteractionScale(
-        helperObject,
-        getHelperScaleMultiplier(state, 1.16, 1.06),
-      ) || changed;
+      changed = updateInteractionScale(helperObject, 1) || changed;
 
       helperObject.traverse((child: any) => {
         if (child.isMesh || child.type === 'LineSegments') {

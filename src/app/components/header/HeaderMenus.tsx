@@ -2,7 +2,7 @@ import { Briefcase, ChevronDown, Code, Download, Eye, FileText, Folder, Pencil, 
 import { ToolboxMenu } from './ToolboxMenu';
 import { HeaderButton } from './HeaderButton';
 import { ViewMenuItem } from './ViewMenuItem';
-import { ensureOptionsPanelsVisible, ensureViewPanelVisible } from './viewMenuState.js';
+import { toggleOptionsPanels, toggleViewPanel } from './viewMenuState.js';
 import type { HeaderMenuKey, HeaderSetViewConfig, HeaderTranslations, HeaderViewConfig } from './types';
 
 interface HeaderMenusProps {
@@ -62,13 +62,13 @@ export function HeaderMenus({
     setActiveMenu(activeMenu === menu ? null : menu);
   };
 
-  const showViewPanel = (key: keyof HeaderViewConfig) => {
-    setViewConfig((prev) => ensureViewPanelVisible(prev, key));
+  const handleToggleViewPanel = (key: keyof HeaderViewConfig) => {
+    setViewConfig((prev) => toggleViewPanel(prev, key));
     setActiveMenu(null);
   };
 
-  const showMergedOptionsPanels = () => {
-    setViewConfig((prev) => ensureOptionsPanelsVisible(prev));
+  const handleToggleOptionsPanels = () => {
+    setViewConfig((prev) => toggleOptionsPanels(prev));
     setActiveMenu(null);
   };
 
@@ -241,12 +241,17 @@ export function HeaderMenus({
               <ViewMenuItem
                 checked={viewConfig.showToolbar}
                 label={t.toolbar}
-                onClick={() => showViewPanel('showToolbar')}
+                onClick={() => handleToggleViewPanel('showToolbar')}
+              />
+              <ViewMenuItem
+                checked={viewConfig.showJointPanel}
+                label={t.jointsPanel}
+                onClick={() => handleToggleViewPanel('showJointPanel')}
               />
               <ViewMenuItem
                 checked={viewConfig.showOptionsPanel || viewConfig.showVisualizerOptionsPanel}
                 label={t.viewOptions}
-                onClick={showMergedOptionsPanels}
+                onClick={handleToggleOptionsPanels}
               />
             </div>
           </>

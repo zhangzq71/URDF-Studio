@@ -1,5 +1,11 @@
 import { Quaternion, Vector3 } from 'three';
-import type { RobotFile, RobotState, UrdfJoint, UrdfLink } from '@/types';
+import type {
+  InteractionHelperKind,
+  RobotFile,
+  RobotState,
+  UrdfJoint,
+  UrdfLink,
+} from '@/types';
 
 type HighlightMode = 'link' | 'collision';
 
@@ -36,12 +42,14 @@ interface AppRegressionHandlers {
       id: string | null;
       subType?: 'visual' | 'collision';
       objectIndex?: number;
+      helperKind?: InteractionHelperKind;
     };
     hoveredSelection: {
       type: 'link' | 'joint' | null;
       id: string | null;
       subType?: 'visual' | 'collision';
       objectIndex?: number;
+      helperKind?: InteractionHelperKind;
     };
   };
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; selectedFile: string | null }>;
@@ -60,6 +68,22 @@ interface ViewerRegressionHandlers {
   setFlags: (flags: RegressionViewerFlags) => void;
   setToolMode: (toolMode: string) => { changed: boolean; activeMode: string | null };
   setJointAngles: (jointAngles: Record<string, number>) => { changed: boolean };
+}
+
+export interface RegressionProjectedInteractionTarget {
+  type: 'link' | 'joint';
+  id: string;
+  subType?: 'visual' | 'collision';
+  objectIndex?: number;
+  helperKind?: InteractionHelperKind;
+  targetKind: 'geometry' | 'helper';
+  sourceName: string | null;
+  clientX: number;
+  clientY: number;
+  projectedWidth: number;
+  projectedHeight: number;
+  projectedArea: number;
+  averageDepth: number;
 }
 
 interface RuntimeJointSummary {
@@ -119,12 +143,14 @@ interface RegressionSnapshot {
       id: string | null;
       subType: 'visual' | 'collision' | null;
       objectIndex: number | null;
+      helperKind: InteractionHelperKind | null;
     };
     hoveredSelection: {
       type: 'link' | 'joint' | null;
       id: string | null;
       subType: 'visual' | 'collision' | null;
       objectIndex: number | null;
+      helperKind: InteractionHelperKind | null;
     };
   } | null;
   viewer: ViewerControllerSnapshot | null;
@@ -152,6 +178,7 @@ interface RegressionAssetDebugState {
 export interface RegressionDebugApi {
   getAvailableFiles: () => Array<{ name: string; format: string }>;
   getRegressionSnapshot: () => RegressionSnapshot;
+  getProjectedInteractionTargets: () => RegressionProjectedInteractionTarget[];
   getAssetDebugState: () => RegressionAssetDebugState;
   getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
@@ -190,6 +217,9 @@ let viewerHandlers: ViewerRegressionHandlers | null = null;
 let viewerResourceScopeState: RegressionViewerResourceScopeState | null = null;
 let runtimeRobot: any | null = null;
 let runtimeRevision = 0;
+let projectedInteractionTargetsProvider:
+  | (() => RegressionProjectedInteractionTarget[])
+  | null = null;
 
 function toFixedArray(
   value: { x?: number; y?: number; z?: number } | [number, number, number] | undefined | null,
@@ -336,12 +366,14 @@ function summarizeInteractionSelection(selection: {
   id: string | null;
   subType?: 'visual' | 'collision';
   objectIndex?: number;
+  helperKind?: InteractionHelperKind;
 } | null | undefined) {
   return {
     type: selection?.type ?? null,
     id: selection?.id ?? null,
     subType: selection?.subType ?? null,
     objectIndex: selection?.objectIndex ?? null,
+    helperKind: selection?.helperKind ?? null,
   };
 }
 
@@ -658,6 +690,12 @@ export function setRegressionRuntimeRobot(robot: any | null): void {
   runtimeRevision += 1;
 }
 
+export function setRegressionProjectedInteractionTargetsProvider(
+  provider: (() => RegressionProjectedInteractionTarget[]) | null,
+): void {
+  projectedInteractionTargetsProvider = provider;
+}
+
 export function getRegressionSnapshot(): RegressionSnapshot {
   const selectedFile = appHandlers?.getSelectedFile() ?? null;
   const robotState = appHandlers?.getRobotState();
@@ -696,6 +734,7 @@ export function installRegressionDebugApi(targetWindow: Window): void {
   targetWindow.__URDF_STUDIO_DEBUG__ = {
     getAvailableFiles: () => getAvailableFilesSummary(),
     getRegressionSnapshot: () => getRegressionSnapshot(),
+    getProjectedInteractionTargets: () => projectedInteractionTargetsProvider?.() ?? [],
     getAssetDebugState: () => {
       const appAssetDebugState = appHandlers?.getAssetDebugState() ?? {
         appAssetKeys: [],

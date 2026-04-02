@@ -1,7 +1,10 @@
 import React, { memo, useRef, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { SceneCompileWarmup } from '@/shared/components/3d';
+import {
+    SceneCompileWarmup,
+    shouldUseIndeterminateStreamingMeshProgress,
+} from '@/shared/components/3d';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { HoverSelectionSync } from './HoverSelectionSync';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
@@ -312,11 +315,18 @@ export const RobotModel: React.FC<RobotModelProps> = memo(({
     // ============================================================
     // RENDER
     // ============================================================
-    const loadingHudState = buildViewerLoadingHudState({
+    const useIndeterminateStreamingProgress = shouldUseIndeterminateStreamingMeshProgress({
+        phase: loadingProgress?.phase,
         loadedCount: loadingProgress?.loadedCount,
         totalCount: loadingProgress?.totalCount,
+    });
+    const loadingHudState = buildViewerLoadingHudState({
+        loadedCount: useIndeterminateStreamingProgress ? null : loadingProgress?.loadedCount,
+        totalCount: useIndeterminateStreamingProgress ? null : loadingProgress?.totalCount,
         progressPercent: loadingProgress?.progressPercent,
-        fallbackDetail: t.loadingRobotPreparing,
+        fallbackDetail: useIndeterminateStreamingProgress
+            ? t.loadingRobotParsingInitialMeshes
+            : t.loadingRobotPreparing,
     });
     const loadingStageLabel = loadingProgress?.phase === 'preparing-scene'
         ? t.loadingRobotPreparing

@@ -7,7 +7,6 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { UrdfJoint } from '@/types';
 import { JointType } from '@/types';
-import { ignoreRaycast } from '@/shared/utils/three/ignoreRaycast';
 
 interface JointAxisProps {
   joint: UrdfJoint;
@@ -60,20 +59,23 @@ export const JointAxesVisual = React.memo(({
   const color = isActive ? '#f0abfc' : '#d946ef';
   const torusOpacity = isActive ? 1 : 0.9;
   const torusThickness = hovered ? 0.007 : 0.005;
+  const pickCylinderRadius = 0.08;
+  const pickSphereRadius = 0.085;
+  const pickTorusThickness = 0.03;
 
   return (
     <group ref={groupRef} quaternion={quaternion} scale={[scale, scale, scale]}>
+      {/* Invisible pick volumes widen the hit window so thin helper lines do not lose hover to nearby geometry. */}
       <mesh
         position={[0, 0, 0.175]}
         rotation={[Math.PI / 2, 0, 0]}
         renderOrder={10020}
-        raycast={ignoreRaycast}
       >
-        <cylinderGeometry args={[0.03, 0.03, 0.35, 8]} />
+        <cylinderGeometry args={[pickCylinderRadius, pickCylinderRadius, 0.35, 8]} />
         <meshBasicMaterial colorWrite={false} depthWrite={false} depthTest={false} />
       </mesh>
-      <mesh renderOrder={10020} raycast={ignoreRaycast}>
-        <sphereGeometry args={[0.045, 12, 12]} />
+      <mesh renderOrder={10020}>
+        <sphereGeometry args={[pickSphereRadius, 12, 12]} />
         <meshBasicMaterial colorWrite={false} depthWrite={false} depthTest={false} />
       </mesh>
       <arrowHelper
@@ -82,6 +84,10 @@ export const JointAxesVisual = React.memo(({
       />
       {(type === JointType.REVOLUTE || type === JointType.CONTINUOUS) && (
         <group>
+          <mesh renderOrder={10020}>
+            <torusGeometry args={[0.15, pickTorusThickness, 8, 32, type === JointType.REVOLUTE ? Math.PI * 1.5 : Math.PI * 2]} />
+            <meshBasicMaterial colorWrite={false} depthWrite={false} depthTest={false} />
+          </mesh>
           <mesh renderOrder={10020}>
             <torusGeometry args={[0.15, torusThickness, 8, 32, type === JointType.REVOLUTE ? Math.PI * 1.5 : Math.PI * 2]} />
             <meshBasicMaterial color={color} transparent opacity={torusOpacity} depthWrite={false} depthTest={false} />

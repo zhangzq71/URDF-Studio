@@ -53,7 +53,7 @@ test('buildUnifiedViewerSceneProps preserves live interaction wiring without pre
     viewerResourceScope: createScopeStub(),
     effectiveSourceFile: null,
     effectiveUrdfContent: '<robot name="go2" />',
-    mode: 'hardware',
+    mode: 'editor',
     selection,
     onHover,
     onMeshSelect,
@@ -63,7 +63,7 @@ test('buildUnifiedViewerSceneProps preserves live interaction wiring without pre
     viewerReloadKey: 9,
   });
 
-  assert.equal(sceneProps.mode, 'hardware');
+  assert.equal(sceneProps.mode, 'editor');
   assert.equal(sceneProps.selection, selection);
   assert.equal(sceneProps.hoveredSelection, hoveredSelection);
   assert.equal(sceneProps.hoverSelectionEnabled, true);
@@ -76,7 +76,7 @@ test('buildUnifiedViewerSceneProps preserves live interaction wiring without pre
   assert.equal(sceneProps.runtimeInstanceKey, 9);
 });
 
-test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only detail scene', () => {
+test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only editor scene', () => {
   const controller = createControllerStub();
   const onHover = () => {};
   const onMeshSelect = () => {};
@@ -91,7 +91,7 @@ test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only detail
     viewerResourceScope: createScopeStub(),
     effectiveSourceFile: null,
     effectiveUrdfContent: '<robot name="go2" />',
-    mode: 'hardware',
+    mode: 'editor',
     selection: { type: 'joint', id: 'hip_joint' },
     onHover,
     onMeshSelect,
@@ -103,7 +103,7 @@ test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only detail
     viewerReloadKey: 3,
   });
 
-  assert.equal(sceneProps.mode, 'detail');
+  assert.equal(sceneProps.mode, 'editor');
   assert.deepEqual(sceneProps.selection, EMPTY_VIEWER_SELECTION);
   assert.equal(sceneProps.hoveredSelection, undefined);
   assert.equal(sceneProps.hoverSelectionEnabled, false);
@@ -133,7 +133,7 @@ test('buildUnifiedViewerSceneProps disables hover interaction for inactive retai
     viewerResourceScope: createScopeStub(),
     effectiveSourceFile: null,
     effectiveUrdfContent: '<robot name="go2" />',
-    mode: 'detail',
+    mode: 'editor',
     selection,
     onHover,
     onMeshSelect,

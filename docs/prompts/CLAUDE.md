@@ -10,24 +10,56 @@
 2. 再读本文件。
 3. 仅在任务相关时再看对应轻量入口：
    - UI / 主题 / 可访问性：看本文件第 6 节
-   - `Visualizer`（`Skeleton` / `Hardware`）：看本文件第 7 节
-   - `URDF Viewer`（`Detail`）：看本文件第 8 节
+   - `Visualizer`（`Editor` 下的拓扑 / 硬件能力）：看本文件第 7 节
+   - `URDF Viewer`（`Editor` 下的几何 / 碰撞 / 测量能力）：看本文件第 8 节
 4. AI 审阅标准直接读取：
    - `src/features/ai-assistant/config/urdf_inspect_standard_en.md`
    - `src/features/ai-assistant/config/urdf_inspect_stantard_zh.md`
 5. 与 AI 对话时，优先给出：
    - 具体的 `Link` / `Joint` 名称
    - 期望的父子关系
-   - 当前处于 `Skeleton` / `Detail` / `Hardware` 哪个模式
+   - 当前在 `Editor` 中操作的是拓扑、几何/碰撞、还是硬件相关能力
    - 涉及电机时的力矩 / 传动 / 阻尼约束
 
 若本文件描述与当前 `src/` 真实结构冲突，以仓库现状和 `AGENTS.md` 为准。
+
+## 1.5 Skill-first 路由（减少 prompt / MCP token）
+
+默认思路：
+
+- 先用 skill 压缩“怎么做”的上下文，再决定是否真的需要调用 MCP / 浏览器 / 外部搜索工具。
+- skill 主要替代工作流说明、最佳实践和决策开销，不替代真实执行能力本身。
+- 若仓库已有现成脚本、测试或 build 命令，优先本地命令，不为了形式统一改走 MCP。
+
+常见路由：
+
+- 浏览器验证 / 联调 / 截图：
+  - 优先 `webapp-testing`、`playwright`、`browser-automation`
+  - 营销或文档截图优先 `screenshots`
+- 3D / R3F / Three.js / WebGL：
+  - 优先 `threejs-skills`
+- URDF Studio UI / 主题一致性：
+  - 优先 `urdf-studio-style`
+  - 通用前端设计再补 `frontend-design`
+- 调试 / 排障：
+  - 优先 `systematic-debugging`、`debugger`
+- 测试 / QA：
+  - 优先 `testing-qa`
+- 最新库文档：
+  - 优先 `context7-auto-research`
+  - OpenAI 相关优先 `openai-docs`
+
+仍需 MCP / 外部工具的典型情况：
+
+- 真实浏览器交互、DOM 快照、网络面板、trace
+- 在线搜索、外部文档抓取、远程资源读取
+- Figma / 设计文件 / 其他 MCP 服务侧资源的真实读写
 
 ## 2. 项目快照
 
 **URDF Studio** 是一个机器人设计、装配、可视化与导出工作台，核心能力包括：
 
-- 三模式编辑：`Skeleton` / `Detail` / `Hardware`
+- 单模式编辑：`Editor`
 - 多 URDF 组装与桥接关节
 - 多格式导入导出：`URDF` / `MJCF` / `USD` / `Xacro` / `ZIP` / `.usp`
 - AI 生成与 AI 审阅
@@ -98,17 +130,17 @@ app -> features -> store -> shared -> core -> types
 - 文案位于 `src/shared/i18n/locales/en.ts` 与 `src/shared/i18n/locales/zh.ts`
 - 新增界面文本时，必须同步双语
 
-## 4. 三种编辑模式
+## 4. 单模式 `Editor`
 
-| 模式 | 目标 | 主模块 | 典型任务 |
-| --- | --- | --- | --- |
-| `Skeleton` | 搭建运动链拓扑 | `Visualizer` | Link / Joint 增删、拓扑编辑、关节参数 |
-| `Detail` | 编辑几何体、材质、碰撞、测量 | `URDF Viewer` | Visual / Collision、网格、材质、纹理、碰撞变换 |
-| `Hardware` | 配置电机与硬件参数 | `Visualizer` | 电机型号、传动比、阻尼、摩擦 |
+| 子能力 | 主模块 | 典型任务 |
+| --- | --- | --- |
+| 拓扑编辑 | `Visualizer` | Link / Joint 增删、拓扑编辑、关节参数 |
+| 几何 / 碰撞 / 测量 | `URDF Viewer` | Visual / Collision、网格、材质、纹理、碰撞变换 |
+| 硬件配置 | `Visualizer` | 电机型号、传动比、阻尼、摩擦 |
 
-新增功能前，先判断所属模式，避免跨模式逻辑缠绕。
+新增功能前，先判断属于 `Editor` 下哪类子能力，避免跨子系统逻辑缠绕。
 
-跨模式共享交互优先落在：
+共享交互优先落在：
 - `src/app/*` 编排层
 - `src/shared/components/3d/*` 共享画布基础设施
 
@@ -167,7 +199,7 @@ app -> features -> store -> shared -> core -> types
 - 文件加入组装的入口：
   - 右键菜单“添加”
   - 文件行右侧绿色按钮
-- 单击文件会打开独立 3D 预览，不直接加入组装
+- 单击文件会直接加入组装；右键菜单与文件行右侧按钮保留快捷操作入口
 
 ## 6. UI / 样式 / 可访问性
 
@@ -216,7 +248,7 @@ app -> features -> store -> shared -> core -> types
 - Hover / Active / Focus 行为一致且可感知
 - 不新增分散硬编码色值
 
-## 7. Visualizer（Skeleton / Hardware）
+## 7. Visualizer（Editor 子能力：拓扑 / 硬件）
 
 ### 当前结构
 
@@ -253,7 +285,7 @@ RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 - 保持 `RobotNode <-> JointNode` 交替递归模式
 - 涉及 THREE 资源时注意释放，避免材质 / 几何体泄漏
 
-## 8. URDF Viewer（Detail）
+## 8. URDF Viewer（Editor 子能力：几何 / 碰撞 / 测量）
 
 ### 当前结构
 

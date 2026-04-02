@@ -20,7 +20,7 @@ test('buildURDFViewerSceneProps uses controller-owned defaults for viewer scene 
     availableFiles: [],
     urdfContent: '<robot name="go2" />',
     assets: {},
-    mode: 'detail',
+    mode: 'editor',
   });
 
   assert.equal(sceneProps.controller, controller);
@@ -53,7 +53,7 @@ test('buildURDFViewerSceneProps preserves explicit overrides for preview and han
     assets: { 'robots/go2/meshes/base.dae': 'blob:base' },
     sourceFilePath: 'robots/go2/urdf/go2.urdf',
     groundPlaneOffset: 3.5,
-    mode: 'detail',
+    mode: 'editor',
     hoveredSelection: { type: 'link', id: 'base_link' },
     hoverSelectionEnabled: false,
     onHover,
@@ -63,7 +63,7 @@ test('buildURDFViewerSceneProps preserves explicit overrides for preview and han
   });
 
   assert.equal(sceneProps.active, false);
-  assert.equal(sceneProps.mode, 'detail');
+  assert.equal(sceneProps.mode, 'editor');
   assert.equal(sceneProps.groundPlaneOffset, 3.5);
   assert.equal(sceneProps.toolMode, 'select');
   assert.equal(sceneProps.hoverSelectionEnabled, false);

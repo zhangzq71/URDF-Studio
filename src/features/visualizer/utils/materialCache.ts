@@ -76,7 +76,9 @@ function createCachedMaterial({
     color: resolvedColor,
     opacity: resolvedOpacity,
     transparent: isCollision || resolvedOpacity < 1,
-    side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
+    // Collision overlays must stay raycastable even when imported mesh winding is
+    // inconsistent, which is common in ROS/STL assets such as Unitree G1.
+    side: THREE.DoubleSide,
     preserveExactColor: true,
   });
   matteMaterial.wireframe = matWireframe;

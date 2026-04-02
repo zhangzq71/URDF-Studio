@@ -14,7 +14,6 @@ interface TreeEditorFileBrowserPanelProps {
   availableFiles: RobotFile[];
   fileTree: FileTreeNode[];
   expandedFolders: Set<string>;
-  previewFileName?: string;
   editingFolderPath?: string | null;
   folderRenameDraft: string;
   folderRenameInputRef: RefObject<HTMLInputElement | null>;
@@ -26,7 +25,6 @@ interface TreeEditorFileBrowserPanelProps {
   onCommitFolderRename: () => void;
   onCancelFolderRename: () => void;
   onLoadRobot?: (file: RobotFile) => void;
-  onPreviewFile?: (file: RobotFile) => void;
   onAddComponent?: (file: RobotFile) => void;
   onDeleteFromLibrary?: (target: LibraryDeleteTarget) => void;
   onFileContextMenu: (event: MouseEvent, file: RobotFile) => void;
@@ -43,7 +41,6 @@ export function TreeEditorFileBrowserPanel({
   availableFiles,
   fileTree,
   expandedFolders,
-  previewFileName,
   editingFolderPath,
   folderRenameDraft,
   folderRenameInputRef,
@@ -55,7 +52,6 @@ export function TreeEditorFileBrowserPanel({
   onCommitFolderRename,
   onCancelFolderRename,
   onLoadRobot,
-  onPreviewFile,
   onAddComponent,
   onDeleteFromLibrary,
   onFileContextMenu,
@@ -81,11 +77,10 @@ export function TreeEditorFileBrowserPanel({
       onFolderRenameDraftChange={onFolderRenameDraftChange}
       onCommitFolderRename={onCommitFolderRename}
       onCancelFolderRename={onCancelFolderRename}
-      onFileActivate={isProMode ? onPreviewFile : onLoadRobot}
+      onFileActivate={isProMode ? onAddComponent : onLoadRobot}
       onFileContextMenu={onFileContextMenu}
       onFolderContextMenu={onFolderContextMenu}
       onToggleOpen={onToggleOpen}
-      previewFileName={previewFileName}
       shouldFillSpace={shouldFillSpace}
       t={t}
       toggleFolder={toggleFolder}

@@ -8,24 +8,23 @@ import {
 } from './mergedVisualizerSceneMode.ts';
 
 test('merged visualizer scene no longer shows the legacy constraint overlay', () => {
-  assert.equal(shouldRenderMergedVisualizerConstraintOverlay('detail'), false);
+  assert.equal(shouldRenderMergedVisualizerConstraintOverlay('editor'), false);
 });
 
-test('merged visualizer scene keeps the joint transform gizmo enabled in detail mode', () => {
-  assert.equal(shouldEnableMergedVisualizerJointTransformControls('detail'), true);
+test('merged visualizer scene keeps the joint transform gizmo enabled in editor mode', () => {
+  assert.equal(shouldEnableMergedVisualizerJointTransformControls('editor'), true);
 });
 
-test('skeleton mode keeps the joint transform gizmo enabled', () => {
-  assert.equal(shouldEnableMergedVisualizerJointTransformControls('skeleton'), true);
-});
-
-test('hardware mode keeps the joint transform gizmo enabled', () => {
-  assert.equal(shouldEnableMergedVisualizerJointTransformControls('hardware'), true);
+test('merged visualizer scene disables joint transform gizmos while assembly workspace transforms are active', () => {
+  assert.equal(
+    shouldEnableMergedVisualizerJointTransformControls('editor', { assemblyWorkspaceActive: true }),
+    false,
+  );
 });
 
 test('joint presentation keeps the shared solid helper styling', () => {
   assert.deepEqual(resolveMergedVisualizerJointPresentation({
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: true,
     showJointLabel: false,
     showOrigin: true,
@@ -39,7 +38,7 @@ test('joint presentation keeps the shared solid helper styling', () => {
 
 test('joint presentation still renders the shared solid connector when labels are visible', () => {
   assert.deepEqual(resolveMergedVisualizerJointPresentation({
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: false,
     showJointLabel: true,
     showOrigin: false,
@@ -53,7 +52,7 @@ test('joint presentation still renders the shared solid connector when labels ar
 
 test('joint presentation falls back to a visible helper dot when no other affordance is shown', () => {
   assert.deepEqual(resolveMergedVisualizerJointPresentation({
-    mode: 'detail',
+    mode: 'editor',
     showGeometry: false,
     showJointLabel: false,
     showOrigin: false,

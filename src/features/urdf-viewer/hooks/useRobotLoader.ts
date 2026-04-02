@@ -23,9 +23,9 @@ import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 import type { UrdfJoint, UrdfLink } from '@/types';
 import { setRegressionRuntimeRobot } from '@/shared/debug/regressionBridge';
 import { isSingleDofJoint } from '../utils/jointTypes';
-import { detectSingleGeometryPatch, detectSingleJointPatch } from '../utils/robotLoaderDiff';
+import { detectJointPatches, detectSingleGeometryPatch } from '../utils/robotLoaderDiff';
 import { applyGeometryPatchInPlace } from '../utils/robotLoaderGeometryPatch';
-import { patchJointInPlace } from '../utils/robotLoaderJointPatch';
+import { patchJointsInPlace } from '../utils/robotLoaderJointPatch';
 import { resolveURDFMaterialsForScene } from '../utils/urdfMaterials';
 import { syncLoadedRobotScene } from '../utils/loadedRobotSceneSync';
 import { shouldMountRobotBeforeAssetsComplete } from '../utils/loadStrategy';
@@ -378,7 +378,9 @@ export function useRobotLoader({
         setError(null);
     }, [robotLinks, resolvedSourceFormat, urdfContent, assets, invalidate, isMeshPreview, sourceFileDir]);
 
-    // Incremental path: update exactly one changed joint in-place and skip next full URDF reload.
+    // Incremental path: update changed joint metadata/origins in-place and skip
+    // the next full URDF reload. This is especially important for assembly
+    // bridge previews, which can move several component root anchors at once.
     useEffect(() => {
         if (isMeshPreview) return;
         if (!robotJoints) return;
@@ -390,10 +392,10 @@ export function useRobotLoader({
         if (!previousJoints || !currentRobot) return;
         if (resolvedSourceFormat === 'mjcf') return;
 
-        const patch = detectSingleJointPatch(previousJoints, robotJoints);
-        if (!patch) return;
+        const patches = detectJointPatches(previousJoints, robotJoints);
+        if (!patches || patches.length === 0) return;
 
-        const applied = patchJointInPlace(currentRobot, patch, invalidate);
+        const applied = patchJointsInPlace(currentRobot, patches, invalidate);
         if (!applied) return;
 
         skipReloadCountRef.current += 1;

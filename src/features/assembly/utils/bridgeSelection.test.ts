@@ -8,6 +8,7 @@ import {
   filterSelectableBridgeComponents,
   isAssemblySelectionAllowedForBridge,
   resolveAssemblySelection,
+  resolveAssemblyViewerComponentSelection,
   resolveBlockedBridgeComponentId,
 } from './bridgeSelection.ts';
 
@@ -25,7 +26,7 @@ function createAssemblyState(): AssemblyState {
           links: {
             'component_a/base_link': {
               id: 'component_a/base_link',
-              name: 'base_link',
+              name: 'robot_a',
               visual: {
                 type: GeometryType.BOX,
                 dimensions: { x: 1, y: 1, z: 1 },
@@ -41,7 +42,7 @@ function createAssemblyState(): AssemblyState {
             },
             'component_a/tool_link': {
               id: 'component_a/tool_link',
-              name: 'tool_link',
+              name: 'robot_a_tool_link',
               visual: {
                 type: GeometryType.BOX,
                 dimensions: { x: 1, y: 1, z: 1 },
@@ -59,7 +60,7 @@ function createAssemblyState(): AssemblyState {
           joints: {
             'component_a/tool_joint': {
               id: 'component_a/tool_joint',
-              name: 'tool_joint',
+              name: 'robot_a_tool_joint',
               type: JointType.FIXED,
               parentLinkId: 'component_a/base_link',
               childLinkId: 'component_a/tool_link',
@@ -80,7 +81,7 @@ function createAssemblyState(): AssemblyState {
           links: {
             'component_b/base_link': {
               id: 'component_b/base_link',
-              name: 'base_link',
+              name: 'robot_b',
               visual: {
                 type: GeometryType.BOX,
                 dimensions: { x: 1, y: 1, z: 1 },
@@ -112,7 +113,7 @@ test('resolveAssemblySelection maps both link and joint picks back to their comp
       componentId: 'component_a',
       componentName: 'Component A',
       linkId: 'component_a/tool_link',
-      linkName: 'tool_link',
+      linkName: 'robot_a_tool_link',
     },
   );
 
@@ -122,8 +123,81 @@ test('resolveAssemblySelection maps both link and joint picks back to their comp
       componentId: 'component_a',
       componentName: 'Component A',
       linkId: 'component_a/tool_link',
-      linkName: 'tool_link',
+      linkName: 'robot_a_tool_link',
     },
+  );
+});
+
+test('resolveAssemblySelection accepts viewer-facing link and joint names', () => {
+  const assemblyState = createAssemblyState();
+
+  assert.deepEqual(
+    resolveAssemblySelection(assemblyState, { type: 'link', id: 'robot_a_tool_link' }),
+    {
+      componentId: 'component_a',
+      componentName: 'Component A',
+      linkId: 'component_a/tool_link',
+      linkName: 'robot_a_tool_link',
+    },
+  );
+
+  assert.deepEqual(
+    resolveAssemblySelection(assemblyState, { type: 'joint', id: 'robot_a_tool_joint' }),
+    {
+      componentId: 'component_a',
+      componentName: 'Component A',
+      linkId: 'component_a/tool_link',
+      linkName: 'robot_a_tool_link',
+    },
+  );
+});
+
+test('resolveAssemblyViewerComponentSelection promotes viewer picks to a component when bridge picking is inactive', () => {
+  const assemblyState = createAssemblyState();
+
+  assert.equal(
+    resolveAssemblyViewerComponentSelection(assemblyState, {
+      type: 'link',
+      id: 'component_a/base_link',
+    }),
+    'component_a',
+  );
+
+  assert.equal(
+    resolveAssemblyViewerComponentSelection(assemblyState, {
+      type: 'joint',
+      id: 'component_a/tool_joint',
+    }),
+    'component_a',
+  );
+
+  assert.equal(
+    resolveAssemblyViewerComponentSelection(assemblyState, {
+      type: 'link',
+      id: 'robot_a',
+    }),
+    'component_a',
+  );
+
+  assert.equal(
+    resolveAssemblyViewerComponentSelection(assemblyState, {
+      type: 'joint',
+      id: 'robot_a_tool_joint',
+    }),
+    'component_a',
+  );
+});
+
+test('resolveAssemblyViewerComponentSelection keeps link or joint picking active while a bridge interaction guard is present', () => {
+  const assemblyState = createAssemblyState();
+
+  assert.equal(
+    resolveAssemblyViewerComponentSelection(
+      assemblyState,
+      { type: 'link', id: 'component_a/base_link' },
+      { hasInteractionGuard: true },
+    ),
+    null,
   );
 });
 
@@ -161,6 +235,24 @@ test('bridge selection rules reject picks from the blocked component and trim dr
       blockedComponentId,
     ),
     true,
+  );
+
+  assert.equal(
+    isAssemblySelectionAllowedForBridge(
+      assemblyState,
+      { type: 'link', id: 'robot_a' } satisfies Selection,
+      blockedComponentId,
+    ),
+    false,
+  );
+
+  assert.equal(
+    isAssemblySelectionAllowedForBridge(
+      assemblyState,
+      { type: 'joint', id: 'robot_a_tool_joint' } satisfies Selection,
+      blockedComponentId,
+    ),
+    false,
   );
 
   assert.deepEqual(

@@ -4,6 +4,11 @@ import * as THREE from 'three';
 import { useSelectionStore } from '@/store/selectionStore';
 import { findNearestVisualizerHoverTarget } from '../utils/hoverPicking';
 import type { VisualizerInteractiveLayer } from '../utils/interactiveLayerPriority';
+import {
+  measureCanvasPointerPosition,
+  normalizeCanvasPointerPosition,
+  type CanvasPointerMeasurement,
+} from '../utils/pointerNormalization';
 
 interface VisualizerHoverControllerProps {
   robotRootRef: React.RefObject<THREE.Group | null>;
@@ -22,7 +27,7 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
   const raycasterRef = React.useRef(new THREE.Raycaster());
   const pointerRef = React.useRef(new THREE.Vector2());
   const frameRef = React.useRef<number | null>(null);
-  const pendingPointerRef = React.useRef<{ x: number; y: number } | null>(null);
+  const pendingPointerRef = React.useRef<CanvasPointerMeasurement | null>(null);
   const lastHoverKeyRef = React.useRef<string | null>(null);
 
   const clearScheduledHoverUpdate = React.useCallback(() => {
@@ -44,36 +49,33 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
     invalidate();
   }, [clearHover, invalidate]);
 
-  const resolvePointerLocalPoint = React.useCallback((event: PointerEvent): { x: number; y: number; inside: boolean } => {
-    const rect = gl.domElement.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const inside = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
-    return { x, y, inside };
+  const resolvePointerLocalPoint = React.useCallback((event: PointerEvent): CanvasPointerMeasurement => {
+    return measureCanvasPointerPosition(
+      event.clientX,
+      event.clientY,
+      gl.domElement.getBoundingClientRect(),
+    );
   }, [gl.domElement]);
 
-  const updateHoverFromLocalPoint = React.useCallback((localX: number, localY: number) => {
+  const updateHoverFromLocalPoint = React.useCallback((pointerMeasurement: CanvasPointerMeasurement) => {
     const root = robotRootRef.current;
     if (!root) {
       commitClearedHover();
       return;
     }
 
-    const width = gl.domElement.clientWidth;
-    const height = gl.domElement.clientHeight;
-    if (width <= 0 || height <= 0) {
-      commitClearedHover();
-      return;
-    }
-    if (localX < 0 || localY < 0 || localX > width || localY > height) {
+    if (!pointerMeasurement.inside) {
       commitClearedHover();
       return;
     }
 
-    pointerRef.current.set(
-      (localX / width) * 2 - 1,
-      -(localY / height) * 2 + 1,
-    );
+    const normalizedPointer = normalizeCanvasPointerPosition(pointerMeasurement);
+    if (!normalizedPointer) {
+      commitClearedHover();
+      return;
+    }
+
+    pointerRef.current.set(normalizedPointer.x, normalizedPointer.y);
 
     raycasterRef.current.setFromCamera(pointerRef.current, camera);
     const nextTarget = findNearestVisualizerHoverTarget(root, raycasterRef.current, {
@@ -95,8 +97,8 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
     commitClearedHover();
   }, [camera, commitClearedHover, gl.domElement, interactionLayerPriority, invalidate, robotRootRef, setHoveredSelection]);
 
-  const scheduleHoverUpdate = React.useCallback((localX: number, localY: number) => {
-    pendingPointerRef.current = { x: localX, y: localY };
+  const scheduleHoverUpdate = React.useCallback((pointerMeasurement: CanvasPointerMeasurement) => {
+    pendingPointerRef.current = pointerMeasurement;
     if (frameRef.current !== null) {
       return;
     }
@@ -109,7 +111,7 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
         return;
       }
 
-      updateHoverFromLocalPoint(nextPoint.x, nextPoint.y);
+      updateHoverFromLocalPoint(nextPoint);
     });
   }, [updateHoverFromLocalPoint]);
 
@@ -138,7 +140,7 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
         return;
       }
 
-      scheduleHoverUpdate(point.x, point.y);
+      scheduleHoverUpdate(point);
     };
 
     const handlePointerUp = (event: PointerEvent) => {
@@ -150,7 +152,7 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
         return;
       }
 
-      scheduleHoverUpdate(point.x, point.y);
+      scheduleHoverUpdate(point);
     };
 
     const handlePointerLeave = () => {

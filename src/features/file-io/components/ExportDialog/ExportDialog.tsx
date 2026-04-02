@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Upload, Package, FileCode, Layers, Lock, Braces, Loader2, Info } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Upload, Package, FileCode, Layers, Lock, Braces, Loader2, Info, Briefcase } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import { Slider, Switch } from '@/shared/components/ui';
@@ -8,7 +8,7 @@ import type { ExportProgressState } from '../../types';
 import type { MjcfActuatorType } from '@/core/parsers/mjcf/mjcfGenerator';
 import { ExportProgressView } from '../ExportProgressView';
 
-export type ExportFormat = 'mjcf' | 'urdf' | 'xacro' | 'sdf' | 'usd';
+export type ExportFormat = 'project' | 'mjcf' | 'urdf' | 'xacro' | 'sdf' | 'usd';
 
 export interface MjcfExportConfig {
   meshdir: string;
@@ -50,6 +50,7 @@ export interface SdfExportConfig {
 }
 
 export interface UsdExportConfig {
+  fileFormat: 'usd' | 'usda';
   compressMeshes: boolean;
   meshQuality: number;
 }
@@ -106,6 +107,7 @@ const DEFAULT_CONFIG: ExportDialogConfig = {
     stlQuality: 50,
   },
   usd: {
+    fileFormat: 'usd',
     compressMeshes: true,
     meshQuality: 50,
   },
@@ -122,6 +124,8 @@ interface ExportDialogProps {
   lang: 'en' | 'zh';
   isExporting?: boolean;
   canExportUsd?: boolean;
+  allowProjectExport?: boolean;
+  defaultFormat?: ExportFormat;
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -136,15 +140,19 @@ function Row({
   label,
   desc,
   hint,
+  stacked = false,
   children,
 }: {
   label: string;
   desc?: string;
   hint?: string;
+  stacked?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-border-black last:border-0">
+    <div className={`flex gap-3 border-b border-border-black py-1.5 last:border-0 ${
+      stacked ? 'flex-col' : 'items-start justify-between'
+    }`}>
       <div className="flex flex-col gap-0.5 min-w-0">
         <div className="flex items-start gap-1.5 min-w-0">
           <span className="text-[11px] text-text-primary leading-tight">{label}</span>
@@ -161,7 +169,7 @@ function Row({
         </div>
         {desc && <span className="text-[9px] text-text-tertiary leading-tight">{desc}</span>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className={stacked ? 'w-full min-w-0' : 'shrink-0'}>{children}</div>
     </div>
   );
 }
@@ -175,18 +183,22 @@ function SelectField({
   options,
   onChange,
   title,
+  fullWidth = false,
 }: {
   value: string;
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
   title?: string;
+  fullWidth?: boolean;
 }) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       title={title}
-      className="bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all"
+      className={`bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all ${
+        fullWidth ? 'w-full min-w-0' : ''
+      }`}
     >
       {options.map((opt) => (
         <option key={opt.value} value={opt.value}>
@@ -202,10 +214,12 @@ function TextField({
   value,
   onChange,
   placeholder,
+  fullWidth = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  fullWidth?: boolean;
 }) {
   return (
     <input
@@ -213,7 +227,9 @@ function TextField({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="w-28 bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all"
+      className={`bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all ${
+        fullWidth ? 'w-full min-w-0' : 'w-28'
+      }`}
     />
   );
 }
@@ -352,11 +368,21 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   lang,
   isExporting = false,
   canExportUsd = false,
+  allowProjectExport = false,
+  defaultFormat = DEFAULT_CONFIG.format,
 }) => {
   const t = translations[lang];
-  const [config, setConfig] = useState<ExportDialogConfig>(DEFAULT_CONFIG);
+  type MeshExportFormat = Exclude<ExportFormat, 'project'>;
+  const initialFormat = defaultFormat === 'project'
+    ? DEFAULT_CONFIG.format
+    : defaultFormat;
+  const [config, setConfig] = useState<ExportDialogConfig>(() => ({
+    ...DEFAULT_CONFIG,
+    format: initialFormat,
+  }));
   const [localExportProgress, setLocalExportProgress] = useState<ExportProgressState | null>(null);
-  const [qualityModes, setQualityModes] = useState<Record<ExportFormat, StlPresetKey>>(() => ({
+  const [pendingExportFormat, setPendingExportFormat] = useState<ExportFormat | null>(null);
+  const [qualityModes, setQualityModes] = useState<Record<MeshExportFormat, StlPresetKey>>(() => ({
     mjcf: getStlPreset(DEFAULT_CONFIG.mjcf.compressSTL, DEFAULT_CONFIG.mjcf.stlQuality),
     urdf: getStlPreset(DEFAULT_CONFIG.urdf.compressSTL, DEFAULT_CONFIG.urdf.stlQuality),
     xacro: getStlPreset(DEFAULT_CONFIG.xacro.compressSTL, DEFAULT_CONFIG.xacro.stlQuality),
@@ -372,7 +398,22 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     enableMaximize: false,
   });
 
-  const setFormat = useCallback((fmt: ExportFormat) => {
+  useEffect(() => {
+    if (!isExporting) {
+      setPendingExportFormat(null);
+    }
+  }, [isExporting]);
+
+  const dialogWidth = windowState.size.width;
+  const isCompactLayout = dialogWidth < 480;
+  const isStackedLayout = dialogWidth < 420;
+  const formatGridClassName = dialogWidth < 420
+    ? 'grid-cols-2'
+    : dialogWidth < 560
+      ? 'grid-cols-3'
+      : 'grid-cols-5';
+
+  const setFormat = useCallback((fmt: MeshExportFormat) => {
     if (fmt === 'usd' && !canExportUsd) return;
     setConfig((prev) => ({ ...prev, format: fmt }));
   }, [canExportUsd]);
@@ -401,7 +442,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     setConfig((prev) => ({ ...prev, includeSkeleton: value }));
   }, []);
 
-  const updateQualityMode = useCallback((format: ExportFormat, mode: StlPresetKey) => {
+  const updateQualityMode = useCallback((format: MeshExportFormat, mode: StlPresetKey) => {
     setQualityModes((prev) => (prev[format] === mode ? prev : { ...prev, [format]: mode }));
   }, []);
 
@@ -410,20 +451,22 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     { value: 'velocity', label: t.exportActuatorVelocity },
     { value: 'motor', label: t.exportActuatorMotor },
   ];
-  const exportActionLabel = config.format === 'usd' ? t.export : t.exportDoExport;
-  const fallbackTotalSteps = config.format === 'usd'
-    ? 3
-    : config.format === 'mjcf'
-      ? (config.mjcf.includeMeshes ? 5 : 4)
-      : (
-        (
-          config.format === 'urdf'
-            ? config.urdf.includeMeshes
-            : config.format === 'xacro'
-              ? config.xacro.includeMeshes
-              : config.sdf.includeMeshes
-        ) ? 4 : 3
-      );
+  const activeExportFormat = pendingExportFormat ?? config.format;
+  const fallbackTotalSteps = activeExportFormat === 'project'
+    ? 6
+    : activeExportFormat === 'usd'
+      ? (config.usd.fileFormat === 'usda' ? 3 : 4)
+      : activeExportFormat === 'mjcf'
+        ? (config.mjcf.includeMeshes ? 5 : 4)
+        : (
+          (
+            activeExportFormat === 'urdf'
+              ? config.urdf.includeMeshes
+              : activeExportFormat === 'xacro'
+                ? config.xacro.includeMeshes
+                : config.sdf.includeMeshes
+          ) ? 4 : 3
+        );
   const progressState = localExportProgress ?? {
     stepLabel: t.exportProgressPreparing,
     detail: t.exportProgressPreparingDetail,
@@ -432,12 +475,22 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     totalSteps: fallbackTotalSteps,
     indeterminate: true,
   };
-  const handleExportClick = useCallback(() => {
+
+  const startExport = useCallback((format: ExportFormat) => {
+    setPendingExportFormat(format);
     setLocalExportProgress(null);
-    void onExport(config, {
+    void onExport({ ...config, format }, {
       onProgress: setLocalExportProgress,
     });
   }, [config, onExport]);
+
+  const handleExportClick = useCallback(() => {
+    startExport(config.format);
+  }, [config.format, startExport]);
+
+  const handleProjectExportClick = useCallback(() => {
+    startExport('project');
+  }, [startExport]);
 
   const formatExt = config.format === 'mjcf'
     ? '.xml'
@@ -445,9 +498,17 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       ? '.urdf.xacro'
       : config.format === 'sdf'
         ? '.sdf'
-      : config.format === 'usd'
-        ? '.usd'
-        : '.urdf';
+        : config.format === 'usd'
+          ? `.${config.usd.fileFormat}`
+          : '.urdf';
+
+  const formatLabel: Record<MeshExportFormat, string> = {
+    mjcf: t.exportFormatMJCF,
+    urdf: t.exportFormatURDF,
+    xacro: t.exportFormatXacro,
+    sdf: t.exportFormatSDF,
+    usd: t.exportFormatUSD,
+  };
 
   return (
     <>
@@ -484,23 +545,21 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
           {/* Format Selector */}
           <SectionLabel>{t.exportFormat}</SectionLabel>
-          <div className="flex gap-1 p-1 bg-segmented-bg rounded-xl border border-border-black">
-            {(['mjcf', 'urdf', 'xacro', 'sdf', 'usd'] as ExportFormat[]).map((fmt) => {
+          <div
+            data-export-format-picker
+            className={`grid gap-1 rounded-xl border border-border-black bg-segmented-bg p-1 ${formatGridClassName}`}
+          >
+            {(['mjcf', 'urdf', 'xacro', 'sdf', 'usd'] as MeshExportFormat[]).map((fmt) => {
               const isDisabled = fmt === 'usd' && !canExportUsd;
               const isActive = config.format === fmt;
-              const label: Record<ExportFormat, string> = {
-                mjcf: t.exportFormatMJCF,
-                urdf: t.exportFormatURDF,
-                xacro: t.exportFormatXacro,
-                sdf: t.exportFormatSDF,
-                usd: t.exportFormatUSD,
-              };
               return (
                 <button
                   key={fmt}
                   onClick={() => setFormat(fmt)}
                   disabled={isDisabled}
-                  className={`relative flex-1 flex items-center justify-center gap-1.5 py-1 px-2.5 rounded-lg text-[11px] font-medium transition-all ${
+                  className={`relative flex min-w-0 items-center justify-center rounded-lg px-2 py-1.5 font-medium transition-all ${
+                    isCompactLayout ? 'flex-col gap-1 text-center text-[10px] leading-tight' : 'gap-1.5 text-[11px]'
+                  } ${
                     isDisabled
                       ? 'opacity-40 cursor-not-allowed text-text-tertiary'
                       : isActive
@@ -513,7 +572,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                   {fmt === 'xacro' && <Braces className="w-3.5 h-3.5" />}
                   {fmt === 'sdf' && <Layers className="w-3.5 h-3.5" />}
                   {fmt === 'usd' && <Package className="w-3.5 h-3.5" />}
-                  <span>{label[fmt]}</span>
+                  <span className="min-w-0 break-words">{formatLabel[fmt]}</span>
                   {isDisabled && (
                     <span className="absolute -top-1.5 -right-1 bg-element-hover text-text-tertiary text-[8px] px-1 py-0.5 rounded border border-border-black flex items-center gap-0.5">
                       <Lock className="w-2 h-2" />{t.exportComingSoon}
@@ -523,6 +582,44 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               );
             })}
           </div>
+
+          {allowProjectExport && (
+            <>
+              <SectionLabel>{t.exportProject}</SectionLabel>
+              <div
+                data-project-export-card
+                className="rounded-xl border border-border-black bg-element-bg px-3 py-3"
+              >
+                <div className={`flex gap-3 ${isCompactLayout ? 'flex-col' : 'items-center justify-between'}`}>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="rounded-xl border border-border-black bg-panel-bg p-2 text-text-secondary shadow-sm">
+                      <Briefcase className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-text-primary">
+                        {t.exportProjectWorkspaceSummary}
+                      </div>
+                      <div className="mt-1 text-[11px] leading-relaxed text-text-secondary">
+                        {t.exportProjectWorkspaceSummaryDesc}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-project-export-button
+                    onClick={handleProjectExportClick}
+                    disabled={isExporting}
+                    className={`flex items-center justify-center gap-2 rounded-lg border border-border-black bg-panel-bg px-3 py-2 text-xs font-semibold text-text-primary transition-colors hover:border-system-blue/30 hover:bg-system-blue/10 hover:text-system-blue disabled:cursor-not-allowed disabled:opacity-50 ${
+                      isCompactLayout ? 'w-full' : 'shrink-0'
+                    }`}
+                  >
+                    <Briefcase className="h-3.5 w-3.5" />
+                    {t.exportDoExportProject}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Compatible simulators */}
           <div className="flex flex-wrap gap-1 pt-1 pb-0.5">
@@ -549,34 +646,37 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             <>
               <SectionLabel>{t.exportOptionsSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.exportMeshdir}>
+                <Row label={t.exportMeshdir} stacked={isStackedLayout}>
                   <TextField
                     value={config.mjcf.meshdir}
                     onChange={(v) => updateMjcf('meshdir', v)}
                     placeholder="meshes/"
+                    fullWidth={isStackedLayout}
                   />
                 </Row>
-                <Row label={t.exportFloatBase} desc={t.exportFloatBaseDesc}>
+                <Row label={t.exportFloatBase} desc={t.exportFloatBaseDesc} stacked={isStackedLayout}>
                   <Toggle value={config.mjcf.addFloatBase} onChange={(v) => updateMjcf('addFloatBase', v)} />
                 </Row>
                 <Row
                   label={t.exportPreferSharedMeshReuse}
                   desc={t.exportPreferSharedMeshReuseDesc}
+                  stacked={isStackedLayout}
                 >
                   <Toggle
                     value={config.mjcf.preferSharedMeshReuse}
                     onChange={(v) => updateMjcf('preferSharedMeshReuse', v)}
                   />
                 </Row>
-                <Row label={t.exportIncludeActuators}>
+                <Row label={t.exportIncludeActuators} stacked={isStackedLayout}>
                   <Toggle value={config.mjcf.includeActuators} onChange={(v) => updateMjcf('includeActuators', v)} />
                 </Row>
                 {config.mjcf.includeActuators && (
-                  <Row label={t.exportActuatorType}>
+                  <Row label={t.exportActuatorType} stacked={isStackedLayout}>
                     <SelectField
                       value={config.mjcf.actuatorType}
                       options={actuatorTypeOptions}
                       onChange={(v) => updateMjcf('actuatorType', v as MjcfActuatorType)}
+                      fullWidth={isStackedLayout}
                     />
                   </Row>
                 )}
@@ -584,10 +684,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc} stacked={isStackedLayout}>
                   <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
                 </Row>
-                <Row label={t.exportIncludeMeshes}>
+                <Row label={t.exportIncludeMeshes} stacked={isStackedLayout}>
                   <Toggle value={config.mjcf.includeMeshes} onChange={(v) => updateMjcf('includeMeshes', v)} />
                 </Row>
                 {config.mjcf.includeMeshes && (
@@ -610,19 +710,20 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             <>
               <SectionLabel>{t.exportOptionsSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.exportIncludeExtended} desc={t.exportIncludeExtendedDesc}>
+                <Row label={t.exportIncludeExtended} desc={t.exportIncludeExtendedDesc} stacked={isStackedLayout}>
                   <Toggle value={config.urdf.includeExtended} onChange={(v) => updateUrdf('includeExtended', v)} />
                 </Row>
-                <Row label={t.exportIncludeBOM} desc={t.exportIncludeBOMDesc}>
+                <Row label={t.exportIncludeBOM} desc={t.exportIncludeBOMDesc} stacked={isStackedLayout}>
                   <Toggle value={config.urdf.includeBOM} onChange={(v) => updateUrdf('includeBOM', v)} />
                 </Row>
-                <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc}>
+                <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc} stacked={isStackedLayout}>
                   <Toggle value={config.urdf.useRelativePaths} onChange={(v) => updateUrdf('useRelativePaths', v)} />
                 </Row>
                 {!config.urdf.includeExtended && (
                   <Row
                     label={t.exportPreferSourceVisualMeshes}
                     desc={t.exportPreferSourceVisualMeshesDesc}
+                    stacked={isStackedLayout}
                   >
                     <Toggle
                       value={config.urdf.preferSourceVisualMeshes}
@@ -633,10 +734,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc} stacked={isStackedLayout}>
                   <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
                 </Row>
-                <Row label={t.exportIncludeMeshes}>
+                <Row label={t.exportIncludeMeshes} stacked={isStackedLayout}>
                   <Toggle value={config.urdf.includeMeshes} onChange={(v) => updateUrdf('includeMeshes', v)} />
                 </Row>
                 {config.urdf.includeMeshes && (
@@ -662,8 +763,14 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 <Row
                   label={t.rosVersion}
                   hint={`${t.exportXacroStaticHint} ${config.xacro.rosVersion === 'ros1' ? t.rosProfileDescRos1 : t.rosProfileDescRos2}`}
+                  stacked={isCompactLayout}
                 >
-                  <div className="grid min-w-[240px] max-w-full grid-cols-2 gap-1.5 rounded-xl border border-border-black bg-segmented-bg p-1.5">
+                  <div
+                    data-xacro-profile-picker
+                    className={`grid gap-1.5 rounded-xl border border-border-black bg-segmented-bg p-1.5 ${
+                      isCompactLayout ? 'grid-cols-1 w-full' : 'min-w-[220px] grid-cols-2'
+                    }`}
+                  >
                     {(['ros1', 'ros2'] as RosVersion[]).map((v) => {
                       const isActive = config.xacro.rosVersion === v;
                       const label = v === 'ros1' ? t.rosProfileRos1 : t.rosProfileRos2;
@@ -677,7 +784,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                           title={description}
                           aria-label={`${label}. ${description}`}
                           aria-pressed={isActive}
-                          className={`flex min-h-[3.15rem] items-center rounded-lg border px-2.5 py-2 text-left text-[11px] font-semibold leading-tight whitespace-normal transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+                          className={`flex min-h-[2.5rem] items-center rounded-lg border px-2.5 py-2 text-left text-[10px] font-semibold leading-tight whitespace-normal transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
                             isActive
                               ? 'border-system-blue/30 bg-system-blue/10 text-system-blue shadow-sm'
                               : 'border-transparent text-text-secondary hover:border-system-blue/20 hover:bg-element-hover hover:text-text-primary'
@@ -692,6 +799,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 <Row
                   label={t.hardwareInterface}
                   hint={config.xacro.rosVersion === 'ros1' ? t.hardwareInterfaceDescRos1 : t.hardwareInterfaceDescRos2}
+                  stacked={isStackedLayout}
                 >
                   <SelectField
                     value={config.xacro.rosHardwareInterface}
@@ -702,18 +810,19 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                       { value: 'velocity', label: t.hardwareInterfaceVelocity },
                     ]}
                     onChange={(v) => updateXacro('rosHardwareInterface', v as RosHwInterface)}
+                    fullWidth={isStackedLayout}
                   />
                 </Row>
-                <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc}>
+                <Row label={t.exportRelativePaths} desc={t.exportRelativePathsDesc} stacked={isStackedLayout}>
                   <Toggle value={config.xacro.useRelativePaths} onChange={(v) => updateXacro('useRelativePaths', v)} />
                 </Row>
               </div>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc} stacked={isStackedLayout}>
                   <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
                 </Row>
-                <Row label={t.exportIncludeMeshes}>
+                <Row label={t.exportIncludeMeshes} stacked={isStackedLayout}>
                   <Toggle value={config.xacro.includeMeshes} onChange={(v) => updateXacro('includeMeshes', v)} />
                 </Row>
                 {config.xacro.includeMeshes && (
@@ -735,10 +844,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             <>
               <SectionLabel>{t.exportOutputSection}</SectionLabel>
               <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
-                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc}>
+                <Row label={t.exportIncludeSkeleton} desc={t.exportIncludeSkeletonDesc} stacked={isStackedLayout}>
                   <Toggle value={config.includeSkeleton} onChange={updateIncludeSkeleton} />
                 </Row>
-                <Row label={t.exportIncludeMeshes}>
+                <Row label={t.exportIncludeMeshes} stacked={isStackedLayout}>
                   <Toggle value={config.sdf.includeMeshes} onChange={(v) => updateSdf('includeMeshes', v)} />
                 </Row>
                 {config.sdf.includeMeshes && (
@@ -759,7 +868,18 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           {config.format === 'usd' && (
             <>
               <SectionLabel>{t.exportOptionsSection}</SectionLabel>
-              <div className="bg-element-bg rounded-xl border border-border-black px-3">
+              <div className="bg-element-bg rounded-xl border border-border-black px-3 divide-y divide-border-black">
+                <Row label={t.exportUsdFileFormat} desc={t.exportUsdFileFormatDesc} stacked={isStackedLayout}>
+                  <SelectField
+                    value={config.usd.fileFormat}
+                    options={[
+                      { value: 'usd', label: t.exportUsdFileFormatUsd },
+                      { value: 'usda', label: t.exportUsdFileFormatUsda },
+                    ]}
+                    onChange={(value) => updateUsd('fileFormat', value as UsdExportConfig['fileFormat'])}
+                    fullWidth={isStackedLayout}
+                  />
+                </Row>
                 <STLQualitySelector
                   compressSTL={config.usd.compressMeshes}
                   stlQuality={config.usd.meshQuality}
@@ -779,7 +899,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
         {/* Footer */}
         <div className="shrink-0 px-4 py-3 border-t border-border-black bg-element-bg">
-          <div className="flex items-center gap-2">
+          <div className={`flex gap-3 ${isCompactLayout ? 'flex-col items-stretch' : 'items-center'}`}>
             {isExporting ? (
               <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-secondary">
                 <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-system-blue" />
@@ -790,33 +910,37 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 </span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 text-text-tertiary text-[10px]">
+              <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-text-tertiary">
                 {config.format === 'mjcf'
                   ? <FileCode className="w-4 h-4" />
                   : config.format === 'xacro'
                     ? <Braces className="w-4 h-4" />
                     : config.format === 'sdf'
                       ? <Layers className="w-4 h-4" />
-                    : config.format === 'usd'
-                      ? <Package className="w-4 h-4" />
-                      : <Layers className="w-4 h-4" />}
-                <span className="font-mono">
-                  {config.format === 'usd' ? `${formatExt} layered package → .zip` : `${formatExt} + meshes → .zip`}
+                      : config.format === 'usd'
+                        ? <Package className="w-4 h-4" />
+                        : <Layers className="w-4 h-4" />}
+                <span className="font-mono break-all">
+                  {config.format === 'usd'
+                    ? `${formatExt} layered package → .zip`
+                    : `${formatExt} + meshes → .zip`}
                 </span>
               </div>
             )}
-            <div className="flex-1" />
+            {!isCompactLayout && <div className="flex-1" />}
             <button
               onClick={handleExportClick}
               disabled={isExporting}
-              className="flex items-center gap-2 px-4 py-2 bg-system-blue-solid hover:bg-system-blue text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`flex items-center justify-center gap-2 rounded-lg bg-system-blue-solid px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-system-blue disabled:cursor-not-allowed disabled:opacity-50 ${
+                isCompactLayout ? 'w-full' : ''
+              }`}
             >
               {isExporting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Upload className="w-3.5 h-3.5" />
               )}
-              {isExporting ? t.exporting : exportActionLabel}
+              {isExporting ? t.exporting : t.exportDoExport}
             </button>
           </div>
         </div>

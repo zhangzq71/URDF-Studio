@@ -1,4 +1,8 @@
-import { LoadingHud, buildLoadingHudState } from '@/shared/components/3d';
+import {
+  LoadingHud,
+  buildLoadingHudState,
+  shouldUseIndeterminateStreamingMeshProgress,
+} from '@/shared/components/3d';
 import { translations, type Language } from '@/shared/i18n';
 import type { DocumentLoadState } from '@/store/assetsStore';
 import { resolveDocumentLoadingOverlayPresentation } from './documentLoadingOverlayPresentation';
@@ -58,16 +62,23 @@ export function DocumentLoadingOverlay({
   const presentation = resolveDocumentLoadingOverlayPresentation(state);
   const stageLabel = resolveStageLabel(state, lang);
   const isResultState = state.status === 'error' || state.status === 'ready';
+  const useIndeterminateStreamingProgress = shouldUseIndeterminateStreamingMeshProgress({
+    phase: state.phase,
+    loadedCount: state.loadedCount,
+    totalCount: state.totalCount,
+  });
   const progressPercent = state.status === 'error'
     ? 0
     : state.status === 'ready' && state.message
       ? 100
       : state.progressPercent;
   const loadingHudState = buildLoadingHudState({
-    loadedCount: state.loadedCount,
-    totalCount: state.totalCount,
+    loadedCount: useIndeterminateStreamingProgress ? null : state.loadedCount,
+    totalCount: useIndeterminateStreamingProgress ? null : state.totalCount,
     progressPercent,
-    fallbackDetail: stageLabel ?? t.loadingRobotPreparing,
+    fallbackDetail: useIndeterminateStreamingProgress
+      ? t.loadingRobotParsingInitialMeshes
+      : stageLabel ?? t.loadingRobotPreparing,
   });
   const detailSource = state.error?.trim() || state.message?.trim() || loadingHudState.detail;
   const detail = detailSource === stageLabel ? '' : detailSource;

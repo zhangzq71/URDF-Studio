@@ -151,7 +151,7 @@ export const UnifiedVisualizerOptionsPanel = forwardRef<HTMLDivElement, UnifiedV
                   max: 0.5,
                   step: 0.01,
                   compact: true,
-                  indent: true,
+                  indent: false,
                   labelClassName: englishSliderLabelClassName,
                 }}
               />
@@ -171,7 +171,7 @@ export const UnifiedVisualizerOptionsPanel = forwardRef<HTMLDivElement, UnifiedV
                   step: 0.1,
                   decimals: 1,
                   compact: true,
-                  indent: true,
+                  indent: false,
                   labelClassName: englishSliderLabelClassName,
                 }}
               />
@@ -190,7 +190,7 @@ export const UnifiedVisualizerOptionsPanel = forwardRef<HTMLDivElement, UnifiedV
                   max: 2.0,
                   step: 0.01,
                   compact: true,
-                  indent: true,
+                  indent: false,
                   labelClassName: englishSliderLabelClassName,
                 }}
               />

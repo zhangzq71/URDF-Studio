@@ -110,3 +110,26 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
 
   dom.window.close();
 });
+
+test('source code auto-apply restores from persisted settings and writes updates back', async () => {
+  const { dom, useUIStore } = await loadUIStore({
+    sourceCodeAutoApply: false,
+  });
+
+  assert.equal(useUIStore.getState().sourceCodeAutoApply, false);
+
+  useUIStore.getState().setSourceCodeAutoApply(true);
+
+  const raw = dom.window.localStorage.getItem('urdf-studio-ui');
+  assert.ok(raw, 'persisted ui store payload should be written');
+
+  const persisted = JSON.parse(raw) as {
+    state?: {
+      sourceCodeAutoApply?: boolean;
+    };
+  };
+
+  assert.equal(persisted.state?.sourceCodeAutoApply, true);
+
+  dom.window.close();
+});

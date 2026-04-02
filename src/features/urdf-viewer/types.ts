@@ -24,7 +24,7 @@ import type {
 import type { MeasureSelectionLike } from './utils/measureTargetResolvers';
 
 export type ToolMode = 'select' | 'translate' | 'rotate' | 'universal' | 'view' | 'face' | 'measure';
-export type ViewerSceneMode = 'detail';
+export type ViewerSceneMode = 'editor';
 export type ViewerHelperKind = InteractionHelperKind;
 export type ViewerInteractiveLayer =
     | 'visual'

@@ -1,4 +1,4 @@
-import type { RobotData, RobotState, UrdfJoint } from '@/types';
+import type { RobotData, RobotState, UrdfJoint, UrdfLink, UrdfVisual } from '@/types';
 
 type JsonLike =
   | null
@@ -42,6 +42,10 @@ function sortKeysDeep(value: unknown): JsonLike {
   return null;
 }
 
+export function createStableJsonSnapshot(value: unknown): string {
+  return JSON.stringify(sortKeysDeep(value));
+}
+
 export function stripTransientJointMotionFromJoint(joint: UrdfJoint): UrdfJoint {
   const { angle: _angle, quaternion: _quaternion, ...sourceJoint } = joint;
   return sourceJoint as UrdfJoint;
@@ -65,6 +69,48 @@ export function stripTransientJointMotionFromRobotData<T extends RobotSnapshotLi
   };
 }
 
+function stripPresentationStateFromVisual<T extends UrdfVisual>(visual: T): T {
+  const { visible: _visible, ...sourceVisual } = visual;
+  return sourceVisual as T;
+}
+
+function stripPresentationStateFromLink<T extends UrdfLink>(link: T): T {
+  const {
+    visible: _visible,
+    visual,
+    visualBodies,
+    collision,
+    collisionBodies,
+    ...sourceLink
+  } = link;
+
+  return {
+    ...sourceLink,
+    visual: stripPresentationStateFromVisual(visual),
+    visualBodies: visualBodies?.map((body) => stripPresentationStateFromVisual(body)),
+    collision: stripPresentationStateFromVisual(collision),
+    collisionBodies: collisionBodies?.map((body) => stripPresentationStateFromVisual(body)),
+  } as T;
+}
+
+export function stripPresentationStateFromRobotData<T extends RobotSnapshotLike>(robot: T): T {
+  return {
+    ...robot,
+    links: Object.fromEntries(
+      Object.entries(robot.links).map(([linkId, link]) => [
+        linkId,
+        stripPresentationStateFromLink(link),
+      ]),
+    ),
+  };
+}
+
+export function stripRobotPersistenceState<T extends RobotSnapshotLike>(robot: T): T {
+  return stripPresentationStateFromRobotData(
+    stripTransientJointMotionFromRobotData(robot),
+  );
+}
+
 export function createRobotSemanticSnapshot(robot: RobotSnapshotLike | RobotState): string {
   const sanitizedRobot = stripTransientJointMotionFromRobotData({
     name: robot.name,
@@ -75,5 +121,18 @@ export function createRobotSemanticSnapshot(robot: RobotSnapshotLike | RobotStat
     closedLoopConstraints: robot.closedLoopConstraints ?? null,
   });
 
-  return JSON.stringify(sortKeysDeep(sanitizedRobot));
+  return createStableJsonSnapshot(sanitizedRobot);
+}
+
+export function createRobotPersistenceSnapshot(robot: RobotSnapshotLike | RobotState): string {
+  const sanitizedRobot = stripRobotPersistenceState({
+    name: robot.name,
+    links: robot.links,
+    joints: robot.joints,
+    rootLinkId: robot.rootLinkId,
+    materials: robot.materials ?? null,
+    closedLoopConstraints: robot.closedLoopConstraints ?? null,
+  });
+
+  return createStableJsonSnapshot(sanitizedRobot);
 }

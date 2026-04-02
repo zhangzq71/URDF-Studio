@@ -64,3 +64,34 @@ test('mergeMotorLibraryEntries ignores entries that do not include a brand direc
   assert.equal(parseFailures.length, 0);
   assert.ok(!Object.values(library).some((entries) => entries.some((entry) => entry.name === 'Ignored')));
 });
+
+test('mergeMotorLibraryEntries accepts a single motor-library.json catalog file', () => {
+  const { library, parseFailures } = mergeMotorLibraryEntries([
+    {
+      path: 'robot/motor-library.json',
+      content: JSON.stringify({
+        Unitree: [
+          {
+            name: 'Unitree-Custom-X',
+            armature: 0.12,
+            velocity: 18,
+            effort: 42,
+          },
+        ],
+        'My Lab': [
+          {
+            name: 'LAB-MOTOR-JSON-01',
+            armature: 0.25,
+            velocity: 9,
+            effort: 88,
+          },
+        ],
+      }),
+    },
+  ]);
+
+  assert.deepEqual(parseFailures, []);
+  assert.ok(library.Unitree.some((entry) => entry.name === 'Go1-M8010-6'));
+  assert.ok(library.Unitree.some((entry) => entry.name === 'Unitree-Custom-X'));
+  assert.ok(library['My Lab']?.some((entry) => entry.name === 'LAB-MOTOR-JSON-01'));
+});

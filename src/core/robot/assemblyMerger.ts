@@ -10,7 +10,7 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
   const materials: RobotData['materials'] = {};
   const closedLoopConstraints: RobotClosedLoopConstraint[] = [];
   const componentVersions = new Set<string>();
-  let rootLinkId = '';
+  let fallbackRootLinkId = '';
 
   const comps = Object.values(assembly.components).filter(c => c.visible !== false);
   const visibleCompIds = new Set(comps.map(c => c.id));
@@ -30,17 +30,17 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
       componentVersions.add(version);
     }
     for (const [id, link] of Object.entries(comp.robot.links)) {
-      links[id] = { ...link };
+      links[id] = link;
     }
     for (const [id, joint] of Object.entries(comp.robot.joints)) {
-      joints[id] = { ...joint };
+      joints[id] = joint;
     }
-    closedLoopConstraints.push(...(comp.robot.closedLoopConstraints || []).map((constraint) => ({ ...constraint })));
+    closedLoopConstraints.push(...(comp.robot.closedLoopConstraints || []));
     if (comp.robot.materials) {
       Object.assign(materials, comp.robot.materials);
     }
-    if (!rootLinkId) {
-      rootLinkId = comp.robot.rootLinkId;
+    if (!fallbackRootLinkId) {
+      fallbackRootLinkId = comp.robot.rootLinkId;
     }
   }
 
@@ -71,6 +71,19 @@ export function mergeAssembly(assembly: AssemblyState): RobotData {
     };
     joints[jointId] = fullJoint;
   }
+
+  const childLinkIds = new Set<string>();
+  Object.values(joints).forEach((joint) => {
+    childLinkIds.add(joint.childLinkId);
+  });
+
+  const graphRootLinkId = Object.keys(links).find((linkId) => !childLinkIds.has(linkId)) ?? '';
+  const rootLinkId = (
+    graphRootLinkId
+    || (fallbackRootLinkId && links[fallbackRootLinkId] ? fallbackRootLinkId : '')
+    || Object.keys(links)[0]
+    || ''
+  );
 
   return {
     name: assembly.name,

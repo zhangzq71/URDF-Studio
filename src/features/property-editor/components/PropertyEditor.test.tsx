@@ -96,7 +96,7 @@ function renderPropertyEditor() {
     React.createElement(PropertyEditor as any, {
       robot: createRobot(),
       onUpdate: () => {},
-      mode: 'detail',
+      mode: 'editor',
       assets: {},
       onUploadAsset: () => {},
       motorLibrary: {},

@@ -296,9 +296,25 @@ test('resolveRobotFileData returns a parse error when XML parser APIs are unavai
       assert.fail('Expected missing XML parser APIs to return a parse error');
     }
     assert.equal(result.reason, 'parse_failed');
+    assert.match(result.message ?? '', /robots\/demo\/model\.sdf/);
   } finally {
     globalThis.DOMParser = previousDomParser;
   }
+});
+
+test('resolveRobotFileData keeps file context on malformed URDF imports', () => {
+  const result = resolveRobotFileData({
+    name: 'robots/demo/broken.urdf',
+    content: '<robot name="broken">',
+    format: 'urdf',
+  });
+
+  assert.equal(result.status, 'error');
+  if (result.status !== 'error') {
+    assert.fail('Expected malformed URDF import result to be an error');
+  }
+  assert.equal(result.reason, 'parse_failed');
+  assert.match(result.message ?? '', /URDF file "robots\/demo\/broken\.urdf"/);
 });
 
 test('resolveRobotFileData returns an error result for unsupported formats', () => {
@@ -314,6 +330,7 @@ test('resolveRobotFileData returns an error result for unsupported formats', () 
   }
   assert.equal(String(result.format), 'unsupported');
   assert.equal(result.reason, 'unsupported_format');
+  assert.match(result.message ?? '', /robots\/demo\/invalid\.txt/);
 });
 
 test('resolveRobotFileData prefers packaged URDF truth for standalone xacro entries', () => {

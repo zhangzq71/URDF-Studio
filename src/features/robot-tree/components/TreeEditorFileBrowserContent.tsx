@@ -27,7 +27,6 @@ interface TreeEditorFileBrowserContentProps {
   onFolderRenameDraftChange: (value: string) => void;
   onFolderContextMenu: (event: ReactMouseEvent, folderPath: string) => void;
   onToggleOpen: () => void;
-  previewFileName?: string;
   shouldFillSpace: boolean;
   t: TreeEditorTranslations;
   toggleFolder: (path: string) => void;
@@ -55,7 +54,6 @@ export function TreeEditorFileBrowserContent({
   onFolderRenameDraftChange,
   onFolderContextMenu,
   onToggleOpen,
-  previewFileName,
   shouldFillSpace,
   t,
   toggleFolder,
@@ -136,7 +134,6 @@ export function TreeEditorFileBrowserContent({
                   expandedFolders={expandedFolders}
                   toggleFolder={toggleFolder}
                   showAddAsComponent={isProMode}
-                  selectedFileName={isProMode ? previewFileName : undefined}
                   t={t}
                 />
               </div>

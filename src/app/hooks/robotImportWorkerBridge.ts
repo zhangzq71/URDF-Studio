@@ -6,6 +6,8 @@ import type { RobotFile } from '@/types';
 import type {
   ParseEditableRobotSourceWorkerRequest,
   ParseEditableRobotSourceWorkerResponse,
+  PreparedAssemblyComponentResult,
+  PrepareAssemblyComponentWorkerRequest,
   RobotImportWorkerResponse,
   RobotImportWorkerContextSnapshot,
   ResolveRobotImportWorkerRequest,
@@ -41,6 +43,12 @@ interface PendingEditableParseWorkerRequest {
   workerEntry: WorkerPoolEntry;
 }
 
+interface PendingPreparedAssemblyComponentWorkerRequest {
+  resolve: (value: PreparedAssemblyComponentResult) => void;
+  reject: (error: unknown) => void;
+  workerEntry: WorkerPoolEntry;
+}
+
 interface WorkerPoolEntry {
   pendingCount: number;
   syncedContextIdsByCacheKey: Map<string, string>;
@@ -56,6 +64,13 @@ interface CreateRobotImportWorkerClientOptions {
 export interface RobotImportWorkerClient {
   dispose: (rejectPendingWith?: unknown) => void;
   resolve: (file: RobotFile, options?: ResolveRobotFileDataOptions) => Promise<RobotImportResult>;
+  prepareAssemblyComponent: (
+    file: RobotFile,
+    options: ResolveRobotFileDataOptions & {
+      componentId: string;
+      rootName: string;
+    },
+  ) => Promise<PreparedAssemblyComponentResult>;
   parseEditableSource: (
     options: ParseEditableRobotSourceOptions,
   ) => Promise<RobotState | null>;
@@ -90,6 +105,7 @@ export function createRobotImportWorkerClient(
 ): RobotImportWorkerClient {
   const pendingRobotImportRequests = new Map<number, PendingRobotImportWorkerRequest>();
   const pendingEditableParseRequests = new Map<number, PendingEditableParseWorkerRequest>();
+  const pendingPreparedAssemblyComponentRequests = new Map<number, PendingPreparedAssemblyComponentWorkerRequest>();
   const workerPool: WorkerPoolEntry[] = [];
   let requestIdCounter = 0;
   let contextIdCounter = 0;
@@ -118,6 +134,19 @@ export function createRobotImportWorkerClient(
     return pendingRequest;
   };
 
+  const clearPendingPreparedAssemblyComponentRequest = (
+    requestId: number,
+  ): PendingPreparedAssemblyComponentWorkerRequest | null => {
+    const pendingRequest = pendingPreparedAssemblyComponentRequests.get(requestId) ?? null;
+    if (!pendingRequest) {
+      return null;
+    }
+
+    pendingPreparedAssemblyComponentRequests.delete(requestId);
+    pendingRequest.workerEntry.pendingCount = Math.max(0, pendingRequest.workerEntry.pendingCount - 1);
+    return pendingRequest;
+  };
+
   const handleSharedWorkerMessage = (event: MessageEvent<RobotImportWorkerResponse>): void => {
     const message = event.data;
     if (!message) {
@@ -140,6 +169,26 @@ export function createRobotImportWorkerClient(
 
       if (!message.result) {
         pendingRequest.reject(new Error('Robot import worker returned no result'));
+        return;
+      }
+
+      pendingRequest.resolve(message.result);
+      return;
+    }
+
+    if (message.type === 'prepare-assembly-component-result' || message.type === 'prepare-assembly-component-error') {
+      const pendingRequest = clearPendingPreparedAssemblyComponentRequest(message.requestId);
+      if (!pendingRequest) {
+        return;
+      }
+
+      if (message.type === 'prepare-assembly-component-error') {
+        pendingRequest.reject(new Error(message.error || 'Assembly component worker failed'));
+        return;
+      }
+
+      if (!message.result) {
+        pendingRequest.reject(new Error('Assembly component worker returned no result'));
         return;
       }
 
@@ -186,6 +235,10 @@ export function createRobotImportWorkerClient(
       });
       pendingEditableParseRequests.forEach((request, requestId) => {
         clearPendingEditableParseRequest(requestId);
+        request.reject(rejectPendingWith);
+      });
+      pendingPreparedAssemblyComponentRequests.forEach((request, requestId) => {
+        clearPendingPreparedAssemblyComponentRequest(requestId);
         request.reject(rejectPendingWith);
       });
     }
@@ -388,8 +441,76 @@ export function createRobotImportWorkerClient(
     });
   };
 
+  const prepareAssemblyComponent = async (
+    file: RobotFile,
+    options: ResolveRobotFileDataOptions & {
+      componentId: string;
+      rootName: string;
+    },
+  ): Promise<PreparedAssemblyComponentResult> => {
+    if (workerUnavailable) {
+      throw new Error('Robot import worker is unavailable');
+    }
+
+    if (!canUseWorker()) {
+      throw new Error('Web Worker is not available in this environment');
+    }
+
+    return new Promise<PreparedAssemblyComponentResult>((resolveRequest, rejectRequest) => {
+      const requestId = ++requestIdCounter;
+      let workerEntry: WorkerPoolEntry;
+
+      try {
+        workerEntry = pickWorkerEntry();
+      } catch (error) {
+        workerUnavailable = true;
+        rejectRequest(error);
+        return;
+      }
+
+      const preparedDispatch = buildResolveRobotImportWorkerDispatch(file, options);
+      let contextId: string | undefined;
+
+      try {
+        contextId = ensureWorkerContext(workerEntry, preparedDispatch);
+      } catch (error) {
+        workerUnavailable = true;
+        rejectRequest(error);
+        disposeWorkerPool(error);
+        return;
+      }
+
+      const request: PrepareAssemblyComponentWorkerRequest = {
+        type: 'prepare-assembly-component',
+        requestId,
+        file,
+        options: preparedDispatch.options,
+        componentId: options.componentId,
+        rootName: options.rootName,
+        contextId,
+      };
+
+      pendingPreparedAssemblyComponentRequests.set(requestId, {
+        resolve: resolveRequest,
+        reject: rejectRequest,
+        workerEntry,
+      });
+      workerEntry.pendingCount += 1;
+
+      try {
+        workerEntry.worker.postMessage(request);
+      } catch (error) {
+        workerUnavailable = true;
+        clearPendingPreparedAssemblyComponentRequest(requestId);
+        disposeWorkerPool(error);
+        rejectRequest(error);
+      }
+    });
+  };
+
   return {
     dispose: disposeWorkerPool,
+    prepareAssemblyComponent,
     parseEditableSource,
     resolve,
   };
@@ -413,6 +534,16 @@ export function parseEditableRobotSourceWithWorker(
   options: ParseEditableRobotSourceOptions,
 ): Promise<RobotState | null> {
   return sharedRobotImportWorkerClient.parseEditableSource(options);
+}
+
+export function prepareAssemblyComponentWithWorker(
+  file: RobotFile,
+  options: ResolveRobotFileDataOptions & {
+    componentId: string;
+    rootName: string;
+  },
+): Promise<PreparedAssemblyComponentResult> {
+  return sharedRobotImportWorkerClient.prepareAssemblyComponent(file, options);
 }
 
 export function disposeRobotImportWorker(rejectPendingWith?: unknown): void {

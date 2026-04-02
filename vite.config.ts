@@ -33,7 +33,7 @@ function buildConfigurationFileIndex(rootDirs: string[]): Map<string, string> {
       }
 
       if (!entry.isFile()) return;
-      if (path.extname(entry.name).toLowerCase() !== '.usd') return;
+      if (!/\.(usd|usda|usdc)$/i.test(entry.name)) return;
       if (!fullPath.includes(`${path.sep}configuration${path.sep}`)) return;
       if (fileIndex.has(entry.name)) return;
 

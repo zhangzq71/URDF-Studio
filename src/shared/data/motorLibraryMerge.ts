@@ -1,6 +1,13 @@
 import type { MotorSpec } from '@/types';
 
-import { DEFAULT_MOTOR_LIBRARY } from './motorLibrary';
+import {
+  DEFAULT_MOTOR_LIBRARY,
+  cloneMotorLibrary,
+  isMotorLibraryCatalogFilePath,
+  mergeMotorLibraries,
+  parseMotorLibraryCatalog,
+  parseMotorSpec,
+} from './motorLibrary';
 
 export interface MotorLibraryEntryLike {
   path: string;
@@ -12,28 +19,28 @@ export interface MotorLibraryMergeResult {
   parseFailures: string[];
 }
 
-function cloneMotorLibrary(library: Record<string, MotorSpec[]>): Record<string, MotorSpec[]> {
-  return Object.fromEntries(
-    Object.entries(library).map(([brand, entries]) => [brand, [...entries]]),
-  );
-}
-
 export function mergeMotorLibraryEntries(
   entries: readonly MotorLibraryEntryLike[],
   baseLibrary: Record<string, MotorSpec[]> = DEFAULT_MOTOR_LIBRARY,
 ): MotorLibraryMergeResult {
-  const library = cloneMotorLibrary(baseLibrary);
+  let library = cloneMotorLibrary(baseLibrary);
   const parseFailures: string[] = [];
 
   for (const entry of entries) {
     try {
+      if (isMotorLibraryCatalogFilePath(entry.path)) {
+        const parsedLibrary = parseMotorLibraryCatalog(JSON.parse(entry.content), entry.path);
+        library = mergeMotorLibraries(library, parsedLibrary);
+        continue;
+      }
+
       const parts = entry.path.split('/');
       if (parts.length < 2) {
         continue;
       }
 
       const brand = parts[parts.length - 2];
-      const spec = JSON.parse(entry.content) as MotorSpec;
+      const spec = parseMotorSpec(JSON.parse(entry.content), entry.path);
       const brandEntries = library[brand] ?? [];
 
       if (!brandEntries.some((motor) => motor.name === spec.name)) {

@@ -91,6 +91,12 @@ function getButtonByText(container: Element, text: string): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+function getRequiredElement<T extends Element>(container: ParentNode, selector: string, label: string): T {
+  const element = container.querySelector(selector);
+  assert.ok(element, `${label} should exist`);
+  return element as T;
+}
+
 async function click(element: Element) {
   await act(async () => {
     element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -119,6 +125,21 @@ async function changeRangeValue(input: HTMLInputElement, value: number) {
   });
 }
 
+async function changeSelectValue(select: HTMLSelectElement, value: string) {
+  const prototype = select.ownerDocument.defaultView?.HTMLSelectElement.prototype;
+  const valueSetter = prototype
+    ? Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+    : undefined;
+
+  assert.ok(valueSetter, 'HTMLSelectElement value setter should exist');
+
+  await act(async () => {
+    valueSetter.call(select, value);
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 test('MJCF, URDF, SDF, and USD exports expose a custom compression mode with a slider', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -144,6 +165,64 @@ test('MJCF, URDF, SDF, and USD exports expose a custom compression mode with a s
   }
 });
 
+test('workspace export dialog keeps project export separate from the format picker', async () => {
+  const { dom, container, root } = createComponentRoot();
+  let exportedConfig: ExportDialogConfig | null = null;
+
+  try {
+    await renderExportDialog(root, (config) => {
+      exportedConfig = config;
+    }, {
+      allowProjectExport: true,
+      defaultFormat: 'project',
+    });
+
+    const formatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-export-format-picker]',
+      'format picker',
+    );
+    assert.doesNotMatch(formatPicker.textContent ?? '', /工程 \(\.usp\)/);
+
+    const projectCard = getRequiredElement<HTMLElement>(
+      container,
+      '[data-project-export-card]',
+      'project export card',
+    );
+    assert.match(projectCard.textContent ?? '', /导出当前工作区工程/);
+
+    const projectExportButton = getRequiredElement<HTMLButtonElement>(
+      container,
+      '[data-project-export-button]',
+      'project export button',
+    );
+    await click(projectExportButton);
+
+    assert.ok(exportedConfig, 'project export should submit a config');
+    assert.equal(exportedConfig.format, 'project');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('project export format stays hidden when project export is not enabled', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    const formatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-export-format-picker]',
+      'format picker',
+    );
+    assert.doesNotMatch(formatPicker.textContent ?? '', /工程 \(\.usp\)/);
+    assert.equal(container.querySelector('[data-project-export-card]'), null);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('USD export shows compression presets immediately without an extra toggle', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -156,6 +235,32 @@ test('USD export shows compression presets immediately without an extra toggle',
     assert.ok(getButtonByText(container, '低压缩'));
     assert.ok(getButtonByText(container, '中等'));
     assert.ok(getButtonByText(container, '自定义'));
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD export lets the user switch authored layer format to USDA', async () => {
+  const { dom, container, root } = createComponentRoot();
+  let exportedConfig: ExportDialogConfig | null = null;
+
+  try {
+    await renderExportDialog(root, (config) => {
+      exportedConfig = config;
+    });
+
+    await click(getButtonByText(container, 'USD'));
+
+    const fileFormatSelect = Array.from(container.querySelectorAll('select')).find((candidate) => (
+      candidate.textContent?.includes('USDA')
+    ));
+    assert.ok(fileFormatSelect, 'USD file format select should render');
+
+    await changeSelectValue(fileFormatSelect as HTMLSelectElement, 'usda');
+    await click(getButtonByText(container, '导出 ZIP'));
+
+    assert.ok(exportedConfig, 'USD export should submit a config');
+    assert.equal(exportedConfig.usd.fileFormat, 'usda');
   } finally {
     await destroyComponentRoot(dom, root);
   }
@@ -229,9 +334,18 @@ test('Xacro export moves ROS profile guidance into hover titles instead of inlin
 
     await click(getButtonByText(container, 'Xacro'));
 
+    const xacroProfilePicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-xacro-profile-picker]',
+      'xacro profile picker',
+    );
+    assert.match(xacroProfilePicker.className, /grid-cols-1/);
+
     const ros2Button = getButtonByText(container, 'ROS2 + gazebo_ros2_control');
     assert.equal(ros2Button.getAttribute('title'), '导出 ros2_control 与 gazebo_ros2_control 约定。');
     assert.equal(ros2Button.getAttribute('aria-pressed'), 'true');
+    assert.match(ros2Button.className, /min-h-\[2\.5rem\]/);
+    assert.doesNotMatch(ros2Button.className, /min-h-\[3\.15rem\]/);
 
     const xacroHintButton = Array.from(container.querySelectorAll('button[title]')).find(
       (candidate) => candidate.getAttribute('title')?.includes('导出为真正的 xacro'),

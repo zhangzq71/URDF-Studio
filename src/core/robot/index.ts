@@ -82,6 +82,14 @@ export {
 
 // Assembly Merger - Merge AssemblyState to RobotData
 export { mergeAssembly } from './assemblyMerger';
+export { analyzeAssemblyConnectivity } from './assemblyConnectivity';
+export {
+    buildAssemblyComponentIdentity,
+    createUniqueAssemblyComponentName,
+    namespaceAssemblyRobotData,
+    prepareAssemblyRobotData,
+    sanitizeAssemblyComponentId,
+} from './assemblyComponentPreparation';
 
 // Transforms - Coordinate transformation utilities
 export {

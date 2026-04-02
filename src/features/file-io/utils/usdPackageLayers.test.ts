@@ -5,6 +5,7 @@ import { GeometryType, JointType, type RobotState } from '@/types';
 import {
   buildUsdLinkPathMaps,
   buildUsdPhysicsLayerContent,
+  buildUsdRobotLayerContent,
   buildUsdRootLayerContent,
   buildUsdSensorLayerContent,
   createUsdArchivePackage,
@@ -88,6 +89,27 @@ test('usd package layers serialize root and sensor configuration prims', () => {
   assert.match(sensorLayer, /def Xform "demo_robot_description"/);
 });
 
+test('isaacsim usd package layers add a Robot variant and robot sidecar references', () => {
+  const robotLayer = buildUsdRobotLayerContent(
+    createLayeredRobot(),
+    buildUsdLinkPathMaps(createLayeredRobot(), 'demo_robot'),
+    'demo_robot',
+  );
+  const rootLayer = buildUsdRootLayerContent('demo_robot', 'demo_robot', {
+    layoutProfile: 'isaacsim',
+    fileFormat: 'usda',
+  });
+
+  assert.match(rootLayer, /string Robot = "Robot"/);
+  assert.match(rootLayer, /prepend variantSets = \["Physics", "Sensor", "Robot"\]/);
+  assert.match(rootLayer, /prepend payload = @configuration\/demo_robot_robot\.usda@/);
+  assert.match(robotLayer, /prepend apiSchemas = \["IsaacRobotAPI"\]/);
+  assert.match(robotLayer, /prepend rel isaac:physics:robotLinks = \[/);
+  assert.match(robotLayer, /prepend rel isaac:physics:robotJoints = \[/);
+  assert.match(robotLayer, /prepend apiSchemas = \["IsaacLinkAPI"\]/);
+  assert.match(robotLayer, /prepend apiSchemas = \["IsaacJointAPI"\]/);
+});
+
 test('usd package layers serialize articulation, joint paths, and mesh collision overrides', () => {
   const robot = createLayeredRobot();
   const pathMaps = buildUsdLinkPathMaps(robot, 'demo_robot_description');
@@ -142,4 +164,39 @@ test('usd package layers package root and configuration files under stable usd p
     await archive.archiveFiles.get('demo_robot/usd/configuration/demo_robot_description_base.usd')?.text(),
     'base',
   );
+});
+
+test('isaacsim usd package layers place the root file beside configuration sidecars', async () => {
+  const archive = createUsdArchivePackage(
+    'demo_robot',
+    {
+      rootLayerContent: 'root',
+      baseLayerContent: 'base',
+      physicsLayerContent: 'physics',
+      sensorLayerContent: 'sensor',
+      robotLayerContent: 'robot',
+    },
+    new Map([
+      ['assets/checker.png', new Blob(['texture'], { type: 'image/png' })],
+    ]),
+    {
+      layoutProfile: 'isaacsim',
+      fileFormat: 'usda',
+    },
+  );
+
+  assert.equal(archive.archiveFileName, 'demo_robot_usda.zip');
+  assert.equal(archive.rootLayerPath, 'demo_robot/demo_robot.usda');
+  assert.deepEqual(
+    Array.from(archive.archiveFiles.keys()).sort(),
+    [
+      'demo_robot/assets/checker.png',
+      'demo_robot/configuration/demo_robot_base.usda',
+      'demo_robot/configuration/demo_robot_physics.usda',
+      'demo_robot/configuration/demo_robot_robot.usda',
+      'demo_robot/configuration/demo_robot_sensor.usda',
+      'demo_robot/demo_robot.usda',
+    ],
+  );
+  assert.equal(await archive.archiveFiles.get('demo_robot/configuration/demo_robot_robot.usda')?.text(), 'robot');
 });

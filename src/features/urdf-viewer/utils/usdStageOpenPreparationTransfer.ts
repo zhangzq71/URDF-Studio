@@ -6,6 +6,7 @@ import type {
 export interface PreparedUsdPreloadTransferFile {
   path: string;
   mimeType: string;
+  blob: Blob | null;
   bytes: ArrayBuffer | null;
   error?: string | null;
 }
@@ -51,6 +52,7 @@ async function serializePreparedUsdPreloadFile(
     return {
       path: preloadFile.path,
       mimeType: preloadFile.mimeType ?? preloadFile.blob?.type ?? '',
+      blob: null,
       bytes: existingBytes,
       error: preloadFile.error ?? null,
     };
@@ -60,6 +62,7 @@ async function serializePreparedUsdPreloadFile(
     return {
       path: preloadFile.path,
       mimeType: '',
+      blob: null,
       bytes: null,
       error: preloadFile.error ?? null,
     };
@@ -68,7 +71,8 @@ async function serializePreparedUsdPreloadFile(
   return {
     path: preloadFile.path,
     mimeType: preloadFile.blob.type,
-    bytes: await preloadFile.blob.arrayBuffer(),
+    blob: preloadFile.blob,
+    bytes: null,
     error: preloadFile.error ?? null,
   };
 }
@@ -78,7 +82,7 @@ function hydratePreparedUsdPreloadFile(
 ): PreparedUsdPreloadFile {
   return {
     path: preloadFile.path,
-    blob: null,
+    blob: preloadFile.blob,
     bytes: preloadFile.bytes,
     mimeType: preloadFile.mimeType || null,
     error: preloadFile.error ?? null,

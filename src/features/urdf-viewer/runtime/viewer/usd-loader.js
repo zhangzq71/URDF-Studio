@@ -1,6 +1,7 @@
 // @ts-ignore runtime cache-busting query suffix is resolved by browser ESM loader.
 import { ThreeRenderDelegateInterface } from "../hydra/ThreeJsRenderDelegate.js";
 import { collectCameraFitSelection, fitCameraToSelection, scheduleCameraRefit } from "./camera.js";
+import { getUsdConfigurationMirrorPlan, getUsdDependencyExtension, getUsdDependencySuffixesForStage, inferDependencyStemForUsdPath } from "./usd-dependency-preload.js";
 import { getDirectoryFromVirtualPath, isLikelyNonRenderableUsdConfig, normalizeUsdPath, parseBooleanFlag } from "./path-utils.js";
 import { applyStageAxisAlignmentToRoot } from "./stage-up-axis.js";
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
@@ -61,16 +62,6 @@ function getMeshLoadStats(renderInterface) {
         visuals,
     };
 }
-function inferDependencyStemForUsdPath(stagePath, fileName) {
-    const normalizedPath = String(stagePath || "").toLowerCase();
-    const normalizedFileName = String(fileName || "").trim();
-    const inferredStem = normalizedFileName.replace(/\.usd[a-z]?$/i, "");
-    if (!inferredStem)
-        return "";
-    if (!normalizedPath.includes("/configuration/"))
-        return inferredStem;
-    return inferredStem.replace(/_(base|physics|robot|sensor)$/i, "");
-}
 async function ensureRootPathIsLoadable(pathToLoad, usdFsHelper) {
     if (!pathToLoad)
         return false;
@@ -98,7 +89,9 @@ export async function loadUsdStage(args) {
     const fastLoad = parseBooleanFlag(params.get("fastLoad"), true);
     const forceDependencyPreload = parseBooleanFlag(params.get("forceDependencyPreload"), false);
     const autoLoadDependencies = parseBooleanFlag(params.get("autoLoadDependencies"), true);
+    const dependenciesPreloadedToVirtualFs = parseBooleanFlag(params.get("dependenciesPreloadedToVirtualFs"), false);
     const strictOneShot = parseBooleanFlag(params.get("strictOneShot"), !nonBlockingLoad);
+    const yieldDuringLoad = parseBooleanFlag(params.get("yieldDuringLoad"), true);
     const normalizedPathForDependencyDefaults = String(pathToLoad || "").toLowerCase();
     const isConfigurationUsdPath = normalizedPathForDependencyDefaults.includes("/configuration/");
     const inferredSkipSensorPayloadsOnOpen = (!isConfigurationUsdPath
@@ -502,30 +495,51 @@ export async function loadUsdStage(args) {
     const autoLoadSublayers = async (dependencyStem) => {
         if (!canWriteVirtualFs)
             return;
+        const dependencyExtension = getUsdDependencyExtension(normalizedPath);
         const tryEnsureDependencyFile = async (fileName) => {
             if (!fileName)
                 return;
-            const rootDirectory = getDirectoryFromVirtualPath(normalizedPath);
-            const configurationDirectory = rootDirectory.toLowerCase().endsWith("/configuration/")
-                ? rootDirectory
-                : normalizeUsdPath(`${rootDirectory}configuration/`);
-            const localConfigurationPath = normalizeUsdPath(`${configurationDirectory}${fileName}`);
-            const sharedConfigurationPath = normalizeUsdPath(`/configuration/${fileName}`);
+            const existingLocalPath = getUsdConfigurationMirrorPlan(normalizedPath, fileName, {
+                hasLocalVirtualFile: false,
+                hasSharedVirtualFile: false,
+            }).localConfigurationPath;
+            const existingSharedPath = getUsdConfigurationMirrorPlan(normalizedPath, fileName, {
+                hasLocalVirtualFile: false,
+                hasSharedVirtualFile: false,
+            }).sharedConfigurationPath;
+            const hasLocalVirtualFile = !!existingLocalPath && usdFsHelper.hasVirtualFilePath(existingLocalPath);
+            const hasSharedVirtualFile = !!existingSharedPath && usdFsHelper.hasVirtualFilePath(existingSharedPath);
+            const { localConfigurationPath, sharedConfigurationPath, shouldWriteLocalAlias, shouldWriteSharedAlias } = getUsdConfigurationMirrorPlan(normalizedPath, fileName, {
+                hasLocalVirtualFile,
+                hasSharedVirtualFile,
+            });
             const candidateFetchPaths = Array.from(new Set([
                 localConfigurationPath,
                 sharedConfigurationPath,
             ]));
-            if (usdFsHelper.hasVirtualFilePath(localConfigurationPath))
+            if (!shouldWriteLocalAlias && !shouldWriteSharedAlias)
                 return;
-            if (usdFsHelper.hasVirtualFilePath(sharedConfigurationPath)) {
+            if (shouldWriteLocalAlias && hasSharedVirtualFile) {
                 try {
                     const existing = usdModule.FS_readFile?.(sharedConfigurationPath);
                     if (existing && existing.length > 0) {
                         writeBinaryToVirtualPath(localConfigurationPath, existing);
-                        return;
                     }
                 }
                 catch { }
+            }
+            if (shouldWriteSharedAlias && hasLocalVirtualFile) {
+                try {
+                    const existing = usdModule.FS_readFile?.(localConfigurationPath);
+                    if (existing && existing.length > 0) {
+                        writeBinaryToVirtualPath(sharedConfigurationPath, existing);
+                    }
+                }
+                catch { }
+            }
+            if (usdFsHelper.hasVirtualFilePath(localConfigurationPath)
+                && (sharedConfigurationPath === localConfigurationPath || usdFsHelper.hasVirtualFilePath(sharedConfigurationPath))) {
+                return;
             }
             let loadedBinary = null;
             for (const candidatePath of candidateFetchPaths) {
@@ -535,25 +549,23 @@ export async function loadUsdStage(args) {
             }
             if (!loadedBinary) {
                 const shouldSeedPlaceholder = shouldSeedMissingOptionalConfigurationPlaceholders
-                    && /_(base|physics|robot)\.usd$/i.test(fileName);
+                    && /_(base|physics|robot)\.usd[a-z]?$/i.test(fileName);
                 if (shouldSeedPlaceholder) {
                     seedMissingOptionalConfigurationPlaceholder(fileName);
                 }
                 return;
             }
-            writeBinaryToVirtualPath(localConfigurationPath, loadedBinary);
-            if (sharedConfigurationPath !== localConfigurationPath) {
+            if (shouldWriteLocalAlias) {
+                writeBinaryToVirtualPath(localConfigurationPath, loadedBinary);
+            }
+            if (shouldWriteSharedAlias) {
                 writeBinaryToVirtualPath(sharedConfigurationPath, loadedBinary);
             }
         };
-        const dependencySuffixesByStem = {
-            h1_2_handless: ["base", "physics", "robot"],
-        };
-        const dependencySuffixes = dependencySuffixesByStem[dependencyStem] || ["base", "physics"];
-        if (includeSensorDependency) {
-            dependencySuffixes.push("sensor");
-        }
-        const dependencyFileNames = dependencySuffixes.map((suffix) => `${dependencyStem}_${suffix}.usd`);
+        const dependencySuffixes = getUsdDependencySuffixesForStage(normalizedPath, dependencyStem, {
+            includeSensorDependency,
+        });
+        const dependencyFileNames = dependencySuffixes.map((suffix) => `${dependencyStem}_${suffix}${dependencyExtension}`);
         await Promise.all(dependencyFileNames.map((dependencyFileName) => tryEnsureDependencyFile(dependencyFileName)));
     };
     const seedOptionalSensorPlaceholder = (dependencyStem) => {
@@ -565,10 +577,14 @@ export async function loadUsdStage(args) {
             return;
         if (!skipSensorPayloadsOnOpen)
             return;
-        seedMissingOptionalConfigurationPlaceholder(`${dependencyStem}_sensor.usd`, "Sensors");
+        seedMissingOptionalConfigurationPlaceholder(
+            `${dependencyStem}_sensor${getUsdDependencyExtension(normalizedPath)}`,
+            "Sensors",
+        );
     };
     const shouldPreloadRootLayerToVirtualFs = normalizedPath.startsWith("/");
-    if (shouldPreloadRootLayerToVirtualFs) {
+    const skipInternalDependencyPreload = dependenciesPreloadedToVirtualFs && usdFsHelper.hasVirtualFilePath(normalizedPath);
+    if (!skipInternalDependencyPreload && shouldPreloadRootLayerToVirtualFs) {
         const rootLayerLoaded = await ensureVirtualFileFromCandidates(normalizedPath, [normalizedPath]);
         if (rootLayerLoaded) {
             // Root layer is available in WASM FS.
@@ -582,7 +598,8 @@ export async function loadUsdStage(args) {
     const shouldAutoLoadDependenciesFromUnitreePath = normalizedPathLower.startsWith("/unitree_model/");
     const isPiperSceneUsdPath = normalizedPathLower.startsWith("/piper_isaac_sim/usd/");
     const shouldAutoLoadInferredRootDependencies = shouldAutoLoadDependenciesFromVirtualFs && !isPiperSceneUsdPath;
-    if (autoLoadDependencies
+    if (!skipInternalDependencyPreload
+        && autoLoadDependencies
         && dependencyStem
         && (shouldAutoLoadInferredRootDependencies || shouldAutoLoadDependenciesFromUnitreePath || forceDependencyPreload)) {
         await autoLoadSublayers(dependencyStem);
@@ -696,7 +713,9 @@ export async function loadUsdStage(args) {
     }
     setProgress(30);
     markLoadPhase("render-interface-ready");
-    await yieldToMainThread();
+    if (yieldDuringLoad) {
+        await yieldToMainThread();
+    }
     try {
         driver = new USD.HdWebSyncDriver(renderInterface, normalizedPath);
         if (driver instanceof Promise) {
@@ -730,7 +749,9 @@ export async function loadUsdStage(args) {
     }
     catch { }
     state.driver = window.driver = driver;
-    await yieldToMainThread();
+    if (yieldDuringLoad) {
+        await yieldToMainThread();
+    }
     const runRuntimeBridgeWarmup = (phaseLabel, options = {}) => {
         if (!warmupRuntimeBridge)
             return null;
@@ -934,12 +955,28 @@ export async function loadUsdStage(args) {
             skipIdleWait: !nonBlockingLoad,
         };
     };
-    const awaitRobotMetadataWarmup = async (activeRenderInterface, options) => {
+    let primedRobotMetadataWarmupPromise = null;
+    const startRobotMetadataWarmup = (activeRenderInterface, options = {}) => {
+        if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function")
+            return null;
         try {
-            const maybePromise = activeRenderInterface.startRobotMetadataWarmupForStage(buildRobotMetadataWarmupOptions(options.force));
-            if (maybePromise && typeof maybePromise.then === "function") {
-                await maybePromise;
-            }
+            const maybePromise = activeRenderInterface.startRobotMetadataWarmupForStage(buildRobotMetadataWarmupOptions(options.force === true));
+            const normalizedPromise = (maybePromise && typeof maybePromise.then === "function")
+                ? maybePromise.catch(() => null)
+                : Promise.resolve(maybePromise ?? null);
+            primedRobotMetadataWarmupPromise = normalizedPromise;
+            return normalizedPromise;
+        }
+        catch {
+            return null;
+        }
+    };
+    const awaitRobotMetadataWarmup = async (activeRenderInterface, options) => {
+        const pendingWarmup = startRobotMetadataWarmup(activeRenderInterface, options);
+        if (!pendingWarmup)
+            return;
+        try {
+            await pendingWarmup;
         }
         catch {
             // Keep load resilient; fallback UI refresh path remains active.
@@ -959,6 +996,18 @@ export async function loadUsdStage(args) {
         const activeRenderInterface = window.renderInterface;
         if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function")
             return;
+        if (primedRobotMetadataWarmupPromise) {
+            try {
+                await primedRobotMetadataWarmupPromise;
+            }
+            catch {
+                // Fall through to the force-refresh path below.
+            }
+        }
+        if (isRobotMetadataReady()) {
+            markLoadPhase("robot-metadata-ready-before-interactive");
+            return;
+        }
         await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
         if (!isRobotMetadataReady()) {
             await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
@@ -1083,6 +1132,10 @@ export async function loadUsdStage(args) {
     const postInitialDrawWarmupSummary = runRuntimeBridgeWarmup("post-initial-draw", { force: true });
     let needsFinalProtoHydrationPass = !hasRuntimeBridgeCompletedProtoHydration(postInitialDrawWarmupSummary);
     let needsFinalResolvedPrimHydrationPass = false;
+    // Start robot-metadata synthesis as soon as the first runtime snapshot exists
+    // so strict one-shot loads can overlap metadata work with mesh drain/finalize
+    // instead of blocking a second long CPU phase right before ready.
+    startRobotMetadataWarmup(window.renderInterface, { force: false });
     if (needsFinalProtoHydrationPass) {
         const postInitialDrawHydrationSummary = runProtoHydrationPass();
         const pendingProtoHydrationCount = getPendingProtoHydrationCount(postInitialDrawHydrationSummary);
@@ -1110,7 +1163,9 @@ export async function loadUsdStage(args) {
     });
     setMessage("Finishing load...");
     setProgress(92);
-    await yieldToMainThread();
+    if (yieldDuringLoad) {
+        await yieldToMainThread();
+    }
     window.usdStage = null;
     if (!isLoadStillActive())
         return state;

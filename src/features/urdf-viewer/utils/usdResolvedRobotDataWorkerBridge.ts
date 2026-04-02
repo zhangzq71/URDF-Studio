@@ -25,6 +25,7 @@ interface CreateUsdResolvedRobotDataWorkerClientOptions {
   canUseWorker?: () => boolean;
   createCanvas?: () => OffscreenCanvas;
   createWorker?: () => WorkerLike;
+  onLoadDebugEntry?: (entry: Extract<UsdOffscreenViewerWorkerResponse, { type: 'load-debug' }>['entry']) => void;
 }
 
 interface UsdResolvedRobotDataWorkerClient {
@@ -60,6 +61,7 @@ export function createUsdResolvedRobotDataWorkerClient(
       new URL('../workers/usdOffscreenViewer.worker.ts', import.meta.url),
       { type: 'module' },
     ),
+    onLoadDebugEntry,
   }: CreateUsdResolvedRobotDataWorkerClientOptions = {},
 ): UsdResolvedRobotDataWorkerClient {
   const pendingRequests = new Set<PendingWorkerRequest>();
@@ -136,6 +138,10 @@ export function createUsdResolvedRobotDataWorkerClient(
           }
           case 'fatal-error': {
             rejectWithError(new Error(message.error || 'USD resolved robot data worker failed'));
+            return;
+          }
+          case 'load-debug': {
+            onLoadDebugEntry?.(message.entry);
             return;
           }
           default: {

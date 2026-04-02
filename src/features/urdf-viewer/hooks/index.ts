@@ -5,3 +5,4 @@ export * from './useMouseInteraction';
 export * from './useHoverDetection';
 export * from './useVisualizationEffects';
 export * from './useURDFViewerController';
+export * from './useResponsivePanelLayout';

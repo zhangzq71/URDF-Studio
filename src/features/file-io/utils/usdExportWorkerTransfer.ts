@@ -3,7 +3,9 @@ import type { RobotState } from '@/types';
 import type {
   ExportRobotToUsdOptions,
   ExportRobotToUsdPayload,
+  UsdLayerFileFormat,
   UsdMeshCompressionOptions,
+  UsdPackageLayoutProfile,
 } from './usdExportCoordinator.ts';
 
 export interface UsdExportWorkerTransferFile {
@@ -18,6 +20,8 @@ export interface UsdExportWorkerRequestPayload {
   assets: Record<string, string>;
   extraMeshFiles: UsdExportWorkerTransferFile[];
   meshCompression?: UsdMeshCompressionOptions;
+  fileFormat?: UsdLayerFileFormat;
+  layoutProfile?: UsdPackageLayoutProfile;
 }
 
 export interface UsdExportWorkerResultPayload {
@@ -85,6 +89,8 @@ export async function serializeUsdExportRequestForWorker(
       assets: options.assets,
       extraMeshFiles: serializedExtraMeshFiles.files,
       meshCompression: options.meshCompression,
+      fileFormat: options.fileFormat,
+      layoutProfile: options.layoutProfile,
     },
     transferables: serializedExtraMeshFiles.transferables,
   };
@@ -101,6 +107,8 @@ export function hydrateUsdExportRequestFromWorker(
     assets: payload.assets,
     extraMeshFiles: extraMeshFiles.size > 0 ? extraMeshFiles : undefined,
     meshCompression: payload.meshCompression,
+    fileFormat: payload.fileFormat,
+    layoutProfile: payload.layoutProfile,
   };
 }
 

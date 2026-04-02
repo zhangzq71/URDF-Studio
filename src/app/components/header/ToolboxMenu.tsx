@@ -8,6 +8,7 @@ import {
   ScanSearch,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
+import { useEffectiveTheme } from '@/shared/hooks/useEffectiveTheme';
 
 interface ToolboxMenuProps {
   t: TranslationKeys;
@@ -96,6 +97,10 @@ export function ToolboxMenu({
   onOpenCollisionOptimizer,
 }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
+  const effectiveTheme = useEffectiveTheme();
+  const motrixLogoSrc = effectiveTheme === 'dark'
+    ? '/logos/motrix-logo-white.svg'
+    : '/logos/motrix-logo.svg';
 
   const openExternal = React.useCallback((url: string) => {
     onClose();
@@ -150,6 +155,15 @@ export function ToolboxMenu({
       onClick: () => openExternal('https://motion-tracking.axell.top/'),
       external: true,
       tone: 'neutral',
+    },
+    {
+      key: 'motrix',
+      title: t.motrix,
+      description: t.motrixDesc,
+      icon: <img src={motrixLogoSrc} alt="" className="h-5 w-5 object-contain" />,
+      onClick: () => openExternal('https://motrix.motphys.com/'),
+      external: true,
+      tone: 'logo',
     },
     {
       key: 'trajectory-editing',

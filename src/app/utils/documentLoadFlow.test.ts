@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  preserveDocumentLoadProgressForSameFile,
   shouldCommitResolvedRobotSelection,
+  shouldIgnoreViewerLoadRegressionAfterReadySameFile,
   shouldIgnoreStaleViewerDocumentLoadEvent,
 } from './documentLoadFlow.ts';
 
@@ -106,6 +108,134 @@ test('shouldIgnoreStaleViewerDocumentLoadEvent ignores old scene progress while 
       documentLoadState: {
         status: 'ready',
         fileName: 'robots/next.urdf',
+      },
+    }),
+    false,
+  );
+});
+
+test('preserveDocumentLoadProgressForSameFile keeps advanced same-file USD progress from regressing back to checking-path', () => {
+  assert.deepEqual(
+    preserveDocumentLoadProgressForSameFile({
+      currentState: {
+        status: 'loading',
+        fileName: 'robots/unitree/g1.usda',
+        format: 'usd',
+        phase: 'finalizing-scene',
+        message: null,
+        progressPercent: 96,
+        loadedCount: null,
+        totalCount: null,
+      },
+      nextState: {
+        status: 'loading',
+        fileName: 'robots/unitree/g1.usda',
+        format: 'usd',
+        phase: 'checking-path',
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+      },
+    }),
+    {
+      status: 'loading',
+      fileName: 'robots/unitree/g1.usda',
+      format: 'usd',
+      phase: 'finalizing-scene',
+      message: null,
+      progressPercent: 96,
+      loadedCount: null,
+      totalCount: null,
+    },
+  );
+});
+
+test('preserveDocumentLoadProgressForSameFile leaves unrelated files unchanged', () => {
+  assert.deepEqual(
+    preserveDocumentLoadProgressForSameFile({
+      currentState: {
+        status: 'loading',
+        fileName: 'robots/unitree/g1.usda',
+        format: 'usd',
+        phase: 'finalizing-scene',
+        message: null,
+        progressPercent: 96,
+        loadedCount: null,
+        totalCount: null,
+      },
+      nextState: {
+        status: 'loading',
+        fileName: 'robots/unitree/h1.usda',
+        format: 'usd',
+        phase: 'checking-path',
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+      },
+    }),
+    {
+      status: 'loading',
+      fileName: 'robots/unitree/h1.usda',
+      format: 'usd',
+      phase: 'checking-path',
+      message: null,
+      progressPercent: null,
+      loadedCount: null,
+      totalCount: null,
+    },
+  );
+});
+
+test('shouldIgnoreViewerLoadRegressionAfterReadySameFile ignores hidden same-file viewer reload progress after ready', () => {
+  assert.equal(
+    shouldIgnoreViewerLoadRegressionAfterReadySameFile({
+      currentState: {
+        status: 'ready',
+        fileName: 'robots/unitree/g1.usda',
+        format: 'usd',
+        phase: 'ready',
+        message: null,
+        progressPercent: 100,
+        loadedCount: null,
+        totalCount: null,
+      },
+      nextState: {
+        status: 'loading',
+        fileName: 'robots/unitree/g1.usda',
+        format: 'usd',
+        phase: 'checking-path',
+        message: null,
+        progressPercent: 0,
+        loadedCount: null,
+        totalCount: null,
+      },
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldIgnoreViewerLoadRegressionAfterReadySameFile({
+      currentState: {
+        status: 'ready',
+        fileName: 'robots/unitree/g1.usda',
+        format: 'usd',
+        phase: 'ready',
+        message: null,
+        progressPercent: 100,
+        loadedCount: null,
+        totalCount: null,
+      },
+      nextState: {
+        status: 'loading',
+        fileName: 'robots/unitree/h1.usda',
+        format: 'usd',
+        phase: 'checking-path',
+        message: null,
+        progressPercent: 0,
+        loadedCount: null,
+        totalCount: null,
       },
     }),
     false,

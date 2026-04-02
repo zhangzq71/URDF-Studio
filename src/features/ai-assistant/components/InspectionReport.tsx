@@ -45,10 +45,13 @@ const ISSUE_PRIORITY: Record<string, number> = {
 }
 
 function getCategoryIcon(categoryId: string) {
+  if (categoryId === 'spec') return FileText
   if (categoryId === 'physical') return Box
-  if (categoryId === 'kinematics') return RefreshCw
+  if (categoryId === 'frames') return RefreshCw
+  if (categoryId === 'assembly') return LayoutGrid
+  if (categoryId === 'simulation') return Sparkles
+  if (categoryId === 'hardware') return Sparkles
   if (categoryId === 'naming') return FileText
-  if (categoryId === 'symmetry') return LayoutGrid
   return Sparkles
 }
 
@@ -126,12 +129,13 @@ export function InspectionReportView({
   const scorePercentage = maxScore > 0 ? (overallScore / maxScore) * 100 : 0
 
   const issuesByCategory: Record<string, typeof report.issues> = {}
+  const defaultCategoryId = INSPECTION_CRITERIA[0]?.id || 'spec'
   INSPECTION_CRITERIA.forEach(category => {
     issuesByCategory[category.id] = []
   })
 
   report.issues.forEach(issue => {
-    const categoryId = issue.category || 'physical'
+    const categoryId = issue.category || defaultCategoryId
     if (!issuesByCategory[categoryId]) {
       issuesByCategory[categoryId] = []
     }

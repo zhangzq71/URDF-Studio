@@ -29,6 +29,18 @@ test('buildCriticalUsdDependencyPaths prefers robot config for h1_2_handless', (
   );
 });
 
+test('buildCriticalUsdDependencyPaths preserves usda configuration layers for Isaac-style roots', () => {
+  assert.deepEqual(
+    buildCriticalUsdDependencyPaths('/test/unitree_ros_usda/go2_description/urdf/go2_description.usda'),
+    [
+      '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_base.usda',
+      '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_physics.usda',
+      '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_sensor.usda',
+      '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_robot.usda',
+    ],
+  );
+});
+
 test('resolveUsdStageOpenPreparationConcurrency caps worker preload fan-out at 10', () => {
   assert.equal(resolveUsdStageOpenPreparationConcurrency(64), 10);
   assert.equal(resolveUsdStageOpenPreparationConcurrency(1), 2);
@@ -57,13 +69,13 @@ test('prepareUsdStageOpenDataCore materializes preload blobs and keeps optional 
     const result = await prepareUsdStageOpenDataCore(
       {
         name: 'Go2/usd/go2.usd',
-        content: '',
+        content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@, @./configuration/go2_description_sensor.usd@]\n)\n',
         blobUrl: undefined,
       },
       [
         {
           name: 'Go2/usd/go2.usd',
-          content: '',
+          content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@, @./configuration/go2_description_sensor.usd@]\n)\n',
           blobUrl: undefined,
           format: 'usd',
         },
@@ -75,9 +87,9 @@ test('prepareUsdStageOpenDataCore materializes preload blobs and keeps optional 
         },
       ],
       {
-        'Go2/usd/go2.usd': 'blob:go2-root',
         'Go2/usd/configuration/go2_description_base.usd': 'blob:go2-base',
-        'Go2/textures/body.png': 'blob:missing-texture',
+        'Go2/usd/configuration/go2_description_sensor.usd': 'blob:missing-texture',
+        'Go2/textures/body.png': 'blob:go2-texture',
       },
     );
 
@@ -94,17 +106,67 @@ test('prepareUsdStageOpenDataCore materializes preload blobs and keeps optional 
         hasError: !!entry.error,
       })),
       [
-        { path: '/Go2/textures/body.png', hasBlob: false, hasError: true },
         { path: '/Go2/usd/configuration/go2_description_base.usd', hasBlob: true, hasError: false },
+        { path: '/Go2/usd/configuration/go2_description_sensor.usd', hasBlob: false, hasError: true },
         { path: '/Go2/usd/go2.usd', hasBlob: true, hasError: false },
       ],
     );
-    assert.deepEqual(fetchCalls, [
-      'blob:missing-texture',
+    assert.deepEqual(fetchCalls.sort(), [
       'blob:go2-base',
-      'blob:go2-root',
+      'blob:missing-texture',
     ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('prepareUsdStageOpenDataCore keeps Isaac-style USDA sidecars as critical dependencies', async () => {
+  const result = await prepareUsdStageOpenDataCore(
+    {
+      name: 'test/unitree_ros_usda/go2_description/urdf/go2_description.usda',
+      content: '#usda 1.0\n',
+      blobUrl: undefined,
+    },
+    [
+      {
+        name: 'test/unitree_ros_usda/go2_description/urdf/go2_description.usda',
+        content: '#usda 1.0\n',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+      {
+        name: 'test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_base.usda',
+        content: '#usda 1.0\n',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+      {
+        name: 'test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_physics.usda',
+        content: '#usda 1.0\n',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+      {
+        name: 'test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_sensor.usda',
+        content: '#usda 1.0\n',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+      {
+        name: 'test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_robot.usda',
+        content: '#usda 1.0\n',
+        blobUrl: undefined,
+        format: 'usd',
+      },
+    ],
+    {},
+  );
+
+  assert.equal(result.stageSourcePath, '/test/unitree_ros_usda/go2_description/urdf/go2_description.usda');
+  assert.deepEqual(result.criticalDependencyPaths, [
+    '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_base.usda',
+    '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_physics.usda',
+    '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_sensor.usda',
+    '/test/unitree_ros_usda/go2_description/urdf/configuration/go2_description_robot.usda',
+  ]);
 });

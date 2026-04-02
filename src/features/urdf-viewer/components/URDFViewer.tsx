@@ -24,7 +24,7 @@ export const URDFViewer = memo(function URDFViewer({
   jointMotionState,
   lang,
   theme,
-  mode = 'detail',
+  mode = 'editor',
   onSelect,
   onMeshSelect,
   onHover,

@@ -274,14 +274,24 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
           if (event.buttons !== 0) {
             return;
           }
-          event.stopPropagation();
-          setHoveredSelection(resolveGeometryHoverTargetFromHits(hoverTarget, event.intersections ?? [], {
+
+          const resolvedHoverTarget = resolveGeometryHoverTargetFromHits(hoverTarget, event.intersections ?? [], {
             interactionLayerPriority,
-          }));
+          });
+          if (!resolvedHoverTarget) {
+            return;
+          }
+
+          event.stopPropagation();
+          setHoveredSelection(resolvedHoverTarget);
         }
       : undefined,
     onPointerOut: visibilityState.interactive
       ? (event: ThreeEvent<PointerEvent>) => {
+          if (!isHovered) {
+            return;
+          }
+
           event.stopPropagation();
           clearGeometryHover();
         }

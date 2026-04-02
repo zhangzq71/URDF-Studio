@@ -42,7 +42,10 @@ export function shouldRenderMergedVisualizerConstraintOverlay(
 
 export function shouldEnableMergedVisualizerJointTransformControls(
   mode: AppMode,
+  options: {
+    assemblyWorkspaceActive?: boolean;
+  } = {},
 ): boolean {
   void mode;
-  return true;
+  return !options.assemblyWorkspaceActive;
 }

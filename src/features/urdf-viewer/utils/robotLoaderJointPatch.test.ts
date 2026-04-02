@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { URDFJoint as RuntimeURDFJoint } from '@/core/parsers/urdf/loader';
 import { JointType, type UrdfJoint } from '@/types';
 
-import { patchJointInPlace } from './robotLoaderJointPatch';
+import { patchJointInPlace, patchJointsInPlace } from './robotLoaderJointPatch';
 
 const makeJointPatchData = (overrides: Partial<UrdfJoint> = {}): UrdfJoint => ({
   id: 'joint_1',
@@ -59,5 +59,72 @@ test('patchJointInPlace handles joints without explicit axis or limits', () => {
   assert.equal(joint.ignoreLimits, true);
   assert.deepEqual(joint.axis.toArray(), [1, 0, 0]);
   assert.equal(joint.position.z, 0.2);
+  assert.equal(invalidations.length, 1);
+});
+
+test('patchJointsInPlace applies batched root-anchor updates without remounting the runtime scene', () => {
+  const robot = new THREE.Group() as THREE.Group & {
+    joints?: Record<string, RuntimeURDFJoint>;
+  };
+  const jointA = new RuntimeURDFJoint();
+  jointA.name = 'joint_a';
+  jointA.origPosition = jointA.position.clone();
+  jointA.origQuaternion = jointA.quaternion.clone();
+
+  const jointB = new RuntimeURDFJoint();
+  jointB.name = 'joint_b';
+  jointB.origPosition = jointB.position.clone();
+  jointB.origQuaternion = jointB.quaternion.clone();
+
+  robot.joints = {
+    joint_a: jointA,
+    joint_b: jointB,
+  };
+
+  const invalidations: number[] = [];
+  const applied = patchJointsInPlace(robot, [
+    {
+      jointName: 'joint_a',
+      previousJointData: makeJointPatchData({
+        id: 'joint_a',
+        name: 'joint_a',
+        childLinkId: 'link_a',
+      }),
+      jointData: makeJointPatchData({
+        id: 'joint_a',
+        name: 'joint_a',
+        childLinkId: 'link_a',
+        origin: {
+          xyz: { x: 0.25, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      }),
+    },
+    {
+      jointName: 'joint_b',
+      previousJointData: makeJointPatchData({
+        id: 'joint_b',
+        name: 'joint_b',
+        childLinkId: 'link_b',
+      }),
+      jointData: makeJointPatchData({
+        id: 'joint_b',
+        name: 'joint_b',
+        childLinkId: 'link_b',
+        origin: {
+          xyz: { x: -0.5, y: 0.1, z: 0.2 },
+          rpy: { r: 0, p: 0.2, y: 0 },
+        },
+      }),
+    },
+  ], () => {
+    invalidations.push(1);
+  });
+
+  assert.equal(applied, true);
+  assert.equal(jointA.position.x, 0.25);
+  assert.equal(jointB.position.x, -0.5);
+  assert.equal(jointB.position.y, 0.1);
+  assert.equal(jointB.position.z, 0.2);
   assert.equal(invalidations.length, 1);
 });

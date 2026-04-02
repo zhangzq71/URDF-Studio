@@ -3,17 +3,23 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotFile } from '@/types';
 import type {
+  ToolMode,
+  URDFViewerProps,
   ViewerDocumentLoadEvent,
+  ViewerInteractiveLayer,
   ViewerRuntimeStageBridge,
   UsdLoadingPhaseLabels,
 } from '../types';
 import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
 import type {
+  OffscreenViewerInteractionSelection,
   UsdOffscreenViewerInitRequest,
   UsdOffscreenViewerLoadDebugEntry,
   UsdOffscreenViewerWorkerRequest,
   UsdOffscreenViewerWorkerResponse,
 } from '../utils/usdOffscreenViewerProtocol';
+import { normalizeUsdBootstrapDocumentLoadEvent } from '../utils/usdBootstrapDocumentLoadEvent';
+import { createUsdViewerRuntimeRobot } from '../utils/usdViewerRuntimeRobot';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 import { supportsUsdWorkerRenderer } from '../utils/usdWorkerRendererSupport';
 
@@ -31,7 +37,15 @@ interface UsdOffscreenStageProps {
   loadingPhaseLabels: UsdLoadingPhaseLabels;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
+  selection?: URDFViewerProps['selection'];
+  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  hoverSelectionEnabled?: boolean;
+  onHover?: URDFViewerProps['onHover'];
+  onMeshSelect?: URDFViewerProps['onMeshSelect'];
+  interactionLayerPriority?: readonly ViewerInteractiveLayer[];
+  toolMode: ToolMode;
   runtimeBridge?: ViewerRuntimeStageBridge;
+  retainReadyAsLoadingDuringBootstrapHandoff?: boolean;
 }
 
 const USD_STAGE_LOAD_DEBUG_HISTORY_LIMIT = 24;
@@ -55,6 +69,34 @@ function recordUsdOffscreenLoadDebug(entry: UsdOffscreenViewerLoadDebugEntry): v
   runtimeWindow.__usdStageLoadDebugHistory = history;
 }
 
+function toOffscreenInteractionSelection(
+  selection?: URDFViewerProps['selection'] | URDFViewerProps['hoveredSelection'],
+): OffscreenViewerInteractionSelection | null {
+  if (!selection || !selection.type || !selection.id) {
+    return null;
+  }
+
+  return {
+    type: selection.type,
+    id: selection.id,
+    subType: selection.subType,
+    objectIndex: selection.objectIndex,
+    helperKind: selection.helperKind,
+  };
+}
+
+function getCanvasPointerPosition(event: ReactPointerEvent<HTMLCanvasElement>): { x: number; y: number } {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+function radiansToDegrees(value: number | null | undefined): number | undefined {
+  return Number.isFinite(Number(value)) ? (Number(value) * 180) / Math.PI : undefined;
+}
+
 export function UsdOffscreenStage({
   active = true,
   sourceFile,
@@ -69,13 +111,30 @@ export function UsdOffscreenStage({
   loadingPhaseLabels,
   onRobotDataResolved,
   onDocumentLoadEvent,
+  selection,
+  hoveredSelection,
+  hoverSelectionEnabled = true,
+  onHover,
+  onMeshSelect,
+  interactionLayerPriority,
+  toolMode,
   runtimeBridge,
+  retainReadyAsLoadingDuringBootstrapHandoff = false,
 }: UsdOffscreenStageProps) {
   const workerRef = useRef<Worker | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const initCompleteRef = useRef(false);
   const onDocumentLoadEventRef = useRef(onDocumentLoadEvent);
   const onRobotDataResolvedRef = useRef(onRobotDataResolved);
+  const onHoverRef = useRef(onHover);
+  const onMeshSelectRef = useRef(onMeshSelect);
+  const jointInfoByLinkPathRef = useRef(new Map<string, {
+    angleDeg?: number;
+    lowerLimitDeg?: number;
+    upperLimitDeg?: number;
+  }>());
+  const lastRobotResolutionRef = useRef<ViewerRobotDataResolution | null>(null);
+  const runtimeRobotProxyRef = useRef<any | null>(null);
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
   const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -110,14 +169,28 @@ export function UsdOffscreenStage({
   }, [onRobotDataResolved]);
 
   useEffect(() => {
+    onHoverRef.current = onHover;
+  }, [onHover]);
+
+  useEffect(() => {
+    onMeshSelectRef.current = onMeshSelect;
+  }, [onMeshSelect]);
+
+  useEffect(() => {
     runtimeBridge?.onRobotResolved?.(null);
     runtimeBridge?.onActiveJointChange?.(null);
     runtimeBridge?.onJointAnglesChange?.({});
+    runtimeRobotProxyRef.current = null;
+    lastRobotResolutionRef.current = null;
+    jointInfoByLinkPathRef.current.clear();
 
     return () => {
       runtimeBridge?.onRobotResolved?.(null);
       runtimeBridge?.onActiveJointChange?.(null);
       runtimeBridge?.onJointAnglesChange?.({});
+      runtimeRobotProxyRef.current = null;
+      lastRobotResolutionRef.current = null;
+      jointInfoByLinkPathRef.current.clear();
     };
   }, [runtimeBridge]);
 
@@ -168,13 +241,16 @@ export function UsdOffscreenStage({
           return;
         }
         case 'document-load': {
+          const normalizedBootstrapEvent = normalizeUsdBootstrapDocumentLoadEvent(message.event, {
+            useUsdOffscreenBootstrap: retainReadyAsLoadingDuringBootstrapHandoff,
+          });
           if (message.event.status === 'loading') {
             setIsLoading(true);
             setLoadingProgress(message.event);
           } else if (message.event.status === 'ready') {
-            setIsLoading(false);
+            setIsLoading(normalizedBootstrapEvent.status === 'loading');
             setErrorMessage(null);
-            setLoadingProgress(message.event);
+            setLoadingProgress(normalizedBootstrapEvent);
           } else if (message.event.status === 'error') {
             setIsLoading(false);
             setErrorMessage(message.event.error || 'Failed to load USD stage in offscreen worker');
@@ -184,7 +260,120 @@ export function UsdOffscreenStage({
           return;
         }
         case 'robot-data': {
+          lastRobotResolutionRef.current = message.resolution;
+          jointInfoByLinkPathRef.current = new Map(
+            Object.entries(message.resolution.childLinkPathByJointId).flatMap(([jointId, childLinkPath]) => {
+              const joint = message.resolution.robotData.joints[jointId];
+              if (!joint || !childLinkPath) {
+                return [];
+              }
+
+              return [[childLinkPath, {
+                angleDeg: radiansToDegrees(joint.angle),
+                lowerLimitDeg: radiansToDegrees(joint.limit?.lower),
+                upperLimitDeg: radiansToDegrees(joint.limit?.upper),
+              }]];
+            }),
+          );
+          runtimeRobotProxyRef.current = createUsdViewerRuntimeRobot({
+            resolution: message.resolution,
+            linkRotationController: {
+              apply: () => false,
+              getJointInfoForLink: (linkPath: string) => (
+                jointInfoByLinkPathRef.current.get(linkPath) ?? null
+              ),
+              setJointAngleForLink: (linkPath: string, angleDeg: number) => {
+                const resolution = lastRobotResolutionRef.current;
+                const jointId = Object.entries(resolution?.childLinkPathByJointId || {}).find(([, candidatePath]) => (
+                  candidatePath === linkPath
+                ))?.[0];
+                const joint = jointId ? resolution?.robotData.joints[jointId] : undefined;
+                const lowerLimitDeg = radiansToDegrees(joint?.limit?.lower);
+                const upperLimitDeg = radiansToDegrees(joint?.limit?.upper);
+                const clampedAngleDeg = Number.isFinite(lowerLimitDeg) && Number.isFinite(upperLimitDeg)
+                  ? Math.min(Math.max(angleDeg, lowerLimitDeg!), upperLimitDeg!)
+                  : angleDeg;
+                const nextInfo = {
+                  angleDeg: clampedAngleDeg,
+                  lowerLimitDeg,
+                  upperLimitDeg,
+                };
+                jointInfoByLinkPathRef.current.set(linkPath, nextInfo);
+
+                if (jointId) {
+                  workerRef.current?.postMessage({
+                    type: 'set-joint-angle',
+                    jointId,
+                    angleRad: (clampedAngleDeg * Math.PI) / 180,
+                  });
+                  if (runtimeRobotProxyRef.current?.joints?.[jointId]) {
+                    runtimeRobotProxyRef.current.joints[jointId].angle = (clampedAngleDeg * Math.PI) / 180;
+                  }
+                }
+
+                return nextInfo;
+              },
+            },
+          });
+          runtimeBridge?.onRobotResolved?.(runtimeRobotProxyRef.current);
           onRobotDataResolvedRef.current?.(message.resolution);
+          return;
+        }
+        case 'selection-change': {
+          if (!message.selection) {
+            runtimeBridge?.onSelectionChange?.('link', '');
+            return;
+          }
+
+          runtimeBridge?.onSelectionChange?.(
+            message.selection.type,
+            message.selection.id,
+            message.selection.subType,
+            message.selection.helperKind,
+          );
+
+          if (message.meshSelection) {
+            onMeshSelectRef.current?.(
+              message.meshSelection.linkId,
+              null,
+              message.meshSelection.objectIndex,
+              message.meshSelection.objectType,
+            );
+          }
+          return;
+        }
+        case 'hover-change': {
+          const nextHover = message.hoveredSelection;
+          onHoverRef.current?.(
+            nextHover?.type ?? null,
+            nextHover?.id ?? null,
+            nextHover?.subType,
+            nextHover?.objectIndex,
+            nextHover?.helperKind,
+          );
+          return;
+        }
+        case 'joint-angles-change': {
+          const resolution = lastRobotResolutionRef.current;
+          if (resolution) {
+            Object.entries(message.jointAngles).forEach(([jointId, angleRad]) => {
+              const childLinkPath = resolution.childLinkPathByJointId[jointId];
+              const existingInfo = childLinkPath
+                ? jointInfoByLinkPathRef.current.get(childLinkPath) ?? {}
+                : {};
+              if (childLinkPath) {
+                jointInfoByLinkPathRef.current.set(childLinkPath, {
+                  ...existingInfo,
+                  angleDeg: radiansToDegrees(angleRad),
+                });
+              }
+              if (runtimeRobotProxyRef.current?.joints?.[jointId]) {
+                runtimeRobotProxyRef.current.joints[jointId].angle = angleRad;
+              }
+            });
+          }
+
+          runtimeBridge?.onJointAnglesChange?.(message.jointAngles);
           return;
         }
         case 'load-debug': {
@@ -275,6 +464,14 @@ export function UsdOffscreenStage({
       };
 
       worker.postMessage(initRequest, [offscreenCanvas]);
+      worker.postMessage({
+        type: 'set-interaction-state',
+        toolMode,
+        selection: toOffscreenInteractionSelection(selection),
+        hoveredSelection: toOffscreenInteractionSelection(hoveredSelection),
+        hoverSelectionEnabled,
+        interactionLayerPriority: interactionLayerPriority ? [...interactionLayerPriority] : [],
+      });
       initCompleteRef.current = true;
 
       resizeObserver = new ResizeObserver((entries) => {
@@ -355,6 +552,24 @@ export function UsdOffscreenStage({
     });
   }, [active, postWorkerMessage]);
 
+  useEffect(() => {
+    postWorkerMessage({
+      type: 'set-interaction-state',
+      toolMode,
+      selection: toOffscreenInteractionSelection(selection),
+      hoveredSelection: toOffscreenInteractionSelection(hoveredSelection),
+      hoverSelectionEnabled,
+      interactionLayerPriority: interactionLayerPriority ? [...interactionLayerPriority] : [],
+    });
+  }, [
+    hoverSelectionEnabled,
+    hoveredSelection,
+    interactionLayerPriority,
+    postWorkerMessage,
+    selection,
+    toolMode,
+  ]);
+
   const loadingHudState = useMemo(() => buildViewerLoadingHudState({
     detailLabel: loadingDetailLabel,
     loadedCount: loadingProgress?.loadedCount,
@@ -379,37 +594,39 @@ export function UsdOffscreenStage({
       return;
     }
 
+    const pointer = getCanvasPointerPosition(event);
     activePointerIdRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     postWorkerMessage({
       type: 'pointer-down',
       pointerId: event.pointerId,
       button: event.button,
-      clientX: event.clientX,
-      clientY: event.clientY,
+      localX: pointer.x,
+      localY: pointer.y,
     });
   }, [active, postWorkerMessage]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!active || activePointerIdRef.current !== event.pointerId) {
+    if (!active) {
       return;
     }
 
+    const pointer = getCanvasPointerPosition(event);
     postWorkerMessage({
       type: 'pointer-move',
       pointerId: event.pointerId,
       buttons: event.buttons,
-      clientX: event.clientX,
-      clientY: event.clientY,
+      localX: pointer.x,
+      localY: pointer.y,
     });
   }, [active, postWorkerMessage]);
 
   const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (activePointerIdRef.current !== event.pointerId) {
-      return;
-    }
+    const pointer = getCanvasPointerPosition(event);
 
-    activePointerIdRef.current = null;
+    if (activePointerIdRef.current === event.pointerId) {
+      activePointerIdRef.current = null;
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -417,9 +634,14 @@ export function UsdOffscreenStage({
       type: 'pointer-up',
       pointerId: event.pointerId,
       buttons: event.buttons,
-      clientX: event.clientX,
-      clientY: event.clientY,
+      localX: pointer.x,
+      localY: pointer.y,
     });
+  }, [postWorkerMessage]);
+
+  const handlePointerLeave = useCallback(() => {
+    activePointerIdRef.current = null;
+    postWorkerMessage({ type: 'pointer-leave' });
   }, [postWorkerMessage]);
 
   const handleWheel = useCallback((event: ReactWheelEvent<HTMLCanvasElement>) => {
@@ -451,6 +673,7 @@ export function UsdOffscreenStage({
           onContextMenuCapture={(event) => event.preventDefault()}
           onPointerCancel={handlePointerUp}
           onPointerDown={handlePointerDown}
+          onPointerLeave={handlePointerLeave}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onWheel={handleWheel}

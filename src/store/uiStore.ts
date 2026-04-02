@@ -51,9 +51,9 @@ export interface PanelLayoutState {
 }
 
 interface UIState {
-  // App mode (legacy values normalize into the merged edit mode)
+  // App mode
   appMode: AppMode;
-  setAppMode: (mode: AppMode | 'skeleton' | 'hardware') => void;
+  setAppMode: (mode: AppMode) => void;
 
   // Theme (light/dark/system)
   theme: Theme;
@@ -116,11 +116,15 @@ interface UIState {
   fontSize: 'small' | 'medium' | 'large';
   setFontSize: (size: 'small' | 'medium' | 'large') => void;
 
+  // Source code editor
+  sourceCodeAutoApply: boolean;
+  setSourceCodeAutoApply: (enabled: boolean) => void;
+
   // Property editor rotation format
   rotationDisplayMode: RotationDisplayMode;
   setRotationDisplayMode: (mode: RotationDisplayMode) => void;
 
-  // Detail-mode link property tab
+  // Editor link property tab
   detailLinkTab: DetailLinkTab;
   setDetailLinkTab: (tab: DetailLinkTab) => void;
 
@@ -257,7 +261,7 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       // App mode
-      appMode: normalizeMergedAppMode('detail'),
+      appMode: normalizeMergedAppMode('editor'),
       setAppMode: (mode) => set({ appMode: normalizeMergedAppMode(mode) }),
 
       // Theme
@@ -391,11 +395,15 @@ export const useUIStore = create<UIState>()(
         set({ fontSize: size });
       },
 
+      // Source code editor
+      sourceCodeAutoApply: true,
+      setSourceCodeAutoApply: (sourceCodeAutoApply) => set({ sourceCodeAutoApply }),
+
       // Property editor rotation format
       rotationDisplayMode: 'euler_deg',
       setRotationDisplayMode: (rotationDisplayMode) => set({ rotationDisplayMode }),
 
-      // Detail-mode link property tab
+      // Editor link property tab
       detailLinkTab: 'visual',
       setDetailLinkTab: (detailLinkTab) => set({ detailLinkTab: normalizeDetailLinkTab(detailLinkTab) }),
 
@@ -440,6 +448,7 @@ export const useUIStore = create<UIState>()(
         showImportWarning: state.showImportWarning,
         panelSections: state.panelSections,
         fontSize: state.fontSize,
+        sourceCodeAutoApply: state.sourceCodeAutoApply,
         rotationDisplayMode: state.rotationDisplayMode,
         detailLinkTab: state.detailLinkTab,
         structureTreeShowGeometryDetails: state.structureTreeShowGeometryDetails,

@@ -151,12 +151,18 @@ const buildInspectionCriteriaDescription = (
       .map(item => {
         const itemName = lang === 'zh' ? item.nameZh : item.name
         const itemDesc = lang === 'zh' ? item.descriptionZh : item.description
-        return `    - ${itemName} (${item.id}): ${itemDesc}`
+        const itemScoreRef =
+          lang === 'zh' ? item.scoringReferenceZh : item.scoringReference
+        const itemDetails = itemScoreRef
+          ? `${itemDesc} ${lang === 'zh' ? `得分参考：${itemScoreRef}` : `Scoring reference: ${itemScoreRef}`}`
+          : itemDesc
+        return `    - ${itemName} (${item.id}): ${itemDetails}`
       })
       .join('\n')
 
     if (itemsDesc) {
-      return `  ${category.id} (${categoryName}, weight: ${category.weight * 100}%):\n${itemsDesc}`
+      const weightLabel = lang === 'zh' ? '权重' : 'weight'
+      return `  ${category.id} (${categoryName}, ${weightLabel}: ${category.weight * 100}%):\n${itemsDesc}`
     }
     return null
   })

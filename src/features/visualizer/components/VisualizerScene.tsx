@@ -1,7 +1,8 @@
 import React from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
-import type { AppMode, RobotState, UrdfJoint } from '@/types';
+import type { AppMode, AssemblyState, RobotState, UrdfJoint } from '@/types';
+import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
 import {
@@ -12,16 +13,25 @@ import {
   buildLoadingHudState,
 } from '@/shared/components/3d';
 import { buildColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
+import type { UpdateCommitOptions } from '@/app/hooks/usePendingHistoryCoordinator';
+import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
 import { RobotNode } from './nodes';
 import { ClosedLoopConstraintsOverlay } from './constraints';
-import { JointTransformControls } from './controls';
+import { AssemblyTransformControls, JointTransformControls } from './controls';
 import { VisualizerHoverController } from './VisualizerHoverController';
 import type { VisualizerController } from '../hooks/useVisualizerController';
+import {
+  createInitialAssemblyAutoGroundTrackingState,
+  resolveAssemblyAutoGrounding,
+  resolveReadyAssemblyAutoGroundComponentIds,
+  resolveNextAssemblyAutoGroundTrackingState,
+} from '../utils/assemblyAutoGrounding';
 import { shouldRenderMergedVisualizerConstraintOverlay } from '../utils/mergedVisualizerSceneMode';
 import { resolveMergedVisualizerRootPlacements } from '../utils/mergedVisualizerLayout';
 import { collectVisualizerMeshLoadKeys } from '../utils/visualizerMeshLoading';
 import { buildVisualizerDocumentLoadEvent } from '../utils/visualizerDocumentLoad';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
 
 const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode }>(
   function GroundedGroup({ children }, ref) {
@@ -38,6 +48,30 @@ interface VisualizerSceneProps {
   lang: Language;
   controller: VisualizerController;
   active?: boolean;
+  assemblyState?: AssemblyState | null;
+  assemblyWorkspaceActive?: boolean;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: (transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { r: number; p: number; y: number };
+  }) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: {
+      position: { x: number; y: number; z: number };
+      rotation: { r: number; p: number; y: number };
+    },
+    options?: UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (
+    bridgeId: string,
+    origin: {
+      xyz: { x: number; y: number; z: number };
+      rpy: { r: number; p: number; y: number };
+      quatXyzw?: { x: number; y: number; z: number; w: number };
+    },
+  ) => void;
+  onTransformPendingChange?: (pending: boolean) => void;
   onDocumentLoadEvent?: (event: {
     status: 'loading' | 'ready' | 'error';
     phase?: string | null;
@@ -58,16 +92,26 @@ export const VisualizerScene = React.memo(({
   lang,
   controller,
   active = true,
+  assemblyState = null,
+  assemblyWorkspaceActive = false,
+  assemblySelection,
+  onAssemblyTransform,
+  onComponentTransform,
+  onBridgeTransform,
+  onTransformPendingChange,
   onDocumentLoadEvent,
 }: VisualizerSceneProps) => {
   const t = translations[lang];
+  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const collisionTransformControlRef = React.useRef<any>(null);
+  const assemblyRootRef = React.useRef<THREE.Group | null>(null);
+  const assemblyAutoGroundTrackingRef = React.useRef(createInitialAssemblyAutoGroundTrackingState());
   const {
     robotRootRef,
     state,
+    jointPivots,
     selectedJointPivot,
-    selectedJointMotion,
     selectedCollisionRef,
     handleRegisterJointPivot,
     handleRegisterJointMotion,
@@ -206,7 +250,63 @@ export const VisualizerScene = React.memo(({
       };
     });
   }, [expectedMeshLoadKeySet, expectedMeshLoadSignature, requestGroundRealignment]);
+
+  React.useEffect(() => {
+    assemblyAutoGroundTrackingRef.current = resolveNextAssemblyAutoGroundTrackingState({
+      previousState: assemblyAutoGroundTrackingRef.current,
+      assemblyState,
+    });
+  }, [assemblyState]);
+
+  React.useEffect(() => {
+    if (!assemblyWorkspaceActive || !assemblyState || !onComponentTransform) {
+      return;
+    }
+
+    const readyComponentIds = resolveReadyAssemblyAutoGroundComponentIds({
+      assemblyState,
+      pendingComponentIds: assemblyAutoGroundTrackingRef.current.pendingComponentIds,
+      expectedMeshLoadKeys,
+      resolvedMeshLoadKeys: meshLoadingState.resolvedKeys,
+    });
+    if (readyComponentIds.length === 0) {
+      return;
+    }
+
+    const { adjustments, measuredComponentIds } = resolveAssemblyAutoGrounding({
+      robot,
+      assemblyState,
+      jointPivots,
+      groundPlaneOffset,
+      componentIds: readyComponentIds,
+    });
+    if (measuredComponentIds.length === 0) {
+      return;
+    }
+
+    measuredComponentIds.forEach((componentId) => {
+      assemblyAutoGroundTrackingRef.current.pendingComponentIds.delete(componentId);
+    });
+    adjustments.forEach(({ componentId, transform }) => {
+      onComponentTransform(componentId, transform, {
+        skipHistory: true,
+      });
+    });
+  }, [
+    assemblyState,
+    assemblyWorkspaceActive,
+    expectedMeshLoadKeys,
+    groundPlaneOffset,
+    jointPivots,
+    meshLoadingState.resolvedKeys,
+    onComponentTransform,
+    robot,
+  ]);
   const shouldRenderConstraintOverlay = shouldRenderMergedVisualizerConstraintOverlay(mode);
+  const assemblyTransform = React.useMemo(
+    () => cloneAssemblyTransform(assemblyWorkspaceActive ? assemblyState?.transform : null),
+    [assemblyState?.transform, assemblyWorkspaceActive],
+  );
 
   return (
     <>
@@ -216,43 +316,57 @@ export const VisualizerScene = React.memo(({
         interactionLayerPriority={state.interactionLayerPriority}
         active={active}
       />
-      <GroundedGroup ref={robotRootRef}>
-        {shouldRenderConstraintOverlay && <ClosedLoopConstraintsOverlay robot={robot} />}
-        {rootPlacements.map(({ linkId, position }) => (
-          <group key={linkId} position={position}>
-            <RobotNode
-              linkId={linkId}
-              robot={robot}
-              onSelect={onSelect}
-              onUpdate={onUpdate}
-              mode={mode}
-              showGeometry={state.showGeometry}
-              showVisual={state.showVisual}
-              showOrigin={state.showOrigin}
-              showLabels={state.showLabels}
-              showJointAxes={state.showJointAxes}
-              jointAxisSize={state.jointAxisSize}
-              frameSize={state.frameSize}
-              labelScale={state.labelScale}
-              showCollision={state.showCollision}
-              modelOpacity={state.modelOpacity}
-              showInertia={state.showInertia}
-              showCenterOfMass={state.showCenterOfMass}
-              interactionLayerPriority={state.interactionLayerPriority}
-              transformMode={state.transformMode}
-              depth={0}
-              assets={assets}
-              lang={lang}
-              colladaRootNormalizationHints={colladaRootNormalizationHints}
-              childJointsByParent={childJointsByParent}
-              onRegisterJointPivot={handleRegisterJointPivot}
-              onRegisterJointMotion={handleRegisterJointMotion}
-              onRegisterCollisionRef={handleRegisterCollisionRef}
-              onMeshResolved={handleMeshResolved}
-            />
-          </group>
-        ))}
-      </GroundedGroup>
+      <group
+        ref={assemblyRootRef}
+        position={[
+          assemblyTransform.position.x,
+          assemblyTransform.position.y,
+          assemblyTransform.position.z,
+        ]}
+        rotation={[
+          assemblyTransform.rotation.r,
+          assemblyTransform.rotation.p,
+          assemblyTransform.rotation.y,
+        ]}
+      >
+        <GroundedGroup ref={robotRootRef}>
+          {shouldRenderConstraintOverlay && <ClosedLoopConstraintsOverlay robot={robot} />}
+          {rootPlacements.map(({ linkId, position }) => (
+            <group key={linkId} position={position}>
+              <RobotNode
+                linkId={linkId}
+                robot={robot}
+                onSelect={onSelect}
+                onUpdate={onUpdate}
+                mode={mode}
+                showGeometry={state.showGeometry}
+                showVisual={state.showVisual}
+                showOrigin={state.showOrigin}
+                showLabels={state.showLabels}
+                showJointAxes={state.showJointAxes}
+                jointAxisSize={state.jointAxisSize}
+                frameSize={state.frameSize}
+                labelScale={state.labelScale}
+                showCollision={state.showCollision}
+                modelOpacity={state.modelOpacity}
+                showInertia={state.showInertia}
+                showCenterOfMass={state.showCenterOfMass}
+                interactionLayerPriority={state.interactionLayerPriority}
+                transformMode={state.transformMode}
+                depth={0}
+                assets={assets}
+                lang={lang}
+                colladaRootNormalizationHints={colladaRootNormalizationHints}
+                childJointsByParent={childJointsByParent}
+                onRegisterJointPivot={handleRegisterJointPivot}
+                onRegisterJointMotion={handleRegisterJointMotion}
+                onRegisterCollisionRef={handleRegisterCollisionRef}
+                onMeshResolved={handleMeshResolved}
+              />
+            </group>
+          ))}
+        </GroundedGroup>
+      </group>
       {active && isMeshLoading ? (
         <Html fullscreen>
           <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
@@ -268,14 +382,30 @@ export const VisualizerScene = React.memo(({
         </Html>
       ) : null}
 
+      {!assemblyWorkspaceActive && (
         <JointTransformControls
-        mode={mode}
-        selectedJointPivot={selectedJointPivot}
-        selectedJointMotion={selectedJointMotion}
-        robot={robot}
-        transformMode="universal"
-        transformControlsState={transformControlsState}
-      />
+          mode={mode}
+          selectedJointPivot={selectedJointPivot}
+          robot={robot}
+          transformMode="universal"
+          transformControlsState={transformControlsState}
+        />
+      )}
+
+      {assemblyWorkspaceActive && (
+        <AssemblyTransformControls
+          robot={robot}
+          assemblyState={assemblyState}
+          assemblySelection={assemblySelection}
+          transformMode={state.transformMode}
+          assemblyRoot={assemblyRootRef.current}
+          jointPivots={jointPivots}
+          onAssemblyTransform={onAssemblyTransform}
+          onComponentTransform={onComponentTransform}
+          onBridgeTransform={onBridgeTransform}
+          onTransformPendingChange={onTransformPendingChange}
+        />
+      )}
 
       {selectedCollisionRef &&
         robot.selection.type === 'link' &&

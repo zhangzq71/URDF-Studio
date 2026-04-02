@@ -154,16 +154,14 @@ async function destroyComponentRoot(dom: JSDOM, root: Root) {
   dom.window.close();
 }
 
-for (const mode of ['skeleton', 'detail', 'hardware'] as const) {
-  test(`mode \`${mode}\` renders link-only editing layout without embedded joint properties`, () => {
-    const markup = renderLinkProperties(mode);
+test('editor mode renders link-only editing layout without embedded joint properties', () => {
+  const markup = renderLinkProperties('editor');
 
-    assert.doesNotMatch(markup, new RegExp(translations.en.selectedJoint));
-    assert.match(markup, new RegExp(translations.en.visualGeometry));
-    assert.match(markup, new RegExp(translations.en.collisionGeometry));
-    assert.match(markup, new RegExp(translations.en.physics));
-  });
-}
+  assert.doesNotMatch(markup, new RegExp(translations.en.selectedJoint));
+  assert.match(markup, new RegExp(translations.en.visualGeometry));
+  assert.match(markup, new RegExp(translations.en.collisionGeometry));
+  assert.match(markup, new RegExp(translations.en.physics));
+});
 
 test('physics tab keeps diagonal inertia inline and principal axes in a matrix layout', async () => {
   const { dom, container, root } = createComponentRoot();
@@ -177,7 +175,7 @@ test('physics tab keeps diagonal inertia inline and principal axes in a matrix l
         React.createElement(LinkProperties, {
           data: link,
           robot,
-          mode: 'detail',
+          mode: 'editor',
           selection: robot.selection,
           onUpdate: () => {},
           motorLibrary: {},

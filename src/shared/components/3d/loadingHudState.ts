@@ -11,6 +11,12 @@ export interface LoadingHudState {
   statusLabel: string | null;
 }
 
+export interface IndeterminateStreamingMeshProgressInput {
+  phase?: string | null;
+  loadedCount?: number | null;
+  totalCount?: number | null;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -49,4 +55,19 @@ export function buildLoadingHudState({
     progress: null,
     statusLabel: null,
   };
+}
+
+export function shouldUseIndeterminateStreamingMeshProgress({
+  phase,
+  loadedCount,
+  totalCount,
+}: IndeterminateStreamingMeshProgressInput): boolean {
+  if (phase !== 'streaming-meshes') {
+    return false;
+  }
+
+  const safeTotalCount = Number.isFinite(totalCount) ? Math.max(0, Math.round(Number(totalCount))) : 0;
+  const safeLoadedCount = Number.isFinite(loadedCount) ? Math.max(0, Math.round(Number(loadedCount))) : 0;
+
+  return safeTotalCount > 0 && safeLoadedCount === 0;
 }

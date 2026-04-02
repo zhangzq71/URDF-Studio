@@ -157,3 +157,70 @@ test('TreeNode link context menu is portaled and exposes collision add/delete ac
     await destroyComponentRoot(dom, root);
   }
 });
+
+test('TreeNode deleting the selected collision geometry falls back to the parent link selection', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: 'link', id: 'base_link', subType: 'collision', objectIndex: 0 },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: null, id: null },
+      focusTarget: null,
+    });
+
+    const robot = createRobotWithCollision();
+    const updatedLinks: RobotState['links'][] = [];
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <TreeNode
+            linkId="base_link"
+            robot={robot}
+            showGeometryDetailsByDefault
+            onSelect={() => {}}
+            onAddChild={() => {}}
+            onAddCollisionBody={() => {}}
+            onDelete={() => {}}
+            onUpdate={(_type, _id, data) => {
+              updatedLinks.push((data as RobotState['links'][string]));
+            }}
+            mode="detail"
+            t={translations.en}
+          />
+        </div>,
+      );
+    });
+
+    const collisionRow = container.querySelector(`[title="${translations.en.collision}"]`) as HTMLDivElement | null;
+    assert.ok(collisionRow, 'primary collision row should render');
+
+    await act(async () => {
+      collisionRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: 140,
+        clientY: 96,
+      }));
+    });
+
+    const deleteCollisionButton = findButtonByText(translations.en.deleteCollisionGeometry);
+    assert.ok(deleteCollisionButton, 'geometry context menu should expose delete collision action');
+
+    await act(async () => {
+      deleteCollisionButton.dispatchEvent(new dom.window.MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    assert.equal(updatedLinks.length, 1, 'deleting the collision should issue one link update');
+    assert.deepEqual(useSelectionStore.getState().selection, { type: 'link', id: 'base_link' });
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});

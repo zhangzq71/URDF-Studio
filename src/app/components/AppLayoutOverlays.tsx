@@ -35,7 +35,9 @@ interface AppLayoutOverlaysProps {
   sourceCodeContent: string;
   sourceCodeDocumentFlavor: SourceCodeDocumentFlavor;
   forceSourceCodeReadOnly?: boolean;
-  onCodeChange: (newCode: string) => void;
+  autoApplyEnabled?: boolean;
+  onCodeChange: (newCode: string) => Promise<boolean> | boolean;
+  onSourceCodeDownload?: () => void;
   onCloseCodeViewer: () => void;
   theme: Theme;
   selectedFileName?: string;
@@ -76,7 +78,9 @@ export function AppLayoutOverlays({
   sourceCodeContent,
   sourceCodeDocumentFlavor,
   forceSourceCodeReadOnly = false,
+  autoApplyEnabled = true,
   onCodeChange,
+  onSourceCodeDownload,
   onCloseCodeViewer,
   theme,
   selectedFileName,
@@ -102,6 +106,8 @@ export function AppLayoutOverlays({
   const codeEditorFileName = selectedFileName
     ? selectedFileName.split('/').pop() || `${robotName}.urdf`
     : `${robotName}.urdf`;
+  const isSourceCodeReadOnly =
+    forceSourceCodeReadOnly || isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor);
   return (
     <>
       {isCodeViewerOpen && (
@@ -114,7 +120,9 @@ export function AppLayoutOverlays({
             fileName={codeEditorFileName}
             lang={lang}
             documentFlavor={sourceCodeDocumentFlavor}
-            readOnly={forceSourceCodeReadOnly || isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor)}
+            readOnly={isSourceCodeReadOnly}
+            autoApplyEnabled={autoApplyEnabled}
+            onDownload={isSourceCodeReadOnly ? undefined : onSourceCodeDownload}
           />
         </Suspense>
       )}

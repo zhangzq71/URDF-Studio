@@ -1,7 +1,18 @@
 import { loader } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 
-const DEFAULT_MONACO_VS_PATH = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs';
+function resolveDefaultMonacoVsPath(): string {
+  const baseUrl = String(import.meta.env.BASE_URL || '/').trim();
+  const normalizedBaseUrl = baseUrl === '/'
+    ? ''
+    : `/${baseUrl.replace(/^\/+|\/+$/g, '')}`;
+
+  // Prefer the vendored Monaco runtime under public/ so the app startup path
+  // does not depend on an external CDN being reachable.
+  return `${normalizedBaseUrl}/monaco-editor/min/vs`;
+}
+
+const DEFAULT_MONACO_VS_PATH = resolveDefaultMonacoVsPath();
 
 const resolveMonacoVsPath = (): string => {
   const configured = String(import.meta.env.VITE_MONACO_VS_PATH || '').trim();

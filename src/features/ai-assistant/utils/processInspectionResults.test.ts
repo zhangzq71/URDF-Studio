@@ -12,7 +12,7 @@ test('processInspectionResults infers MJCF-relevant item ids when the model omit
           type: 'warning',
           title: 'Frame origin drift',
           description: 'Joint origin and coordinate frame are inconsistent near the hip assembly.',
-          category: 'kinematics',
+          category: 'frames',
         },
         {
           type: 'warning',
@@ -29,7 +29,7 @@ test('processInspectionResults infers MJCF-relevant item ids when the model omit
       ],
     },
     {
-      kinematics: ['frame_alignment'],
+      frames: ['frame_alignment'],
       hardware: ['armature_config', 'motor_limits'],
     },
     'en'

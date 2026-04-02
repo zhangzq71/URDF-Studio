@@ -20,10 +20,14 @@ import {
 import { buildStandalonePackageAssetImportWarning } from '@/app/utils/importPackageAssetReferences.ts';
 import { primePreResolvedRobotImports } from '@/app/utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from '@/app/utils/usdSelectionPrewarm';
+import { markUnsavedChangesBaselineSaved } from '@/app/utils/unsavedChangesBaseline';
 
 export interface ImportPreparationOverlayState {
   label: string;
   detail?: string;
+  progress?: number | null;
+  statusLabel?: string | null;
+  stageLabel?: string | null;
 }
 
 interface UseFileImportOptions {
@@ -65,6 +69,29 @@ function waitForNextPaint(): Promise<void> {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
+}
+
+function createImportPreparationOverlayState(
+  t: (typeof translations)[keyof typeof translations],
+  stage: 'prepare-import' | 'open-viewer',
+): ImportPreparationOverlayState {
+  if (stage === 'open-viewer') {
+    return {
+      label: t.importPreparationLoadingTitle,
+      detail: t.loadingRobotPreparing,
+      progress: 0.72,
+      statusLabel: '2/2',
+      stageLabel: t.loadingRobotPreparing,
+    };
+  }
+
+  return {
+    label: t.importPreparationLoadingTitle,
+    detail: t.importPreparationLoadingDetail,
+    progress: 0.34,
+    statusLabel: '1/2',
+    stageLabel: t.importPreparationLoadingTitle,
+  };
 }
 
 export function useFileImport(options: UseFileImportOptions = {}) {
@@ -171,6 +198,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         });
 
         uiState.setSidebarTab(result.assemblyState ? 'workspace' : 'structure');
+        markUnsavedChangesBaselineSaved('all');
 
         if (onShowToast) {
           onShowToast(t.importUspSuccess, 'success');
@@ -182,10 +210,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       const hadSelectedFile = Boolean(assetsState.selectedFile);
 
       if (shouldShowPreparationOverlay) {
-        setImportPreparationOverlay({
-          label: t.importPreparationLoadingTitle,
-          detail: t.importPreparationLoadingDetail,
-        });
+        setImportPreparationOverlay(createImportPreparationOverlayState(t, 'prepare-import'));
         await waitForNextPaint();
       }
 
@@ -196,6 +221,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           ...Object.keys(assetsState.assets),
           ...Object.keys(assetsState.allFileContents),
         ],
+        preResolvePreferredImport: false,
       });
 
       const {
@@ -326,9 +352,14 @@ export function useFileImport(options: UseFileImportOptions = {}) {
               if (!component) {
                 throw new Error(`Failed to add imported assembly component: ${preferredFile.name}`);
               }
+              markUnsavedChangesBaselineSaved('assembly');
             }
 
             uiState.setSidebarTab('structure');
+            if (shouldShowPreparationOverlay) {
+              setImportPreparationOverlay(createImportPreparationOverlayState(t, 'open-viewer'));
+              await waitForNextPaint();
+            }
             prewarmUsdSelectionInBackground(preferredFile, mergedFiles, mergedAssets);
             if (onLoadRobot) {
               onLoadRobot(preferredFile);
@@ -342,6 +373,10 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             }
           } else if (!hadSelectedFile) {
             uiState.setSidebarTab('structure');
+            if (shouldShowPreparationOverlay) {
+              setImportPreparationOverlay(createImportPreparationOverlayState(t, 'open-viewer'));
+              await waitForNextPaint();
+            }
             prewarmUsdSelectionInBackground(preferredFile, mergedFiles, mergedAssets);
             if (onLoadRobot) {
               onLoadRobot(preferredFile);
@@ -415,7 +450,9 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       if (!importedAssetsCommitted) {
         revokeBlobUrls(createdBlobUrls);
       }
-      alert(translations[useUIStore.getState().lang].importFailedCheckFiles);
+      const fallbackMessage = translations[useUIStore.getState().lang].importFailedCheckFiles;
+      const errorMessage = error instanceof Error ? error.message.trim() : '';
+      alert(errorMessage ? `${fallbackMessage}\n${errorMessage}` : fallbackMessage);
     } finally {
       clearImportPreparationOverlay();
     }

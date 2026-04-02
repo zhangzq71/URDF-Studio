@@ -137,7 +137,7 @@ function renderHook() {
 function resetStoresToBaseline() {
   useUIStore.setState({
     lang: 'en',
-    appMode: 'detail',
+    appMode: 'editor',
     sidebarTab: 'structure',
   });
 
@@ -289,6 +289,7 @@ function createExportConfig(
       stlQuality: 50,
     },
     usd: {
+      fileFormat: 'usd',
       compressMeshes: true,
       meshQuality: 50,
     },
@@ -317,7 +318,7 @@ test('useFileExport packages selected xacro sources as an exportable xacro zip',
 
   useUIStore.setState({
     lang: 'en',
-    appMode: 'detail',
+    appMode: 'editor',
     sidebarTab: 'structure',
   });
 
@@ -491,7 +492,7 @@ test('useFileExport packages ROS1 xacro exports with gazebo_ros_control metadata
 
   useUIStore.setState({
     lang: 'en',
-    appMode: 'detail',
+    appMode: 'editor',
     sidebarTab: 'structure',
   });
 

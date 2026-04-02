@@ -40,6 +40,7 @@ import {
   stripTransientJointMotionFromRobotData,
 } from '@/shared/utils/robot/semanticSnapshot';
 import { getVisualGeometryEntries } from '@/core/robot';
+import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
 
 const AXIS_EXPORT_TYPES = new Set<JointType>([
   JointType.REVOLUTE,
@@ -202,12 +203,14 @@ export interface ProjectManifest {
   };
   assembly?: {
     name: string;
+    transform?: AssemblyState['transform'];
     components: Record<
       string,
       {
         id: string;
         name: string;
         sourceFile: string;
+        transform?: AssemblyState['components'][string]['transform'];
         visible: boolean;
       }
     >;
@@ -692,6 +695,7 @@ async function buildProjectArchiveEntries(params: ExportProjectParams): Promise<
     assembly: currentAssembly
       ? {
           name: currentAssembly.name,
+          transform: currentAssembly.transform,
           components: Object.fromEntries(
             Object.entries(currentAssembly.components).map(([id, component]) => [
               id,
@@ -699,6 +703,7 @@ async function buildProjectArchiveEntries(params: ExportProjectParams): Promise<
                 id: component.id,
                 name: component.name,
                 sourceFile: component.sourceFile,
+                transform: component.transform,
                 visible: component.visible !== false,
               },
             ]),
@@ -828,7 +833,9 @@ async function buildProjectArchiveEntries(params: ExportProjectParams): Promise<
     await Promise.all(componentAssetTasks);
     assertNoProjectExportWarnings(warnings);
   } else {
-    const mergedRobot = getMergedRobotData() ?? robotState.present;
+    const mergedRobot = currentAssembly
+      ? buildExportableAssemblyRobotData(currentAssembly)
+      : getMergedRobotData() ?? robotState.present;
 
     if (mergedRobot) {
       const mainRobotFolderPath = joinArchivePath('components', 'main_robot');
@@ -865,7 +872,9 @@ async function buildProjectArchiveEntries(params: ExportProjectParams): Promise<
     setProjectArchiveEntry(archiveEntries, 'bridges/bridge.xml', generateBridgeXml(currentAssembly.bridges));
   }
 
-  const mergedRobot = getMergedRobotData() ?? robotState.present;
+  const mergedRobot = currentAssembly
+    ? buildExportableAssemblyRobotData(currentAssembly)
+    : getMergedRobotData() ?? robotState.present;
   if (mergedRobot) {
     emitPhaseProgress('output', 0, 1, mergedRobot.name);
     const robotForExport = {

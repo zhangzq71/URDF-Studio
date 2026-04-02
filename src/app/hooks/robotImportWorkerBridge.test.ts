@@ -149,6 +149,70 @@ test('robot import worker client resolves editable source parse responses', asyn
   assert.deepEqual(result, parsedRobot);
 });
 
+test('robot import worker client resolves prepared assembly component responses', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const resultPromise = client.prepareAssemblyComponent(demoUrdfFile, {
+    componentId: 'comp_demo',
+    rootName: 'demo',
+  });
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as { requestId: number };
+
+  fakeWorker.emitMessage({
+    type: 'prepare-assembly-component-result',
+    requestId: postedRequest.requestId,
+    result: {
+      componentId: 'comp_demo',
+      displayName: 'demo',
+      robotData: {
+        name: 'demo',
+        rootLinkId: 'comp_demo_base_link',
+        links: {
+          comp_demo_base_link: {
+            id: 'comp_demo_base_link',
+            name: 'demo',
+            visible: true,
+            visual: {
+              type: 'none',
+              dimensions: { x: 0, y: 0, z: 0 },
+              color: '#808080',
+              origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+            },
+            visualBodies: [],
+            collision: {
+              type: 'none',
+              dimensions: { x: 0, y: 0, z: 0 },
+              color: '#ef4444',
+              origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+            },
+            collisionBodies: [],
+            inertial: {
+              mass: 0,
+              origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+            },
+          },
+        },
+        joints: {},
+      },
+      resolvedUrdfContent: demoUrdfFile.content,
+      resolvedUrdfSourceFilePath: demoUrdfFile.name,
+    },
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.componentId, 'comp_demo');
+  assert.equal(result.displayName, 'demo');
+  assert.equal(result.robotData.rootLinkId, 'comp_demo_base_link');
+});
+
 test('robot import worker client rejects editable source parse errors', async () => {
   const fakeWorker = new FakeWorker();
   const client = createRobotImportWorkerClient({

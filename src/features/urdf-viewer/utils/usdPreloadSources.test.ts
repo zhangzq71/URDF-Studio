@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   buildUsdBundlePreloadEntries,
+  collectUsdStageOpenRelevantVirtualPaths,
   createUsdPreloadSource,
+  extractUsdLayerReferencesFromText,
   inferUsdBundleVirtualDirectory,
   isUsdPathWithinBundleDirectory,
+  resolveUsdLayerReferencePath,
   resolveUsdBlobUrl,
 } from './usdPreloadSources.ts';
 
@@ -107,17 +110,97 @@ test('isUsdPathWithinBundleDirectory includes only files from the same USD packa
   );
 });
 
-test('buildUsdBundlePreloadEntries only preloads files from the current USD package bundle', () => {
+test('extractUsdLayerReferencesFromText keeps only USD layer references', () => {
+  assert.deepEqual(
+    extractUsdLayerReferencesFromText(`
+      #usda 1.0
+      (
+        subLayers = [
+          @./configuration/go2_description_base.usd@,
+          @./configuration/go2_description_sensor.usda@,
+          @./textures/body.png@
+        ]
+      )
+    `),
+    [
+      './configuration/go2_description_base.usd',
+      './configuration/go2_description_sensor.usda',
+    ],
+  );
+});
+
+test('resolveUsdLayerReferencePath resolves relative layer paths from the current USD file', () => {
+  assert.equal(
+    resolveUsdLayerReferencePath(
+      '/robots/go2/usd/go2.usd',
+      './configuration/go2_description_base.usd',
+    ),
+    '/robots/go2/usd/configuration/go2_description_base.usd',
+  );
+  assert.equal(
+    resolveUsdLayerReferencePath(
+      '/robots/go2/usd/configuration/go2_description_base.usd',
+      '../go2.usd',
+    ),
+    '/robots/go2/usd/go2.usd',
+  );
+});
+
+test('collectUsdStageOpenRelevantVirtualPaths keeps the selected root layer, its references, and critical config sidecars', () => {
+  assert.deepEqual(
+    collectUsdStageOpenRelevantVirtualPaths(
+      {
+        name: 'robots/go2/usd/go2.usd',
+        content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
+        blobUrl: undefined,
+      },
+      [
+        {
+          name: 'robots/go2/usd/go2.usd',
+          content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
+          blobUrl: undefined,
+          format: 'usd',
+        },
+        {
+          name: 'robots/go2/usd/configuration/go2_description_base.usd',
+          content: '#usda 1.0\n(\n  subLayers = [@./go2_description_sensor.usd@]\n)\n',
+          blobUrl: undefined,
+          format: 'usd',
+        },
+        {
+          name: 'robots/go2/usd/configuration/go2_description_sensor.usd',
+          content: '',
+          blobUrl: undefined,
+          format: 'usd',
+        },
+        {
+          name: 'robots/go2/usd/go2_alt.usd',
+          content: '#usda 1.0',
+          blobUrl: undefined,
+          format: 'usd',
+        },
+      ],
+    ),
+    [
+      '/robots/go2/usd/go2.usd',
+      '/robots/go2/usd/configuration/go2_description_base.usd',
+      '/robots/go2/usd/configuration/go2_description_physics.usd',
+      '/robots/go2/usd/configuration/go2_description_sensor.usd',
+    ],
+  );
+});
+
+test('buildUsdBundlePreloadEntries only preloads the selected USD root and its referenced layers', () => {
   const preloadEntries = buildUsdBundlePreloadEntries(
     {
       name: 'Go2/usd/go2.usd',
-      content: '',
+      content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
       blobUrl: undefined,
     },
     [
       {
         name: 'Go2/usd/go2.usd',
-        content: '',
+        content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
         blobUrl: undefined,
         format: 'usd',
       },
@@ -132,6 +215,12 @@ test('buildUsdBundlePreloadEntries only preloads files from the current USD pack
         content: '',
         blobUrl: undefined,
         format: 'mesh',
+      },
+      {
+        name: 'Go2/usd/go2_alt.usd',
+        content: '#usda 1.0',
+        blobUrl: undefined,
+        format: 'usd',
       },
       {
         name: 'H1/usd/h1.usd',
@@ -151,7 +240,6 @@ test('buildUsdBundlePreloadEntries only preloads files from the current USD pack
   assert.deepEqual(
     preloadEntries.map((entry) => entry.path),
     [
-      '/Go2/textures/body.png',
       '/Go2/usd/configuration/go2_description_base.usd',
       '/Go2/usd/go2.usd',
     ],

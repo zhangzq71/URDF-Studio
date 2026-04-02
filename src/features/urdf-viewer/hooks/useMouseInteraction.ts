@@ -26,6 +26,10 @@ import {
     resolveHoverInteractionResolution,
     type ResolvedHoverInteractionCandidate,
 } from '../utils/hoverInteractionResolution';
+import {
+    collectProjectedHelperInteractionTargets,
+    resolveScreenSpaceHelperInteraction,
+} from '../utils/screenSpaceHelperInteraction';
 import { resolveRevoluteDragDelta } from '../utils/jointDragDelta';
 import { createJointDragStoreSync } from '../utils/jointDragStoreSync';
 import { createJointDragFrameSync } from '../utils/jointDragFrameSync';
@@ -38,6 +42,7 @@ import {
     disarmSelectionMissGuard,
     clearSelectionMissGuardTimer,
     scheduleSelectionMissGuardReset,
+    shouldDisarmSelectionMissGuardOnPointerMove,
 } from '../utils/selectionMissGuard';
 
 const JOINT_DRAG_EPSILON = 1e-5;
@@ -173,7 +178,7 @@ export function useMouseInteraction({
     // Mouse tracking for hover detection AND joint dragging
     useEffect(() => {
         const getGizmoTargets = () => {
-            const nextCacheKey = `${scene.children.length}:${toolMode}:${mode ?? 'detail'}:${robot ? 'robot' : 'empty'}`;
+            const nextCacheKey = `${scene.children.length}:${toolMode}:${mode ?? 'editor'}:${robot ? 'robot' : 'empty'}`;
             const now = performance.now();
 
             if (
@@ -574,6 +579,15 @@ export function useMouseInteraction({
         // Full handler: immediate for joint dragging, throttled for hover
         const handleMouseMove = (e: MouseEvent) => {
             pointerButtonsRef.current = e.buttons;
+            if (shouldDisarmSelectionMissGuardOnPointerMove({
+                justSelected: justSelectedRef?.current === true,
+                pointerButtons: e.buttons,
+                dragging: isDraggingJoint.current,
+                hasPendingSelection: pendingPointerSelectionRef.current !== null,
+                hasResetTimer: selectionResetTimerRef.current !== null,
+            })) {
+                disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+            }
             if (
                 pendingPointerSelectionRef.current
                 && pointerDownPositionRef.current
@@ -619,6 +633,25 @@ export function useMouseInteraction({
             // underlying collision/visual meshes by mistake.
             const gizmoTargets = getGizmoTargets();
             const pickTargets = getPickTargets('all');
+            const canvasRect = gl.domElement.getBoundingClientRect();
+            let projectedHelperInteraction: ResolvedHoverInteractionCandidate | null | undefined;
+            const getProjectedHelperInteraction = () => {
+                if (projectedHelperInteraction !== undefined) {
+                    return projectedHelperInteraction;
+                }
+
+                projectedHelperInteraction = resolveScreenSpaceHelperInteraction({
+                    pointerClientX: e.clientX,
+                    pointerClientY: e.clientY,
+                    projectedHelpers: collectProjectedHelperInteractionTargets({
+                        robot,
+                        camera,
+                        canvasRect,
+                    }),
+                    interactionLayerPriority,
+                });
+                return projectedHelperInteraction;
+            };
             const nearestSceneHit = gizmoTargets.length > 0
                 ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
                 : undefined;
@@ -627,35 +660,39 @@ export function useMouseInteraction({
                 return;
             }
 
-            if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
-                disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
-                return;
-            }
+            let resolvedHit: ResolvedHoverInteractionCandidate | null = null;
 
-            const intersections = findPickIntersections(
-                robot,
-                raycasterRef.current,
-                pickTargets,
-                'all',
-                false,
-                interactionLayerPriority,
-            );
-            const resolvedCandidates: ResolvedHoverInteractionCandidate[] = intersections.reduce<ResolvedHoverInteractionCandidate[]>(
-                (candidates, rayHit) => {
-                    const selectionHit = resolveInteractionSelectionHit(robot, rayHit.object);
-                    if (selectionHit) {
-                        candidates.push({
-                            ...selectionHit,
-                            distance: rayHit.distance,
-                        });
-                    }
-                    return candidates;
-                },
-                [],
-            );
-            const { primaryInteraction: resolvedHit } = resolveHoverInteractionResolution(
-                resolvedCandidates,
-            );
+            if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
+                resolvedHit = getProjectedHelperInteraction();
+            } else {
+                const intersections = findPickIntersections(
+                    robot,
+                    raycasterRef.current,
+                    pickTargets,
+                    'all',
+                    false,
+                    interactionLayerPriority,
+                );
+                const resolvedCandidates: ResolvedHoverInteractionCandidate[] = intersections.reduce<ResolvedHoverInteractionCandidate[]>(
+                    (candidates, rayHit) => {
+                        const selectionHit = resolveInteractionSelectionHit(robot, rayHit.object);
+                        if (selectionHit) {
+                            candidates.push({
+                                ...selectionHit,
+                                distance: rayHit.distance,
+                            });
+                        }
+                        return candidates;
+                    },
+                    [],
+                );
+                const helperInteraction = getProjectedHelperInteraction();
+
+                ({ primaryInteraction: resolvedHit } = resolveHoverInteractionResolution(
+                    helperInteraction ? resolvedCandidates.concat(helperInteraction) : resolvedCandidates,
+                    interactionLayerPriority,
+                ));
+            }
 
             if (!resolvedHit) {
                 disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
@@ -687,6 +724,7 @@ export function useMouseInteraction({
                 clickedJoint,
             };
             const hasDirectJointDragTarget = Boolean(clickedJoint)
+                && !resolvedHit.screenSpaceProjected
                 && shouldStartJointDragFromGeometryHit(toolMode || 'select');
             const shouldDeferSelection = shouldDeferSelectionUntilPointerUp(
                 toolMode || 'select',
@@ -705,6 +743,7 @@ export function useMouseInteraction({
             applyResolvedSelection(pendingSelection);
 
             const joint = !shouldStartJointDragFromGeometryHit(toolMode || 'select')
+                || resolvedHit.screenSpaceProjected
                 ? null
                 : clickedJoint;
 

@@ -10,11 +10,14 @@ import { SettingsModal } from './components/SettingsModal';
 import { AboutModal } from './components/AboutModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
-import { useAppShellState, useFileImport, useFileExport, useImportInputBinding } from './hooks';
+import { useAppShellState, useFileImport, useFileExport, useImportInputBinding, useUnsavedChangesPrompt } from './hooks';
 import { prepareImportPayloadWithWorker } from './hooks/importPreparationWorkerBridge';
 import { resolveRobotFileDataWithWorker } from './hooks/robotImportWorkerBridge';
 import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
-import { shouldCommitResolvedRobotSelection } from './utils/documentLoadFlow';
+import {
+  preserveDocumentLoadProgressForSameFile,
+  shouldCommitResolvedRobotSelection,
+} from './utils/documentLoadFlow';
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
@@ -22,7 +25,13 @@ import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemb
 import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
-import { ExportProgressDialog, type ExportProgressState } from '@/features/file-io';
+import { isLibraryRobotExportableFormat } from '@/shared/utils';
+import {
+  DisconnectedWorkspaceUrdfExportDialog,
+  ExportProgressDialog,
+  type ExportDialogConfig,
+  type ExportProgressState,
+} from '@/features/file-io';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import { prewarmUsdWasmRuntimeInBackground } from '@/features/urdf-viewer/utils/usdWasmRuntime';
 import type { ImportPreparationOverlayState } from './hooks/useFileImport';
@@ -30,6 +39,7 @@ import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
 } from '@/shared/debug/regressionBridge';
+import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
 
 const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
 const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
@@ -170,7 +180,7 @@ function ExportDialogConnector({
   lang: Language;
   isExporting: boolean;
   onClose: () => void;
-  onExport: (config: unknown, options?: { onProgress?: (progress: ExportProgressState) => void }) => Promise<void>;
+  onExport: (config: ExportDialogConfig, options?: { onProgress?: (progress: ExportProgressState) => void }) => Promise<void>;
 }) {
   const { sidebarTab } = useUIStore(useShallow((state) => ({
     sidebarTab: state.sidebarTab,
@@ -204,9 +214,9 @@ function ExportDialogConnector({
     ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
       ? currentUsdExportMode !== 'unavailable'
       : !isSelectedUsdHydrating
-    : target.file.format === 'urdf'
-      || target.file.format === 'mjcf'
-      || target.file.format === 'xacro';
+    : isLibraryRobotExportableFormat(target.file.format);
+  const allowProjectExport = target.type === 'current' && sidebarTab === 'workspace';
+  const defaultFormat: ExportDialogConfig['format'] = 'mjcf';
 
   return (
     <ExportDialog
@@ -215,6 +225,8 @@ function ExportDialogConnector({
       lang={lang}
       isExporting={isExporting}
       canExportUsd={canExportUsd}
+      allowProjectExport={allowProjectExport}
+      defaultFormat={defaultFormat}
     />
   );
 }
@@ -236,6 +248,8 @@ type ExportDialogTarget =
   | { type: 'library-file'; file: RobotFile };
 
 function AppContent() {
+  useUnsavedChangesPrompt();
+
   // Refs for file inputs
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
@@ -243,6 +257,16 @@ function AppContent() {
   const loadRequestIdRef = useRef(0);
   const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
   const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({ type: 'current' });
+  const [disconnectedWorkspaceUrdfDialog, setDisconnectedWorkspaceUrdfDialog] = useState<{
+    config: ExportDialogConfig;
+    request: {
+      type: 'disconnected-workspace-urdf';
+      componentCount: number;
+      connectedGroupCount: number;
+      exportName: string;
+    };
+  } | null>(null);
+  const [isDisconnectedWorkspaceUrdfExporting, setIsDisconnectedWorkspaceUrdfExporting] = useState(false);
   const [viewerReloadKey, setViewerReloadKey] = useState(0);
   const [importPreparationOverlay, setImportPreparationOverlay] = useState<ImportPreparationOverlayState | null>(null);
 
@@ -307,22 +331,27 @@ function AppContent() {
         if (file.format === 'xacro' && importResult.resolvedUrdfContent) {
           setOriginalUrdfContent(importResult.resolvedUrdfContent);
         }
+        markUnsavedChangesBaselineSaved('robot');
       }
-      setDocumentLoadState({
-        status: importResult.status === 'needs_hydration' ? 'hydrating' : 'loading',
-        fileName: file.name,
-        format: file.format,
-        error: null,
-        phase: importResult.status === 'needs_hydration'
-          ? 'checking-path'
-          : file.format === 'usd'
+      const currentDocumentLoadState = useAssetsStore.getState().documentLoadState;
+      setDocumentLoadState(preserveDocumentLoadProgressForSameFile({
+        currentState: currentDocumentLoadState,
+        nextState: {
+          status: importResult.status === 'needs_hydration' ? 'hydrating' : 'loading',
+          fileName: file.name,
+          format: file.format,
+          error: null,
+          phase: importResult.status === 'needs_hydration'
             ? 'checking-path'
-            : 'preparing-scene',
-        message: null,
-        progressPercent: null,
-        loadedCount: null,
-        totalCount: null,
-      });
+            : file.format === 'usd'
+              ? 'checking-path'
+              : 'preparing-scene',
+          message: null,
+          progressPercent: null,
+          loadedCount: null,
+          totalCount: null,
+        },
+      }));
       return;
     }
 
@@ -342,7 +371,8 @@ function AppContent() {
       return;
     }
 
-    const message = t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
+    const message = importResult.message
+      ?? t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
     setDocumentLoadState({
       status: 'error',
       fileName: file.name,
@@ -398,17 +428,20 @@ function AppContent() {
       return;
     }
 
-    setDocumentLoadState({
-      status: 'loading',
-      fileName: file.name,
-      format: file.format,
-      error: null,
-      phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
-      message: null,
-      progressPercent: null,
-      loadedCount: null,
-      totalCount: null,
-    });
+    setDocumentLoadState(preserveDocumentLoadProgressForSameFile({
+      currentState: liveAssetsState.documentLoadState,
+      nextState: {
+        status: 'loading',
+        fileName: file.name,
+        format: file.format,
+        error: null,
+        phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+      },
+    }));
     const requestId = ++loadRequestIdRef.current;
 
     prewarmUsdSelectionInBackground(file, liveAssetsState.availableFiles, liveAssetsState.assets);
@@ -576,7 +609,11 @@ function AppContent() {
     onShowToast: showToast,
     onImportPreparationStateChange: setImportPreparationOverlay,
   });
-  const { handleExportProject: runProjectExport, handleExportWithConfig } = useFileExport();
+  const {
+    handleExportProject: runProjectExport,
+    handleExportWithConfig,
+    handleExportDisconnectedWorkspaceUrdfBundle,
+  } = useFileExport();
 
   const handleExportProject = useCallback(() => {
     void (async () => {
@@ -672,6 +709,35 @@ function AppContent() {
     setIsExportDialogOpen(true);
   }, [setIsExportDialogOpen]);
 
+  const handleConfirmDisconnectedWorkspaceUrdfExport = useCallback(async () => {
+    if (!disconnectedWorkspaceUrdfDialog) {
+      return;
+    }
+
+    setIsDisconnectedWorkspaceUrdfExporting(true);
+    try {
+      const result = await handleExportDisconnectedWorkspaceUrdfBundle(disconnectedWorkspaceUrdfDialog.config);
+      if (result.partial && result.warnings.length > 0) {
+        showToast(result.warnings[0], 'info');
+      }
+      setDisconnectedWorkspaceUrdfDialog(null);
+    } catch (error) {
+      showToast(
+        error instanceof Error && error.message
+          ? error.message
+          : t.exportFailedParse,
+        'error',
+      );
+    } finally {
+      setIsDisconnectedWorkspaceUrdfExporting(false);
+    }
+  }, [
+    disconnectedWorkspaceUrdfDialog,
+    handleExportDisconnectedWorkspaceUrdfBundle,
+    showToast,
+    t.exportFailedParse,
+  ]);
+
   const loadingLabel = t.loadingPanel;
   const toastPresentation = toast.type === 'success'
     ? {
@@ -744,9 +810,21 @@ function AppContent() {
                 requestAnimationFrame(() => resolve());
               });
               try {
-                const result = await handleExportWithConfig(config as never, exportDialogTarget, {
-                  onProgress: options?.onProgress,
-                });
+                const result = config.format === 'project'
+                  ? await runProjectExport({
+                    onProgress: options?.onProgress,
+                  })
+                  : await handleExportWithConfig(config, exportDialogTarget, {
+                    onProgress: options?.onProgress,
+                  });
+                if (result.actionRequired?.type === 'disconnected-workspace-urdf') {
+                  setDisconnectedWorkspaceUrdfDialog({
+                    config,
+                    request: result.actionRequired,
+                  });
+                  setIsExportDialogOpen(false);
+                  return;
+                }
                 if (result.partial && result.warnings.length > 0) {
                   showToast(result.warnings[0], 'info');
                 }
@@ -766,6 +844,22 @@ function AppContent() {
         </Suspense>
       )}
 
+      <DisconnectedWorkspaceUrdfExportDialog
+        isOpen={Boolean(disconnectedWorkspaceUrdfDialog)}
+        lang={lang}
+        componentCount={disconnectedWorkspaceUrdfDialog?.request.componentCount ?? 0}
+        connectedGroupCount={disconnectedWorkspaceUrdfDialog?.request.connectedGroupCount ?? 0}
+        isExporting={isDisconnectedWorkspaceUrdfExporting}
+        onClose={() => {
+          if (!isDisconnectedWorkspaceUrdfExporting) {
+            setDisconnectedWorkspaceUrdfDialog(null);
+          }
+        }}
+        onExportMultiple={() => {
+          void handleConfirmDisconnectedWorkspaceUrdfExport();
+        }}
+      />
+
       {projectExportProgress && !isExportDialogOpen && (
         <ExportProgressDialog
           lang={lang}
@@ -777,26 +871,29 @@ function AppContent() {
         <ImportPreparationOverlay
           label={importPreparationOverlay.label}
           detail={importPreparationOverlay.detail}
+          progress={importPreparationOverlay.progress}
+          statusLabel={importPreparationOverlay.statusLabel}
+          stageLabel={importPreparationOverlay.stageLabel}
         />
       )}
 
       {/* Toast */}
       {toast.show && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
-          <div className="flex max-w-[min(44rem,calc(100vw-2rem))] items-start gap-3 rounded-2xl border border-border-black bg-panel-bg px-4 py-3 shadow-2xl dark:shadow-black/40">
-            <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${toastPresentation.badgeClassName}`}>
+          <div className="flex max-w-[min(44rem,calc(100vw-2rem))] items-center gap-2.5 rounded-[1.75rem] border border-border-black bg-panel-bg px-3.5 py-2.5 shadow-2xl dark:shadow-black/40">
+            <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${toastPresentation.badgeClassName}`}>
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={toastPresentation.iconPath} />
               </svg>
             </div>
-            <div className="min-w-0 flex-1 whitespace-pre-line break-words text-sm font-medium leading-5 text-text-primary">
+            <div className="flex min-h-6 min-w-0 flex-1 items-center whitespace-pre-line break-words text-[15px] font-semibold leading-5 text-text-primary">
               {toast.message}
             </div>
             <button
               onClick={closeToast}
-              className="ml-1 rounded p-1 text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>

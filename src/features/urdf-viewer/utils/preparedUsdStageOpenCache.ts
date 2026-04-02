@@ -1,10 +1,14 @@
 import type { RobotFile } from '@/types';
 import type { PreparedUsdStageOpenData } from './usdStageOpenPreparation';
 import {
-  inferUsdBundleVirtualDirectory,
-  isUsdPathWithinBundleDirectory,
+  collectUsdStageOpenRelevantVirtualPaths,
+  toVirtualUsdPath,
 } from './usdPreloadSources.ts';
 import { prepareUsdStageOpenDataCore } from './usdStageOpenPreparationCore.ts';
+import {
+  buildBlobBackedLargeTextUsdSignature,
+  isBlobBackedLargeTextUsd,
+} from './usdStageOpenLargeText.ts';
 import { prepareUsdStageOpenWithWorker } from './usdStageOpenPreparationWorkerBridge.ts';
 import { logRuntimeFailure } from '@/core/utils/runtimeDiagnostics';
 
@@ -30,10 +34,14 @@ function hashString(value: string): string {
 }
 
 function buildSourceFileSignature(sourceFile: StageOpenSourceFile): string {
+  const contentSignature = isBlobBackedLargeTextUsd(sourceFile)
+    ? buildBlobBackedLargeTextUsdSignature(sourceFile, hashString)
+    : hashString(sourceFile.content);
+
   return [
     sourceFile.name,
     sourceFile.blobUrl ?? '',
-    hashString(sourceFile.content),
+    contentSignature,
     String(sourceFile.content.length),
   ].join('\u0000');
 }
@@ -42,15 +50,19 @@ function buildScopedAvailableFilesSignature(
   sourceFile: StageOpenSourceFile,
   availableFiles: StageOpenAvailableFile[],
 ): string {
-  const bundleDirectory = inferUsdBundleVirtualDirectory(sourceFile.name);
+  const relevantPathSet = new Set(
+    collectUsdStageOpenRelevantVirtualPaths(sourceFile, availableFiles),
+  );
   return availableFiles
-    .filter((file) => file.format !== 'mesh' && isUsdPathWithinBundleDirectory(file.name, bundleDirectory))
+    .filter((file) => file.format !== 'mesh' && relevantPathSet.has(toVirtualUsdPath(file.name)))
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((file) => [
       file.name,
       file.format,
       file.blobUrl ?? '',
-      hashString(file.content),
+      isBlobBackedLargeTextUsd(file)
+        ? buildBlobBackedLargeTextUsdSignature(file, hashString)
+        : hashString(file.content),
       String(file.content.length),
     ].join('\u0000'))
     .join('\n');
@@ -58,11 +70,14 @@ function buildScopedAvailableFilesSignature(
 
 function buildScopedAssetsSignature(
   sourceFile: StageOpenSourceFile,
+  availableFiles: StageOpenAvailableFile[],
   assets: Record<string, string>,
 ): string {
-  const bundleDirectory = inferUsdBundleVirtualDirectory(sourceFile.name);
+  const relevantPathSet = new Set(
+    collectUsdStageOpenRelevantVirtualPaths(sourceFile, availableFiles),
+  );
   return Object.entries(assets)
-    .filter(([path]) => isUsdPathWithinBundleDirectory(path, bundleDirectory))
+    .filter(([path]) => relevantPathSet.has(toVirtualUsdPath(path)))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, url]) => `${path}\u0000${url}`)
     .join('\n');
@@ -76,7 +91,7 @@ export function buildPreparedUsdStageOpenCacheKey(
   return [
     buildSourceFileSignature(sourceFile),
     buildScopedAvailableFilesSignature(sourceFile, availableFiles),
-    buildScopedAssetsSignature(sourceFile, assets),
+    buildScopedAssetsSignature(sourceFile, availableFiles, assets),
   ].join('\n---\n');
 }
 

@@ -7,7 +7,7 @@ import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
 
 import { parseURDF } from '@/core/parsers';
-import { DEFAULT_JOINT, JointType, type RobotData } from '@/types';
+import { DEFAULT_JOINT, DEFAULT_LINK, JointType, type RobotData } from '@/types';
 
 import { exportProject } from './projectExport';
 
@@ -34,6 +34,22 @@ function loadSimpleRobotData(): RobotData {
   const robot = parseURDF(source);
   assert.ok(robot, 'expected simple URDF to parse');
   return robot;
+}
+
+function createAssemblyComponentRobotData(): RobotData {
+  return {
+    name: 'left_arm',
+    rootLinkId: 'comp_left_base_link',
+    links: {
+      comp_left_base_link: {
+        ...DEFAULT_LINK,
+        id: 'comp_left_base_link',
+        name: 'left_arm',
+        visible: true,
+      },
+    },
+    joints: {},
+  };
 }
 
 function buildGo2AssetMap(): Record<string, string> {
@@ -74,7 +90,7 @@ test('exportProject preserves go2 split visual materials in generated MJCF outpu
   const exportResult = await exportProject({
     name: 'go2_project',
     uiState: {
-      appMode: 'detail',
+      appMode: 'editor',
       lang: 'en',
     },
     assetsState: {
@@ -141,7 +157,7 @@ test('exportProject fails fast when a packed workspace asset cannot be fetched',
     exportProject({
       name: 'broken_asset_project',
       uiState: {
-        appMode: 'detail',
+        appMode: 'editor',
         lang: 'en',
       },
       assetsState: {
@@ -180,7 +196,7 @@ test('exportProject fails fast when a packed workspace asset cannot be fetched',
   );
 });
 
-test('exportProject does not persist legacy appMode state in project.json', async () => {
+test('exportProject does not persist appMode state in project.json', async () => {
   const robot = loadSimpleRobotData();
   const originalUrdfContent = `<?xml version="1.0"?>
 <robot name="simple_export">
@@ -190,7 +206,7 @@ test('exportProject does not persist legacy appMode state in project.json', asyn
   const exportResult = await exportProject({
     name: 'mode_free_project',
     uiState: {
-      appMode: 'hardware',
+      appMode: 'editor',
       lang: 'en',
     },
     assetsState: {
@@ -233,6 +249,104 @@ test('exportProject does not persist legacy appMode state in project.json', asyn
   assert.equal('appMode' in (manifest.ui ?? {}), false);
 });
 
+test('exportProject preserves assembly transforms in the manifest and generated URDF output', async () => {
+  const sourcePath = 'robots/left_arm.urdf';
+  const sourceContent = `<?xml version="1.0"?>
+<robot name="left_arm">
+  <link name="base_link" />
+</robot>`;
+  const componentRobot = createAssemblyComponentRobotData();
+  const assemblyState = {
+    name: 'demo_workspace',
+    transform: {
+      position: { x: 1, y: 2, z: 3 },
+      rotation: { r: 0.1, p: -0.2, y: 0.3 },
+    },
+    components: {
+      comp_left: {
+        id: 'comp_left',
+        name: 'left_arm',
+        sourceFile: sourcePath,
+        visible: true,
+        transform: {
+          position: { x: -0.5, y: 0.25, z: 0.75 },
+          rotation: { r: -0.15, p: 0.35, y: -0.45 },
+        },
+        robot: componentRobot,
+      },
+    },
+    bridges: {},
+  };
+
+  const exportResult = await exportProject({
+    name: 'transformed_workspace',
+    uiState: {
+      appMode: 'editor',
+      lang: 'en',
+    },
+    assetsState: {
+      availableFiles: [
+        {
+          name: sourcePath,
+          format: 'urdf',
+          content: sourceContent,
+        },
+      ],
+      assets: {},
+      allFileContents: {
+        [sourcePath]: sourceContent,
+      },
+      motorLibrary: {},
+      selectedFileName: sourcePath,
+      originalUrdfContent: sourceContent,
+      originalFileFormat: 'urdf',
+      usdPreparedExportCaches: {},
+    },
+    robotState: {
+      present: componentRobot,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    assemblyState: {
+      present: assemblyState,
+      history: { past: [], future: [] },
+      activity: [],
+    },
+    getMergedRobotData: () => componentRobot,
+  });
+
+  const zip = await JSZip.loadAsync(await exportResult.blob.arrayBuffer());
+  const manifestText = await zip.file('project.json')?.async('string');
+  const outputUrdf = await zip.file(`output/${assemblyState.name}.urdf`)?.async('string');
+
+  assert.ok(manifestText, 'expected project export to include project.json');
+  assert.ok(outputUrdf, 'expected project export to include transformed URDF output');
+
+  const manifest = JSON.parse(manifestText);
+  assert.deepEqual(manifest.assembly?.transform, assemblyState.transform);
+  assert.deepEqual(manifest.assembly?.components?.comp_left?.transform, assemblyState.components.comp_left.transform);
+
+  const exportedRobot = parseURDF(outputUrdf!);
+  assert.ok(exportedRobot, 'expected transformed URDF output to parse');
+  assert.equal(exportedRobot?.rootLinkId, '__assembly_root');
+  assert.deepEqual(
+    exportedRobot?.joints.__assembly_root_joint_comp_left.origin.xyz,
+    assemblyState.transform.position,
+  );
+  assert.deepEqual(
+    exportedRobot?.joints.__assembly_root_joint_comp_left.origin.rpy,
+    assemblyState.transform.rotation,
+  );
+  assert.deepEqual(
+    exportedRobot?.joints.__assembly_component_joint_comp_left.origin.xyz,
+    assemblyState.components.comp_left.transform.position,
+  );
+  assert.deepEqual(
+    exportedRobot?.joints.__assembly_component_joint_comp_left.origin.rpy,
+    assemblyState.components.comp_left.transform.rotation,
+  );
+});
+
 test('exportProject fails fast when a non-mesh library source file has no content', async () => {
   const robot = loadSimpleRobotData();
 
@@ -240,7 +354,7 @@ test('exportProject fails fast when a non-mesh library source file has no conten
     exportProject({
       name: 'missing_library_source_project',
       uiState: {
-        appMode: 'detail',
+        appMode: 'editor',
         lang: 'en',
       },
       assetsState: {
@@ -291,7 +405,7 @@ test('exportProject reports phased progress while building a .usp archive', asyn
   const exportResult = await exportProject({
     name: 'progress_project',
     uiState: {
-      appMode: 'detail',
+      appMode: 'editor',
       lang: 'en',
     },
     assetsState: {
@@ -368,7 +482,7 @@ test('exportProject preserves bridge joint quat_xyzw metadata in bridge.xml', as
   const exportResult = await exportProject({
     name: 'bridge_quat_project',
     uiState: {
-      appMode: 'detail',
+      appMode: 'editor',
       lang: 'en',
     },
     assetsState: {

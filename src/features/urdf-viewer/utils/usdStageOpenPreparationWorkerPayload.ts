@@ -1,8 +1,9 @@
 import type { RobotFile } from '@/types';
 import {
-  inferUsdBundleVirtualDirectory,
-  isUsdPathWithinBundleDirectory,
+  collectUsdStageOpenRelevantVirtualPaths,
+  toVirtualUsdPath,
 } from './usdPreloadSources.ts';
+import { compactBlobBackedLargeTextUsdForWorker } from './usdStageOpenLargeText.ts';
 
 type StageOpenSourceFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl'>;
 type StageOpenAvailableFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
@@ -60,7 +61,9 @@ function filterStageOpenAvailableFiles(
   sourceFile: StageOpenSourceFile,
   availableFiles: StageOpenAvailableFile[],
 ): StageOpenAvailableFile[] {
-  const bundleDirectory = inferUsdBundleVirtualDirectory(sourceFile.name);
+  const relevantPathSet = new Set(
+    collectUsdStageOpenRelevantVirtualPaths(sourceFile, availableFiles),
+  );
   return availableFiles.filter((file) => {
     if (file.format === 'mesh') {
       return false;
@@ -68,17 +71,20 @@ function filterStageOpenAvailableFiles(
     if (file.name === sourceFile.name) {
       return false;
     }
-    return isUsdPathWithinBundleDirectory(file.name, bundleDirectory);
-  });
+    return relevantPathSet.has(toVirtualUsdPath(file.name));
+  }).map((file) => compactBlobBackedLargeTextUsdForWorker(file));
 }
 
 function filterStageOpenAssets(
   sourceFile: StageOpenSourceFile,
+  availableFiles: StageOpenAvailableFile[],
   assets: Record<string, string>,
 ): Record<string, string> {
-  const bundleDirectory = inferUsdBundleVirtualDirectory(sourceFile.name);
+  const relevantPathSet = new Set(
+    collectUsdStageOpenRelevantVirtualPaths(sourceFile, availableFiles),
+  );
   return Object.fromEntries(
-    Object.entries(assets).filter(([path]) => isUsdPathWithinBundleDirectory(path, bundleDirectory)),
+    Object.entries(assets).filter(([path]) => relevantPathSet.has(toVirtualUsdPath(path))),
   );
 }
 
@@ -87,8 +93,9 @@ export function buildUsdStageOpenPreparationWorkerDispatch(
   availableFiles: StageOpenAvailableFile[],
   assets: Record<string, string>,
 ): PreparedUsdStageOpenWorkerDispatch {
+  const compactSourceFile = compactBlobBackedLargeTextUsdForWorker(sourceFile);
   const filteredAvailableFiles = filterStageOpenAvailableFiles(sourceFile, availableFiles);
-  const filteredAssets = filterStageOpenAssets(sourceFile, assets);
+  const filteredAssets = filterStageOpenAssets(sourceFile, availableFiles, assets);
   const contextSnapshot: UsdStageOpenPreparationWorkerContextSnapshot = {
     availableFiles: filteredAvailableFiles,
     assets: filteredAssets,
@@ -96,7 +103,7 @@ export function buildUsdStageOpenPreparationWorkerDispatch(
 
   if (!hasContextSnapshotContent(contextSnapshot)) {
     return {
-      sourceFile,
+      sourceFile: compactSourceFile,
       availableFiles: filteredAvailableFiles,
       assets: filteredAssets,
       contextCacheKey: null,
@@ -105,7 +112,7 @@ export function buildUsdStageOpenPreparationWorkerDispatch(
   }
 
   return {
-    sourceFile,
+    sourceFile: compactSourceFile,
     availableFiles: undefined,
     assets: undefined,
     contextCacheKey: buildContextCacheKey(sourceFile, availableFiles, assets),

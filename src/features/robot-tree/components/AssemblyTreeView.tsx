@@ -13,9 +13,11 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
+import { isAssemblyComponentIndividuallyTransformable } from '@/core/robot/assemblyTransforms';
 import { getTreeRenderRootLinkIds } from '@/core/robot';
 import { ContextMenuFrame, ContextMenuItem } from '@/shared/components/ui';
 import type { TranslationKeys } from '@/shared/i18n';
+import { useAssemblySelectionStore } from '@/store/assemblySelectionStore';
 import { matchesSelection, useSelectionStore } from '@/store/selectionStore';
 import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
 import { useShallow } from 'zustand/react/shallow';
@@ -33,6 +35,7 @@ export interface AssemblyTreeViewProps {
   onAddCollisionBody: (parentId: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  onRenameAssembly?: (name: string) => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
@@ -40,6 +43,46 @@ export interface AssemblyTreeViewProps {
   onToggleComponentVisibility?: (id: string) => void;
   mode: AppMode;
   t: TranslationKeys;
+}
+
+type AssemblyRenameTarget =
+  | { kind: 'assembly'; draft: string }
+  | { kind: 'component'; id: string; draft: string }
+  | { kind: 'bridge'; id: string; draft: string };
+
+type AssemblyContextMenuTarget =
+  | { kind: 'assembly'; x: number; y: number }
+  | { kind: 'component'; id: string; x: number; y: number }
+  | { kind: 'bridge'; id: string; x: number; y: number };
+
+function componentContainsSelection(
+  component: AssemblyState['components'][string],
+  selection: ReturnType<typeof useSelectionStore.getState>['selection'],
+): boolean {
+  if (!selection.type || !selection.id) {
+    return false;
+  }
+
+  if (selection.type === 'link') {
+    if (component.robot.links[selection.id]) {
+      return true;
+    }
+
+    return Object.values(component.robot.links).some((link) => link.name === selection.id);
+  }
+
+  if (component.robot.joints[selection.id]) {
+    return true;
+  }
+
+  return Object.values(component.robot.joints).some((joint) => joint.name === selection.id);
+}
+
+function resolveComponentHoverLinkId(
+  component: AssemblyState['components'][string],
+  componentRootLinkIds: Record<string, string[]>,
+): string | null {
+  return component.robot.rootLinkId || componentRootLinkIds[component.id]?.[0] || null;
 }
 
 export const AssemblyTreeView = memo(({
@@ -53,6 +96,7 @@ export const AssemblyTreeView = memo(({
   onAddCollisionBody,
   onDelete,
   onUpdate,
+  onRenameAssembly,
   onRemoveComponent,
   onRemoveBridge,
   onRenameComponent,
@@ -61,24 +105,29 @@ export const AssemblyTreeView = memo(({
   mode,
   t,
 }: AssemblyTreeViewProps) => {
-  const { selection, hoveredSelection, attentionSelection, setHoveredSelection, clearHover } = useSelectionStore(
+  const { selection, hoveredSelection, attentionSelection, interactionGuard, setSelection, setHoveredSelection, clearHover } = useSelectionStore(
     useShallow((state) => ({
       selection: state.selection,
       hoveredSelection: state.hoveredSelection,
       attentionSelection: state.attentionSelection,
+      interactionGuard: state.interactionGuard,
+      setSelection: state.setSelection,
       setHoveredSelection: state.setHoveredSelection,
       clearHover: state.clearHover,
+    })),
+  );
+  const { assemblySelection, selectAssembly, selectComponent } = useAssemblySelectionStore(
+    useShallow((state) => ({
+      assemblySelection: state.selection,
+      selectAssembly: state.selectAssembly,
+      selectComponent: state.selectComponent,
     })),
   );
   const [isComponentsExpanded, setIsComponentsExpanded] = useState(true);
   const [isBridgesExpanded, setIsBridgesExpanded] = useState(true);
   const [expandedComponents, setExpandedComponents] = useState<Record<string, boolean>>({});
-  const [editingComponent, setEditingComponent] = useState<{ id: string; draft: string } | null>(null);
-  const [componentContextMenu, setComponentContextMenu] = useState<{
-    x: number;
-    y: number;
-    componentId: string;
-  } | null>(null);
+  const [editingTarget, setEditingTarget] = useState<AssemblyRenameTarget | null>(null);
+  const [contextMenu, setContextMenu] = useState<AssemblyContextMenuTarget | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const components = useMemo(() => Object.values(assemblyState.components), [assemblyState.components]);
   const bridges = useMemo(() => Object.values(assemblyState.bridges), [assemblyState.bridges]);
@@ -114,17 +163,17 @@ export const AssemblyTreeView = memo(({
   };
 
   useEffect(() => {
-    if (!editingComponent) return;
+    if (!editingTarget) return;
     const id = window.requestAnimationFrame(() => {
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
     });
     return () => window.cancelAnimationFrame(id);
-  }, [editingComponent]);
+  }, [editingTarget]);
 
   useEffect(() => {
-    if (!componentContextMenu) return;
-    const closeMenu = () => setComponentContextMenu(null);
+    if (!contextMenu) return;
+    const closeMenu = () => setContextMenu(null);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         closeMenu();
@@ -142,63 +191,150 @@ export const AssemblyTreeView = memo(({
       window.removeEventListener('contextmenu', closeMenu);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [componentContextMenu]);
+  }, [contextMenu]);
 
   const beginComponentRename = (componentId: string, currentName: string) => {
-    setEditingComponent({ id: componentId, draft: currentName });
+    setEditingTarget({ kind: 'component', id: componentId, draft: currentName });
   };
 
-  const commitComponentRename = () => {
-    if (!editingComponent) return;
-    const nextName = editingComponent.draft.trim();
+  const beginAssemblyRename = () => {
+    setEditingTarget({ kind: 'assembly', draft: assemblyState.name });
+  };
+
+  const beginBridgeRename = (bridgeId: string, currentName: string) => {
+    setEditingTarget({ kind: 'bridge', id: bridgeId, draft: currentName });
+  };
+
+  const commitRename = () => {
+    if (!editingTarget) return;
+    const nextName = editingTarget.draft.trim();
     if (nextName) {
-      onRenameComponent?.(editingComponent.id, nextName);
+      if (editingTarget.kind === 'assembly') {
+        if (nextName !== assemblyState.name) {
+          onRenameAssembly?.(nextName);
+        }
+      } else if (editingTarget.kind === 'component') {
+        const component = assemblyState.components[editingTarget.id];
+        if (component && nextName !== component.name) {
+          onRenameComponent?.(editingTarget.id, nextName);
+        }
+      } else {
+        const bridge = assemblyState.bridges[editingTarget.id];
+        if (bridge && nextName !== bridge.name) {
+          onUpdate('joint', bridge.id, {
+            ...bridge.joint,
+            name: nextName,
+          });
+        }
+      }
     }
-    setEditingComponent(null);
+    setEditingTarget(null);
   };
 
-  const cancelComponentRename = () => {
-    setEditingComponent(null);
+  const cancelRename = () => {
+    setEditingTarget(null);
   };
 
-  const openComponentContextMenu = (event: React.MouseEvent, componentId: string) => {
+  const openContextMenu = (
+    event: React.MouseEvent,
+    target: Omit<AssemblyContextMenuTarget, 'x' | 'y'>,
+    actionCount = 2,
+  ) => {
     event.preventDefault();
     event.stopPropagation();
     const menuWidth = 170;
-    const menuHeight = 88;
+    const menuHeight = actionCount * 32 + 8;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
-    setComponentContextMenu({
-      componentId,
+    setContextMenu({
+      ...target,
       x: Math.min(event.clientX, maxX),
       y: Math.min(event.clientY, maxY),
-    });
+    } as AssemblyContextMenuTarget);
   };
 
-  const handleComponentRenameFromMenu = () => {
-    if (!componentContextMenu) return;
-    const component = assemblyState.components[componentContextMenu.componentId];
-    if (!component) return;
-    beginComponentRename(component.id, component.name);
-    setComponentContextMenu(null);
+  const handleRenameFromMenu = () => {
+    if (!contextMenu) return;
+    if (contextMenu.kind === 'assembly') {
+      beginAssemblyRename();
+    } else if (contextMenu.kind === 'component') {
+      const component = assemblyState.components[contextMenu.id];
+      if (!component) return;
+      beginComponentRename(component.id, component.name);
+    } else {
+      const bridge = assemblyState.bridges[contextMenu.id];
+      if (!bridge) return;
+      beginBridgeRename(bridge.id, bridge.name);
+    }
+    setContextMenu(null);
   };
 
-  const handleComponentDeleteFromMenu = () => {
-    if (!componentContextMenu) return;
-    onRemoveComponent?.(componentContextMenu.componentId);
-    setComponentContextMenu(null);
+  const handleDeleteFromMenu = () => {
+    if (!contextMenu || contextMenu.kind === 'assembly') return;
+    if (contextMenu.kind === 'component') {
+      onRemoveComponent?.(contextMenu.id);
+    } else {
+      onRemoveBridge?.(contextMenu.id);
+    }
+    setContextMenu(null);
   };
 
   const sectionHoverClass = 'hover:bg-system-blue/10 hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
   const itemHoverClass = 'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
+  const itemHoveredClass = 'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15 dark:bg-system-blue/18 dark:ring-system-blue/25';
   const itemSelectedClass = 'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
   const itemAttentionClass = 'bg-system-blue/15 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/30 dark:bg-system-blue/25 dark:ring-system-blue/40';
+  const renameInputClassName = 'select-text text-[11px] font-medium leading-none flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors bg-input-bg border-border-strong text-text-primary focus:border-system-blue';
+  const isEditingAssembly = editingTarget?.kind === 'assembly';
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center py-1 px-2 mx-1 my-0.5 rounded-md bg-element-bg text-text-primary">
+    <div className="space-y-1 select-none">
+      <div
+        className={`flex items-center py-1 px-2 mx-1 my-0.5 rounded-md text-text-primary cursor-pointer transition-colors ${
+          assemblySelection.type === 'assembly'
+            ? itemSelectedClass
+            : `bg-element-bg ${itemHoverClass}`
+        }`}
+        onClick={() => {
+          setSelection({ type: null, id: null });
+          selectAssembly();
+        }}
+        onContextMenu={(event) => openContextMenu(event, { kind: 'assembly' }, 1)}
+      >
         <Cuboid size={14} className="mr-1.5 text-system-blue" />
-        <span className="text-xs font-bold uppercase tracking-wider truncate">{assemblyState.name}</span>
+        {isEditingAssembly ? (
+          <input
+            ref={renameInputRef}
+            value={editingTarget?.draft ?? ''}
+            onChange={(event) => {
+              setEditingTarget((prev) => (prev?.kind === 'assembly'
+                ? { ...prev, draft: event.target.value }
+                : prev));
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                commitRename();
+              } else if (event.key === 'Escape') {
+                cancelRename();
+              }
+            }}
+            className={renameInputClassName}
+          />
+        ) : (
+          <span
+            className="min-w-0 flex-1 text-[11px] font-medium leading-none truncate"
+            title={assemblyState.name}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              beginAssemblyRename();
+            }}
+          >
+            {assemblyState.name}
+          </span>
+        )}
       </div>
 
       <div className="mt-2">
@@ -227,54 +363,114 @@ export const AssemblyTreeView = memo(({
             {components.map((component) => {
               const isExpanded = expandedComponents[component.id] ?? false;
               const isVisible = component.visible !== false;
-              const isEditingComponent = editingComponent?.id === component.id;
+              const isEditingComponent = editingTarget?.kind === 'component' && editingTarget.id === component.id;
+              const isComponentSelected = assemblySelection.type === 'component' && assemblySelection.id === component.id;
+              const isComponentSelectionHighlighted = componentContainsSelection(component, effectiveSelection);
+              const isComponentHovered = componentContainsSelection(component, hoveredSelection);
+              const isComponentAttentionHighlighted = componentContainsSelection(component, attentionSelection);
+              const isComponentTransformable = isAssemblyComponentIndividuallyTransformable(assemblyState, component.id);
+              const componentHoverLinkId = resolveComponentHoverLinkId(component, componentRootLinkIds);
               const componentRobotState: RobotState = {
                 ...component.robot,
                 selection: effectiveSelection,
               };
+              const componentRowStateClass = isComponentAttentionHighlighted
+                ? itemAttentionClass
+                : (isComponentSelected || isComponentSelectionHighlighted)
+                    ? itemSelectedClass
+                    : isComponentHovered
+                        ? itemHoveredClass
+                        : itemHoverClass;
 
               return (
                 <div key={component.id}>
                   <div
-                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group transition-all duration-200 ${itemHoverClass}
+                    className={`flex items-center gap-1.5 py-1 px-2 mx-1 rounded-md cursor-pointer group transition-all duration-200 ${
+                      componentRowStateClass
+                    }
                       ${!isVisible ? 'opacity-60' : ''}`}
                     onClick={() => {
-                      toggleComponent(component.id);
-                      if (!isVisible && onToggleComponentVisibility) {
-                        onToggleComponentVisibility(component.id);
+                      if (interactionGuard && componentHoverLinkId) {
+                        setExpandedComponents((prev) => (
+                          prev[component.id]
+                            ? prev
+                            : { ...prev, [component.id]: true }
+                        ));
+                        onSelect('link', componentHoverLinkId);
+                        return;
+                      }
+
+                      setSelection({ type: null, id: null });
+                      selectComponent(component.id);
+                    }}
+                    onContextMenu={(event) => openContextMenu(event, { kind: 'component', id: component.id })}
+                    onMouseEnter={() => {
+                      if (componentHoverLinkId) {
+                        setHoveredSelection({ type: 'link', id: componentHoverLinkId });
                       }
                     }}
-                    onContextMenu={(event) => openComponentContextMenu(event, component.id)}
+                    onMouseLeave={clearHover}
                   >
-                    {isExpanded ? (
-                      <ChevronDown size={12} className="text-text-tertiary" />
-                    ) : (
-                      <ChevronRight size={12} className="text-text-tertiary" />
-                    )}
+                    <button
+                      type="button"
+                      className="flex items-center justify-center rounded p-0.5 text-text-tertiary hover:bg-element-hover"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleComponent(component.id);
+                      }}
+                      aria-label={isExpanded ? `${t.collapse} ${component.name}` : `${t.expand} ${component.name}`}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown size={12} className="text-text-tertiary" />
+                      ) : (
+                        <ChevronRight size={12} className="text-text-tertiary" />
+                      )}
+                    </button>
                     <Box size={12} className="text-system-blue" />
 
                     {isEditingComponent ? (
                       <input
                         ref={renameInputRef}
-                        value={editingComponent?.draft ?? ''}
+                        value={editingTarget?.draft ?? ''}
                         onChange={(event) => {
-                          setEditingComponent((prev) => (prev ? { ...prev, draft: event.target.value } : prev));
+                          setEditingTarget((prev) => (
+                            prev?.kind === 'component' && prev.id === component.id
+                              ? { ...prev, draft: event.target.value }
+                              : prev
+                          ));
                         }}
                         onClick={(event) => event.stopPropagation()}
-                        onBlur={commitComponentRename}
+                        onBlur={commitRename}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
-                            commitComponentRename();
+                            commitRename();
                           } else if (event.key === 'Escape') {
-                            cancelComponentRename();
+                            cancelRename();
                           }
                         }}
-                        className="text-xs font-medium flex-1 min-w-0 px-1 py-0.5 rounded border outline-none transition-colors bg-input-bg border-border-strong text-text-primary focus:border-system-blue"
+                        className={renameInputClassName}
                       />
                     ) : (
-                      <span className="text-xs font-medium text-text-primary truncate flex-1">
-                        {component.name}
-                      </span>
+                      <div
+                        className="min-w-0 flex flex-1 items-center gap-2"
+                        onDoubleClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          beginComponentRename(component.id, component.name);
+                        }}
+                      >
+                        <span className="text-[11px] font-medium text-text-primary truncate flex-1" title={component.name}>
+                          {component.name}
+                        </span>
+                        {!isComponentTransformable && (
+                          <span
+                            className="shrink-0 rounded border border-amber-400/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.08em] text-amber-600 dark:text-amber-300"
+                            title={t.bridgedComponentLockedHint}
+                          >
+                            {t.bridgedComponent}
+                          </span>
+                        )}
+                      </div>
                     )}
 
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -380,11 +576,47 @@ export const AssemblyTreeView = memo(({
                           : `text-text-secondary dark:text-text-secondary ${itemHoverClass}`
                   }`}
                   onClick={() => onSelect('joint', bridge.id)}
+                  onContextMenu={(event) => openContextMenu(event, { kind: 'bridge', id: bridge.id })}
                   onMouseEnter={() => setHoveredSelection({ type: 'joint', id: bridge.id })}
                   onMouseLeave={clearHover}
                 >
                   <ArrowRightLeft size={12} className="text-orange-500 dark:text-orange-300" />
-                  <span className="text-xs font-medium truncate flex-1">{bridge.name}</span>
+                  {editingTarget?.kind === 'bridge' && editingTarget.id === bridge.id ? (
+                    <input
+                      ref={renameInputRef}
+                      value={editingTarget?.draft ?? ''}
+                      onChange={(event) => {
+                        setEditingTarget((prev) => (
+                          prev?.kind === 'bridge' && prev.id === bridge.id
+                            ? { ...prev, draft: event.target.value }
+                            : prev
+                        ));
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      onBlur={commitRename}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          commitRename();
+                        } else if (event.key === 'Escape') {
+                          cancelRename();
+                        }
+                      }}
+                      className={renameInputClassName}
+                    />
+                  ) : (
+                    <div
+                      className="min-w-0 flex flex-1 items-center"
+                      onDoubleClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        beginBridgeRename(bridge.id, bridge.name);
+                      }}
+                    >
+                      <span className="text-[11px] font-medium truncate flex-1" title={bridge.name}>
+                        {bridge.name}
+                      </span>
+                    </div>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -403,14 +635,16 @@ export const AssemblyTreeView = memo(({
       </div>
 
       <ContextMenuFrame
-        position={componentContextMenu ? { x: componentContextMenu.x, y: componentContextMenu.y } : null}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
       >
-        <ContextMenuItem onClick={handleComponentRenameFromMenu} icon={<Edit3 size={12} />}>
+        <ContextMenuItem onClick={handleRenameFromMenu} icon={<Edit3 size={12} />}>
           {t.rename}
         </ContextMenuItem>
-        <ContextMenuItem onClick={handleComponentDeleteFromMenu} icon={<Trash2 size={12} />} tone="danger">
-          {t.deleteBranch}
-        </ContextMenuItem>
+        {contextMenu?.kind !== 'assembly' && (
+          <ContextMenuItem onClick={handleDeleteFromMenu} icon={<Trash2 size={12} />} tone="danger">
+            {t.deleteBranch}
+          </ContextMenuItem>
+        )}
       </ContextMenuFrame>
     </div>
   );

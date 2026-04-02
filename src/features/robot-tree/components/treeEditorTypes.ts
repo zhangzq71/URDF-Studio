@@ -34,6 +34,4 @@ export interface TreeEditorProps {
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
-  onPreviewFile?: (file: RobotFile) => void;
-  previewFileName?: string;
 }

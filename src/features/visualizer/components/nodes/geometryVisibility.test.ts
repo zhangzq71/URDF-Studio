@@ -3,9 +3,9 @@ import test from 'node:test';
 
 import { resolveGeometryVisibilityState } from './geometryVisibility.ts';
 
-test('appMode `detail` keeps visual geometry visible and interactive', () => {
+test('appMode `editor` keeps visual geometry visible and interactive', () => {
   const state = resolveGeometryVisibilityState({
-    mode: 'detail',
+    mode: 'editor',
     isCollision: false,
     showGeometry: false,
     showCollision: false,
@@ -18,9 +18,9 @@ test('appMode `detail` keeps visual geometry visible and interactive', () => {
   });
 });
 
-test('detail mode ignores the legacy geometry toggle for visual bodies', () => {
+test('editor mode ignores the legacy geometry toggle for visual bodies', () => {
   const state = resolveGeometryVisibilityState({
-    mode: 'detail',
+    mode: 'editor',
     isCollision: false,
     showGeometry: false,
     showCollision: false,
@@ -35,7 +35,7 @@ test('detail mode ignores the legacy geometry toggle for visual bodies', () => {
 
 test('collision geometry renders when enabled', () => {
   const state = resolveGeometryVisibilityState({
-    mode: 'detail',
+    mode: 'editor',
     isCollision: true,
     showGeometry: true,
     showCollision: true,
@@ -50,7 +50,7 @@ test('collision geometry renders when enabled', () => {
 
 test('collision geometry stays hidden when the unified collision toggle is off', () => {
   const state = resolveGeometryVisibilityState({
-    mode: 'detail',
+    mode: 'editor',
     isCollision: true,
     showGeometry: true,
     showCollision: false,

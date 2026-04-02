@@ -19,7 +19,7 @@ export interface UnifiedViewerSessionState<TPreview> {
   activePreview: TPreview | undefined;
   isPreviewing: boolean;
   isViewerMode: boolean;
-  viewerSceneMode: 'detail';
+  viewerSceneMode: 'editor';
 }
 
 export function isUnifiedViewerMode({
@@ -27,7 +27,7 @@ export function isUnifiedViewerMode({
   isPreviewing,
   forceViewerSession = false,
 }: UnifiedViewerMountStateInput): boolean {
-  return forceViewerSession || isPreviewing || normalizeMergedAppMode(mode) === 'detail';
+  return forceViewerSession || isPreviewing || normalizeMergedAppMode(mode) === 'editor';
 }
 
 export function resolveUnifiedViewerSessionState<TPreview>({

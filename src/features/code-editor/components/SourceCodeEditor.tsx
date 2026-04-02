@@ -32,21 +32,25 @@ import {
 } from '../utils/xmlLanguageSupport';
 import { getUrdfValidationDebounceMs } from '../utils/editorPerformance.ts';
 import { ensureSourceCodeEditorLanguages } from '../utils/monacoLoader';
+import { downloadSourceCodeDocument } from '../utils/sourceCodeDownload';
 import type { ValidationError } from '../utils/urdfValidation.ts';
 import {
   requestXmlCompletionsWithWorker,
   requestXmlValidationWithWorker,
 } from '../utils/xmlEditorWorkerBridge.ts';
+import { useSourceCodeEditorAutoApply } from '../hooks/useSourceCodeEditorAutoApply';
 
 export interface SourceCodeEditorProps {
   code: string;
-  onCodeChange: (newCode: string) => void;
+  onCodeChange: (newCode: string) => Promise<boolean> | boolean;
   onClose: () => void;
   theme: Theme;
   fileName?: string;
   lang?: Language;
   documentFlavor?: SourceCodeDocumentFlavor;
   readOnly?: boolean;
+  autoApplyEnabled?: boolean;
+  onDownload?: () => void;
 }
 
 interface DocumentMeta {
@@ -191,18 +195,6 @@ const formatContentSize = (content: string): string => {
   return `${(bytes / 1024).toFixed(1)} KB`;
 };
 
-const getDownloadFileName = (
-  fileName: string,
-  documentFlavor: SourceCodeDocumentFlavor,
-): string => {
-  if (documentFlavor !== 'equivalent-mjcf') {
-    return fileName;
-  }
-
-  const strippedName = fileName.replace(/\.(usd|usda|usdc|usdz)$/i, '');
-  return `${strippedName}.equivalent.mjcf`;
-};
-
 const getDocumentMeta = (
   documentFlavor: SourceCodeDocumentFlavor,
   t: (typeof editorTexts)['en'],
@@ -301,6 +293,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   lang = 'en',
   documentFlavor = 'urdf',
   readOnly = false,
+  autoApplyEnabled = true,
+  onDownload,
 }) => {
   const t = editorTexts[lang];
   const isEquivalentMjcfPreview = documentFlavor === 'equivalent-mjcf';
@@ -311,10 +305,15 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   );
   const [isDirty, setIsDirty] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
+  const [isValidationPending, setIsValidationPending] = useState(documentMeta.supportsValidation);
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
+  const [isApplying, setIsApplying] = useState(false);
+  const [autoApplyBlockedCode, setAutoApplyBlockedCode] = useState<string | null>(null);
   const [currentCode, setCurrentCode] = useState(code);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAppliedCodeRef = useRef<string | null>(null);
+  const pendingAppliedBaseCodeRef = useRef<string | null>(null);
   const validationRequestSequenceRef = useRef(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
@@ -350,21 +349,48 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, []);
 
   useEffect(() => {
+    const awaitingParentApplySync = (
+      pendingAppliedCodeRef.current !== null
+      && pendingAppliedCodeRef.current === currentCode
+      && code === pendingAppliedBaseCodeRef.current
+    );
+
+    if (awaitingParentApplySync) {
+      return;
+    }
+
+    if (
+      pendingAppliedCodeRef.current !== null
+      && code !== pendingAppliedBaseCodeRef.current
+    ) {
+      pendingAppliedCodeRef.current = null;
+      pendingAppliedBaseCodeRef.current = null;
+    }
+
     if (editorRef.current && code !== currentCode && !isDirty) {
       editorRef.current.setValue(code);
       setCurrentCode(code);
+      setAutoApplyBlockedCode(null);
+      return;
     }
-  }, [code, currentCode, documentFlavor, isDirty, t]);
+
+    if (code === currentCode && pendingAppliedCodeRef.current === code) {
+      pendingAppliedCodeRef.current = null;
+      pendingAppliedBaseCodeRef.current = null;
+    }
+  }, [code, currentCode, isDirty]);
 
   useEffect(() => {
     if (!documentMeta.supportsValidation) {
       setValidationErrors([]);
+      setIsValidationPending(false);
       validationRequestSequenceRef.current += 1;
       return undefined;
     }
 
     const requestSequence = validationRequestSequenceRef.current + 1;
     validationRequestSequenceRef.current = requestSequence;
+    setIsValidationPending(true);
 
     const timeout = window.setTimeout(() => {
       void requestXmlValidationWithWorker(currentCode, documentFlavor, t)
@@ -374,6 +400,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           }
           startTransition(() => {
             setValidationErrors(nextErrors);
+            setIsValidationPending(false);
           });
         })
         .catch((error) => {
@@ -383,6 +410,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           console.error('XML validation worker request failed:', error);
           startTransition(() => {
             setValidationErrors(toWorkerValidationError(error, t));
+            setIsValidationPending(false);
           });
         });
     }, getUrdfValidationDebounceMs(currentCode.length));
@@ -506,9 +534,9 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     monacoInstance.editor.setModelMarkers(model, 'urdf-validator', markers);
   }, [documentMeta.supportsValidation, monacoInstance, validationErrors]);
 
-  const handleApply = useCallback(() => {
-    if (isReadOnly || !editorRef.current) {
-      return;
+  const handleApply = useCallback(async (trigger: 'manual' | 'auto' = 'manual') => {
+    if (isReadOnly || !editorRef.current || isApplying) {
+      return false;
     }
 
     const value = editorRef.current.getValue();
@@ -527,9 +555,32 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         });
     }
 
-    onCodeChange(value);
-    setIsDirty(false);
-  }, [documentFlavor, documentMeta.supportsValidation, isReadOnly, onCodeChange, t]);
+    setIsApplying(true);
+
+    try {
+      const didApply = await Promise.resolve(onCodeChange(value));
+      if (didApply) {
+        pendingAppliedCodeRef.current = value;
+        pendingAppliedBaseCodeRef.current = code;
+        setIsDirty(false);
+        setAutoApplyBlockedCode(null);
+        return true;
+      }
+
+      if (trigger === 'auto') {
+        setAutoApplyBlockedCode(value);
+      }
+      return false;
+    } catch (error) {
+      if (trigger === 'auto') {
+        setAutoApplyBlockedCode(value);
+      }
+      console.error('Failed to apply source code changes:', error);
+      return false;
+    } finally {
+      setIsApplying(false);
+    }
+  }, [code, documentFlavor, documentMeta.supportsValidation, isApplying, isReadOnly, onCodeChange, t]);
 
   const handleEditorChange = useCallback(
     (value: string | undefined) => {
@@ -539,8 +590,11 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
       setCurrentCode(value);
       setIsDirty(isReadOnly ? false : value !== code);
+      if (autoApplyBlockedCode && autoApplyBlockedCode !== value) {
+        setAutoApplyBlockedCode(null);
+      }
     },
-    [code, isReadOnly],
+    [autoApplyBlockedCode, code, isReadOnly],
   );
 
   const handleCopy = useCallback(() => {
@@ -553,19 +607,13 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, [currentCode]);
 
   const handleDownload = useCallback(() => {
-    if (isEquivalentMjcfPreview) {
-      return;
-    }
-    const blob = new Blob([currentCode], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = getDownloadFileName(fileName, documentFlavor);
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-  }, [currentCode, documentFlavor, fileName, isEquivalentMjcfPreview]);
+    downloadSourceCodeDocument({
+      content: currentCode,
+      fileName,
+      documentFlavor,
+      onDownload,
+    });
+  }, [currentCode, documentFlavor, fileName, onDownload]);
 
   useEffect(() => {
     if (isReadOnly) {
@@ -576,7 +624,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       if ((event.ctrlKey || event.metaKey) && event.key === 's') {
         event.preventDefault();
         if (isDirty) {
-          handleApply();
+          void handleApply('manual');
         }
       }
     };
@@ -584,6 +632,23 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleApply, isDirty, isReadOnly]);
+
+  const handleAutoApply = useCallback(() => {
+    void handleApply('auto');
+  }, [handleApply]);
+
+  useSourceCodeEditorAutoApply({
+    enabled: autoApplyEnabled,
+    currentCode,
+    isDirty,
+    isReadOnly,
+    supportsValidation: documentMeta.supportsValidation,
+    validationErrorCount: validationErrors.length,
+    isValidationPending,
+    isApplying,
+    autoApplyBlockedCode,
+    onAutoApply: handleAutoApply,
+  });
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -658,17 +723,19 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         <div className="flex items-center gap-1">
           {!isReadOnly ? (
             <button
-              onClick={handleApply}
-              disabled={!isDirty}
+              onClick={() => {
+                void handleApply('manual');
+              }}
+              disabled={!isDirty || isApplying}
               className={`${HEADER_PRIMARY_ACTION_CLASS} ${
-                isDirty
+                isDirty || isApplying
                   ? 'bg-system-blue-solid text-white hover:bg-system-blue-hover'
                   : 'cursor-not-allowed bg-transparent text-text-tertiary'
               }`}
               title={t.saveTooltip}
               type="button"
             >
-              <Save className="h-3 w-3" />
+              {isApplying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
               <span>{t.save}</span>
             </button>
           ) : null}

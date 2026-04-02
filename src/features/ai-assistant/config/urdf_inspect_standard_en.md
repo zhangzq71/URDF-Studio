@@ -13,6 +13,7 @@ Final Achievement Rate: $Rate = (Score_{total} / Score_{max}) \times 100\%$
 0. URDF Spec Compliance
 
 Category ID: spec
+Category Weight: 0.20
 
 0.1 Robot Root Contract
 
@@ -81,6 +82,7 @@ Scoring Reference: Hidden consumer-specific dependencies or undocumented require
 1. Physical Plausibility
 
 Category ID: physical
+Category Weight: 0.20
 
 1.1 Mass & Inertia Validity
 
@@ -123,6 +125,7 @@ Scoring Reference: Obvious deviation in parameters between both sides scores 6 p
 2. Link Frames (Coordinate System Position & Orientation)
 
 Category ID: frames
+Category Weight: 0.15
 
 2.1 Joint Collinearity
 
@@ -165,6 +168,7 @@ Scoring Reference: Offset or asymmetric center scores 5 points.
 3. Assembly Logic
 
 Category ID: assembly
+Category Weight: 0.10
 
 3.1 Actuator Mass Attribution
 
@@ -193,6 +197,7 @@ Scoring Reference: Confused mass allocation of transmission components scores 6 
 4. Kinematics & Simulation Properties
 
 Category ID: simulation
+Category Weight: 0.15
 
 4.1 Topology Validation
 
@@ -221,6 +226,7 @@ Scoring Reference: Not simplified scores 5 points.
 5. Hardware Parameter Configuration
 
 Category ID: hardware
+Category Weight: 0.10
 
 5.1 Motor Torque & Velocity Limits
 
@@ -241,6 +247,7 @@ Scoring Reference: Missing configuration scores 7 points.
 6. Naming Conventions
 
 Category ID: naming
+Category Weight: 0.10
 
 6.1 Uniqueness & Descriptiveness
 

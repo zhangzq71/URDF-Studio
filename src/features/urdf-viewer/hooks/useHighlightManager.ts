@@ -146,12 +146,11 @@ export function useHighlightManager({
     }, [getColliderIndex, getCollisionGeometryByIndex]);
 
     const getActiveBoundingMode = useCallback((): PickTargetMode | null => {
-        return resolveTopLayerInteractionSubType({
-            showVisual: showVisualRef.current,
-            showCollision: showCollisionRef.current,
-            collisionAlwaysOnTop: showCollisionAlwaysOnTop,
-        });
-    }, [showCollisionAlwaysOnTop]);
+        if (showVisualRef.current && showCollisionRef.current) return 'all';
+        if (showCollisionRef.current) return 'collision';
+        if (showVisualRef.current) return 'visual';
+        return null;
+    }, []);
 
     // Helper to get/update robot bounding box (cached)
     const getRobotBoundingBox = useCallback((forceRefresh = false) => {

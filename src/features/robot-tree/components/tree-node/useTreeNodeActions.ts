@@ -14,7 +14,8 @@ import type {
 interface UseTreeNodeActionsParams {
   linkId: string;
   link: RobotState['links'][string];
-  robot: RobotState;
+  childJointsById: Record<string, RobotState['joints'][string]>;
+  selection: Selection;
   isVisualVisible: boolean;
   isPrimaryCollisionVisible: boolean;
   editingTarget: TreeNodeEditingTarget | null;
@@ -35,7 +36,8 @@ interface UseTreeNodeActionsParams {
 export function useTreeNodeActions({
   linkId,
   link,
-  robot,
+  childJointsById,
+  selection,
   isVisualVisible,
   isPrimaryCollisionVisible,
   editingTarget,
@@ -141,12 +143,11 @@ export function useTreeNodeActions({
     }
 
     if (editingTarget.type === 'link') {
-      const targetLink = robot.links[editingTarget.id];
-      if (targetLink && targetLink.name !== nextName) {
-        onUpdate('link', editingTarget.id, { ...targetLink, name: nextName });
+      if (editingTarget.id === linkId && link.name !== nextName) {
+        onUpdate('link', editingTarget.id, { ...link, name: nextName });
       }
     } else {
-      const targetJoint = robot.joints[editingTarget.id];
+      const targetJoint = childJointsById[editingTarget.id];
       if (targetJoint && targetJoint.name !== nextName) {
         onUpdate('joint', editingTarget.id, { ...targetJoint, name: nextName });
       }
@@ -200,7 +201,7 @@ export function useTreeNodeActions({
     if (!contextMenu) return null;
     if (contextMenu.target.type === 'link') return contextMenu.target.id;
     if (contextMenu.target.type === 'joint') {
-      return robot.joints[contextMenu.target.id]?.childLinkId || null;
+      return childJointsById[contextMenu.target.id]?.childLinkId || null;
     }
     return null;
   };
@@ -226,7 +227,7 @@ export function useTreeNodeActions({
     }
 
     if (contextMenu.target.type === 'joint') {
-      const targetJoint = robot.joints[contextMenu.target.id];
+      const targetJoint = childJointsById[contextMenu.target.id];
       if (targetJoint) {
         onDelete(targetJoint.childLinkId);
       }
@@ -249,7 +250,7 @@ export function useTreeNodeActions({
     if (!contextMenu || contextMenu.target.type !== 'geometry') return;
 
     const { linkId: targetLinkId, subType, objectIndex } = contextMenu.target;
-    const targetLink = robot.links[targetLinkId];
+    const targetLink = targetLinkId === linkId ? link : null;
     if (!targetLink) {
       setContextMenu(null);
       return;
@@ -261,7 +262,7 @@ export function useTreeNodeActions({
       subType,
       objectIndex,
     };
-    const shouldSyncSelection = matchesSelection(robot.selection, deletedGeometrySelection);
+    const shouldSyncSelection = matchesSelection(selection, deletedGeometrySelection);
 
     if (subType === 'collision') {
       const { link: nextLink, removed, nextObjectIndex } = removeCollisionGeometryByObjectIndex(
@@ -342,9 +343,9 @@ export function useTreeNodeActions({
       });
 
       if (
-        robot.selection.type === 'link'
-        && robot.selection.id === contextMenu.target.id
-        && robot.selection.subType === 'collision'
+        selection.type === 'link'
+        && selection.id === contextMenu.target.id
+        && selection.subType === 'collision'
       ) {
         setSelection({ type: 'link', id: contextMenu.target.id });
       }
@@ -369,9 +370,9 @@ export function useTreeNodeActions({
     });
 
     if (
-      robot.selection.type === 'link'
-      && robot.selection.id === contextMenu.target.id
-      && robot.selection.subType === 'visual'
+      selection.type === 'link'
+      && selection.id === contextMenu.target.id
+      && selection.subType === 'visual'
     ) {
       setSelection({ type: 'link', id: contextMenu.target.id });
     }

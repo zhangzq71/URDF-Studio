@@ -19,7 +19,7 @@ function resetSelectionStore() {
 
 function resetUiStore() {
   const store = useUIStore.getState();
-  store.setAppMode('detail');
+  store.setAppMode('editor');
   store.setDetailLinkTab('visual');
   store.setPanelSection('property_editor_link_inertial', true);
   store.setPanelSection('kinematics', true);
@@ -140,10 +140,10 @@ test('handleSelect does not carry collision objectIndex across different links',
   });
 });
 
-test('handleViewerMeshSelect seeds the detail tab from visual mesh clicks while in hardware mode', () => {
+test('handleViewerMeshSelect seeds the detail tab from visual mesh clicks while in editor mode', () => {
   resetSelectionStore();
   resetUiStore();
-  useUIStore.getState().setAppMode('hardware');
+  useUIStore.getState().setAppMode('editor');
   useUIStore.getState().setDetailLinkTab('collision');
 
   const hook = renderHook({

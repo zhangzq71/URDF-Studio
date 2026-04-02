@@ -16,6 +16,30 @@ export interface BridgeInteractionState {
   childComponentId: string;
 }
 
+function resolveComponentLinkSelection(
+  component: AssemblyComponent,
+  selectionId: string,
+) {
+  const directMatch = component.robot.links[selectionId];
+  if (directMatch) {
+    return directMatch;
+  }
+
+  return Object.values(component.robot.links).find((link) => link.name === selectionId) ?? null;
+}
+
+function resolveComponentJointSelection(
+  component: AssemblyComponent,
+  selectionId: string,
+) {
+  const directMatch = component.robot.joints[selectionId];
+  if (directMatch) {
+    return directMatch;
+  }
+
+  return Object.values(component.robot.joints).find((joint) => joint.name === selectionId) ?? null;
+}
+
 export function resolveAssemblySelection(
   assemblyState: AssemblyState,
   selection: Selection,
@@ -26,7 +50,7 @@ export function resolveAssemblySelection(
 
   for (const component of Object.values(assemblyState.components)) {
     if (selection.type === 'link') {
-      const link = component.robot.links[selection.id];
+      const link = resolveComponentLinkSelection(component, selection.id);
       if (link) {
         return {
           componentId: component.id,
@@ -38,7 +62,7 @@ export function resolveAssemblySelection(
       continue;
     }
 
-    const joint = component.robot.joints[selection.id];
+    const joint = resolveComponentJointSelection(component, selection.id);
     if (!joint) {
       continue;
     }
@@ -57,6 +81,20 @@ export function resolveAssemblySelection(
   }
 
   return null;
+}
+
+export function resolveAssemblyViewerComponentSelection(
+  assemblyState: AssemblyState | null | undefined,
+  selection: Selection,
+  options: {
+    hasInteractionGuard?: boolean;
+  } = {},
+): string | null {
+  if (!assemblyState || options.hasInteractionGuard) {
+    return null;
+  }
+
+  return resolveAssemblySelection(assemblyState, selection)?.componentId ?? null;
 }
 
 export function resolveBlockedBridgeComponentId({

@@ -15,6 +15,8 @@ import {
   generateSkeletonXML,
   injectGazeboTags,
 } from '@/core/parsers';
+import { analyzeAssemblyConnectivity } from '@/core/robot';
+import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
 import { rewriteUrdfAssetPathsForExport } from '@/core/parsers/meshPathUtils';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
 import {
@@ -41,6 +43,7 @@ import { convertUsdArchiveFilesToBinaryWithWorker } from '../utils/usdBinaryArch
 import { resolveUrdfSourceExportContent } from './urdfSourceExportUtils';
 import { buildGeneratedUrdfOptions } from '../utils/generatedUrdfOptions';
 import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
+import { markUnsavedChangesBaselineSaved } from '../utils/unsavedChangesBaseline';
 
 type ExportTarget =
   | { type: 'current' }
@@ -76,16 +79,27 @@ export interface ExportExecutionIssue {
   context?: Record<string, string>;
 }
 
+export interface DisconnectedWorkspaceUrdfExportAction {
+  type: 'disconnected-workspace-urdf';
+  componentCount: number;
+  connectedGroupCount: number;
+  exportName: string;
+}
+
+export type ExportActionRequired = DisconnectedWorkspaceUrdfExportAction;
+
 export interface ExportExecutionResult {
   partial: boolean;
   warnings: string[];
   issues: ExportExecutionIssue[];
+  actionRequired?: ExportActionRequired;
 }
 
 export interface ProjectExportExecutionResult {
   partial: boolean;
   warnings: string[];
   issues: ExportExecutionIssue[];
+  actionRequired?: ExportActionRequired;
 }
 
 interface UrdfSourceExportPreference {
@@ -310,7 +324,7 @@ export function useFileExport() {
     // Keep export source aligned with current viewer:
     // workspace tab -> merged assembly; structure tab -> current robot store.
     if (assemblyState && sidebarTab === 'workspace') {
-      const mergedData = getMergedRobotData();
+      const mergedData = buildExportableAssemblyRobotData(assemblyState);
       if (mergedData) {
         return { ...mergedData, selection: { type: null, id: null } };
       }
@@ -368,6 +382,32 @@ export function useFileExport() {
     const trimmed = robot.name?.trim();
     return trimmed && trimmed.length > 0 ? trimmed : 'robot';
   }, []);
+
+  const resolveDisconnectedWorkspaceUrdfAction = useCallback((
+    target: ExportTarget,
+    config: ExportDialogConfig,
+  ): ExportActionRequired | null => {
+    if (
+      target.type !== 'current'
+      || config.format !== 'urdf'
+      || sidebarTab !== 'workspace'
+      || !assemblyState
+    ) {
+      return null;
+    }
+
+    const analysis = analyzeAssemblyConnectivity(assemblyState);
+    if (!analysis.hasDisconnectedComponents) {
+      return null;
+    }
+
+    return {
+      type: 'disconnected-workspace-urdf',
+      componentCount: analysis.componentCount,
+      connectedGroupCount: analysis.connectedGroupCount,
+      exportName: assemblyState.name?.trim() || 'assembly',
+    };
+  }, [assemblyState, sidebarTab]);
 
   const createArchiveRoot = useCallback((zip: JSZip, exportName: string): JSZip => {
     return zip.folder(exportName) ?? zip;
@@ -734,12 +774,119 @@ export function useFileExport() {
     t.exportFailedParse,
   ]);
 
+  const handleExportDisconnectedWorkspaceUrdfBundle = useCallback(async (
+    config: ExportDialogConfig,
+  ): Promise<ExportExecutionResult> => {
+    flushPendingHistory();
+
+    if (config.format !== 'urdf') {
+      throw new Error(t.exportFailedParse);
+    }
+
+    if (!assemblyState || Object.keys(assemblyState.components).length === 0) {
+      throw new Error(t.exportFailedParse);
+    }
+
+    const zip = new JSZip();
+    const assemblyExportName = assemblyState.name?.trim() || 'assembly';
+    const archiveRoot = createArchiveRoot(zip, assemblyExportName);
+    const componentsRoot = archiveRoot.folder('components') ?? archiveRoot;
+    const assetPackagingFailures: RobotAssetPackagingFailure[] = [];
+
+    const {
+      includeExtended,
+      includeBOM,
+      useRelativePaths,
+      includeMeshes,
+      compressSTL,
+      stlQuality,
+      preferSourceVisualMeshes,
+    } = config.urdf;
+
+    for (const component of Object.values(assemblyState.components)) {
+      const componentExportName = component.name?.trim() || component.id;
+      const componentFolder = componentsRoot.folder(componentExportName) ?? componentsRoot;
+      const componentRobot: RobotState = {
+        ...component.robot,
+        selection: { type: null, id: null },
+      };
+      const sourceFile = availableFiles.find((file) => file.name === component.sourceFile);
+      const generatedUrdfOptions = await buildGeneratedUrdfOptions(undefined, { useRelativePaths });
+      const urdfContent = includeExtended
+        ? generateURDF(
+          componentRobot,
+          await buildGeneratedUrdfOptions(undefined, { extended: true, useRelativePaths }),
+        )
+        : (
+          sourceFile
+            ? await buildUrdfSourceExportContent(
+              { type: 'library-file', file: sourceFile },
+              componentExportName,
+              {
+                useRelativePaths,
+                preferSourceVisualMeshes,
+              },
+            )
+            : null
+        ) ?? generateURDF(componentRobot, generatedUrdfOptions);
+
+      componentFolder.file(`${componentExportName}.urdf`, urdfContent);
+
+      if (config.includeSkeleton) {
+        addSkeletonToZip(componentRobot, componentFolder, componentExportName, includeMeshes);
+      }
+
+      if (includeBOM) {
+        const hardwareFolder = componentFolder.folder('hardware');
+        hardwareFolder?.file('bom_list.csv', generateBOM(componentRobot));
+      }
+
+      if (!includeMeshes) {
+        continue;
+      }
+
+      const meshPackagingResult = await addMeshesToZip(
+        componentRobot,
+        componentFolder,
+        { compressSTL, stlQuality },
+      );
+      assetPackagingFailures.push(...meshPackagingResult.failedAssets);
+    }
+
+    throwForAssetPackagingFailures(assetPackagingFailures);
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(content, `${assemblyExportName}_components_urdf.zip`);
+
+    return {
+      partial: false,
+      warnings: [],
+      issues: [],
+    };
+  }, [
+    addMeshesToZip,
+    addSkeletonToZip,
+    assemblyState,
+    availableFiles,
+    buildUrdfSourceExportContent,
+    createArchiveRoot,
+    downloadBlob,
+    generateBOM,
+    t.exportFailedParse,
+    throwForAssetPackagingFailures,
+  ]);
+
   const handleExportWithConfig = useCallback(async (
     config: ExportDialogConfig,
     target: ExportTarget = DEFAULT_EXPORT_TARGET,
     options: HandleExportWithConfigOptions = {},
   ): Promise<ExportExecutionResult> => {
     flushPendingHistory();
+    const markCurrentTargetSaved = () => {
+      if (target.type === 'current') {
+        markUnsavedChangesBaselineSaved('robot');
+      }
+    };
     const requiresResolvedUsdContext = (
       target.type === 'current'
       && selectedFile?.format === 'usd'
@@ -747,7 +894,8 @@ export function useFileExport() {
     );
 
     if (config.format === 'usd') {
-      const reportProgress = createProgressReporter(options.onProgress, 4);
+      const shouldConvertUsdLayers = config.usd.fileFormat !== 'usda';
+      const reportProgress = createProgressReporter(options.onProgress, shouldConvertUsdLayers ? 4 : 3);
       reportProgress(1, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
         stageProgress: 0.2,
         indeterminate: true,
@@ -758,6 +906,8 @@ export function useFileExport() {
         && selectedFile?.format === 'usd'
         && sidebarTab !== 'workspace'
         && currentUsdExportMode === 'live-stage'
+        && config.usd.fileFormat === 'usd'
+        && selectedFile.name.toLowerCase().endsWith('.usd')
       );
 
       if (shouldExportLiveUsdStage) {
@@ -789,6 +939,7 @@ export function useFileExport() {
         const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
 
         downloadBlob(content, roundtripArchive.archiveFileName);
+        markCurrentTargetSaved();
         return {
           partial: false,
           warnings: [],
@@ -828,6 +979,8 @@ export function useFileExport() {
         exportName: exportContext.exportName,
         assets,
         extraMeshFiles: exportContext.extraMeshFiles,
+        fileFormat: config.usd.fileFormat,
+        layoutProfile: 'isaacsim',
         meshCompression: {
           enabled: config.usd.compressMeshes,
           quality: config.usd.meshQuality,
@@ -883,39 +1036,62 @@ export function useFileExport() {
         },
       });
 
-      reportProgress(3, t.exportProgressConvertingUsdLayers, t.exportProgressConvertingUsdLayersPreparingDetail, {
-        stageProgress: 0.04,
-        indeterminate: true,
-      });
-
-      const binaryArchiveFiles = await convertUsdArchiveFilesToBinaryWithWorker(usdExport.archiveFiles, {
-        onProgress: ({ current, total, filePath }) => {
-          reportProgress(
-            3,
-            t.exportProgressConvertingUsdLayers,
-            replaceTemplate(t.exportProgressConvertingUsdLayersDetail, {
-              current,
-              total,
-              file: trimProgressFileLabel(filePath) || t.exportProgressArchiveFallbackFile,
-            }),
-            {
-              stageProgress: total > 0 ? current / total : 1,
-              indeterminate: false,
-            },
-          );
-        },
-      });
-
       const zip = new JSZip();
-      binaryArchiveFiles.forEach((blob, filePath) => {
-        zip.file(filePath, blob);
-      });
-      const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
+
+      if (shouldConvertUsdLayers) {
+        reportProgress(3, t.exportProgressConvertingUsdLayers, t.exportProgressConvertingUsdLayersPreparingDetail, {
+          stageProgress: 0.04,
+          indeterminate: true,
+        });
+
+        const binaryArchiveFiles = await convertUsdArchiveFilesToBinaryWithWorker(usdExport.archiveFiles, {
+          onProgress: ({ current, total, filePath }) => {
+            reportProgress(
+              3,
+              t.exportProgressConvertingUsdLayers,
+              replaceTemplate(t.exportProgressConvertingUsdLayersDetail, {
+                current,
+                total,
+                file: trimProgressFileLabel(filePath) || t.exportProgressArchiveFallbackFile,
+              }),
+              {
+                stageProgress: total > 0 ? current / total : 1,
+                indeterminate: false,
+              },
+            );
+          },
+        });
+
+        binaryArchiveFiles.forEach((blob, filePath) => {
+          zip.file(filePath, blob);
+        });
+      } else {
+        usdExport.archiveFiles.forEach((blob, filePath) => {
+          zip.file(filePath, blob);
+        });
+      }
+
+      const content = await generateZipBlobWithProgress(
+        zip,
+        reportProgress,
+        shouldConvertUsdLayers ? 4 : 3,
+      );
       downloadBlob(content, usdExport.archiveFileName);
+      markCurrentTargetSaved();
       return {
         partial: false,
         warnings: [],
         issues: [],
+      };
+    }
+
+    const disconnectedWorkspaceUrdfAction = resolveDisconnectedWorkspaceUrdfAction(target, config);
+    if (disconnectedWorkspaceUrdfAction) {
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+        actionRequired: disconnectedWorkspaceUrdfAction,
       };
     }
 
@@ -1043,6 +1219,7 @@ export function useFileExport() {
         includeMeshes ? 5 : 4,
       );
       downloadBlob(content, `${exportName}_mjcf.zip`);
+      markCurrentTargetSaved();
       return {
         partial: false,
         warnings: [],
@@ -1106,6 +1283,7 @@ export function useFileExport() {
         includeMeshes ? 4 : 3,
       );
       downloadBlob(content, `${exportName}_urdf.zip`);
+      markCurrentTargetSaved();
       return {
         partial: false,
         warnings: [],
@@ -1159,6 +1337,7 @@ export function useFileExport() {
         includeMeshes ? 4 : 3,
       );
       downloadBlob(content, `${exportName}_sdf.zip`);
+      markCurrentTargetSaved();
       return {
         partial: false,
         warnings: [],
@@ -1213,6 +1392,7 @@ export function useFileExport() {
         includeMeshes ? 4 : 3,
       );
       downloadBlob(content, `${exportName}_xacro.zip`);
+      markCurrentTargetSaved();
       return {
         partial: false,
         warnings: [],
@@ -1242,6 +1422,7 @@ export function useFileExport() {
     buildUrdfSourceExportContent,
     replaceTemplate,
     resolveLibraryRobotForExport,
+    resolveDisconnectedWorkspaceUrdfAction,
     resolveExportContext,
     selectedFile,
     sidebarTab,
@@ -1381,6 +1562,7 @@ export function useFileExport() {
       },
     });
     downloadBlob(result.blob, `${robotName || assemblyState?.name || 'my_project'}.usp`);
+    markUnsavedChangesBaselineSaved('all');
 
     return {
       partial: result.partial,
@@ -1424,6 +1606,7 @@ export function useFileExport() {
     handleExportURDF,
     handleExportMJCF,
     handleExport,
+    handleExportDisconnectedWorkspaceUrdfBundle,
     handleExportProject,
     handleExportWithConfig,
     generateBOM,

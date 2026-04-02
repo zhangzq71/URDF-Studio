@@ -159,7 +159,7 @@ function renderHook() {
 function resetStoresToBaseline() {
   useUIStore.setState({
     lang: 'en',
-    appMode: 'detail',
+    appMode: 'editor',
     sidebarTab: 'structure',
   });
 
@@ -296,11 +296,16 @@ function installUsdExportPipelineWorkerMock() {
         usdExportRequestCount += 1;
         queueMicrotask(async () => {
           const exportName = String(message.payload?.exportName || 'worker_bot');
-          const rootLayerPath = `${exportName}/usd/${exportName}.usd`;
+          const fileFormat = String(message.payload?.fileFormat || 'usd');
+          const layoutProfile = String(message.payload?.layoutProfile || 'legacy');
+          const extension = fileFormat === 'usda' ? 'usda' : 'usd';
+          const rootLayerPath = layoutProfile === 'isaacsim'
+            ? `${exportName}/${exportName}.${extension}`
+            : `${exportName}/usd/${exportName}.${extension}`;
           const serialized = await serializeUsdExportResultForWorker({
             content: '#usda 1.0\n',
-            downloadFileName: `${exportName}.usd`,
-            archiveFileName: `${exportName}_usd.zip`,
+            downloadFileName: `${exportName}.${extension}`,
+            archiveFileName: `${exportName}_${extension}.zip`,
             rootLayerPath,
             archiveFiles: new Map<string, Blob>([
               [rootLayerPath, new Blob(['#usda 1.0\n'], { type: 'text/plain;charset=utf-8' })],
@@ -392,7 +397,9 @@ function installUsdExportPipelineWorkerMock() {
   };
 }
 
-function createUsdExportConfig(): ExportDialogConfig {
+function createUsdExportConfig(
+  usdOverrides: Partial<ExportDialogConfig['usd']> = {},
+): ExportDialogConfig {
   return {
     format: 'usd',
     includeSkeleton: false,
@@ -429,8 +436,10 @@ function createUsdExportConfig(): ExportDialogConfig {
       stlQuality: 50,
     },
     usd: {
+      fileFormat: 'usd',
       compressMeshes: true,
       meshQuality: 50,
+      ...usdOverrides,
     },
   };
 }
@@ -523,7 +532,7 @@ test('useFileExport routes USD exports through usd export worker and binary arch
 
     useUIStore.setState({
       lang: 'en',
-      appMode: 'detail',
+      appMode: 'editor',
       sidebarTab: 'structure',
     });
 
@@ -580,6 +589,72 @@ test('useFileExport routes USD exports through usd export worker and binary arch
   }
 });
 
+test('useFileExport skips binary USD conversion when exporting authored USDA layers', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  const downloadMocks = installDownloadMocks();
+  const workerMocks = installUsdExportPipelineWorkerMock();
+
+  try {
+    const selectedFile: RobotFile = {
+      name: 'robots/demo/demo.usd',
+      format: 'usd',
+      content: '#usda 1.0\n',
+    };
+
+    useUIStore.setState({
+      lang: 'en',
+      appMode: 'editor',
+      sidebarTab: 'structure',
+    });
+
+    useAssetsStore.getState().setAvailableFiles([selectedFile]);
+    useAssetsStore.getState().setSelectedFile(selectedFile);
+    useAssetsStore.getState().setAllFileContents({
+      [selectedFile.name]: selectedFile.content,
+    });
+    useAssetsStore.getState().setDocumentLoadState({
+      status: 'ready',
+      fileName: selectedFile.name,
+      format: 'usd',
+      error: null,
+    });
+    useAssetsStore.getState().setUsdPreparedExportCache(
+      '/robots/demo/demo.usd',
+      createPreparedUsdExportCache('/robots/demo/demo.usd'),
+    );
+
+    useRobotStore.getState().setRobot(createCurrentRobot());
+
+    const rendered = renderHook();
+
+    try {
+      const result = await rendered.hook.handleExportWithConfig(
+        createUsdExportConfig({ fileFormat: 'usda' }),
+        { type: 'current' },
+      );
+
+      assert.deepEqual(result, {
+        partial: false,
+        warnings: [],
+        issues: [],
+      });
+      assert.equal(workerMocks.usdExportRequestCount, 1);
+      assert.equal(workerMocks.usdBinaryRequestCount, 0);
+      assert.ok(downloadMocks.clicked);
+      assert.equal(downloadMocks.appendedAnchor?.download, 'edited_worker_bot_usda.zip');
+      assert.ok(downloadMocks.capturedBlob);
+    } finally {
+      rendered.cleanup();
+    }
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    workerMocks.restore();
+    downloadMocks.restore();
+    domEnvironment.restore();
+  }
+});
+
 test('useFileExport fails fast before starting workers when USD worker export encounters unsupported mesh formats', async () => {
   resetStoresToBaseline();
   const domEnvironment = installDomEnvironment();
@@ -595,7 +670,7 @@ test('useFileExport fails fast before starting workers when USD worker export en
 
     useUIStore.setState({
       lang: 'en',
-      appMode: 'detail',
+      appMode: 'editor',
       sidebarTab: 'structure',
     });
 

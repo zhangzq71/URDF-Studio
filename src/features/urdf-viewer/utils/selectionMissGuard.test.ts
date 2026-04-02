@@ -6,6 +6,7 @@ import {
   disarmSelectionMissGuard,
   clearSelectionMissGuardTimer,
   scheduleSelectionMissGuardReset,
+  shouldDisarmSelectionMissGuardOnPointerMove,
 } from './selectionMissGuard.ts';
 
 test('arms the guard immediately after a successful scene pick', () => {
@@ -75,4 +76,40 @@ test('disarms the guard immediately when the next click is a background miss', (
 
   t.mock.timers.tick(100);
   assert.equal(justSelectedRef.current, false);
+});
+
+test('releases a stale selection guard once the pointer is idle and moves again', () => {
+  const shouldDisarm = shouldDisarmSelectionMissGuardOnPointerMove({
+    justSelected: true,
+    pointerButtons: 0,
+    dragging: false,
+    hasPendingSelection: false,
+    hasResetTimer: false,
+  });
+
+  assert.equal(shouldDisarm, true);
+});
+
+test('keeps the guard armed while a deferred pointer selection is still pending', () => {
+  const shouldDisarm = shouldDisarmSelectionMissGuardOnPointerMove({
+    justSelected: true,
+    pointerButtons: 0,
+    dragging: false,
+    hasPendingSelection: true,
+    hasResetTimer: false,
+  });
+
+  assert.equal(shouldDisarm, false);
+});
+
+test('keeps the guard armed while the normal settle timer is still pending', () => {
+  const shouldDisarm = shouldDisarmSelectionMissGuardOnPointerMove({
+    justSelected: true,
+    pointerButtons: 0,
+    dragging: false,
+    hasPendingSelection: false,
+    hasResetTimer: true,
+  });
+
+  assert.equal(shouldDisarm, false);
 });

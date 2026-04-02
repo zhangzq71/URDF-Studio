@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 
 import { resolveMouseDownSelectionPlan } from './mouseDownSelectionPlan.ts';
 
-test('mode `detail` keeps mesh selection sync for clicked link geometry', () => {
+test('mode `editor` keeps mesh selection sync for clicked link geometry', () => {
   const result = resolveMouseDownSelectionPlan({
-    mode: 'detail',
+    mode: 'editor',
     linkName: 'forearm_link',
     jointName: 'elbow_joint',
     subType: 'visual',
@@ -18,9 +18,9 @@ test('mode `detail` keeps mesh selection sync for clicked link geometry', () => 
   });
 });
 
-test('detail mode keeps the same link geometry selection semantics for repeated clicks', () => {
+test('editor mode keeps the same link geometry selection semantics for repeated clicks', () => {
   const result = resolveMouseDownSelectionPlan({
-    mode: 'detail',
+    mode: 'editor',
     linkName: 'forearm_link',
     jointName: 'elbow_joint',
     subType: 'visual',
@@ -33,9 +33,9 @@ test('detail mode keeps the same link geometry selection semantics for repeated 
   });
 });
 
-test('detail mode keeps collision mesh selection metadata when no joint exists', () => {
+test('editor mode keeps collision mesh selection metadata when no joint exists', () => {
   const result = resolveMouseDownSelectionPlan({
-    mode: 'detail',
+    mode: 'editor',
     linkName: 'base_link',
     jointName: null,
     subType: 'collision',

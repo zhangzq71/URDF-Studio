@@ -63,7 +63,7 @@ test('buildInspectionPromptNotes emits MJCF-specific frame and tendon guidance w
   const notes = buildInspectionPromptNotes(
     robot,
     {
-      kinematics: ['frame_alignment'],
+      frames: ['frame_alignment'],
       hardware: ['motor_limits', 'armature_config'],
     },
     'en'

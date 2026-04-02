@@ -30,6 +30,14 @@ function installDom() {
   (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
   (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'attachEvent', {
+    value: () => {},
+    configurable: true,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'detachEvent', {
+    value: () => {},
+    configurable: true,
+  });
 
   return dom;
 }
@@ -197,6 +205,89 @@ test('solidThumb adds an opaque panel halo without changing the default slider t
   assert.ok(defaultThumb, 'default slider thumb should still render');
   const defaultStyle = defaultThumb.getAttribute('style') ?? '';
   assert.doesNotMatch(defaultStyle, /0 0 0 2px var\(--ui-panel-bg\)/, 'default slider thumb should keep the shared styling');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('compactThumb uses the tighter thumb sizing intended for options panels', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderSlider(root, {
+    compactThumb: true,
+  });
+
+  const compactThumb = container.querySelector('[data-testid="ui-slider-thumb"]') as HTMLDivElement | null;
+  assert.ok(compactThumb, 'compact slider thumb should render');
+  assert.match(compactThumb.className, /\bh-4\b/);
+  assert.match(compactThumb.className, /\bw-4\b/);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('compactThumb also uses a quieter value input until focus', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderSlider(root, {
+    compactThumb: true,
+    value: 0.42,
+    min: 0,
+    max: 1,
+    step: 0.01,
+    formatValue: (nextValue) => `${Math.round(nextValue * 100)}%`,
+  });
+
+  const valueInput = container.querySelector('[data-testid="ui-slider-value-input"]') as HTMLInputElement | null;
+  assert.ok(valueInput, 'compact slider should still render a value input');
+  assert.match(valueInput.className, /\bh-5\b/);
+  assert.match(valueInput.className, /\bw-12\b/);
+  assert.match(valueInput.className, /\bborder-transparent\b/);
+  assert.match(valueInput.className, /\bbg-transparent\b/);
+  assert.match(valueInput.className, /\bfocus:bg-input-bg\b/);
+  assert.match(valueInput.className, /\bfocus:border-border-black\b/);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('editable value input commits typed values on blur', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const changes: number[] = [];
+
+  await renderSlider(root, {
+    value: 0.25,
+    min: 0,
+    max: 1,
+    step: 0.05,
+    formatValue: (nextValue) => nextValue.toFixed(2),
+    onChange: (nextValue) => changes.push(nextValue),
+  });
+
+  const valueInput = container.querySelector('[data-testid="ui-slider-value-input"]') as HTMLInputElement | null;
+  assert.ok(valueInput, 'slider value input should render');
+  const setNativeInputValue = Object.getOwnPropertyDescriptor(
+    dom.window.HTMLInputElement.prototype,
+    'value',
+  )?.set;
+  assert.ok(setNativeInputValue, 'native input value setter should exist');
+
+  await act(async () => {
+    valueInput.focus();
+    setNativeInputValue.call(valueInput, '0.70');
+    valueInput.dispatchEvent(new Event('input', { bubbles: true }));
+    valueInput.dispatchEvent(new Event('change', { bubbles: true }));
+    valueInput.blur();
+  });
+
+  assert.equal(changes.at(-1), 0.7);
+  assert.equal(valueInput.value, '0.70');
 
   await act(async () => {
     root.unmount();

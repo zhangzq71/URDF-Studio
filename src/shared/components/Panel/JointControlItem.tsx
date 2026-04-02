@@ -24,7 +24,6 @@ export interface JointControlItemProps {
     handleJointAngleChange: (name: string, val: number) => void;
     handleJointChangeCommit: (name: string, val: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
     isAdvanced?: boolean;
     onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }
@@ -39,7 +38,6 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     handleJointAngleChange,
     handleJointChangeCommit,
     onSelect,
-    onHover,
     isAdvanced = false,
     onUpdate,
 }) => {
@@ -130,7 +128,11 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     const continuousSliderAnchorRef = useRef(value);
     const [sliderPreviewValue, setSliderPreviewValue] = useState(value);
     const [isSliderDragging, setIsSliderDragging] = useState(false);
+    const [isSliderThumbHovered, setIsSliderThumbHovered] = useState(false);
+    const [isPanelHovered, setIsPanelHovered] = useState(false);
     const sliderShellRef = useRef<HTMLDivElement>(null);
+    const sliderThumbDiameter = 12;
+    const sliderThumbHalf = sliderThumbDiameter / 2;
 
     const syncContinuousSliderAnchor = useCallback((nextAnchor: number) => {
         continuousSliderAnchorRef.current = nextAnchor;
@@ -304,6 +306,22 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
         updateSliderValueFromClientX(clientX);
     }, [handleSliderChangeStart, updateSliderValueFromClientX]);
 
+    const updateSliderThumbHover = useCallback((clientX: number, clientY: number) => {
+        const sliderShell = sliderShellRef.current;
+        if (!sliderShell) {
+            setIsSliderThumbHovered(false);
+            return;
+        }
+
+        const rect = sliderShell.getBoundingClientRect();
+        const thumbCenterX = rect.left + (clampedSliderPercentage / 100) * rect.width;
+        const thumbCenterY = rect.top + rect.height / 2;
+        const withinX = Math.abs(clientX - thumbCenterX) <= sliderThumbHalf + 7;
+        const withinY = Math.abs(clientY - thumbCenterY) <= 14;
+
+        setIsSliderThumbHovered(withinX && withinY);
+    }, [clampedSliderPercentage, sliderThumbHalf]);
+
     useEffect(() => {
         if (!isSliderDragging) {
             return;
@@ -311,6 +329,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
 
         const handleWindowPointerMove = (event: PointerEvent) => {
             updateSliderValueFromClientX(event.clientX);
+            updateSliderThumbHover(event.clientX, event.clientY);
         };
 
         const handleWindowTouchMove = (event: TouchEvent) => {
@@ -320,6 +339,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
             }
 
             updateSliderValueFromClientX(touch.clientX);
+            updateSliderThumbHover(touch.clientX, touch.clientY);
         };
 
         const handleWindowPointerUp = () => {
@@ -343,7 +363,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
             window.removeEventListener('touchend', handleWindowPointerUp);
             window.removeEventListener('blur', handleWindowPointerUp);
         };
-    }, [handleSliderChangeEnd, isSliderDragging, updateSliderValueFromClientX]);
+    }, [handleSliderChangeEnd, isSliderDragging, updateSliderThumbHover, updateSliderValueFromClientX]);
 
     useEffect(() => {
         const currentParsed = parseFloat(inputValue);
@@ -543,15 +563,19 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
     return (
         <div
             ref={itemRef}
+            data-panel-hovered={isPanelHovered ? 'true' : 'false'}
             onClick={() => {
                 setActiveJoint(name);
                 onSelect?.('joint', name);
             }}
-            onMouseEnter={() => onHover?.('joint', name, 'visual')}
+            onMouseEnter={() => setIsPanelHovered(true)}
+            onMouseLeave={() => setIsPanelHovered(false)}
             className={`cursor-pointer space-y-1 rounded-lg border px-1 py-1.5 transition-colors ${
                 isActive
                     ? 'border-system-blue/20 bg-system-blue/10 dark:border-system-blue/30 dark:bg-system-blue/18'
-                    : 'border-transparent bg-transparent hover:bg-element-hover/80'
+                    : isPanelHovered
+                        ? 'border-border-black/60 bg-element-hover/80'
+                        : 'border-transparent bg-transparent'
             }`}
         >
             <div className="flex h-6 items-center justify-between gap-1">
@@ -559,7 +583,9 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                     className={`text-[11px] font-medium truncate min-w-0 ${
                         isActive 
                             ? 'text-system-blue' 
-                            : 'text-text-secondary'
+                            : isPanelHovered
+                                ? 'text-text-primary'
+                                : 'text-text-secondary'
                     } flex-1`}
                     title={displayName}
                 >
@@ -609,6 +635,9 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                     ref={sliderShellRef}
                     className="relative flex min-w-0 items-center"
                     data-testid="joint-slider-shell"
+                    onPointerEnter={(event) => updateSliderThumbHover(event.clientX, event.clientY)}
+                    onPointerMove={(event) => updateSliderThumbHover(event.clientX, event.clientY)}
+                    onPointerLeave={() => setIsSliderThumbHovered(false)}
                     onPointerDown={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
@@ -639,16 +668,23 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
                     </div>
                     <div
                         data-testid="joint-slider-thumb"
-                        className={`pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border transition-[transform,box-shadow] duration-75 ${
-                            isSliderDragging ? 'scale-110 ring-4 ring-system-blue/15' : 'scale-100'
+                        data-hovered={isSliderThumbHovered ? 'true' : 'false'}
+                        className={`pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border transition-[transform,box-shadow] duration-150 ease-out ${
+                            isSliderDragging
+                                ? 'scale-110 ring-4 ring-system-blue/15'
+                                : isSliderThumbHovered
+                                    ? 'scale-[1.08] ring-2 ring-system-blue/10'
+                                    : 'scale-100'
                         }`}
                         style={{
-                            left: `calc(${clampedSliderPercentage}% - 0.4375rem)`,
+                            left: `calc(${clampedSliderPercentage}% - ${sliderThumbHalf}px)`,
                             backgroundColor: 'var(--ui-slider-thumb-bg)',
                             borderColor: 'var(--ui-slider-thumb-border)',
                             boxShadow: isSliderDragging
                                 ? 'var(--ui-slider-thumb-shadow-active)'
-                                : 'var(--ui-slider-thumb-shadow)',
+                                : isSliderThumbHovered
+                                    ? 'var(--ui-slider-thumb-shadow-hover)'
+                                    : 'var(--ui-slider-thumb-shadow)',
                         }}
                     />
                     <input
