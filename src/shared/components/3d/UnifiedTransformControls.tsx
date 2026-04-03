@@ -12,8 +12,8 @@ import {
   patchHoverBehavior,
   patchVisibleHoverHitFallback,
   patchVisiblePointerDownFallback,
+  resolvePreferredUniversalOwner,
   resolveAttachedTransformControlObject,
-  resolvePreferredVisibleOwner,
   resolveUniversalOwner,
   resolveVisibleRotateHit,
   resolveVisibleTranslateHit,
@@ -54,7 +54,7 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       size,
       ...restProps
     },
-    ref
+    ref,
   ) {
     const defaultControls = useThree((state) => state.controls);
     const pointer = useThree((state) => state.pointer);
@@ -68,11 +68,14 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     const orbitPassthroughRef = useRef(false);
     const resolvedTranslateObject = translateObject ?? object;
     const resolvedRotateObject = rotateObject ?? object;
-    const attachedTranslateObject = resolveAttachedTransformControlObject(scene, resolvedTranslateObject) ?? undefined;
-    const attachedRotateObject = resolveAttachedTransformControlObject(scene, resolvedRotateObject) ?? undefined;
+    const attachedTranslateObject =
+      resolveAttachedTransformControlObject(scene, resolvedTranslateObject) ?? undefined;
+    const attachedRotateObject =
+      resolveAttachedTransformControlObject(scene, resolvedRotateObject) ?? undefined;
     const primaryMode = mode === 'universal' ? 'translate' : mode;
     const primaryObject = primaryMode === 'rotate' ? attachedRotateObject : attachedTranslateObject;
-    const primarySpace = primaryMode === 'rotate' ? (rotateSpace ?? space) : (translateSpace ?? space);
+    const primarySpace =
+      primaryMode === 'rotate' ? (rotateSpace ?? space) : (translateSpace ?? space);
 
     useImperativeHandle(ref, () => translateRef.current);
 
@@ -109,7 +112,11 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     }, [defaultControls]);
 
     const clearHoveredAxes = useCallback(() => {
-      if (translateRef.current && !translateRef.current.dragging && translateRef.current.axis !== null) {
+      if (
+        translateRef.current &&
+        !translateRef.current.dragging &&
+        translateRef.current.axis !== null
+      ) {
         translateRef.current.axis = null;
       }
 
@@ -142,29 +149,39 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       }
 
       if (effectiveRotateRef.current) {
-        effectiveRotateRef.current.enabled = mode === 'universal' ? false : (rotateEnabled ?? enabled);
+        effectiveRotateRef.current.enabled =
+          mode === 'universal' ? false : (rotateEnabled ?? enabled);
       }
     }, [effectiveRotateRef, enabled, mode, rotateEnabled]);
 
-    const handleControlMouseDown = useCallback((event: any) => {
-      suppressDefaultControls();
-      onMouseDown?.(event);
-    }, [onMouseDown, suppressDefaultControls]);
-
-    const handleControlMouseUp = useCallback((event: any) => {
-      restoreDefaultControls();
-      onMouseUp?.(event);
-    }, [onMouseUp, restoreDefaultControls]);
-
-    const handleControlDraggingChanged = useCallback((event: any) => {
-      if (event?.value) {
+    const handleControlMouseDown = useCallback(
+      (event: any) => {
         suppressDefaultControls();
-      } else {
-        restoreDefaultControls();
-      }
+        onMouseDown?.(event);
+      },
+      [onMouseDown, suppressDefaultControls],
+    );
 
-      onDraggingChanged?.(event);
-    }, [onDraggingChanged, restoreDefaultControls, suppressDefaultControls]);
+    const handleControlMouseUp = useCallback(
+      (event: any) => {
+        restoreDefaultControls();
+        onMouseUp?.(event);
+      },
+      [onMouseUp, restoreDefaultControls],
+    );
+
+    const handleControlDraggingChanged = useCallback(
+      (event: any) => {
+        if (event?.value) {
+          suppressDefaultControls();
+        } else {
+          restoreDefaultControls();
+        }
+
+        onDraggingChanged?.(event);
+      },
+      [onDraggingChanged, restoreDefaultControls, suppressDefaultControls],
+    );
 
     useEffect(() => {
       const translateControls = translateRef.current;
@@ -253,7 +270,10 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
 
     useEffect(() => {
       if (!defaultControls) return;
-      if (defaultControls === translateRef.current || defaultControls === effectiveRotateRef.current) {
+      if (
+        defaultControls === translateRef.current ||
+        defaultControls === effectiveRotateRef.current
+      ) {
         return;
       }
 
@@ -299,7 +319,10 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
 
     useFrame(() => {
       if (!defaultControls) return;
-      if (defaultControls === translateRef.current || defaultControls === effectiveRotateRef.current) {
+      if (
+        defaultControls === translateRef.current ||
+        defaultControls === effectiveRotateRef.current
+      ) {
         return;
       }
       if (!hasEnabledFlag(defaultControls)) return;
@@ -445,46 +468,18 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       const translateHovered = hasHoveredHandle(translateControls);
       const rotateHovered = hasHoveredHandle(rotateControls);
 
-      // If one gizmo already owns the hover, trust that state and skip the
-      // more expensive visible-hit traversal. This trims the "grab hitch"
-      // when the pointer first enters a handle in universal mode.
-      if (translateHovered !== rotateHovered) {
-        const activeOwner = translateHovered ? 'translate' : 'rotate';
-        universalOwnerRef.current = activeOwner;
-
-        if (activeOwner === 'rotate') {
-          if (!translateControls.dragging && translateControls.axis !== null) {
-            translateControls.axis = null;
-          }
-
-          rotateControls.enabled = rotateEnabled ?? enabled;
-          translateControls.enabled = false;
-          return;
-        }
-
-        if (!rotateControls.dragging && rotateControls.axis !== null) {
-          rotateControls.axis = null;
-        }
-
-        translateControls.enabled = enabled;
-        rotateControls.enabled = false;
-        return;
-      }
-
       const translateVisibleHit = resolveVisibleTranslateHit(translateControls, pointer);
       const rotateVisibleHit = resolveVisibleRotateHit(rotateControls, pointer);
 
-      const pointerOwner = resolvePreferredVisibleOwner(
-        translateVisibleHit,
-        rotateVisibleHit,
-        universalOwnerRef.current
-      );
+      const pointerOwner = resolvePreferredUniversalOwner({
+        translateHovered,
+        rotateHovered,
+        translateHit: translateVisibleHit,
+        rotateHit: rotateVisibleHit,
+        previousOwner: universalOwnerRef.current,
+      });
 
-      const activeOwner = resolveUniversalOwner(
-        translateControls,
-        rotateControls,
-        pointerOwner
-      );
+      const activeOwner = resolveUniversalOwner(translateControls, rotateControls, pointerOwner);
       universalOwnerRef.current = activeOwner;
 
       if (activeOwner === 'rotate') {
@@ -559,5 +554,5 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
         )}
       </>
     );
-  }
+  },
 );

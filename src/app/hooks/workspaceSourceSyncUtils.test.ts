@@ -5,6 +5,8 @@ import { JSDOM } from 'jsdom';
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
 import { disposeRobotImportWorker } from '@/app/hooks/robotImportWorkerBridge';
 import { mergeAssembly, prepareAssemblyRobotData } from '@/core/robot';
+import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
+import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
 import { DEFAULT_LINK } from '@/types/constants';
 import {
   GeometryType,
@@ -37,7 +39,9 @@ import {
   getWorkspaceAssemblyRenderFailureReason,
   isGeneratedWorkspaceUrdfFileName,
   normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource,
+  resolveWorkspaceGeneratedUrdfRobotData,
   shouldKeepPristineSingleComponentWorkspaceOnSourceViewer,
+  shouldPromptGenerateWorkspaceUrdfOnStructureSwitch,
   shouldReseedSingleComponentAssemblyFromActiveFile,
   shouldReuseSourceViewerForSingleComponentAssembly,
   shouldUseGeneratedWorkspaceViewerReloadContent,
@@ -330,6 +334,14 @@ function createSeededSingleComponentAssemblyState(
   };
 }
 
+function createStructureSwitchBaselineSnapshot(assemblyState: AssemblyState): string {
+  const mergedRobotData = buildExportableAssemblyRobotData(assemblyState);
+  return createRobotSourceSnapshot({
+    ...mergedRobotData,
+    selection: { type: null, id: null },
+  });
+}
+
 test('createRobotSourceSnapshot ignores transient selection state', () => {
   const left = createRobotState();
   const right = createRobotState();
@@ -457,6 +469,126 @@ test('createGeneratedWorkspaceUrdfFile creates a deterministic URDF projection f
   assert.equal(generated.file.format, 'urdf');
   assert.match(generated.file.content, /<robot name="demo">/);
   assert.equal(generated.snapshot, createRobotSourceSnapshot(generated.robot));
+});
+
+test('resolveWorkspaceGeneratedUrdfRobotData prefers source truth for pristine single-component MJCF seeds', () => {
+  const activeFile = createMjcfFile('robots/demo/fruitfly.xml');
+  const importResult = resolveRobotFileData(activeFile, {
+    availableFiles: [activeFile],
+    assets: {},
+    allFileContents: {},
+  });
+
+  assert.equal(importResult.status, 'ready');
+  if (importResult.status !== 'ready') {
+    return;
+  }
+
+  const assemblyState: AssemblyState = {
+    name: 'demo_project',
+    components: {
+      comp_fruitfly: {
+        id: 'comp_fruitfly',
+        name: 'fruitfly',
+        sourceFile: activeFile.name,
+        robot: prepareAssemblyRobotData(importResult.robotData, {
+          componentId: 'comp_fruitfly',
+          rootName: 'fruitfly',
+          sourceFilePath: activeFile.name,
+          sourceFormat: 'mjcf',
+        }),
+        transform: {
+          position: { x: 0, y: 0, z: 0 },
+          rotation: { r: 0, p: 0, y: 0 },
+        },
+        visible: true,
+      },
+    },
+    bridges: {},
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+  };
+
+  const resolvedRobotData = resolveWorkspaceGeneratedUrdfRobotData({
+    assemblyState,
+    activeFile,
+    availableFiles: [activeFile],
+    assets: {},
+    allFileContents: {},
+  });
+
+  assert.ok(resolvedRobotData, 'expected source-truth robot data for pristine seed');
+  assert.equal(resolvedRobotData?.rootLinkId, importResult.robotData.rootLinkId);
+
+  const generated = createGeneratedWorkspaceUrdfFile({
+    assemblyName: assemblyState.name,
+    mergedRobotData: resolvedRobotData!,
+    availableFiles: [],
+  });
+
+  assert.equal(
+    generated.file.content.includes('comp_fruitfly_'),
+    false,
+    'pristine single-component generation should not leak assembly namespaces into the file',
+  );
+});
+
+test('resolveWorkspaceGeneratedUrdfRobotData falls back to exportable assembly data once transforms diverge', () => {
+  const activeFile = createMjcfFile('robots/demo/fruitfly.xml');
+  const importResult = resolveRobotFileData(activeFile, {
+    availableFiles: [activeFile],
+    assets: {},
+    allFileContents: {},
+  });
+
+  assert.equal(importResult.status, 'ready');
+  if (importResult.status !== 'ready') {
+    return;
+  }
+
+  const assemblyState: AssemblyState = {
+    name: 'demo_project',
+    components: {
+      comp_fruitfly: {
+        id: 'comp_fruitfly',
+        name: 'fruitfly',
+        sourceFile: activeFile.name,
+        robot: prepareAssemblyRobotData(importResult.robotData, {
+          componentId: 'comp_fruitfly',
+          rootName: 'fruitfly',
+          sourceFilePath: activeFile.name,
+          sourceFormat: 'mjcf',
+        }),
+        transform: {
+          position: { x: 0.15, y: -0.05, z: 0.25 },
+          rotation: { r: 0, p: 0, y: 0.35 },
+        },
+        visible: true,
+      },
+    },
+    bridges: {},
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+  };
+
+  const resolvedRobotData = resolveWorkspaceGeneratedUrdfRobotData({
+    assemblyState,
+    activeFile,
+    availableFiles: [activeFile],
+    assets: {},
+    allFileContents: {},
+  });
+
+  assert.ok(resolvedRobotData, 'expected exportable assembly data for transformed seed');
+  assert.equal(
+    resolvedRobotData?.rootLinkId,
+    '__assembly_component_root_comp_fruitfly',
+    'transformed components should still export through the assembly wrapper path',
+  );
 });
 
 test('createRobotSourceSnapshotFromUrdfContent normalizes mesh paths relative to the source file', async () => {
@@ -1818,6 +1950,60 @@ test('shouldReuseSourceViewerForSingleComponentAssembly keeps the current file s
       assemblyState: rotatedComponentAssembly,
       activeFile: createUrdfFile('robots/demo/demo.urdf'),
       sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+    }),
+    true,
+  );
+});
+
+test('shouldPromptGenerateWorkspaceUrdfOnStructureSwitch ignores isolated seeded component transforms', () => {
+  const pristineAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  const translatedAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  translatedAssembly.components.comp_demo.transform = {
+    position: { x: 0.15, y: -0.05, z: 0.25 },
+    rotation: { r: 0, p: 0, y: 0.35 },
+  };
+
+  assert.equal(
+    shouldPromptGenerateWorkspaceUrdfOnStructureSwitch({
+      assemblyState: translatedAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+      baselineSnapshot: createStructureSwitchBaselineSnapshot(pristineAssembly),
+    }),
+    false,
+  );
+});
+
+test('shouldPromptGenerateWorkspaceUrdfOnStructureSwitch still flags structural single-component edits', () => {
+  const pristineAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  const mutatedAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  mutatedAssembly.components.comp_demo.robot.joints.comp_demo_joint_a.origin.xyz.x = 0.25;
+
+  assert.equal(
+    shouldPromptGenerateWorkspaceUrdfOnStructureSwitch({
+      assemblyState: mutatedAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+      baselineSnapshot: createStructureSwitchBaselineSnapshot(pristineAssembly),
+    }),
+    true,
+  );
+});
+
+test('shouldPromptGenerateWorkspaceUrdfOnStructureSwitch keeps assembly-level transform changes confirmable', () => {
+  const pristineAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  const translatedAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  translatedAssembly.transform = {
+    position: { x: 1, y: 0, z: 0 },
+    rotation: { r: 0, p: 0, y: 0 },
+  };
+
+  assert.equal(
+    shouldPromptGenerateWorkspaceUrdfOnStructureSwitch({
+      assemblyState: translatedAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+      baselineSnapshot: createStructureSwitchBaselineSnapshot(pristineAssembly),
     }),
     true,
   );

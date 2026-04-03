@@ -39,6 +39,14 @@ function isUsdFileLike(file: OffscreenUsdFileLike | null | undefined): boolean {
   return Boolean(file && (file.format === 'usd' || /\.usd[a-z]?$/i.test(file.name)));
 }
 
+function isPureUsdRootFile(file: OffscreenUsdFileLike | null | undefined): boolean {
+  if (!isUsdFileLike(file)) {
+    return false;
+  }
+
+  return /\.usd$/i.test(normalizeUsdFileName(file.name));
+}
+
 function hasUnsupportedHandArticulation({
   sourceFile,
   availableFiles,
@@ -131,6 +139,16 @@ export function shouldUseUsdOffscreenStage({
   // fails to materialize the renderable scene. Keep those imports on the proven
   // main-thread USD stage until the offscreen loader can reliably compose them.
   if (hasBlobBackedLargeUsdaInStageScope(sourceFile, availableFiles)) {
+    return false;
+  }
+
+  // The current offscreen worker renderer lives in a fullscreen overlay canvas
+  // outside the shared WorkspaceCanvas R3F scene. Pure `.usd` robot bundles
+  // therefore orbit against a different presentation stack than the workspace
+  // ground/grid, which makes models like Unitree B2 feel screen-locked while
+  // navigating. Keep `.usd` roots on the proven main-thread stage until the
+  // offscreen path participates in the same scene camera/ground presentation.
+  if (isPureUsdRootFile(sourceFile)) {
     return false;
   }
 

@@ -11,6 +11,7 @@ import {
   resolveAssemblyComponentLinkId,
 } from '@/core/robot/assemblyBridgeAlignment';
 import {
+  buildExportableAssemblyRobotData,
   cloneAssemblyTransform,
   isAssemblyComponentIndividuallyTransformable,
   isIdentityAssemblyTransform,
@@ -247,6 +248,61 @@ export function createGeneratedWorkspaceUrdfFile({
     robot,
     snapshot: createRobotSourceSnapshot(robot),
   };
+}
+
+export function resolveWorkspaceGeneratedUrdfRobotData({
+  assemblyState,
+  activeFile,
+  availableFiles,
+  assets,
+  allFileContents,
+  usdRobotData = null,
+}: {
+  assemblyState: AssemblyState | null;
+  activeFile: RobotFile | null;
+  availableFiles: RobotFile[];
+  assets?: Record<string, string>;
+  allFileContents?: Record<string, string>;
+  usdRobotData?: RobotData | null;
+}): RobotData | null {
+  if (!assemblyState) {
+    return null;
+  }
+
+  if (activeFile && activeFile.format !== 'mesh') {
+    const visibleComponents = Object.values(assemblyState.components).filter(
+      (component) => component.visible !== false,
+    );
+    const singleVisibleComponent = visibleComponents.length === 1 ? visibleComponents[0] : null;
+
+    if (
+      singleVisibleComponent &&
+      Object.keys(assemblyState.bridges).length === 0 &&
+      isIdentityAssemblyTransform(assemblyState.transform) &&
+      isIdentityAssemblyTransform(singleVisibleComponent.transform)
+    ) {
+      const importResult = resolveRobotFileData(activeFile, {
+        availableFiles,
+        assets,
+        allFileContents,
+        usdRobotData,
+      });
+
+      if (
+        importResult.status === 'ready' &&
+        shouldReuseSourceViewerForSingleComponentAssembly({
+          assemblyState,
+          activeFile,
+          sourceSnapshot: null,
+          sourceRobotData: importResult.robotData,
+        })
+      ) {
+        return importResult.robotData;
+      }
+    }
+  }
+
+  return buildExportableAssemblyRobotData(assemblyState);
 }
 
 interface CreateRobotSourceSnapshotFromUrdfContentOptions {
@@ -927,6 +983,43 @@ export function shouldReuseSourceViewerForSingleComponentAssembly({
       selection: { type: null, id: null },
     })
   );
+}
+
+export function shouldPromptGenerateWorkspaceUrdfOnStructureSwitch({
+  assemblyState,
+  activeFile,
+  sourceSnapshot,
+  sourceRobotData,
+  baselineSnapshot,
+}: {
+  assemblyState: AssemblyState | null;
+  activeFile: RobotFile | null;
+  sourceSnapshot: string | null;
+  sourceRobotData?: RobotData | null;
+  baselineSnapshot: string;
+}): boolean {
+  if (!assemblyState) {
+    return false;
+  }
+
+  if (
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState,
+      activeFile,
+      sourceSnapshot,
+      sourceRobotData,
+    })
+  ) {
+    return false;
+  }
+
+  const mergedRobotData = buildExportableAssemblyRobotData(assemblyState);
+  const currentSnapshot = createRobotSourceSnapshot({
+    ...mergedRobotData,
+    selection: { type: null, id: null },
+  });
+
+  return currentSnapshot !== baselineSnapshot;
 }
 
 export function shouldKeepPristineSingleComponentWorkspaceOnSourceViewer({

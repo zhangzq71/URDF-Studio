@@ -144,7 +144,7 @@ export function Header({
 
       <div
         id="viewer-toolbar-dock-slot"
-        className="flex h-full min-w-[240px] items-center justify-center"
+        className="flex h-full min-w-0 items-center justify-center"
       />
 
       <HeaderActions

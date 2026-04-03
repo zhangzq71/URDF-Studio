@@ -6,20 +6,17 @@ export {
   resolveAttachedTransformControlObject,
 } from './gizmoCore';
 
-export {
-  patchHoverBehavior,
-} from './hoverBehavior';
+export { patchHoverBehavior } from './hoverBehavior';
 
 export {
   forceReleaseTransformControl,
   hasHoveredHandle,
+  resolvePreferredUniversalOwner,
   resolvePreferredVisibleOwner,
   resolveUniversalOwner,
 } from './ownership';
 
-export {
-  patchDisplayBehavior,
-} from './displayPatches';
+export { patchDisplayBehavior } from './displayPatches';
 
 export {
   patchVisibleHoverHitFallback,

@@ -48,6 +48,8 @@ import {
   createRobotSourceSnapshot,
   getViewerSourceFile,
   isGeneratedWorkspaceUrdfFileName,
+  resolveWorkspaceGeneratedUrdfRobotData,
+  shouldPromptGenerateWorkspaceUrdfOnStructureSwitch,
   shouldReseedSingleComponentAssemblyFromActiveFile,
   shouldUseEmptyRobotForUsdHydration,
 } from './hooks/workspaceSourceSyncUtils';
@@ -1049,15 +1051,24 @@ export function AppLayout({
       const { switchToStructure = false } = options;
       const assemblyStoreState = useAssemblyStore.getState();
       const connectivity = analyzeAssemblyConnectivity(assemblyStoreState.assemblyState);
+      const activeFile = previewFile ?? selectedFile;
 
       if (connectivity.hasDisconnectedComponents) {
         showToast(t.generateWorkspaceUrdfDisconnected, 'info');
         return false;
       }
 
-      const mergedRobotData = assemblyStoreState.assemblyState
-        ? buildExportableAssemblyRobotData(assemblyStoreState.assemblyState)
-        : null;
+      const mergedRobotData = resolveWorkspaceGeneratedUrdfRobotData({
+        assemblyState: assemblyStoreState.assemblyState,
+        activeFile,
+        availableFiles,
+        assets,
+        allFileContents,
+        usdRobotData:
+          activeFile?.format === 'usd'
+            ? (getUsdPreparedExportCache(activeFile.name)?.robotData ?? null)
+            : null,
+      });
 
       if (!mergedRobotData) {
         showToast(t.generateWorkspaceUrdfUnavailable, 'info');
@@ -1127,8 +1138,14 @@ export function AppLayout({
       return true;
     },
     [
+      allFileContents,
+      assets,
+      availableFiles,
+      getUsdPreparedExportCache,
       handleClosePreview,
+      previewFile,
       robotName,
+      selectedFile,
       setRobot,
       setSelection,
       showToast,
@@ -1155,26 +1172,46 @@ export function AppLayout({
         return switchTreeEditorToStructure();
       }
 
-      const latestAssemblyState = useAssemblyStore.getState().assemblyState;
-      const mergedRobotData = latestAssemblyState
-        ? buildExportableAssemblyRobotData(latestAssemblyState)
-        : null;
-      if (!mergedRobotData) {
-        return switchTreeEditorToStructure();
-      }
-
-      const currentSnapshot = createRobotSourceSnapshot({
-        ...mergedRobotData,
-        selection: { type: null, id: null },
+      const activeWorkspaceSourceFile = previewFile ?? selectedFile;
+      const currentWorkspaceSourceSnapshot = createRobotSemanticSnapshot({
+        name: robotName,
+        links: robotLinks,
+        joints: robotJoints,
+        rootLinkId,
+        materials: robotMaterials,
+        closedLoopConstraints,
       });
-
-      if (currentSnapshot === session.baselineSnapshot || intent === 'skip-generate') {
+      const latestAssemblyState = useAssemblyStore.getState().assemblyState;
+      if (intent === 'skip-generate') {
         return switchTreeEditorToStructure();
       }
 
-      return 'needs-generate-confirm' as const;
+      return shouldPromptGenerateWorkspaceUrdfOnStructureSwitch({
+        assemblyState: latestAssemblyState,
+        activeFile: activeWorkspaceSourceFile,
+        sourceSnapshot: currentWorkspaceSourceSnapshot,
+        sourceRobotData:
+          activeWorkspaceSourceFile?.format === 'usd'
+            ? (getUsdPreparedExportCache(activeWorkspaceSourceFile.name)?.robotData ?? null)
+            : null,
+        baselineSnapshot: session.baselineSnapshot,
+      })
+        ? ('needs-generate-confirm' as const)
+        : switchTreeEditorToStructure();
     },
-    [generateWorkspaceUrdfFromProMode, switchTreeEditorToStructure],
+    [
+      closedLoopConstraints,
+      generateWorkspaceUrdfFromProMode,
+      getUsdPreparedExportCache,
+      previewFile,
+      robotJoints,
+      robotLinks,
+      robotMaterials,
+      robotName,
+      rootLinkId,
+      selectedFile,
+      switchTreeEditorToStructure,
+    ],
   );
 
   const handleSwitchTreeEditorToProMode = useCallback(() => {
