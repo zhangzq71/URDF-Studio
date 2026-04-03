@@ -845,15 +845,8 @@ export function SettingsModal() {
               </div>
             </aside>
 
-            <section className="flex min-h-0 flex-col overflow-hidden rounded-[12px] border border-border-black bg-panel-bg">
-              <div className="border-b border-border-black bg-panel-bg px-3.5 py-2">
-                <div className="text-[12px] font-semibold tracking-[-0.01em] text-text-primary">
-                  {pageTitle}
-                </div>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto bg-settings-shell p-3">
-                {detailPane}
-              </div>
+            <section className="overflow-hidden rounded-[12px] border border-border-black bg-panel-bg">
+              <div className="min-h-0 flex-1 overflow-y-auto bg-panel-bg p-3">{detailPane}</div>
             </section>
           </div>
         </div>

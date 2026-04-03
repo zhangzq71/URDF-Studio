@@ -57,6 +57,14 @@ import {
   type UsdWorkerOrbitState,
 } from '../utils/usdWorkerOrbit.ts';
 import {
+  createUsdOffscreenLightRig,
+  createUsdOffscreenStudioEnvironment,
+  disposeUsdOffscreenLightRig,
+  syncUsdOffscreenLightRigWithCamera,
+  type UsdOffscreenLightRig,
+  type UsdOffscreenStudioEnvironmentHandle,
+} from '../utils/usdOffscreenLighting.ts';
+import {
   computeCameraFrame,
   computeVisibleBounds,
   createCameraFrameStabilityKey,
@@ -151,6 +159,8 @@ let camera: THREE.PerspectiveCamera | null = null;
 let usdRoot: THREE.Group | null = null;
 let controls: WorkerControls | null = null;
 let currentOrbit: UsdWorkerOrbitState | null = null;
+let offscreenLightRig: UsdOffscreenLightRig | null = null;
+let offscreenStudioEnvironment: UsdOffscreenStudioEnvironmentHandle | null = null;
 let currentDriver: unknown = null;
 let activePointer: ActivePointerState | null = null;
 let currentLoadGeneration = 0;
@@ -540,6 +550,10 @@ function getBasePixelRatio(): number {
 function renderScene(): void {
   if (!renderer || !scene || !camera) {
     return;
+  }
+
+  if (offscreenLightRig) {
+    syncUsdOffscreenLightRigWithCamera(offscreenLightRig, camera);
   }
 
   renderer.render(scene, camera);
@@ -1207,31 +1221,14 @@ function initializeSceneGraph(canvas: OffscreenCanvas): void {
   usdRoot.name = 'USD Root';
   scene.add(usdRoot);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.42);
-  ambient.name = 'OffscreenViewerAmbientLight';
-  scene.add(ambient);
-
-  const keyLight = new THREE.DirectionalLight(0xffffff, 1.18);
-  keyLight.position.set(6, 8, 6);
-  keyLight.name = 'OffscreenViewerKeyLight';
-  scene.add(keyLight);
-
-  const fillLight = new THREE.DirectionalLight(0xd7e6ff, 0.8);
-  fillLight.position.set(-7, 4, -6);
-  fillLight.name = 'OffscreenViewerFillLight';
-  scene.add(fillLight);
-
-  const rimLight = new THREE.DirectionalLight(0xfff2d4, 0.48);
-  rimLight.position.set(0, 10, -10);
-  rimLight.name = 'OffscreenViewerRimLight';
-  scene.add(rimLight);
-
   controls = {
     target: new THREE.Vector3(0, 0, 0),
     update: () => false,
   };
 
   renderer = createWorkerRenderer(canvas);
+  offscreenLightRig = createUsdOffscreenLightRig(scene);
+  offscreenStudioEnvironment = createUsdOffscreenStudioEnvironment(scene, renderer);
   runtimeWindow.scene = scene;
   runtimeWindow.camera = camera;
   runtimeWindow.renderer = renderer;
@@ -2244,6 +2241,10 @@ function disposeWorkerStage(): void {
   currentLoadGeneration += 1;
   activePointer = null;
   disposeStageResources();
+  disposeUsdOffscreenLightRig(scene, offscreenLightRig);
+  offscreenLightRig = null;
+  offscreenStudioEnvironment?.dispose();
+  offscreenStudioEnvironment = null;
 
   renderer?.dispose();
   renderer = null;
