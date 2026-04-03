@@ -210,6 +210,7 @@ const styles: Record<string, React.CSSProperties> = {
 
   infoValue: {
     color: '#374151',
+    overflowWrap: 'anywhere' as const,
   },
 
   scoreSection: {
@@ -284,6 +285,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '14px',
     margin: '0',
     whiteSpace: 'pre-wrap' as const,
+    overflowWrap: 'anywhere' as const,
   },
 
   evidenceSection: {
@@ -371,6 +373,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '14px',
     fontWeight: '600',
     color: '#374151',
+    overflowWrap: 'anywhere' as const,
   },
 
   issueScore: {
@@ -384,6 +387,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#6b7280',
     fontSize: '13px',
     whiteSpace: 'pre-wrap' as const,
+    overflowWrap: 'anywhere' as const,
   },
 
   footer: {
