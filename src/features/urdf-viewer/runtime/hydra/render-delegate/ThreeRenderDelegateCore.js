@@ -124,6 +124,7 @@ export class ThreeRenderDelegateCore {
         this._primOverrideDataCache = new Map();
         this._urdfTruthByStageSource = new Map();
         this._urdfTruthLoadPromisesByStageSource = new Map();
+        this._urdfTruthLoadErrorByStageSource = new Map();
         this._urdfLinkWorldTransformCacheByStageSource = new Map();
         this._urdfVisualFallbackDecisionCache = new Map();
         this._urdfVisualFallbackLinkDecisionCache = new Map();
@@ -133,6 +134,11 @@ export class ThreeRenderDelegateCore {
         this._preferredVisualMaterialByLinkCache = new Map();
         this._resolvedDriverStage = null;
         this._pendingDriverStagePromise = null;
+        this._driverStageResolveState = 'idle';
+        this._driverStageResolveSource = 'none';
+        this._driverStageResolveError = null;
+        this._driverStageResolveUpdatedAtMs = null;
+        this._lastRobotSceneWarmupSummary = null;
         this._decomposeScratchPosition = new Vector3();
         this._decomposeScratchQuaternion = new Quaternion();
         this._decomposeScratchScale = new Vector3();
@@ -263,6 +269,7 @@ export class ThreeRenderDelegateCore {
             this._guideCollisionReferenceCache,
             this._urdfTruthByStageSource,
             this._urdfTruthLoadPromisesByStageSource,
+            this._urdfTruthLoadErrorByStageSource,
             this._urdfLinkWorldTransformCacheByStageSource,
             this._urdfVisualFallbackDecisionCache,
             this._urdfVisualFallbackLinkDecisionCache,
@@ -279,6 +286,11 @@ export class ThreeRenderDelegateCore {
         this._knownPrimPathSet = null;
         this._resolvedDriverStage = null;
         this._pendingDriverStagePromise = null;
+        this._driverStageResolveState = 'idle';
+        this._driverStageResolveSource = 'none';
+        this._driverStageResolveError = null;
+        this._driverStageResolveUpdatedAtMs = null;
+        this._lastRobotSceneWarmupSummary = null;
     }
     enterHydraSyncHotPath() {
         const nextDepth = Number(this._hydraSyncHotPathDepth || 0) + 1;
@@ -739,12 +751,20 @@ export class ThreeRenderDelegateCore {
                 || jointCatalogEntries.length > 0
                 || linkDynamicsEntries.length > 0);
             const generatedAtMs = Number(rawSnapshot.generatedAtMs);
+            const errorFlags = toArray(rawSnapshot.errorFlags)
+                .map((entry) => String(entry || '').trim())
+                .filter((entry) => entry.length > 0);
+            const truthLoadError = String(rawSnapshot.truthLoadError || '').trim() || null;
+            const stale = rawSnapshot.stale === true || errorFlags.length > 0 || !!truthLoadError;
             return {
                 stageSourcePath: String(rawSnapshot.stageSourcePath || stageSourcePath || '').trim() || null,
                 generatedAtMs: Number.isFinite(generatedAtMs) ? generatedAtMs : this._nowPerfMs(),
                 source: hasStageData
                     ? (String(rawSnapshot.source || 'usd-stage-cpp') || 'usd-stage-cpp')
                     : 'mesh-only',
+                ...(stale ? { stale: true } : {}),
+                ...(errorFlags.length > 0 ? { errorFlags } : {}),
+                ...(truthLoadError ? { truthLoadError } : {}),
                 linkParentPairs,
                 jointCatalogEntries,
                 linkDynamicsEntries,
@@ -754,6 +774,50 @@ export class ThreeRenderDelegateCore {
         catch {
             return null;
         }
+    }
+    applyRobotMetadataErrorAnnotations(snapshot, options = {}) {
+        if (!snapshot || typeof snapshot !== 'object')
+            return snapshot;
+        const nextErrorFlags = new Set();
+        const addErrorFlag = (value) => {
+            const normalized = String(value || '').trim();
+            if (normalized) {
+                nextErrorFlags.add(normalized);
+            }
+        };
+        for (const errorFlag of Array.isArray(snapshot.errorFlags) ? snapshot.errorFlags : []) {
+            addErrorFlag(errorFlag);
+        }
+        for (const errorFlag of Array.isArray(options.errorFlags) ? options.errorFlags : []) {
+            addErrorFlag(errorFlag);
+        }
+        const normalizeErrorText = (value) => {
+            if (typeof value === 'string') {
+                const normalized = value.trim();
+                return normalized || null;
+            }
+            if (value instanceof Error) {
+                const normalized = String(value.message || value).trim();
+                return normalized || null;
+            }
+            return null;
+        };
+        const truthLoadError = normalizeErrorText(options.truthLoadError)
+            || normalizeErrorText(snapshot.truthLoadError)
+            || null;
+        const stale = options.stale === true
+            || snapshot.stale === true
+            || nextErrorFlags.size > 0
+            || !!truthLoadError;
+        if (!stale && nextErrorFlags.size <= 0 && !truthLoadError) {
+            return snapshot;
+        }
+        return {
+            ...snapshot,
+            ...(stale ? { stale: true } : {}),
+            ...(nextErrorFlags.size > 0 ? { errorFlags: Array.from(nextErrorFlags) } : {}),
+            ...(truthLoadError ? { truthLoadError } : {}),
+        };
     }
     buildRobotMetadataSnapshotForStage(stageSourcePath, truth) {
         const normalizedStagePath = String(stageSourcePath || this.getNormalizedStageSourcePath() || '').trim().split('?')[0] || null;
@@ -777,6 +841,13 @@ export class ThreeRenderDelegateCore {
         const meshCountsByLinkPath = {};
         const linkPathSet = new Set();
         const syntheticSemanticChildParentPathByChildLinkPath = new Map();
+        const metadataErrorFlags = new Set();
+        const registerMetadataErrorFlag = (value) => {
+            const normalized = String(value || '').trim();
+            if (normalized) {
+                metadataErrorFlags.add(normalized);
+            }
+        };
         const addKnownLinkPath = (value) => {
             const normalizedPath = normalizeUsdPathToken(String(value || ''));
             if (!normalizedPath || !normalizedPath.startsWith('/'))
@@ -1069,6 +1140,7 @@ export class ThreeRenderDelegateCore {
                 rawJointRecords = activeDriver.GetPhysicsJointRecords();
             }
             catch {
+                registerMetadataErrorFlag('physics-joint-records-unavailable');
                 rawJointRecords = [];
             }
             const driverJointRecords = (rawJointRecords && typeof rawJointRecords.length === 'number')
@@ -1085,6 +1157,7 @@ export class ThreeRenderDelegateCore {
                 rawLinkDynamicsRecords = activeDriver.GetPhysicsLinkDynamicsRecords();
             }
             catch {
+                registerMetadataErrorFlag('physics-link-dynamics-unavailable');
                 rawLinkDynamicsRecords = [];
             }
             const driverLinkDynamicsRecords = (rawLinkDynamicsRecords && typeof rawLinkDynamicsRecords.length === 'number')
@@ -1229,6 +1302,7 @@ export class ThreeRenderDelegateCore {
                 rawJointRecords = activeDriver.GetPhysicsJointRecords();
             }
             catch {
+                registerMetadataErrorFlag('physics-joint-records-unavailable');
                 rawJointRecords = [];
             }
             const driverJointRecords = (rawJointRecords && typeof rawJointRecords.length === 'number'
@@ -1472,6 +1546,11 @@ export class ThreeRenderDelegateCore {
             let cxxSnapshot = this.tryBuildRobotMetadataSnapshotFromDriver(normalizedStagePath, sortedLinkPaths, meshCountsByLinkPath);
             cxxSnapshot = mergeMissingJointCatalogEntriesFromDriver(cxxSnapshot);
             cxxSnapshot = mergeSyntheticSemanticChildLinkMetadata(cxxSnapshot);
+            const truthLoadError = String(this._urdfTruthLoadErrorByStageSource?.get?.(normalizedStagePath) || '').trim() || null;
+            const annotationErrorFlags = Array.from(metadataErrorFlags);
+            if (truthLoadError) {
+                annotationErrorFlags.push('urdf-truth-load-failed');
+            }
             if (cxxSnapshot) {
                 const cxxLinkParentCount = Array.isArray(cxxSnapshot.linkParentPairs)
                     ? cxxSnapshot.linkParentPairs.length
@@ -1486,11 +1565,14 @@ export class ThreeRenderDelegateCore {
                 const cxxHasAnyStageMetadata = cxxLinkParentCount > 0 || cxxJointCount > 0 || cxxDynamicsCount > 0;
                 const stage = allowJsStageFallback ? getStageForMetadataFallback() : null;
                 if (cxxHasCompleteStageMetadata || (!stage && cxxHasAnyStageMetadata) || !allowJsStageFallback) {
-                    return cxxSnapshot;
+                    return this.applyRobotMetadataErrorAnnotations(cxxSnapshot, {
+                        errorFlags: annotationErrorFlags,
+                        truthLoadError,
+                    });
                 }
             }
             if (!allowJsStageFallback) {
-                return {
+                return this.applyRobotMetadataErrorAnnotations({
                     stageSourcePath: normalizedStagePath,
                     generatedAtMs: this._nowPerfMs(),
                     source: 'mesh-only',
@@ -1498,7 +1580,10 @@ export class ThreeRenderDelegateCore {
                     jointCatalogEntries: [],
                     linkDynamicsEntries: [],
                     meshCountsByLinkPath,
-                };
+                }, {
+                    errorFlags: annotationErrorFlags,
+                    truthLoadError,
+                });
             }
             const stage = getStageForMetadataFallback();
             if (metadataLayerTexts.length <= 0) {
@@ -1681,28 +1766,37 @@ export class ThreeRenderDelegateCore {
         };
         if (allowJsStageFallback) {
             const driverRecords = (() => {
-                try {
-                    const activeDriver = typeof window !== 'undefined' ? window?.driver : null;
-                    if (!activeDriver) {
-                        return { jointRecords: [], linkDynamicsRecords: [] };
-                    }
-                    const rawJointRecords = (typeof activeDriver.GetPhysicsJointRecords === 'function')
-                        ? activeDriver.GetPhysicsJointRecords()
-                        : [];
-                    const jointRecords = (rawJointRecords && typeof rawJointRecords.length === 'number'
-                        ? Array.from(rawJointRecords)
-                        : []);
-                    const rawLinkDynamicsRecords = (typeof activeDriver.GetPhysicsLinkDynamicsRecords === 'function')
-                        ? activeDriver.GetPhysicsLinkDynamicsRecords()
-                        : [];
-                    const linkDynamicsRecords = (rawLinkDynamicsRecords && typeof rawLinkDynamicsRecords.length === 'number'
-                        ? Array.from(rawLinkDynamicsRecords)
-                        : []);
-                    return { jointRecords, linkDynamicsRecords };
-                }
-                catch {
+                const activeDriver = typeof window !== 'undefined' ? window?.driver : null;
+                if (!activeDriver) {
                     return { jointRecords: [], linkDynamicsRecords: [] };
                 }
+                let rawJointRecords = [];
+                if (typeof activeDriver.GetPhysicsJointRecords === 'function') {
+                    try {
+                        rawJointRecords = activeDriver.GetPhysicsJointRecords();
+                    }
+                    catch {
+                        registerMetadataErrorFlag('physics-joint-records-unavailable');
+                        rawJointRecords = [];
+                    }
+                }
+                let rawLinkDynamicsRecords = [];
+                if (typeof activeDriver.GetPhysicsLinkDynamicsRecords === 'function') {
+                    try {
+                        rawLinkDynamicsRecords = activeDriver.GetPhysicsLinkDynamicsRecords();
+                    }
+                    catch {
+                        registerMetadataErrorFlag('physics-link-dynamics-unavailable');
+                        rawLinkDynamicsRecords = [];
+                    }
+                }
+                const jointRecords = (rawJointRecords && typeof rawJointRecords.length === 'number'
+                    ? Array.from(rawJointRecords)
+                    : []);
+                const linkDynamicsRecords = (rawLinkDynamicsRecords && typeof rawLinkDynamicsRecords.length === 'number'
+                    ? Array.from(rawLinkDynamicsRecords)
+                    : []);
+                return { jointRecords, linkDynamicsRecords };
             })();
             ingestStageJointRecords(driverRecords.jointRecords);
             for (const dynamicsRecord of driverRecords.linkDynamicsRecords) {
@@ -1893,7 +1987,7 @@ export class ThreeRenderDelegateCore {
         ) {
             metadataSource = 'usd-stage';
         }
-        return mergeSyntheticSemanticChildLinkMetadata({
+        const snapshot = mergeSyntheticSemanticChildLinkMetadata({
             stageSourcePath: normalizedStagePath,
             generatedAtMs: this._nowPerfMs(),
             source: metadataSource,
@@ -1901,6 +1995,17 @@ export class ThreeRenderDelegateCore {
             jointCatalogEntries,
             linkDynamicsEntries,
             meshCountsByLinkPath,
+        });
+        const truthLoadError = (!truth)
+            ? (String(this._urdfTruthLoadErrorByStageSource?.get?.(normalizedStagePath) || '').trim() || null)
+            : null;
+        const annotationErrorFlags = Array.from(metadataErrorFlags);
+        if (truthLoadError) {
+            annotationErrorFlags.push('urdf-truth-load-failed');
+        }
+        return this.applyRobotMetadataErrorAnnotations(snapshot, {
+            errorFlags: annotationErrorFlags,
+            truthLoadError,
         });
     }
     startRobotMetadataWarmupForStage(stageSourcePathOrOptions = null, maybeOptions = null) {
@@ -1917,7 +2022,7 @@ export class ThreeRenderDelegateCore {
         }
         const force = options?.force === true;
         const skipIdleWait = options?.skipIdleWait === true;
-        const skipUrdfTruthFallback = true;
+        const skipUrdfTruthFallback = options?.skipUrdfTruthFallback === true;
         const normalizedStagePath = String(stageSourcePath || this.getNormalizedStageSourcePath() || '').trim().split('?')[0];
         if (!normalizedStagePath)
             return Promise.resolve(null);
@@ -1994,16 +2099,29 @@ export class ThreeRenderDelegateCore {
                 && (!snapshot
                     || ((!Array.isArray(snapshot.jointCatalogEntries) || snapshot.jointCatalogEntries.length <= 0)
                         && (!Array.isArray(snapshot.linkDynamicsEntries) || snapshot.linkDynamicsEntries.length <= 0))));
+            let truthLoadError = null;
             if (needsUrdfTruth) {
                 const truthPromise = this.startUrdfTruthLoadForStage(normalizedStagePath);
                 const truth = truthPromise ? await truthPromise.catch((error) => {
                     rawConsoleWarn?.('[HydraDelegate] Failed to load URDF truth snapshot; continuing without URDF fallback context.', error);
+                    truthLoadError = String(error?.message || error || '').trim() || 'urdf-truth-load-failed';
                     return null;
                 }) : null;
+                const cachedTruthLoadError = String(this._urdfTruthLoadErrorByStageSource?.get?.(normalizedStagePath) || '').trim();
+                if (!truthLoadError && cachedTruthLoadError) {
+                    truthLoadError = cachedTruthLoadError;
+                }
                 if (!skipIdleWait) {
                     await waitForIdleSlice({ minBudgetMs: 4, maxPasses: 6, timeoutMs: 420 });
                 }
                 snapshot = this.buildRobotMetadataSnapshotForStage(normalizedStagePath, truth || null);
+                if (truthLoadError) {
+                    snapshot = this.applyRobotMetadataErrorAnnotations(snapshot, {
+                        stale: true,
+                        errorFlags: ['urdf-truth-load-failed'],
+                        truthLoadError,
+                    });
+                }
             }
             if (!snapshot)
                 return null;
@@ -2066,6 +2184,7 @@ export class ThreeRenderDelegateCore {
             return null;
         if (!this.shouldAllowUrdfHttpFallback()) {
             this._urdfTruthByStageSource.set(normalizedStagePath, null);
+            this._urdfTruthLoadErrorByStageSource?.delete?.(normalizedStagePath);
             return Promise.resolve(null);
         }
         if (this._urdfTruthByStageSource.has(normalizedStagePath)) {
@@ -2077,21 +2196,33 @@ export class ThreeRenderDelegateCore {
         const urdfFileName = resolveUrdfTruthFileNameForStagePath(normalizedStagePath);
         if (!urdfFileName) {
             this._urdfTruthByStageSource.set(normalizedStagePath, null);
+            this._urdfTruthLoadErrorByStageSource?.delete?.(normalizedStagePath);
             return Promise.resolve(null);
         }
+        this._urdfTruthLoadErrorByStageSource?.delete?.(normalizedStagePath);
         const loadPromise = fetch(`/urdf/${encodeURIComponent(urdfFileName)}`)
             .then(async (response) => {
-            if (!response.ok)
-                return null;
+            if (!response.ok) {
+                throw new Error(`urdf-truth-fetch-http-${Number(response.status) || 0}`);
+            }
             const text = await response.text();
-            return parseUrdfTruthFromText(text);
+            const truth = parseUrdfTruthFromText(text);
+            if (!truth) {
+                throw new Error('urdf-truth-parse-empty');
+            }
+            return truth;
         })
             .catch((error) => {
             rawConsoleWarn?.(`[HydraDelegate] Failed to fetch URDF truth file "${urdfFileName}" for stage "${normalizedStagePath}".`, error);
+            const truthLoadError = String(error?.message || error || '').trim() || 'urdf-truth-load-failed';
+            this._urdfTruthLoadErrorByStageSource?.set?.(normalizedStagePath, truthLoadError);
             return null;
         })
             .then((truth) => {
             this._urdfTruthByStageSource.set(normalizedStagePath, truth || null);
+            if (truth) {
+                this._urdfTruthLoadErrorByStageSource?.delete?.(normalizedStagePath);
+            }
             return truth || null;
         })
             .finally(() => {

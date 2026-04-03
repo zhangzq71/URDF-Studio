@@ -57,6 +57,10 @@ export const URDFViewerScene = ({
   onCollisionTransform,
   isMeshPreview = false,
   runtimeInstanceKey = 0,
+  sourceSceneAssemblyComponentId,
+  sourceSceneAssemblyComponentTransform,
+  showSourceSceneAssemblyComponentControls = false,
+  onSourceSceneAssemblyComponentTransform,
   toolMode,
   t,
 }: URDFViewerSceneProps) => {
@@ -81,7 +85,8 @@ export const URDFViewerScene = ({
     ? `${usdSourceFile.name}:${shouldRemountRuntime ? runtimeInstanceKey : 'stable'}`
     : null;
   const useUsdOffscreenBootstrap = usdSourceFile
-    ? !useUsdOffscreenOnlyRenderer && shouldBootstrapUsdOffscreenStage({
+    ? !useUsdOffscreenOnlyRenderer &&
+      shouldBootstrapUsdOffscreenStage({
         toolMode,
         selection,
         hoveredSelection,
@@ -95,34 +100,40 @@ export const URDFViewerScene = ({
   const readyNotificationFrameBRef = useRef<number | null>(null);
   const [offscreenBootstrapReady, setOffscreenBootstrapReady] = useState(false);
   const [interactiveUsdStageReady, setInteractiveUsdStageReady] = useState(false);
-  const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(() => ({
-    onRobotResolved: controller.handleJointPanelRobotLoaded,
-    onSelectionChange: controller.handleSelectWrapper,
-    onActiveJointChange: controller.handleActiveJointChange,
-    onJointAnglesChange: controller.handleRuntimeJointAnglesChange,
-  }), [
-    controller.handleActiveJointChange,
-    controller.handleJointPanelRobotLoaded,
-    controller.handleRuntimeJointAnglesChange,
-    controller.handleSelectWrapper,
-  ]);
-  const usdLoadingPhaseLabels = useMemo<UsdLoadingPhaseLabels>(() => ({
-    'checking-path': t.loadingRobotCheckingPath,
-    'preloading-dependencies': t.loadingRobotPreloadingDependencies,
-    'initializing-renderer': t.loadingRobotInitializingRenderer,
-    'streaming-meshes': t.loadingRobotStreamingMeshes,
-    'applying-stage-fixes': t.loadingRobotApplyingStageFixes,
-    'resolving-metadata': t.loadingRobotResolvingMetadata,
-    'finalizing-scene': t.loadingRobotFinalizingScene,
-  }), [
-    t.loadingRobotApplyingStageFixes,
-    t.loadingRobotCheckingPath,
-    t.loadingRobotFinalizingScene,
-    t.loadingRobotInitializingRenderer,
-    t.loadingRobotPreloadingDependencies,
-    t.loadingRobotResolvingMetadata,
-    t.loadingRobotStreamingMeshes,
-  ]);
+  const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(
+    () => ({
+      onRobotResolved: controller.handleJointPanelRobotLoaded,
+      onSelectionChange: controller.handleSelectWrapper,
+      onActiveJointChange: controller.handleActiveJointChange,
+      onJointAnglesChange: controller.handleRuntimeJointAnglesChange,
+    }),
+    [
+      controller.handleActiveJointChange,
+      controller.handleJointPanelRobotLoaded,
+      controller.handleRuntimeJointAnglesChange,
+      controller.handleSelectWrapper,
+    ],
+  );
+  const usdLoadingPhaseLabels = useMemo<UsdLoadingPhaseLabels>(
+    () => ({
+      'checking-path': t.loadingRobotCheckingPath,
+      'preloading-dependencies': t.loadingRobotPreloadingDependencies,
+      'initializing-renderer': t.loadingRobotInitializingRenderer,
+      'streaming-meshes': t.loadingRobotStreamingMeshes,
+      'applying-stage-fixes': t.loadingRobotApplyingStageFixes,
+      'resolving-metadata': t.loadingRobotResolvingMetadata,
+      'finalizing-scene': t.loadingRobotFinalizingScene,
+    }),
+    [
+      t.loadingRobotApplyingStageFixes,
+      t.loadingRobotCheckingPath,
+      t.loadingRobotFinalizingScene,
+      t.loadingRobotInitializingRenderer,
+      t.loadingRobotPreloadingDependencies,
+      t.loadingRobotResolvingMetadata,
+      t.loadingRobotStreamingMeshes,
+    ],
+  );
   const cancelScheduledSceneReadyNotification = useCallback(() => {
     if (typeof window === 'undefined') {
       return;
@@ -159,73 +170,81 @@ export const URDFViewerScene = ({
       });
     });
   }, [cancelScheduledSceneReadyNotification, onSceneReadyForDisplay]);
-  useEffect(() => () => {
-    cancelScheduledSceneReadyNotification();
-  }, [cancelScheduledSceneReadyNotification]);
+  useEffect(
+    () => () => {
+      cancelScheduledSceneReadyNotification();
+    },
+    [cancelScheduledSceneReadyNotification],
+  );
   useEffect(() => {
     setOffscreenBootstrapReady(false);
     setInteractiveUsdStageReady(false);
   }, [usdStageSessionKey]);
-  const handleUsdOffscreenDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
-    if (event.status === 'ready') {
-      setOffscreenBootstrapReady(true);
-      scheduleSceneReadyForDisplay();
-    }
-    onDocumentLoadEvent?.(event);
-  }, [onDocumentLoadEvent, scheduleSceneReadyForDisplay]);
-  const handleUsdWasmDocumentLoadEvent = useCallback((event: ViewerDocumentLoadEvent) => {
-    if (useUsdOffscreenBootstrap) {
-      if (event.status === 'loading') {
+  const handleUsdOffscreenDocumentLoadEvent = useCallback(
+    (event: ViewerDocumentLoadEvent) => {
+      if (event.status === 'ready') {
+        setOffscreenBootstrapReady(true);
+        scheduleSceneReadyForDisplay();
+      }
+      onDocumentLoadEvent?.(event);
+    },
+    [onDocumentLoadEvent, scheduleSceneReadyForDisplay],
+  );
+  const handleUsdWasmDocumentLoadEvent = useCallback(
+    (event: ViewerDocumentLoadEvent) => {
+      if (useUsdOffscreenBootstrap) {
+        if (event.status === 'loading') {
+          return;
+        }
+
+        if (event.status === 'ready') {
+          setInteractiveUsdStageReady(true);
+          scheduleSceneReadyForDisplay();
+          // The worker-rendered bootstrap stage is already visible at this point.
+          // Keep the hidden main-thread handoff from reopening the global loading HUD.
+          return;
+        }
+
+        if (event.status === 'error') {
+          setInteractiveUsdStageReady(false);
+          onDocumentLoadEvent?.(event);
+        }
         return;
       }
 
       if (event.status === 'ready') {
-        setInteractiveUsdStageReady(true);
         scheduleSceneReadyForDisplay();
-        // The worker-rendered bootstrap stage is already visible at this point.
-        // Keep the hidden main-thread handoff from reopening the global loading HUD.
-        return;
       }
-
-      if (event.status === 'error') {
-        setInteractiveUsdStageReady(false);
-        onDocumentLoadEvent?.(event);
-      }
-      return;
-    }
-
-    if (event.status === 'ready') {
+      onDocumentLoadEvent?.(event);
+    },
+    [onDocumentLoadEvent, scheduleSceneReadyForDisplay, useUsdOffscreenBootstrap],
+  );
+  const handleRobotLoaded = useCallback(
+    (robot: Parameters<NonNullable<RobotModelProps['onRobotLoaded']>>[0]) => {
+      controller.handleRobotLoaded(robot);
+      onRuntimeRobotLoaded?.(robot);
       scheduleSceneReadyForDisplay();
-    }
-    onDocumentLoadEvent?.(event);
-  }, [onDocumentLoadEvent, scheduleSceneReadyForDisplay, useUsdOffscreenBootstrap]);
-  const handleRobotLoaded = useCallback((robot: Parameters<NonNullable<RobotModelProps['onRobotLoaded']>>[0]) => {
-    controller.handleRobotLoaded(robot);
-    onRuntimeRobotLoaded?.(robot);
-    scheduleSceneReadyForDisplay();
-  }, [controller.handleRobotLoaded, onRuntimeRobotLoaded, scheduleSceneReadyForDisplay]);
+    },
+    [controller.handleRobotLoaded, onRuntimeRobotLoaded, scheduleSceneReadyForDisplay],
+  );
   // For default USD select mode, keep the worker-rendered stage on screen until
   // the interactive main-thread stage has finished its own hidden handoff load.
   const mountUsdOffscreenStage = Boolean(
-    usdSourceFile
-    && (
-      useUsdOffscreenOnlyRenderer
-      || (useUsdOffscreenBootstrap && !interactiveUsdStageReady)
-    ),
+    usdSourceFile &&
+    (useUsdOffscreenOnlyRenderer || (useUsdOffscreenBootstrap && !interactiveUsdStageReady)),
   );
   const mountUsdWasmStage = Boolean(
-    usdSourceFile
-    && !useUsdOffscreenOnlyRenderer
-    && (!useUsdOffscreenBootstrap || offscreenBootstrapReady),
+    usdSourceFile &&
+    !useUsdOffscreenOnlyRenderer &&
+    (!useUsdOffscreenBootstrap || offscreenBootstrapReady),
   );
-  const usdOffscreenStageActive = active
-    && (
-      useUsdOffscreenOnlyRenderer
-      || (useUsdOffscreenBootstrap && !interactiveUsdStageReady)
-    );
-  const usdWasmStageActive = active
-    && !useUsdOffscreenOnlyRenderer
-    && (!useUsdOffscreenBootstrap || interactiveUsdStageReady);
+  const usdOffscreenStageActive =
+    active &&
+    (useUsdOffscreenOnlyRenderer || (useUsdOffscreenBootstrap && !interactiveUsdStageReady));
+  const usdWasmStageActive =
+    active &&
+    !useUsdOffscreenOnlyRenderer &&
+    (!useUsdOffscreenBootstrap || interactiveUsdStageReady);
 
   return (
     <>
@@ -319,12 +338,12 @@ export const URDFViewerScene = ({
         </Suspense>
       ) : (
         <Suspense fallback={null}>
-            <RobotModel
-              active={active}
-              urdfContent={urdfContent}
-              assets={assets}
-              sourceFormat={sourceFormat ?? getViewerRobotSourceFormat(sourceFile?.format)}
-              reloadToken={runtimeInstanceKey}
+          <RobotModel
+            active={active}
+            urdfContent={urdfContent}
+            assets={assets}
+            sourceFormat={sourceFormat ?? getViewerRobotSourceFormat(sourceFile?.format)}
+            reloadToken={runtimeInstanceKey}
             initialRobot={retainedRobot}
             sourceFilePath={sourceFilePath}
             onRobotLoaded={handleRobotLoaded}
@@ -372,6 +391,10 @@ export const URDFViewerScene = ({
             onTransformPending={controller.handleTransformPending}
             isSelectionLockedRef={controller.transformPendingRef}
             isMeshPreview={isMeshPreview}
+            sourceSceneAssemblyComponentId={sourceSceneAssemblyComponentId}
+            sourceSceneAssemblyComponentTransform={sourceSceneAssemblyComponentTransform}
+            showSourceSceneAssemblyComponentControls={showSourceSceneAssemblyComponentControls}
+            onSourceSceneAssemblyComponentTransform={onSourceSceneAssemblyComponentTransform}
           />
         </Suspense>
       )}

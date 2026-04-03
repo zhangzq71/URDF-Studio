@@ -8,7 +8,9 @@ import {
   resolveSelectionHit,
 } from './selectionTargets.ts';
 
-function createRobotWithLinks(...links: THREE.Object3D[]): THREE.Object3D {
+function createRobotWithLinks(
+  ...links: THREE.Object3D[]
+): THREE.Group & { links?: Record<string, THREE.Object3D> } {
   const robot = new THREE.Group() as THREE.Group & { links?: Record<string, THREE.Object3D> };
   robot.links = Object.fromEntries(links.map((link) => [link.name, link]));
   return robot;
@@ -78,6 +80,44 @@ test('resolveHitLinkTarget falls back to hierarchy when metadata is unavailable'
 
   assert.ok(resolved);
   assert.equal(resolved?.linkId, 'base_link');
+  assert.equal(resolved?.linkObject, link);
+});
+
+test('resolveHitLinkTarget skips anonymous URDFLink wrappers and keeps walking to a named runtime link', () => {
+  const link = createUrdfLink('workspace_link');
+  const robot = createRobotWithLinks(link);
+  robot.add(link);
+
+  const anonymousWrapper = createUrdfLink('');
+  link.add(anonymousWrapper);
+
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  anonymousWrapper.add(mesh);
+
+  const resolved = resolveHitLinkTarget(robot, mesh);
+
+  assert.ok(resolved);
+  assert.equal(resolved?.linkId, 'workspace_link');
+  assert.equal(resolved?.linkObject, link);
+});
+
+test('resolveInteractionSelectionHit does not emit empty link ids for geometry under anonymous URDFLink wrappers', () => {
+  const link = createUrdfLink('workspace_link');
+  const robot = createRobotWithLinks(link);
+  robot.add(link);
+
+  const anonymousWrapper = createUrdfLink('');
+  link.add(anonymousWrapper);
+
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  anonymousWrapper.add(mesh);
+
+  const resolved = resolveInteractionSelectionHit(robot, mesh);
+
+  assert.ok(resolved);
+  assert.equal(resolved?.type, 'link');
+  assert.equal(resolved?.id, 'workspace_link');
+  assert.equal(resolved?.linkId, 'workspace_link');
   assert.equal(resolved?.linkObject, link);
 });
 
@@ -196,14 +236,20 @@ test('resolveInteractionSelectionHit preserves collision subtype for tagged mesh
   robot.add(link);
 
   const firstCollisionRoot = new THREE.Group();
-  const firstCollisionMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  const firstCollisionMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
   firstCollisionMesh.userData.parentLinkName = 'base_link';
   firstCollisionMesh.userData.isCollisionMesh = true;
   firstCollisionRoot.add(firstCollisionMesh);
   link.add(firstCollisionRoot);
 
   const secondCollisionRoot = new THREE.Group();
-  const secondCollisionMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  const secondCollisionMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
   secondCollisionMesh.userData.parentLinkName = 'base_link';
   secondCollisionMesh.userData.isCollisionMesh = true;
   secondCollisionRoot.add(secondCollisionMesh);
@@ -226,14 +272,20 @@ test('resolveInteractionSelectionHit preserves visual subtype for tagged meshes 
   robot.add(link);
 
   const firstVisualRoot = new THREE.Group();
-  const firstVisualMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  const firstVisualMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
   firstVisualMesh.userData.parentLinkName = 'base_link';
   firstVisualMesh.userData.isVisualMesh = true;
   firstVisualRoot.add(firstVisualMesh);
   link.add(firstVisualRoot);
 
   const secondVisualRoot = new THREE.Group();
-  const secondVisualMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  const secondVisualMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
   secondVisualMesh.userData.parentLinkName = 'base_link';
   secondVisualMesh.userData.isVisualMesh = true;
   secondVisualRoot.add(secondVisualMesh);

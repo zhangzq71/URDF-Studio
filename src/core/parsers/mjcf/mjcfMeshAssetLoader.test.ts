@@ -9,43 +9,49 @@ import {
 } from './mjcfMeshAssetLoader';
 
 const createGltfBlob = () => {
-  const positionBuffer = Buffer.from(
-    new Float32Array([
-      0, 0, 0,
-      1, 0, 0,
-      0, 1, 0,
-    ]).buffer,
-  ).toString('base64');
+  const positionBuffer = Buffer.from(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer).toString(
+    'base64',
+  );
 
   const document = {
     asset: { version: '2.0' },
     scene: 0,
     scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0 }],
-    meshes: [{
-      primitives: [{
-        attributes: {
-          POSITION: 0,
-        },
-      }],
-    }],
-    buffers: [{
-      uri: `data:application/octet-stream;base64,${positionBuffer}`,
-      byteLength: 36,
-    }],
-    bufferViews: [{
-      buffer: 0,
-      byteOffset: 0,
-      byteLength: 36,
-    }],
-    accessors: [{
-      bufferView: 0,
-      componentType: 5126,
-      count: 3,
-      type: 'VEC3',
-      min: [0, 0, 0],
-      max: [1, 1, 0],
-    }],
+    meshes: [
+      {
+        primitives: [
+          {
+            attributes: {
+              POSITION: 0,
+            },
+          },
+        ],
+      },
+    ],
+    buffers: [
+      {
+        uri: `data:application/octet-stream;base64,${positionBuffer}`,
+        byteLength: 36,
+      },
+    ],
+    bufferViews: [
+      {
+        buffer: 0,
+        byteOffset: 0,
+        byteLength: 36,
+      },
+    ],
+    accessors: [
+      {
+        bufferView: 0,
+        componentType: 5126,
+        count: 3,
+        type: 'VEC3',
+        min: [0, 0, 0],
+        max: [1, 1, 0],
+      },
+    ],
   };
 
   return new Blob([JSON.stringify(document)], { type: 'model/gltf+json' });
@@ -70,16 +76,17 @@ test('loadMJCFMeshObject reuses cached GLTF assets within the same mesh cache', 
       }
     }
 
-    globalThis.ProgressEvent = TestProgressEvent as typeof ProgressEvent;
+    globalThis.ProgressEvent = TestProgressEvent as unknown as typeof ProgressEvent;
   }
 
   globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
     const request = args[0];
-    const requestUrl = typeof request === 'string'
-      ? request
-      : request instanceof URL
-        ? request.toString()
-        : request.url;
+    const requestUrl =
+      typeof request === 'string'
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
 
     if (requestUrl === assetUrl) {
       fetchCount += 1;
@@ -111,10 +118,12 @@ test('loadMJCFMeshObject reuses cached GLTF assets within the same mesh cache', 
 test('finalizeLoadedMJCFColladaScene strips embedded Collada lights so MJCF DAE assets match URDF scene lighting', () => {
   const root = new THREE.Group();
   root.add(new THREE.PointLight(0xffffff, 1));
-  root.add(new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x999999 }),
-  ));
+  root.add(
+    new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x999999 }),
+    ),
+  );
 
   const finalized = finalizeLoadedMJCFColladaScene(root);
 
@@ -131,4 +140,11 @@ test('finalizeLoadedMJCFColladaScene strips embedded Collada lights so MJCF DAE 
 
   assert.equal(lights.length, 0);
   assert.ok(meshes.length > 0);
+});
+
+test('loadMJCFMeshObject rejects unsupported mesh formats instead of returning null placeholders', async () => {
+  await assert.rejects(
+    loadMJCFMeshObject('https://example.com/robot.ply', 'meshes/robot.ply', new Map()),
+    /Unsupported mesh format "ply"/,
+  );
 });

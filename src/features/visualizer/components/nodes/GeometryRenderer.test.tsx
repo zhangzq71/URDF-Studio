@@ -64,21 +64,112 @@ test('GeometryRenderer renders editor visual geometry without unresolved legacy 
   useSelectionStore.getState().clearHover();
   useSelectionStore.getState().clearSelection();
 
-  const markup = withSilencedR3fDomWarnings(() => renderToStaticMarkup(
-    React.createElement(GeometryRenderer, {
-      isCollision: false,
-      link: createLink(),
-      mode: 'editor',
-      showGeometry: true,
-      showCollision: true,
-      modelOpacity: 1,
-      interactionLayerPriority: ['visual'],
-      assets: {},
-      isSelected: false,
-      onLinkClick: () => {},
-    }),
-  ));
+  const markup = withSilencedR3fDomWarnings(() =>
+    renderToStaticMarkup(
+      React.createElement(GeometryRenderer, {
+        isCollision: false,
+        link: createLink(),
+        mode: 'editor',
+        showGeometry: true,
+        showCollision: true,
+        modelOpacity: 1,
+        interactionLayerPriority: ['visual'],
+        assets: {},
+        isSelected: false,
+        onLinkClick: () => {},
+      }),
+    ),
+  );
 
   assert.match(markup, /boxgeometry/i);
   assert.match(markup, /group/i);
+});
+
+test('GeometryRenderer hides collision geometry when the parent link is hidden', () => {
+  useSelectionStore.getState().clearHover();
+  useSelectionStore.getState().clearSelection();
+
+  const hiddenLink = createLink();
+  hiddenLink.visible = false;
+
+  const markup = withSilencedR3fDomWarnings(() =>
+    renderToStaticMarkup(
+      React.createElement(GeometryRenderer, {
+        isCollision: true,
+        link: hiddenLink,
+        mode: 'editor',
+        showGeometry: true,
+        showCollision: true,
+        modelOpacity: 1,
+        interactionLayerPriority: ['collision'],
+        assets: {},
+        isSelected: false,
+        onLinkClick: () => {},
+      }),
+    ),
+  );
+
+  assert.equal(markup, '');
+});
+
+test('GeometryRenderer defers visible collision primitives until the owning component is released', () => {
+  useSelectionStore.getState().clearHover();
+  useSelectionStore.getState().clearSelection();
+
+  const markup = withSilencedR3fDomWarnings(() =>
+    renderToStaticMarkup(
+      React.createElement(GeometryRenderer, {
+        isCollision: true,
+        link: createLink(),
+        mode: 'editor',
+        showGeometry: true,
+        showCollision: true,
+        modelOpacity: 1,
+        interactionLayerPriority: ['collision'],
+        assets: {},
+        collisionRevealComponentId: 'comp_alpha',
+        revealedCollisionComponentIds: new Set<string>(),
+        isSelected: false,
+        onLinkClick: () => {},
+      }),
+    ),
+  );
+
+  assert.equal(markup, '');
+});
+
+test('GeometryRenderer defers visible collision mesh rendering until the mesh is ready', () => {
+  useSelectionStore.getState().clearHover();
+  useSelectionStore.getState().clearSelection();
+
+  const collisionMeshLink = createLink();
+  collisionMeshLink.collision = {
+    type: GeometryType.MESH,
+    dimensions: { x: 1, y: 1, z: 1 },
+    color: '#a855f7',
+    meshPath: 'meshes/collision.stl',
+    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+  };
+
+  const markup = withSilencedR3fDomWarnings(() =>
+    renderToStaticMarkup(
+      React.createElement(GeometryRenderer, {
+        isCollision: true,
+        link: collisionMeshLink,
+        mode: 'editor',
+        showGeometry: true,
+        showCollision: true,
+        modelOpacity: 1,
+        interactionLayerPriority: ['collision'],
+        assets: {
+          'meshes/collision.stl': 'blob:collision',
+        },
+        readyCollisionMeshLoadKeys: new Set<string>(),
+        isSelected: false,
+        onLinkClick: () => {},
+      }),
+    ),
+  );
+
+  assert.equal(markup, '');
 });

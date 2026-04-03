@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
-import type { RobotFile } from '@/types';
+import { GeometryType, type RobotFile } from '@/types';
 import type { RobotState } from '@/types';
 import type { RobotImportWorkerResponse } from '@/app/utils/robotImportWorker';
 import { createRobotImportWorkerClient } from './robotImportWorkerBridge';
@@ -102,10 +102,7 @@ test('robot import worker client rejects after worker errors and marks worker un
   await assert.rejects(firstResultPromise, /worker exploded/i);
   assert.equal(fakeWorker.terminated, true);
 
-  await assert.rejects(
-    client.resolve(demoUrdfFile),
-    /worker is unavailable/i,
-  );
+  await assert.rejects(client.resolve(demoUrdfFile), /worker is unavailable/i);
   assert.equal(fakeWorker.postedMessages.length, 1);
 });
 
@@ -180,14 +177,14 @@ test('robot import worker client resolves prepared assembly component responses'
             name: 'demo',
             visible: true,
             visual: {
-              type: 'none',
+              type: GeometryType.NONE,
               dimensions: { x: 0, y: 0, z: 0 },
               color: '#808080',
               origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
             },
             visualBodies: [],
             collision: {
-              type: 'none',
+              type: GeometryType.NONE,
               dimensions: { x: 0, y: 0, z: 0 },
               color: '#ef4444',
               origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
@@ -202,6 +199,10 @@ test('robot import worker client resolves prepared assembly component responses'
         },
         joints: {},
       },
+      suggestedTransform: {
+        position: { x: 1.5, y: 0, z: 0.25 },
+        rotation: { r: 0, p: 0, y: 0.1 },
+      },
       resolvedUrdfContent: demoUrdfFile.content,
       resolvedUrdfSourceFilePath: demoUrdfFile.name,
     },
@@ -211,6 +212,52 @@ test('robot import worker client resolves prepared assembly component responses'
   assert.equal(result.componentId, 'comp_demo');
   assert.equal(result.displayName, 'demo');
   assert.equal(result.robotData.rootLinkId, 'comp_demo_base_link');
+  assert.deepEqual(result.suggestedTransform, {
+    position: { x: 1.5, y: 0, z: 0.25 },
+    rotation: { r: 0, p: 0, y: 0.1 },
+  });
+});
+
+test('robot import worker client syncs mesh assets for prepared assembly components', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  void client
+    .prepareAssemblyComponent(demoUrdfFile, {
+      componentId: 'comp_demo',
+      rootName: 'demo',
+      assets: {
+        'robots/demo/meshes/base.stl': 'solid demo',
+      },
+    })
+    .catch(() => {});
+
+  assert.equal(fakeWorker.postedMessages.length, 2);
+  const syncContextRequest = fakeWorker.postedMessages[0] as {
+    type: string;
+    context: {
+      assets?: Record<string, string>;
+    };
+  };
+  const postedRequest = fakeWorker.postedMessages[1] as {
+    type: string;
+    contextId?: string;
+    options: {
+      assets?: Record<string, string>;
+    };
+  };
+
+  assert.equal(syncContextRequest.type, 'sync-context');
+  assert.deepEqual(syncContextRequest.context.assets, {
+    'robots/demo/meshes/base.stl': 'solid demo',
+  });
+  assert.equal(postedRequest.type, 'prepare-assembly-component');
+  assert.equal(typeof postedRequest.contextId, 'string');
+  assert.equal(postedRequest.options.assets, undefined);
 });
 
 test('robot import worker client rejects editable source parse errors', async () => {
@@ -312,27 +359,32 @@ test('robot import worker client prunes unused resolve payload fields before pos
     rootLinkId: null,
   };
 
-  void client.resolve({
-    name: 'robots/demo/usd/demo.usd',
-    format: 'usd',
-    content: '#usda 1.0',
-  }, {
-    availableFiles: [
-      demoUrdfFile,
+  void client
+    .resolve(
       {
-        name: 'robots/demo/xacro/demo.xacro',
-        format: 'xacro',
-        content: '<robot />',
+        name: 'robots/demo/usd/demo.usd',
+        format: 'usd',
+        content: '#usda 1.0',
       },
-    ],
-    assets: {
-      'robots/demo/meshes/base.stl': 'blob:mesh',
-    },
-    allFileContents: {
-      'robots/demo/materials/demo.material': 'material Demo {}',
-    },
-    usdRobotData,
-  }).catch(() => {});
+      {
+        availableFiles: [
+          demoUrdfFile,
+          {
+            name: 'robots/demo/xacro/demo.xacro',
+            format: 'xacro',
+            content: '<robot />',
+          },
+        ],
+        assets: {
+          'robots/demo/meshes/base.stl': 'blob:mesh',
+        },
+        allFileContents: {
+          'robots/demo/materials/demo.material': 'material Demo {}',
+        },
+        usdRobotData,
+      },
+    )
+    .catch(() => {});
 
   assert.equal(fakeWorker.postedMessages.length, 1);
   const postedRequest = fakeWorker.postedMessages[0] as {
@@ -357,35 +409,37 @@ test('robot import worker client prunes editable parse payload to source-relevan
     getWorkerCount: () => 1,
   });
 
-  void client.parseEditableSource({
-    file: {
-      name: 'robots/demo/xacro/demo.xacro',
-      format: 'xacro',
-    },
-    content: '<robot />',
-    availableFiles: [
-      demoUrdfFile,
-      {
+  void client
+    .parseEditableSource({
+      file: {
         name: 'robots/demo/xacro/demo.xacro',
         format: 'xacro',
-        content: '<robot />',
       },
-      {
-        name: 'robots/demo/usd/demo.usd',
-        format: 'usd',
-        content: '#usda 1.0',
+      content: '<robot />',
+      availableFiles: [
+        demoUrdfFile,
+        {
+          name: 'robots/demo/xacro/demo.xacro',
+          format: 'xacro',
+          content: '<robot />',
+        },
+        {
+          name: 'robots/demo/usd/demo.usd',
+          format: 'usd',
+          content: '#usda 1.0',
+        },
+        {
+          name: 'robots/demo/meshes/base.stl',
+          format: 'mesh',
+          content: 'solid demo',
+        },
+      ],
+      allFileContents: {
+        'robots/demo/xacro/macros/common.xacro': '<robot />',
+        'robots/demo/materials/demo.material': 'material Demo {}',
       },
-      {
-        name: 'robots/demo/meshes/base.stl',
-        format: 'mesh',
-        content: 'solid demo',
-      },
-    ],
-    allFileContents: {
-      'robots/demo/xacro/macros/common.xacro': '<robot />',
-      'robots/demo/materials/demo.material': 'material Demo {}',
-    },
-  }).catch(() => {});
+    })
+    .catch(() => {});
 
   assert.equal(fakeWorker.postedMessages.length, 2);
   const syncContextRequest = fakeWorker.postedMessages[0] as {
@@ -405,7 +459,10 @@ test('robot import worker client prunes editable parse payload to source-relevan
 
   assert.equal(syncContextRequest.type, 'sync-context');
   assert.deepEqual(
-    syncContextRequest.context.availableFiles.map((file) => ({ name: file.name, format: file.format })),
+    syncContextRequest.context.availableFiles.map((file) => ({
+      name: file.name,
+      format: file.format,
+    })),
     [
       { name: demoUrdfFile.name, format: demoUrdfFile.format },
       { name: 'robots/demo/xacro/demo.xacro', format: 'xacro' },
@@ -452,8 +509,14 @@ test('robot import worker client reuses synced worker context for repeated xacro
 
   assert.equal(fakeWorker.postedMessages.length, 3);
   assert.equal((fakeWorker.postedMessages[0] as { type: string }).type, 'sync-context');
-  assert.equal((fakeWorker.postedMessages[1] as { type: string }).type, 'parse-editable-robot-source');
-  assert.equal((fakeWorker.postedMessages[2] as { type: string }).type, 'parse-editable-robot-source');
+  assert.equal(
+    (fakeWorker.postedMessages[1] as { type: string }).type,
+    'parse-editable-robot-source',
+  );
+  assert.equal(
+    (fakeWorker.postedMessages[2] as { type: string }).type,
+    'parse-editable-robot-source',
+  );
 });
 
 test('robot import worker client distributes concurrent resolve requests across the worker pool', async () => {
@@ -543,7 +606,10 @@ test('robot import worker client scales workers on demand up to the hardware-der
       overflowResultPromise,
     ]);
 
-    assert.equal(results.every((result) => result.status === 'ready'), true);
+    assert.equal(
+      results.every((result) => result.status === 'ready'),
+      true,
+    );
   } finally {
     if (previousNavigator === undefined) {
       delete (globalThis as { navigator?: Navigator }).navigator;

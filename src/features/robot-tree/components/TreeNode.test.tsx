@@ -24,14 +24,19 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   return dom;
@@ -83,9 +88,9 @@ function createRobotWithCollision(): RobotState {
 }
 
 function findButtonByText(text: string): HTMLButtonElement | null {
-  return Array.from(document.querySelectorAll('button')).find((button) => (
-    button.textContent?.includes(text)
-  )) as HTMLButtonElement | null;
+  return Array.from(document.querySelectorAll('button')).find((button) =>
+    button.textContent?.includes(text),
+  ) as HTMLButtonElement | null;
 }
 
 test('TreeNode link context menu is portaled and exposes collision add/delete actions', async () => {
@@ -117,7 +122,7 @@ test('TreeNode link context menu is portaled and exposes collision add/delete ac
             }}
             onDelete={() => {}}
             onUpdate={() => {}}
-            mode="detail"
+            mode="editor"
             t={translations.en}
           />
         </div>,
@@ -128,28 +133,43 @@ test('TreeNode link context menu is portaled and exposes collision add/delete ac
     assert.ok(linkRow, 'link row should render');
 
     await act(async () => {
-      linkRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        clientX: 120,
-        clientY: 80,
-      }));
+      linkRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 120,
+          clientY: 80,
+        }),
+      );
     });
 
     const addCollisionButton = findButtonByText(translations.en.addCollisionBody);
     const deleteCollisionButton = findButtonByText(translations.en.deleteCollisionGeometry);
 
     assert.ok(addCollisionButton, 'right-clicking a link should expose add collision body');
-    assert.ok(deleteCollisionButton, 'right-clicking a link with collisions should expose delete collision geometry');
-    assert.equal(container.contains(addCollisionButton), false, 'context menu should render outside the tree container');
-    assert.equal(document.body.contains(addCollisionButton), true, 'context menu should be portaled to document.body');
+    assert.ok(
+      deleteCollisionButton,
+      'right-clicking a link with collisions should expose delete collision geometry',
+    );
+    assert.equal(
+      container.contains(addCollisionButton),
+      false,
+      'context menu should render outside the tree container',
+    );
+    assert.equal(
+      document.body.contains(addCollisionButton),
+      true,
+      'context menu should be portaled to document.body',
+    );
 
     await act(async () => {
-      addCollisionButton.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      addCollisionButton.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     assert.deepEqual(addedCollisionTargets, ['base_link']);
@@ -172,7 +192,7 @@ test('TreeNode deleting the selected collision geometry falls back to the parent
     });
 
     const robot = createRobotWithCollision();
-    const updatedLinks: RobotState['links'][] = [];
+    const updatedLinks: RobotState['links'][string][] = [];
 
     await act(async () => {
       root.render(
@@ -186,40 +206,110 @@ test('TreeNode deleting the selected collision geometry falls back to the parent
             onAddCollisionBody={() => {}}
             onDelete={() => {}}
             onUpdate={(_type, _id, data) => {
-              updatedLinks.push((data as RobotState['links'][string]));
+              updatedLinks.push(data as RobotState['links'][string]);
             }}
-            mode="detail"
+            mode="editor"
             t={translations.en}
           />
         </div>,
       );
     });
 
-    const collisionRow = container.querySelector(`[title="${translations.en.collision}"]`) as HTMLDivElement | null;
+    const collisionRow = container.querySelector(
+      `[title="${translations.en.collision}"]`,
+    ) as HTMLDivElement | null;
     assert.ok(collisionRow, 'primary collision row should render');
 
     await act(async () => {
-      collisionRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        clientX: 140,
-        clientY: 96,
-      }));
+      collisionRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 140,
+          clientY: 96,
+        }),
+      );
     });
 
     const deleteCollisionButton = findButtonByText(translations.en.deleteCollisionGeometry);
     assert.ok(deleteCollisionButton, 'geometry context menu should expose delete collision action');
 
     await act(async () => {
-      deleteCollisionButton.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      deleteCollisionButton.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     assert.equal(updatedLinks.length, 1, 'deleting the collision should issue one link update');
     assert.deepEqual(useSelectionStore.getState().selection, { type: 'link', id: 'base_link' });
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TreeNode geometry eye icons reflect inherited hidden state from the parent link', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: null, id: null },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: null, id: null },
+      focusTarget: null,
+    });
+
+    const robot = createRobotWithCollision();
+    robot.links.base_link.visible = false;
+    robot.links.base_link.visual.visible = true;
+    robot.links.base_link.collision.visible = true;
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <TreeNode
+            linkId="base_link"
+            robot={robot}
+            showGeometryDetailsByDefault
+            onSelect={() => {}}
+            onAddChild={() => {}}
+            onAddCollisionBody={() => {}}
+            onDelete={() => {}}
+            onUpdate={() => {}}
+            mode="editor"
+            t={translations.en}
+          />
+        </div>,
+      );
+    });
+
+    const visualRow = container.querySelector(
+      `[title="${translations.en.visualGeometry}"]`,
+    ) as HTMLDivElement | null;
+    const collisionRow = container.querySelector(
+      `[title="${translations.en.collision}"]`,
+    ) as HTMLDivElement | null;
+    assert.ok(visualRow, 'visual row should render');
+    assert.ok(collisionRow, 'collision row should render');
+
+    const visualButton = visualRow.querySelector(
+      'button[data-visibility-source]',
+    ) as HTMLButtonElement | null;
+    const collisionButton = collisionRow.querySelector(
+      'button[data-visibility-source]',
+    ) as HTMLButtonElement | null;
+    assert.ok(visualButton, 'visual row should expose a visibility button');
+    assert.ok(collisionButton, 'collision row should expose a visibility button');
+
+    assert.equal(visualButton.dataset.visibilitySource, 'inherited');
+    assert.equal(collisionButton.dataset.visibilitySource, 'inherited');
+    assert.match(visualButton.innerHTML, /eye-off/i);
+    assert.match(collisionButton.innerHTML, /eye-off/i);
   } finally {
     await destroyComponentRoot(dom, root);
   }

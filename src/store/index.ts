@@ -11,6 +11,8 @@ export type {
   ViewOptions,
   PanelsState,
   SidebarState,
+  GlobalFontSize,
+  CodeEditorFontFamily,
   RotationDisplayMode,
 } from './uiStore';
 

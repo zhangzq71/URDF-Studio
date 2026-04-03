@@ -30,14 +30,15 @@ export const URDFViewerPanels = ({
   setShowJointPanel,
 }: URDFViewerPanelsProps) => {
   const t = translations[lang];
-  const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
-    containerRef: controller.containerRef,
-    optionsPanelRef: controller.optionsPanelRef,
-    jointPanelRef: controller.jointPanelRef,
-    showOptionsPanel,
-    showJointPanel,
-    showToolbar,
-  });
+  const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } =
+    useResponsivePanelLayout({
+      containerRef: controller.containerRef,
+      optionsPanelRef: controller.optionsPanelRef,
+      jointPanelRef: controller.jointPanelRef,
+      showOptionsPanel,
+      showJointPanel,
+      showToolbar,
+    });
 
   return (
     <>
@@ -117,6 +118,7 @@ export const URDFViewerPanels = ({
           setMode={controller.handleToolModeChange}
           onClose={setShowToolbar ? () => setShowToolbar(false) : undefined}
           lang={lang}
+          containerRef={controller.containerRef}
         />
       )}
 

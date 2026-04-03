@@ -35,13 +35,12 @@ function createBytesTransferFile(
   path: string,
   entry: Uint8Array | ArrayBuffer,
 ): { file: ProjectArchiveTransferFile; transferables: ArrayBuffer[] } {
-  const bytes = entry instanceof Uint8Array
-    ? (
-        entry.byteOffset === 0 && entry.byteLength === entry.buffer.byteLength
-          ? entry.buffer
-          : entry.buffer.slice(entry.byteOffset, entry.byteOffset + entry.byteLength)
-      )
-    : entry;
+  const bytes =
+    entry instanceof Uint8Array
+      ? entry.byteOffset === 0 && entry.byteLength === entry.buffer.byteLength
+        ? entry.buffer
+        : entry.buffer.slice(entry.byteOffset, entry.byteOffset + entry.byteLength)
+      : entry;
 
   return {
     file: {
@@ -92,17 +91,22 @@ export async function serializeProjectArchiveEntriesForWorker(
 export function hydrateProjectArchiveEntriesFromWorker(
   payload: ProjectArchiveWorkerPayload,
 ): Map<string, ProjectArchiveEntryData> {
-  return new Map(payload.files.map((file) => {
+  const entries = new Map<string, ProjectArchiveEntryData>();
+  payload.files.forEach((file) => {
     switch (file.kind) {
       case 'text':
-        return [file.path, file.text] as const;
+        entries.set(file.path, file.text);
+        break;
       case 'blob':
-        return [file.path, file.blob] as const;
+        entries.set(file.path, file.blob);
+        break;
       case 'bytes':
       default:
-        return [file.path, file.bytes] as const;
+        entries.set(file.path, file.bytes);
+        break;
     }
-  }));
+  });
+  return entries;
 }
 
 export function hydrateProjectArchiveBlobFromWorker(

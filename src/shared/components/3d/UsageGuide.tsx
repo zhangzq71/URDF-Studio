@@ -6,21 +6,22 @@ interface UsageGuideProps {
   lang: Language;
 }
 
-type DetectedOS = 'mac' | 'windows' | 'linux' | 'other';
-
 export const UsageGuide: React.FC<UsageGuideProps> = ({ lang }) => {
-  const [detectedOS, setDetectedOS] = useState<DetectedOS>('other');
+  const [detectedOS, setDetectedOS] = useState<'mac' | 'windows' | 'linux' | 'other'>('other');
   const [isVisible, setIsVisible] = useState(true);
   const t = translations[lang];
 
   useEffect(() => {
-    const detectOS = (): DetectedOS => {
+    const detectOS = (): 'mac' | 'windows' | 'linux' | 'other' => {
       if (typeof navigator === 'undefined') return 'other';
 
       const userAgent = navigator.userAgent || '';
-      const userAgentDataPlatform = (navigator as Navigator & {
-        userAgentData?: { platform?: string };
-      }).userAgentData?.platform || '';
+      const userAgentDataPlatform =
+        (
+          navigator as Navigator & {
+            userAgentData?: { platform?: string };
+          }
+        ).userAgentData?.platform || '';
 
       const raw = `${userAgent} ${userAgentDataPlatform}`.toLowerCase();
 

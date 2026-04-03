@@ -3,6 +3,10 @@ import { getLowestMeshZ } from '@/shared/utils';
 import type { AssemblyState, AssemblyTransform, RobotData } from '@/types';
 import type * as THREE from 'three';
 import { resolveAssemblyComponentTransformTarget } from './assemblyTransformControlsShared';
+import {
+  buildAssemblyComponentMeshLoadKeyMap,
+  resolveReadyAssemblyMeshComponentIds,
+} from './assemblyMeshLoadState';
 
 export interface AssemblyAutoGroundAdjustment {
   componentId: string;
@@ -109,36 +113,33 @@ export function resolveReadyAssemblyAutoGroundComponentIds({
     return [];
   }
 
-  return [...pendingComponentIds].filter((componentId) => {
-    const component = assemblyState.components[componentId];
-    if (!component || component.visible === false) {
-      return false;
-    }
+  const readyComponentIds = new Set(
+    resolveReadyAssemblyMeshComponentIds({
+      assemblyState,
+      componentMeshLoadKeyMap: buildAssemblyComponentMeshLoadKeyMap({
+        assemblyState,
+        meshLoadKeys: expectedMeshLoadKeys,
+      }),
+      resolvedMeshLoadKeys,
+    }),
+  );
 
-    const componentLinkIds = new Set(Object.keys(component.robot.links));
-    const componentMeshLoadKeys = expectedMeshLoadKeys.filter((meshLoadKey) => {
-      const [linkId] = meshLoadKey.split('|');
-      return Boolean(linkId) && componentLinkIds.has(linkId);
-    });
-
-    if (componentMeshLoadKeys.length === 0) {
-      return true;
-    }
-
-    return componentMeshLoadKeys.every((meshLoadKey) => resolvedMeshLoadKeys.has(meshLoadKey));
-  });
+  return [...pendingComponentIds].filter((componentId) => readyComponentIds.has(componentId));
 }
 
 function measureComponentLowestPoint(target: THREE.Group): number | null {
-  return getLowestMeshZ(target, {
-    includeInvisible: false,
-    includeVisual: true,
-    includeCollision: false,
-  }) ?? getLowestMeshZ(target, {
-    includeInvisible: true,
-    includeVisual: true,
-    includeCollision: false,
-  });
+  return (
+    getLowestMeshZ(target, {
+      includeInvisible: false,
+      includeVisual: true,
+      includeCollision: false,
+    }) ??
+    getLowestMeshZ(target, {
+      includeInvisible: true,
+      includeVisual: true,
+      includeCollision: false,
+    })
+  );
 }
 
 export function resolveAssemblyAutoGrounding({
@@ -156,9 +157,7 @@ export function resolveAssemblyAutoGrounding({
     };
   }
 
-  const requestedComponentIds = componentIds
-    ? new Set(componentIds)
-    : null;
+  const requestedComponentIds = componentIds ? new Set(componentIds) : null;
   const adjustments: AssemblyAutoGroundAdjustment[] = [];
   const measuredComponentIds: string[] = [];
 

@@ -25,14 +25,19 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   return dom;
@@ -108,9 +113,12 @@ test('store-driven TreeNode keeps unrelated siblings from re-rendering on a loca
     await act(async () => {
       root.render(
         <>
-          <Profiler id="base" onRender={() => {
-            renderCounts.base += 1;
-          }}>
+          <Profiler
+            id="base"
+            onRender={() => {
+              renderCounts.base += 1;
+            }}
+          >
             <TreeNode
               linkId="base_link"
               storeDriven
@@ -119,13 +127,16 @@ test('store-driven TreeNode keeps unrelated siblings from re-rendering on a loca
               onAddCollisionBody={() => {}}
               onDelete={() => {}}
               onUpdate={() => {}}
-              mode="detail"
+              mode="editor"
               t={translations.en}
             />
           </Profiler>
-          <Profiler id="sibling" onRender={() => {
-            renderCounts.sibling += 1;
-          }}>
+          <Profiler
+            id="sibling"
+            onRender={() => {
+              renderCounts.sibling += 1;
+            }}
+          >
             <TreeNode
               linkId="sibling_link"
               storeDriven
@@ -134,7 +145,7 @@ test('store-driven TreeNode keeps unrelated siblings from re-rendering on a loca
               onAddCollisionBody={() => {}}
               onDelete={() => {}}
               onUpdate={() => {}}
-              mode="detail"
+              mode="editor"
               t={translations.en}
             />
           </Profiler>

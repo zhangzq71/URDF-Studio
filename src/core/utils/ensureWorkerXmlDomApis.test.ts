@@ -14,7 +14,10 @@ test('ensureWorkerXmlDomApis installs worker XML and image polyfills', async () 
   assert.equal(typeof scope.HTMLImageElement, 'function');
   assert.equal(typeof scope.Image, 'function');
 
-  const image = scope.document!.createElementNS('http://www.w3.org/1999/xhtml', 'img') as {
+  const image = scope.document!.createElementNS(
+    'http://www.w3.org/1999/xhtml',
+    'img',
+  ) as unknown as {
     addEventListener: (type: 'load', listener: () => void) => void;
     complete: boolean;
     src: string;

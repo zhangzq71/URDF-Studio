@@ -41,21 +41,25 @@ interface GeometryRendererProps {
   assets: Record<string, string>;
   isSelected: boolean;
   selectionSubType?: 'visual' | 'collision';
-  onLinkClick: (
-    event: ThreeEvent<MouseEvent>,
-    target?: VisualizerHoverTarget | null,
-  ) => void;
+  onLinkClick: (event: ThreeEvent<MouseEvent>, target?: VisualizerHoverTarget | null) => void;
   setVisualRef?: (ref: THREE.Group | null) => void;
   setCollisionRef?: (ref: THREE.Group | null) => void;
   geometryData?: UrdfVisual;
   geometryId?: string;
   objectIndex?: number;
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
+  collisionRevealComponentId?: string;
+  revealedCollisionComponentIds?: ReadonlySet<string>;
+  prewarmedCollisionMeshLoadKeys?: ReadonlySet<string>;
+  readyCollisionMeshLoadKeys?: ReadonlySet<string>;
   onMeshResolved?: (meshLoadKey: string) => void;
+  onPrewarmedMeshResolved?: (meshLoadKey: string) => void;
 }
 
 interface ActiveGeometryRendererProps extends GeometryRendererProps {
   data: UrdfVisual;
+  isPrewarmedHiddenCollision: boolean;
+  meshLoadKey: string | null;
   visibilityState: ReturnType<typeof resolveGeometryVisibilityState>;
 }
 
@@ -64,7 +68,7 @@ interface ActiveGeometryRendererProps extends GeometryRendererProps {
  * Handles different geometry types: Box, Cylinder, Sphere/Ellipsoid, Capsule,
  * and Mesh (STL/OBJ/DAE)
  */
-export const GeometryRenderer = memo(function GeometryRenderer({
+export const GeometryRenderer = memo<GeometryRendererProps>(function GeometryRenderer({
   isCollision,
   link,
   mode,
@@ -72,20 +76,68 @@ export const GeometryRenderer = memo(function GeometryRenderer({
   showCollision,
   modelOpacity,
   geometryData,
+  geometryId,
+  objectIndex,
+  collisionRevealComponentId,
+  revealedCollisionComponentIds,
+  prewarmedCollisionMeshLoadKeys,
+  readyCollisionMeshLoadKeys,
   ...props
 }: GeometryRendererProps) {
   const data = geometryData || (isCollision ? link.collision : link.visual);
-  const visibilityState = resolveGeometryVisibilityState({
-    mode,
-    isCollision,
-    showGeometry,
-    showCollision,
-  });
+  const meshLoadKey =
+    data?.type === GeometryType.MESH && data.meshPath
+      ? buildVisualizerMeshLoadKey({
+          linkId: link.id,
+          geometryRole: isCollision ? 'collision' : 'visual',
+          geometryId: geometryId || 'primary',
+          objectIndex: objectIndex ?? 0,
+          meshPath: data.meshPath,
+        })
+      : null;
+  const isPrewarmedHiddenCollision = Boolean(
+    isCollision &&
+    !showCollision &&
+    meshLoadKey &&
+    prewarmedCollisionMeshLoadKeys?.has(meshLoadKey),
+  );
+  const isDeferredVisibleCollisionMesh = Boolean(
+    isCollision &&
+    showCollision &&
+    meshLoadKey &&
+    readyCollisionMeshLoadKeys &&
+    !readyCollisionMeshLoadKeys.has(meshLoadKey),
+  );
+  const isDeferredVisibleCollisionComponent = Boolean(
+    isCollision &&
+    showCollision &&
+    collisionRevealComponentId &&
+    revealedCollisionComponentIds &&
+    !revealedCollisionComponentIds.has(collisionRevealComponentId),
+  );
+  const visibilityState = isPrewarmedHiddenCollision
+    ? {
+        shouldRender: true,
+        visible: false,
+        interactive: false,
+      }
+    : isDeferredVisibleCollisionComponent || isDeferredVisibleCollisionMesh
+      ? {
+          shouldRender: false,
+          visible: false,
+          interactive: false,
+        }
+      : resolveGeometryVisibilityState({
+          mode,
+          isCollision,
+          showGeometry,
+          showCollision,
+        });
 
   if (!data) return null;
   if (data.visible === false) return null;
   if (!visibilityState.shouldRender) return null;
-  if (!isCollision && link.visible === false) {
+  if (link.visible === false) {
     return null;
   }
   if (data.type === GeometryType.NONE) return null;
@@ -101,12 +153,14 @@ export const GeometryRenderer = memo(function GeometryRenderer({
       modelOpacity={modelOpacity}
       geometryData={geometryData}
       data={data}
+      isPrewarmedHiddenCollision={isPrewarmedHiddenCollision}
+      meshLoadKey={meshLoadKey}
       visibilityState={visibilityState}
     />
   );
 });
 
-const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
+const ActiveGeometryRenderer = memo<ActiveGeometryRendererProps>(function ActiveGeometryRenderer({
   isCollision,
   link,
   mode,
@@ -125,10 +179,12 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
   objectIndex,
   colladaRootNormalizationHints,
   onMeshResolved,
+  onPrewarmedMeshResolved,
   data,
+  isPrewarmedHiddenCollision,
+  meshLoadKey,
   visibilityState,
 }: ActiveGeometryRendererProps) {
-
   const { type, dimensions, color, origin, meshPath } = data;
   // Keep Visualizer origin handling aligned with URDF/Viewer quaternion conversion.
   const originRotation = origin
@@ -147,21 +203,16 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
   // material treatment across scenes instead of keeping a ghost skeleton look.
   const useLegacySkeletonVisualStyle = false;
   const geometrySubType = isCollision ? 'collision' : 'visual';
-  const meshLoadKey = type === GeometryType.MESH && meshPath
-    ? buildVisualizerMeshLoadKey({
-        linkId: link.id,
-        geometryRole: geometrySubType,
-        geometryId: geometryId || 'primary',
-        objectIndex: objectIndex ?? 0,
-        meshPath,
-      })
-    : null;
   const handleMeshResolved = useCallback(() => {
     if (!meshLoadKey) {
       return;
     }
+
+    if (isPrewarmedHiddenCollision) {
+      onPrewarmedMeshResolved?.(meshLoadKey);
+    }
     onMeshResolved?.(meshLoadKey);
-  }, [meshLoadKey, onMeshResolved]);
+  }, [isPrewarmedHiddenCollision, meshLoadKey, onMeshResolved, onPrewarmedMeshResolved]);
   const hoverTarget = useMemo(
     () => createGeometryHoverTargetSelection(link.id, geometrySubType, objectIndex),
     [geometrySubType, link.id, objectIndex],
@@ -181,7 +232,8 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
   }, [hoverTarget]);
 
   // Interaction States
-  const isVisualHighlight = !isCollision && isSelected && (selectionSubType === 'visual' || !selectionSubType);
+  const isVisualHighlight =
+    !isCollision && isSelected && (selectionSubType === 'visual' || !selectionSubType);
   const isCollisionHighlight = isCollision && isSelected && selectionSubType === 'collision';
 
   // Collision styling - Purple wireframe default
@@ -198,7 +250,7 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
   // Wireframe: Fill if selected or hovered (for collision)
   const matWireframe = isCollision ? !isCollisionHighlight && !isHovered : false;
 
-  const baseColor = isCollision ? colColor : (color || DEFAULT_VISUAL_COLOR);
+  const baseColor = isCollision ? colColor : color || DEFAULT_VISUAL_COLOR;
 
   // Colors
   const selectionColorVisual = '#60a5fa'; // Blue-400
@@ -226,29 +278,19 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
     emissiveIntensity = 0.3;
   }
 
-  const materialOptions = useMemo(() => ({
-    finalColor,
-    matOpacity,
-    matWireframe,
-    isCollision,
-    emissiveColor,
-    emissiveIntensity,
-  }), [
-    emissiveColor,
-    emissiveIntensity,
-    finalColor,
-    isCollision,
-    matOpacity,
-    matWireframe,
-  ]);
-  const materialKey = useMemo(
-    () => buildMaterialCacheKey(materialOptions),
-    [materialOptions],
+  const materialOptions = useMemo(
+    () => ({
+      finalColor,
+      matOpacity,
+      matWireframe,
+      isCollision,
+      emissiveColor,
+      emissiveIntensity,
+    }),
+    [emissiveColor, emissiveIntensity, finalColor, isCollision, matOpacity, matWireframe],
   );
-  const material = useMemo(
-    () => getCachedMaterial(materialOptions),
-    [materialOptions],
-  );
+  const materialKey = useMemo(() => buildMaterialCacheKey(materialOptions), [materialOptions]);
+  const material = useMemo(() => getCachedMaterial(materialOptions), [materialOptions]);
 
   useEffect(() => {
     retainCachedMaterial(materialKey);
@@ -275,9 +317,13 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
             return;
           }
 
-          const resolvedHoverTarget = resolveGeometryHoverTargetFromHits(hoverTarget, event.intersections ?? [], {
-            interactionLayerPriority,
-          });
+          const resolvedHoverTarget = resolveGeometryHoverTargetFromHits(
+            hoverTarget,
+            event.intersections ?? [],
+            {
+              interactionLayerPriority,
+            },
+          );
           if (!resolvedHoverTarget) {
             return;
           }
@@ -300,16 +346,19 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
       ? ([origin.xyz.x, origin.xyz.y, origin.xyz.z] as [number, number, number])
       : undefined,
     rotation: originRotation,
-    ref: isCollision ? setCollisionRef : setVisualRef,
+    ref: isPrewarmedHiddenCollision ? undefined : isCollision ? setCollisionRef : setVisualRef,
     visible: visibilityState.visible,
     userData: {
       geometryRole: isCollision ? 'collision' : 'visual',
-      ...createVisualizerHoverUserData({
-        type: 'link',
-        id: link.id,
-        subType: geometrySubType,
-        objectIndex: objectIndex ?? 0,
-      }, geometrySubType),
+      ...createVisualizerHoverUserData(
+        {
+          type: 'link',
+          id: link.id,
+          subType: geometrySubType,
+          objectIndex: objectIndex ?? 0,
+        },
+        geometrySubType,
+      ),
     },
   };
 
@@ -344,7 +393,10 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
     meshRotation = [-Math.PI / 2, 0, 0];
     // scale: X/Z = radius, Y = height
     geometryNode = (
-      <mesh rotation={meshRotation} scale={[dimensions.x, dimensions.y, dimensions.z || dimensions.x]}>
+      <mesh
+        rotation={meshRotation}
+        scale={[dimensions.x, dimensions.y, dimensions.z || dimensions.x]}
+      >
         <cylinderGeometry args={[1, 1, 1, radialSegments, 1]} />
         <primitive object={material} attach="material" />
       </mesh>
@@ -369,18 +421,21 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
     const cylinderLength = Math.max(0, dimensions.y - 2 * dimensions.x);
     geometryNode = (
       <mesh rotation={meshRotation}>
-        <capsuleGeometry args={[dimensions.x, cylinderLength, radialSegments / 2, radialSegments]} />
+        <capsuleGeometry
+          args={[dimensions.x, cylinderLength, radialSegments / 2, radialSegments]}
+        />
         <primitive object={material} attach="material" />
       </mesh>
     );
   } else if (type === GeometryType.MESH) {
-    const preserveOriginalMaterial = !isCollision
-      && !useLegacySkeletonVisualStyle
-      && !isVisualHighlight
-      && !isCollisionHighlight
-      && !isHovered
-      && !color
-      && modelOpacity >= 0.999;
+    const preserveOriginalMaterial =
+      !isCollision &&
+      !useLegacySkeletonVisualStyle &&
+      !isVisualHighlight &&
+      !isCollisionHighlight &&
+      !isHovered &&
+      !color &&
+      modelOpacity >= 0.999;
 
     geometryNode = (
       <Suspense fallback={null}>
@@ -390,7 +445,11 @@ const ActiveGeometryRenderer = memo(function ActiveGeometryRenderer({
           material={material}
           color={finalColor}
           scale={dimensions}
-          normalizeRoot={shouldNormalizeColladaGeometry(meshPath, origin, colladaRootNormalizationHints)}
+          normalizeRoot={shouldNormalizeColladaGeometry(
+            meshPath,
+            origin,
+            colladaRootNormalizationHints,
+          )}
           preserveOriginalMaterial={preserveOriginalMaterial}
           onResolved={handleMeshResolved}
           missingContent={

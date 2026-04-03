@@ -1,7 +1,10 @@
 import type { ResolveRobotFileDataOptions } from '@/core/parsers/importRobotFile';
 import type { RobotFile } from '@/types';
 import type { ParseEditableRobotSourceOptions } from './parseEditableRobotSource';
-import type { RobotImportWorkerContextSnapshot } from './robotImportWorker';
+import type {
+  PrepareAssemblyComponentWorkerOptions,
+  RobotImportWorkerContextSnapshot,
+} from './robotImportWorker';
 
 export interface PreparedRobotImportWorkerDispatch<TOptions> {
   options: TOptions;
@@ -29,7 +32,7 @@ function getObjectIdentityToken(value: unknown): number {
 }
 
 function buildContextCacheKey(
-  requestKind: 'resolve' | 'parse',
+  requestKind: 'resolve' | 'parse' | 'prepare',
   file: Pick<RobotFile, 'name' | 'format'>,
   refs: {
     availableFiles?: RobotFile[];
@@ -73,14 +76,14 @@ function filterAvailableFiles(
   }
 
   const filtered = files.filter((candidate) => allowedFormats.has(candidate.format));
-  const alreadyIncluded = filtered.some((candidate) => (
-    candidate.name === sourceFile.name && candidate.format === sourceFile.format
-  ));
+  const alreadyIncluded = filtered.some(
+    (candidate) => candidate.name === sourceFile.name && candidate.format === sourceFile.format,
+  );
 
   if (!alreadyIncluded && allowedFormats.has(sourceFile.format as RobotFile['format'])) {
-    const sourceEntry = files.find((candidate) => (
-      candidate.name === sourceFile.name && candidate.format === sourceFile.format
-    ));
+    const sourceEntry = files.find(
+      (candidate) => candidate.name === sourceFile.name && candidate.format === sourceFile.format,
+    );
     if (sourceEntry) {
       filtered.push(sourceEntry);
     }
@@ -103,14 +106,11 @@ export function buildResolveRobotImportWorkerDispatch(
       };
     case 'usd':
       return {
-        options: options.usdRobotData
-          ? { usdRobotData: options.usdRobotData }
-          : {},
+        options: options.usdRobotData ? { usdRobotData: options.usdRobotData } : {},
         contextCacheKey: null,
         contextSnapshot: null,
       };
-    case 'mjcf':
-    {
+    case 'mjcf': {
       const contextSnapshot = {
         availableFiles: filterAvailableFiles(
           options.availableFiles,
@@ -122,16 +122,13 @@ export function buildResolveRobotImportWorkerDispatch(
         options: {},
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('resolve', file, {
-            availableFiles: options.availableFiles,
-          })
+              availableFiles: options.availableFiles,
+            })
           : null,
-        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
-          ? contextSnapshot
-          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,
       };
     }
-    case 'sdf':
-    {
+    case 'sdf': {
       const contextSnapshot = {
         allFileContents: options.allFileContents ?? {},
       };
@@ -139,16 +136,13 @@ export function buildResolveRobotImportWorkerDispatch(
         options: {},
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('resolve', file, {
-            allFileContents: options.allFileContents,
-          })
+              allFileContents: options.allFileContents,
+            })
           : null,
-        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
-          ? contextSnapshot
-          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,
       };
     }
-    case 'xacro':
-    {
+    case 'xacro': {
       const contextSnapshot = {
         availableFiles: filterAvailableFiles(
           options.availableFiles,
@@ -161,13 +155,11 @@ export function buildResolveRobotImportWorkerDispatch(
         options: {},
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('resolve', file, {
-            availableFiles: options.availableFiles,
-            allFileContents: options.allFileContents,
-          })
+              availableFiles: options.availableFiles,
+              allFileContents: options.allFileContents,
+            })
           : null,
-        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
-          ? contextSnapshot
-          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,
       };
     }
     default:
@@ -187,6 +179,35 @@ export function buildResolveRobotImportWorkerOptions(
   return {
     ...preparedDispatch.contextSnapshot,
     ...preparedDispatch.options,
+  };
+}
+
+export function buildPrepareAssemblyComponentWorkerDispatch(
+  file: RobotFile,
+  options: PrepareAssemblyComponentWorkerOptions = {},
+): PreparedRobotImportWorkerDispatch<PrepareAssemblyComponentWorkerOptions> {
+  const preparedDispatch = buildResolveRobotImportWorkerDispatch(file, options);
+  const contextSnapshot: RobotImportWorkerContextSnapshot = {
+    ...(preparedDispatch.contextSnapshot ?? {}),
+    ...(options.assets && Object.keys(options.assets).length > 0 ? { assets: options.assets } : {}),
+  };
+  const hasContext = hasContextSnapshotContent(contextSnapshot);
+
+  return {
+    options: {
+      ...preparedDispatch.options,
+      ...(options.existingPlacementComponents?.length
+        ? { existingPlacementComponents: options.existingPlacementComponents }
+        : {}),
+    },
+    contextCacheKey: hasContext
+      ? buildContextCacheKey('prepare', file, {
+          availableFiles: options.availableFiles,
+          assets: options.assets,
+          allFileContents: options.allFileContents,
+        })
+      : null,
+    contextSnapshot: hasContext ? contextSnapshot : null,
   };
 }
 
@@ -216,8 +237,7 @@ export function buildEditableRobotSourceWorkerDispatch(
         contextCacheKey: null,
         contextSnapshot: null,
       };
-    case 'mjcf':
-    {
+    case 'mjcf': {
       const contextSnapshot = {
         availableFiles: filterAvailableFiles(
           options.availableFiles,
@@ -233,16 +253,13 @@ export function buildEditableRobotSourceWorkerDispatch(
         },
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('parse', options.file, {
-            availableFiles: options.availableFiles,
-          })
+              availableFiles: options.availableFiles,
+            })
           : null,
-        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
-          ? contextSnapshot
-          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,
       };
     }
-    case 'sdf':
-    {
+    case 'sdf': {
       const contextSnapshot = {
         allFileContents: options.allFileContents ?? {},
       };
@@ -254,16 +271,13 @@ export function buildEditableRobotSourceWorkerDispatch(
         },
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('parse', options.file, {
-            allFileContents: options.allFileContents,
-          })
+              allFileContents: options.allFileContents,
+            })
           : null,
-        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
-          ? contextSnapshot
-          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,
       };
     }
-    case 'xacro':
-    {
+    case 'xacro': {
       const contextSnapshot = {
         availableFiles: filterAvailableFiles(
           options.availableFiles,
@@ -280,13 +294,11 @@ export function buildEditableRobotSourceWorkerDispatch(
         },
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('parse', options.file, {
-            availableFiles: options.availableFiles,
-            allFileContents: options.allFileContents,
-          })
+              availableFiles: options.availableFiles,
+              allFileContents: options.allFileContents,
+            })
           : null,
-        contextSnapshot: hasContextSnapshotContent(contextSnapshot)
-          ? contextSnapshot
-          : null,
+        contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,
       };
     }
     default:
@@ -308,7 +320,13 @@ export function buildEditableRobotSourceWorkerOptions(
   const preparedDispatch = buildEditableRobotSourceWorkerDispatch(options);
   return {
     ...preparedDispatch.options,
-    availableFiles: preparedDispatch.contextSnapshot?.availableFiles ?? preparedDispatch.options.availableFiles ?? [],
-    allFileContents: preparedDispatch.contextSnapshot?.allFileContents ?? preparedDispatch.options.allFileContents ?? {},
+    availableFiles:
+      preparedDispatch.contextSnapshot?.availableFiles ??
+      preparedDispatch.options.availableFiles ??
+      [],
+    allFileContents:
+      preparedDispatch.contextSnapshot?.allFileContents ??
+      preparedDispatch.options.allFileContents ??
+      {},
   };
 }

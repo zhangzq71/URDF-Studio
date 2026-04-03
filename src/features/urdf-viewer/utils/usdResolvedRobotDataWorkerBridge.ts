@@ -1,5 +1,6 @@
 import type { RobotFile } from '@/types';
 import type { ViewerRobotDataResolution } from './viewerRobotData.ts';
+import { buildUsdStageOpenPreparationWorkerDispatch } from './usdStageOpenPreparationWorkerPayload.ts';
 import type {
   UsdOffscreenViewerInitRequest,
   UsdOffscreenViewerWorkerRequest,
@@ -10,8 +11,14 @@ type WorkerSourceFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format
 type WorkerAvailableFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
 
 interface WorkerLike {
-  addEventListener: (type: 'message' | 'error' | 'messageerror', listener: EventListenerOrEventListenerObject) => void;
-  removeEventListener: (type: 'message' | 'error' | 'messageerror', listener: EventListenerOrEventListenerObject) => void;
+  addEventListener: (
+    type: 'message' | 'error' | 'messageerror',
+    listener: EventListenerOrEventListenerObject,
+  ) => void;
+  removeEventListener: (
+    type: 'message' | 'error' | 'messageerror',
+    listener: EventListenerOrEventListenerObject,
+  ) => void;
   postMessage: (message: UsdOffscreenViewerWorkerRequest, transfer?: Transferable[]) => void;
   terminate: () => void;
 }
@@ -25,7 +32,9 @@ interface CreateUsdResolvedRobotDataWorkerClientOptions {
   canUseWorker?: () => boolean;
   createCanvas?: () => OffscreenCanvas;
   createWorker?: () => WorkerLike;
-  onLoadDebugEntry?: (entry: Extract<UsdOffscreenViewerWorkerResponse, { type: 'load-debug' }>['entry']) => void;
+  onLoadDebugEntry?: (
+    entry: Extract<UsdOffscreenViewerWorkerResponse, { type: 'load-debug' }>['entry'],
+  ) => void;
 }
 
 interface UsdResolvedRobotDataWorkerClient {
@@ -45,25 +54,23 @@ function createWorkerError(event: ErrorEvent | { error?: unknown; message?: stri
   return new Error(event.message || 'USD resolved robot data worker failed');
 }
 
-export function supportsUsdResolvedRobotDataWorker(globalScope: typeof globalThis = globalThis): boolean {
+export function supportsUsdResolvedRobotDataWorker(
+  globalScope: typeof globalThis = globalThis,
+): boolean {
   return Boolean(
-    globalScope.Worker
-      && globalScope.OffscreenCanvas
-      && globalScope.crossOriginIsolated,
+    globalScope.Worker && globalScope.OffscreenCanvas && globalScope.crossOriginIsolated,
   );
 }
 
-export function createUsdResolvedRobotDataWorkerClient(
-  {
-    canUseWorker = () => supportsUsdResolvedRobotDataWorker(),
-    createCanvas = () => new OffscreenCanvas(1, 1),
-    createWorker = () => new Worker(
-      new URL('../workers/usdOffscreenViewer.worker.ts', import.meta.url),
-      { type: 'module' },
-    ),
-    onLoadDebugEntry,
-  }: CreateUsdResolvedRobotDataWorkerClientOptions = {},
-): UsdResolvedRobotDataWorkerClient {
+export function createUsdResolvedRobotDataWorkerClient({
+  canUseWorker = () => supportsUsdResolvedRobotDataWorker(),
+  createCanvas = () => new OffscreenCanvas(1, 1),
+  createWorker = () =>
+    new Worker(new URL('../workers/usdOffscreenViewer.worker.ts', import.meta.url), {
+      type: 'module',
+    }),
+  onLoadDebugEntry,
+}: CreateUsdResolvedRobotDataWorkerClientOptions = {}): UsdResolvedRobotDataWorkerClient {
   const pendingRequests = new Set<PendingWorkerRequest>();
 
   const dispose = (rejectPendingWith?: unknown): void => {
@@ -132,7 +139,9 @@ export function createUsdResolvedRobotDataWorkerClient(
           }
           case 'document-load': {
             if (message.event.status === 'error') {
-              rejectWithError(new Error(message.event.error || 'USD resolved robot data worker failed'));
+              rejectWithError(
+                new Error(message.event.error || 'USD resolved robot data worker failed'),
+              );
             }
             return;
           }
@@ -170,6 +179,11 @@ export function createUsdResolvedRobotDataWorkerClient(
         worker.addEventListener('error', handleWorkerError as EventListener);
         worker.addEventListener('messageerror', handleWorkerMessageError as EventListener);
         pendingRequests.add(pendingRequest);
+        const stageOpenDispatch = buildUsdStageOpenPreparationWorkerDispatch(
+          sourceFile,
+          availableFiles,
+          assets,
+        );
 
         const initRequest: UsdOffscreenViewerInitRequest = {
           type: 'init',
@@ -182,9 +196,9 @@ export function createUsdResolvedRobotDataWorkerClient(
           showVisual: true,
           showCollision: true,
           showCollisionAlwaysOnTop: false,
-          sourceFile,
-          availableFiles,
-          assets,
+          sourceFile: stageOpenDispatch.sourceFile,
+          stageOpenContextKey: stageOpenDispatch.contextCacheKey ?? undefined,
+          stageOpenContext: stageOpenDispatch.contextSnapshot,
         };
 
         worker.postMessage(initRequest, [canvas]);

@@ -25,6 +25,8 @@ export interface BridgePreviewDraft {
   axis?: Vector3;
   limitLower?: number;
   limitUpper?: number;
+  limitEffort?: number;
+  limitVelocity?: number;
   rotationMode: BridgeRotationMode;
   rotationEulerDeg: { r: number; p: number; y: number };
   rotationQuaternion: JointQuaternion;
@@ -32,6 +34,12 @@ export interface BridgePreviewDraft {
 
 const URDF_EULER_ORDER: THREE.EulerOrder = 'ZYX';
 const DEFAULT_QUATERNION: JointQuaternion = { x: 0, y: 0, z: 0, w: 1 };
+const FULL_LIMIT_JOINT_TYPES = new Set<JointType>([JointType.REVOLUTE, JointType.PRISMATIC]);
+const EFFORT_VELOCITY_LIMIT_JOINT_TYPES = new Set<JointType>([
+  JointType.REVOLUTE,
+  JointType.PRISMATIC,
+  JointType.CONTINUOUS,
+]);
 
 function normalizeZero(value: number): number {
   return Object.is(value, -0) || Math.abs(value) < Number.EPSILON ? 0 : value;
@@ -52,14 +60,13 @@ export function normalizeBridgeQuaternion(value: JointQuaternion): JointQuaterni
   };
 }
 
-export function bridgeEulerDegreesToQuaternion(value: { r: number; p: number; y: number }): JointQuaternion {
+export function bridgeEulerDegreesToQuaternion(value: {
+  r: number;
+  p: number;
+  y: number;
+}): JointQuaternion {
   const quaternion = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(
-      degToRad(value.r),
-      degToRad(value.p),
-      degToRad(value.y),
-      URDF_EULER_ORDER,
-    ),
+    new THREE.Euler(degToRad(value.r), degToRad(value.p), degToRad(value.y), URDF_EULER_ORDER),
   );
 
   return normalizeBridgeQuaternion({
@@ -70,7 +77,11 @@ export function bridgeEulerDegreesToQuaternion(value: { r: number; p: number; y:
   });
 }
 
-export function bridgeQuaternionToEulerDegrees(value: JointQuaternion): { r: number; p: number; y: number } {
+export function bridgeQuaternionToEulerDegrees(value: JointQuaternion): {
+  r: number;
+  p: number;
+  y: number;
+} {
   const normalized = normalizeBridgeQuaternion(value);
   const euler = new THREE.Euler().setFromQuaternion(
     new THREE.Quaternion(normalized.x, normalized.y, normalized.z, normalized.w),
@@ -85,13 +96,15 @@ export function bridgeQuaternionToEulerDegrees(value: JointQuaternion): { r: num
 }
 
 export function buildBridgeOriginFromDraft(draft: BridgePreviewDraft): UrdfOrigin {
-  const quatXyzw = draft.rotationMode === 'quaternion'
-    ? normalizeBridgeQuaternion(draft.rotationQuaternion)
-    : bridgeEulerDegreesToQuaternion(draft.rotationEulerDeg);
+  const quatXyzw =
+    draft.rotationMode === 'quaternion'
+      ? normalizeBridgeQuaternion(draft.rotationQuaternion)
+      : bridgeEulerDegreesToQuaternion(draft.rotationEulerDeg);
 
-  const eulerDegrees = draft.rotationMode === 'quaternion'
-    ? bridgeQuaternionToEulerDegrees(quatXyzw)
-    : draft.rotationEulerDeg;
+  const eulerDegrees =
+    draft.rotationMode === 'quaternion'
+      ? bridgeQuaternionToEulerDegrees(quatXyzw)
+      : draft.rotationEulerDeg;
 
   return {
     xyz: {
@@ -108,16 +121,35 @@ export function buildBridgeOriginFromDraft(draft: BridgePreviewDraft): UrdfOrigi
   };
 }
 
-export function buildBridgeJointFromDraft(draft: BridgePreviewDraft, id = BRIDGE_PREVIEW_ID): UrdfJoint | null {
+export function buildBridgeJointFromDraft(
+  draft: BridgePreviewDraft,
+  id = BRIDGE_PREVIEW_ID,
+): UrdfJoint | null {
   if (
-    !draft.parentComponentId
-    || !draft.parentLinkId
-    || !draft.childComponentId
-    || !draft.childLinkId
-    || draft.parentComponentId === draft.childComponentId
+    !draft.parentComponentId ||
+    !draft.parentLinkId ||
+    !draft.childComponentId ||
+    !draft.childLinkId ||
+    draft.parentComponentId === draft.childComponentId
   ) {
     return null;
   }
+
+  const includeFullLimit = FULL_LIMIT_JOINT_TYPES.has(draft.jointType);
+  const includeEffortVelocityLimit = EFFORT_VELOCITY_LIMIT_JOINT_TYPES.has(draft.jointType);
+  const limit = includeFullLimit
+    ? {
+        lower: draft.limitLower ?? DEFAULT_JOINT.limit?.lower ?? -1.57,
+        upper: draft.limitUpper ?? DEFAULT_JOINT.limit?.upper ?? 1.57,
+        effort: draft.limitEffort ?? DEFAULT_JOINT.limit?.effort ?? 100,
+        velocity: draft.limitVelocity ?? DEFAULT_JOINT.limit?.velocity ?? 10,
+      }
+    : includeEffortVelocityLimit
+      ? ({
+          effort: draft.limitEffort ?? DEFAULT_JOINT.limit?.effort ?? 100,
+          velocity: draft.limitVelocity ?? DEFAULT_JOINT.limit?.velocity ?? 10,
+        } as UrdfJoint['limit'])
+      : undefined;
 
   return {
     ...DEFAULT_JOINT,
@@ -128,14 +160,7 @@ export function buildBridgeJointFromDraft(draft: BridgePreviewDraft, id = BRIDGE
     childLinkId: draft.childLinkId,
     origin: buildBridgeOriginFromDraft(draft),
     axis: draft.axis ?? DEFAULT_JOINT.axis,
-    limit: draft.jointType !== JointType.FIXED
-      ? {
-          lower: draft.limitLower ?? DEFAULT_JOINT.limit?.lower ?? -1.57,
-          upper: draft.limitUpper ?? DEFAULT_JOINT.limit?.upper ?? 1.57,
-          effort: DEFAULT_JOINT.limit?.effort ?? 100,
-          velocity: DEFAULT_JOINT.limit?.velocity ?? 10,
-        }
-      : undefined,
+    limit,
   };
 }
 

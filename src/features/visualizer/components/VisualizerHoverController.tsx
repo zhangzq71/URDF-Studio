@@ -49,71 +49,88 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
     invalidate();
   }, [clearHover, invalidate]);
 
-  const resolvePointerLocalPoint = React.useCallback((event: PointerEvent): CanvasPointerMeasurement => {
-    return measureCanvasPointerPosition(
-      event.clientX,
-      event.clientY,
-      gl.domElement.getBoundingClientRect(),
-    );
-  }, [gl.domElement]);
+  const resolvePointerLocalPoint = React.useCallback(
+    (event: PointerEvent): CanvasPointerMeasurement => {
+      return measureCanvasPointerPosition(
+        event.clientX,
+        event.clientY,
+        gl.domElement.getBoundingClientRect(),
+      );
+    },
+    [gl.domElement],
+  );
 
-  const updateHoverFromLocalPoint = React.useCallback((pointerMeasurement: CanvasPointerMeasurement) => {
-    const root = robotRootRef.current;
-    if (!root) {
+  const updateHoverFromLocalPoint = React.useCallback(
+    (pointerMeasurement: CanvasPointerMeasurement) => {
+      const root = robotRootRef.current;
+      if (!root) {
+        commitClearedHover();
+        return;
+      }
+
+      if (!pointerMeasurement.inside) {
+        commitClearedHover();
+        return;
+      }
+
+      const normalizedPointer = normalizeCanvasPointerPosition(pointerMeasurement);
+      if (!normalizedPointer) {
+        commitClearedHover();
+        return;
+      }
+
+      pointerRef.current.set(normalizedPointer.x, normalizedPointer.y);
+
+      raycasterRef.current.setFromCamera(pointerRef.current, camera);
+      const nextTarget = findNearestVisualizerHoverTarget(root, raycasterRef.current, {
+        interactionLayerPriority,
+      });
+
+      if (nextTarget) {
+        const nextHoverKey = `${nextTarget.type}:${nextTarget.id}:${nextTarget.subType}:${nextTarget.objectIndex}:${nextTarget.helperKind ?? ''}`;
+        if (lastHoverKeyRef.current === nextHoverKey) {
+          return;
+        }
+
+        lastHoverKeyRef.current = nextHoverKey;
+        setHoveredSelection(nextTarget);
+        invalidate();
+        return;
+      }
+
       commitClearedHover();
-      return;
-    }
-
-    if (!pointerMeasurement.inside) {
-      commitClearedHover();
-      return;
-    }
-
-    const normalizedPointer = normalizeCanvasPointerPosition(pointerMeasurement);
-    if (!normalizedPointer) {
-      commitClearedHover();
-      return;
-    }
-
-    pointerRef.current.set(normalizedPointer.x, normalizedPointer.y);
-
-    raycasterRef.current.setFromCamera(pointerRef.current, camera);
-    const nextTarget = findNearestVisualizerHoverTarget(root, raycasterRef.current, {
+    },
+    [
+      camera,
+      commitClearedHover,
+      gl.domElement,
       interactionLayerPriority,
-    });
+      invalidate,
+      robotRootRef,
+      setHoveredSelection,
+    ],
+  );
 
-    if (nextTarget) {
-      const nextHoverKey = `${nextTarget.type}:${nextTarget.id}:${nextTarget.subType}:${nextTarget.objectIndex}`;
-      if (lastHoverKeyRef.current === nextHoverKey) {
+  const scheduleHoverUpdate = React.useCallback(
+    (pointerMeasurement: CanvasPointerMeasurement) => {
+      pendingPointerRef.current = pointerMeasurement;
+      if (frameRef.current !== null) {
         return;
       }
 
-      lastHoverKeyRef.current = nextHoverKey;
-      setHoveredSelection(nextTarget);
-      invalidate();
-      return;
-    }
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+        const nextPoint = pendingPointerRef.current;
+        pendingPointerRef.current = null;
+        if (!nextPoint) {
+          return;
+        }
 
-    commitClearedHover();
-  }, [camera, commitClearedHover, gl.domElement, interactionLayerPriority, invalidate, robotRootRef, setHoveredSelection]);
-
-  const scheduleHoverUpdate = React.useCallback((pointerMeasurement: CanvasPointerMeasurement) => {
-    pendingPointerRef.current = pointerMeasurement;
-    if (frameRef.current !== null) {
-      return;
-    }
-
-    frameRef.current = requestAnimationFrame(() => {
-      frameRef.current = null;
-      const nextPoint = pendingPointerRef.current;
-      pendingPointerRef.current = null;
-      if (!nextPoint) {
-        return;
-      }
-
-      updateHoverFromLocalPoint(nextPoint);
-    });
-  }, [updateHoverFromLocalPoint]);
+        updateHoverFromLocalPoint(nextPoint);
+      });
+    },
+    [updateHoverFromLocalPoint],
+  );
 
   React.useEffect(() => {
     if (!active) {
@@ -174,7 +191,14 @@ export const VisualizerHoverController = React.memo(function VisualizerHoverCont
       domElement.removeEventListener('pointerleave', handlePointerLeave);
       domElement.removeEventListener('pointercancel', handlePointerLeave);
     };
-  }, [active, clearScheduledHoverUpdate, commitClearedHover, gl.domElement, resolvePointerLocalPoint, scheduleHoverUpdate]);
+  }, [
+    active,
+    clearScheduledHoverUpdate,
+    commitClearedHover,
+    gl.domElement,
+    resolvePointerLocalPoint,
+    scheduleHoverUpdate,
+  ]);
 
   return null;
 });

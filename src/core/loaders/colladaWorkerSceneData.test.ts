@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as THREE from 'three';
 
+import { createLoadingManager } from './index';
 import {
   createSceneFromSerializedColladaData,
   parseColladaSceneData,
@@ -42,7 +43,8 @@ function restoreWorkerImageGlobals(snapshot: WorkerImageGlobalSnapshot): void {
   if (snapshot.HTMLImageElement) {
     globalThis.HTMLImageElement = snapshot.HTMLImageElement;
   } else {
-    delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement }).HTMLImageElement;
+    delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement })
+      .HTMLImageElement;
   }
 
   if (snapshot.Image) {
@@ -54,7 +56,8 @@ function restoreWorkerImageGlobals(snapshot: WorkerImageGlobalSnapshot): void {
   if (snapshot.XMLSerializer) {
     globalThis.XMLSerializer = snapshot.XMLSerializer;
   } else {
-    delete (globalThis as typeof globalThis & { XMLSerializer?: typeof XMLSerializer }).XMLSerializer;
+    delete (globalThis as typeof globalThis & { XMLSerializer?: typeof XMLSerializer })
+      .XMLSerializer;
   }
 }
 
@@ -78,7 +81,8 @@ test('textured Collada worker scene data restores image-backed textures without 
 
   delete (globalThis as typeof globalThis & { DOMParser?: typeof DOMParser }).DOMParser;
   delete (globalThis as typeof globalThis & { document?: Document }).document;
-  delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement }).HTMLImageElement;
+  delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement })
+    .HTMLImageElement;
   delete (globalThis as typeof globalThis & { Image?: typeof Image }).Image;
   delete (globalThis as typeof globalThis & { XMLSerializer?: typeof XMLSerializer }).XMLSerializer;
 
@@ -98,4 +102,31 @@ test('textured Collada worker scene data restores image-backed textures without 
   } finally {
     restoreWorkerImageGlobals(snapshot);
   }
+});
+
+test('createSceneFromSerializedColladaData resolves blob-relative Collada textures through the loading manager', () => {
+  const daePath = 'test/unitree_ros/robots/aliengo_description/meshes/trunk.dae';
+  const pngPath = 'test/unitree_ros/robots/aliengo_description/meshes/trunk_uv_base_final.png';
+  const colladaText = fs.readFileSync(daePath, 'utf8');
+  const textureDataUrl = `data:image/png;base64,${fs.readFileSync(pngPath).toString('base64')}`;
+  const serializedScene = parseColladaSceneData(
+    colladaText,
+    'blob:http://127.0.0.1:4204/fake-trunk-dae',
+  );
+  const manager = createLoadingManager(
+    {
+      'aliengo_description/meshes/trunk_uv_base_final.png': textureDataUrl,
+    },
+    'aliengo_description/urdf/',
+  );
+  const restoredScene = createSceneFromSerializedColladaData(serializedScene, { manager });
+  const restoredMesh = getFirstMesh(restoredScene);
+  const restoredMaterial = restoredMesh.material as THREE.MeshPhongMaterial;
+
+  assert.ok(restoredMaterial.map, 'expected Aliengo trunk Collada scene to restore material.map');
+  assert.equal(
+    (restoredMaterial.map.source.data as { src?: string }).src,
+    textureDataUrl,
+    'expected blob-relative Collada texture URL to be remapped through the asset manager',
+  );
 });

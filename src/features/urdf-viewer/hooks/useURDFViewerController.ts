@@ -19,19 +19,55 @@ import type {
   ToolMode,
   URDFViewerProps,
   ViewerHelperKind,
-  ViewerJointMotionStateValue
+  ViewerJointMotionStateValue,
 } from '../types';
 import { resolveInitialJointControlState } from '../utils/jointControlState';
 import { createEmptyMeasureState } from '../utils/measurements';
 import { beginInitialGroundAlignment } from '../utils/robotPositioning';
-import {
-  createScopedToolModeState,
-  resolveScopedToolModeState,
-} from '../utils/scopedToolMode';
+import { createScopedToolModeState, resolveScopedToolModeState } from '../utils/scopedToolMode';
 import { usePanelDrag } from './usePanelDrag';
 import { useViewerSettings } from './useViewerSettings';
 
 type Selection = URDFViewerProps['selection'];
+const JOINT_SYNC_EPSILON = 1e-6;
+
+function isSameJointAngle(left: number | undefined, right: number | undefined) {
+  if (typeof left !== 'number' || typeof right !== 'number') {
+    return left === right;
+  }
+
+  return Math.abs(left - right) <= JOINT_SYNC_EPSILON;
+}
+
+function isSameJointQuaternion(
+  left: ViewerJointMotionStateValue['quaternion'] | undefined,
+  right: ViewerJointMotionStateValue['quaternion'] | undefined,
+) {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return (
+    isSameJointAngle(left.x, right.x) &&
+    isSameJointAngle(left.y, right.y) &&
+    isSameJointAngle(left.z, right.z) &&
+    isSameJointAngle(left.w, right.w)
+  );
+}
+
+function isSameJointMotion(
+  left: ViewerJointMotionStateValue | undefined,
+  right: ViewerJointMotionStateValue | undefined,
+) {
+  if (!left || !right) {
+    return left === right;
+  }
+
+  return (
+    isSameJointAngle(left.angle, right.angle) &&
+    isSameJointQuaternion(left.quaternion, right.quaternion)
+  );
+}
 
 interface UseURDFViewerControllerProps {
   onJointChange?: URDFViewerProps['onJointChange'];
@@ -121,26 +157,25 @@ export const useURDFViewerController = ({
   } = useViewerSettings();
 
   const showVisual = propShowVisual !== undefined ? propShowVisual : localShowVisual;
-  const setShowVisual = useCallback<React.Dispatch<React.SetStateAction<boolean>>>((nextValue) => {
-    const resolvedValue = typeof nextValue === 'function'
-      ? nextValue(showVisual)
-      : nextValue;
-    (propSetShowVisual || setLocalShowVisual)(resolvedValue);
-    if (resolvedValue) {
-      recordInteractionLayerActivation('visual');
-    }
-  }, [propSetShowVisual, recordInteractionLayerActivation, setLocalShowVisual, showVisual]);
+  const setShowVisual = useCallback<React.Dispatch<React.SetStateAction<boolean>>>(
+    (nextValue) => {
+      const resolvedValue = typeof nextValue === 'function' ? nextValue(showVisual) : nextValue;
+      (propSetShowVisual || setLocalShowVisual)(resolvedValue);
+      if (resolvedValue) {
+        recordInteractionLayerActivation('visual');
+      }
+    },
+    [propSetShowVisual, recordInteractionLayerActivation, setLocalShowVisual, showVisual],
+  );
 
   const normalizedToolModeScopeKey = toolModeScopeKey ?? null;
-  const [toolModeState, setToolModeState] = useState(() => createScopedToolModeState(
-    normalizedToolModeScopeKey,
-    defaultToolMode,
-  ));
-  const resolvedToolModeState = useMemo(() => resolveScopedToolModeState(
-    toolModeState,
-    normalizedToolModeScopeKey,
-    defaultToolMode,
-  ), [defaultToolMode, normalizedToolModeScopeKey, toolModeState]);
+  const [toolModeState, setToolModeState] = useState(() =>
+    createScopedToolModeState(normalizedToolModeScopeKey, defaultToolMode),
+  );
+  const resolvedToolModeState = useMemo(
+    () => resolveScopedToolModeState(toolModeState, normalizedToolModeScopeKey, defaultToolMode),
+    [defaultToolMode, normalizedToolModeScopeKey, toolModeState],
+  );
   const toolMode = resolvedToolModeState.mode;
   const [measureState, setMeasureState] = useState<MeasureState>(createEmptyMeasureState);
   const [measureAnchorMode, setMeasureAnchorMode] = useState<MeasureAnchorMode>('frame');
@@ -149,15 +184,24 @@ export const useURDFViewerController = ({
   const optionsPanelRef = useRef<HTMLDivElement>(null);
   const jointPanelRef = useRef<HTMLDivElement>(null);
   const measurePanelRef = useRef<HTMLDivElement>(null);
-  const { optionsPanelPos, jointPanelPos, measurePanelPos, handleMouseDown, handleMouseMove, handleMouseUp } =
-    usePanelDrag(containerRef, optionsPanelRef, jointPanelRef, measurePanelRef);
+  const {
+    optionsPanelPos,
+    jointPanelPos,
+    measurePanelPos,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+  } = usePanelDrag(containerRef, optionsPanelRef, jointPanelRef, measurePanelRef);
 
-  const transformMode = (['translate', 'rotate', 'universal'].includes(toolMode)
-    ? toolMode
-    : 'select') as 'select' | 'translate' | 'rotate' | 'universal';
-  const updateGroundPlaneOffset = useCallback((nextOffset: number) => {
-    setGroundPlaneOffset?.(nextOffset);
-  }, [setGroundPlaneOffset]);
+  const transformMode = (
+    ['translate', 'rotate', 'universal'].includes(toolMode) ? toolMode : 'select'
+  ) as 'select' | 'translate' | 'rotate' | 'universal';
+  const updateGroundPlaneOffset = useCallback(
+    (nextOffset: number) => {
+      setGroundPlaneOffset?.(nextOffset);
+    },
+    [setGroundPlaneOffset],
+  );
 
   useEffect(() => {
     if (resolvedToolModeState === toolModeState) {
@@ -177,28 +221,39 @@ export const useURDFViewerController = ({
   }, [selection?.subType, setHighlightMode, setShowCollision]);
 
   const jointPanelStoreRef = useRef(createJointPanelStore());
-  const jointAnglesRef = useRef<Record<string, number>>(jointPanelStoreRef.current.getSnapshot().jointAngles);
+  const jointAnglesRef = useRef<Record<string, number>>(
+    jointPanelStoreRef.current.getSnapshot().jointAngles,
+  );
   const initialJointAnglesRef = useRef<Record<string, number>>({});
   const jointStateScopeRef = useRef<string | null>(null);
   const [angleUnit, setAngleUnit] = useState<'rad' | 'deg'>('rad');
-  const activeJointRef = useRef<string | null>(jointPanelStoreRef.current.getSnapshot().activeJoint);
+  const activeJointRef = useRef<string | null>(
+    jointPanelStoreRef.current.getSnapshot().activeJoint,
+  );
   const [isDragging, setIsDragging] = useState(false);
   const sceneRefreshRef = useRef<(() => void) | null>(null);
   const pendingSceneRefreshFrameRef = useRef<number | null>(null);
   const previousGroundPlaneOffsetRef = useRef(groundPlaneOffset);
+  const previousAppliedJointAngleStateRef = useRef<Record<string, number>>({});
+  const previousAppliedJointMotionStateRef = useRef<Record<string, ViewerJointMotionStateValue>>(
+    {},
+  );
 
   const justSelectedRef = useRef(false);
   const transformPendingRef = useRef(false);
   const jointControlRobot = jointPanelRobot || robot;
   const jointControlJoints = jointControlRobot?.joints;
 
-  const emitJointChangeToApp = useCallback((jointName: string, angle: number) => {
-    if (!syncJointChangesToApp) {
-      return;
-    }
+  const emitJointChangeToApp = useCallback(
+    (jointName: string, angle: number) => {
+      if (!syncJointChangesToApp) {
+        return;
+      }
 
-    onJointChange?.(jointName, angle);
-  }, [onJointChange, syncJointChangesToApp]);
+      onJointChange?.(jointName, angle);
+    },
+    [onJointChange, syncJointChangesToApp],
+  );
 
   const syncJointAngleSnapshot = useCallback(() => {
     jointAnglesRef.current = jointPanelStoreRef.current.getSnapshot().jointAngles;
@@ -208,25 +263,34 @@ export const useURDFViewerController = ({
     activeJointRef.current = jointPanelStoreRef.current.getSnapshot().activeJoint;
   }, []);
 
-  const patchJointPanelAngles = useCallback((nextJointAngles: Record<string, number>) => {
-    const changed = jointPanelStoreRef.current.patchJointAngles(nextJointAngles);
-    if (changed) {
+  const patchJointPanelAngles = useCallback(
+    (nextJointAngles: Record<string, number>) => {
+      const changed = jointPanelStoreRef.current.patchJointAngles(nextJointAngles);
+      if (changed) {
+        syncJointAngleSnapshot();
+      }
+      return changed;
+    },
+    [syncJointAngleSnapshot],
+  );
+
+  const replaceJointPanelAngles = useCallback(
+    (nextJointAngles: Record<string, number>) => {
+      const changed = jointPanelStoreRef.current.replaceJointAngles(nextJointAngles);
       syncJointAngleSnapshot();
-    }
-    return changed;
-  }, [syncJointAngleSnapshot]);
+      return changed;
+    },
+    [syncJointAngleSnapshot],
+  );
 
-  const replaceJointPanelAngles = useCallback((nextJointAngles: Record<string, number>) => {
-    const changed = jointPanelStoreRef.current.replaceJointAngles(nextJointAngles);
-    syncJointAngleSnapshot();
-    return changed;
-  }, [syncJointAngleSnapshot]);
-
-  const setPanelActiveJoint = useCallback((jointName: string | null) => {
-    const changed = jointPanelStoreRef.current.setActiveJoint(jointName);
-    syncActiveJointSnapshot();
-    return changed;
-  }, [syncActiveJointSnapshot]);
+  const setPanelActiveJoint = useCallback(
+    (jointName: string | null) => {
+      const changed = jointPanelStoreRef.current.setActiveJoint(jointName);
+      syncActiveJointSnapshot();
+      return changed;
+    },
+    [syncActiveJointSnapshot],
+  );
 
   const flushSceneRefresh = useCallback(() => {
     pendingSceneRefreshFrameRef.current = null;
@@ -308,9 +372,10 @@ export const useURDFViewerController = ({
   }, []);
 
   useEffect(() => {
-    const regressionDebugEnabled = import.meta.env.DEV
-      || (typeof window !== 'undefined'
-        && new URLSearchParams(window.location.search).get('regressionDebug') === '1');
+    const regressionDebugEnabled =
+      import.meta.env.DEV ||
+      (typeof window !== 'undefined' &&
+        new URLSearchParams(window.location.search).get('regressionDebug') === '1');
     if (!regressionDebugEnabled) {
       return;
     }
@@ -327,7 +392,8 @@ export const useURDFViewerController = ({
 
     const applyFlags = (flags: RegressionViewerFlags) => {
       if (flags.showCollision !== undefined) setShowCollision(flags.showCollision);
-      if (flags.showCollisionAlwaysOnTop !== undefined) setShowCollisionAlwaysOnTop(flags.showCollisionAlwaysOnTop);
+      if (flags.showCollisionAlwaysOnTop !== undefined)
+        setShowCollisionAlwaysOnTop(flags.showCollisionAlwaysOnTop);
       if (flags.showVisual !== undefined) setShowVisual(flags.showVisual);
       if (flags.showCenterOfMass !== undefined) setShowCenterOfMass(flags.showCenterOfMass);
       if (flags.showCoMOverlay !== undefined) setShowCoMOverlay(flags.showCoMOverlay);
@@ -338,7 +404,8 @@ export const useURDFViewerController = ({
       if (flags.showOriginsOverlay !== undefined) setShowOriginsOverlay(flags.showOriginsOverlay);
       if (flags.originSize !== undefined) setOriginSize(flags.originSize);
       if (flags.showJointAxes !== undefined) setShowJointAxes(flags.showJointAxes);
-      if (flags.showJointAxesOverlay !== undefined) setShowJointAxesOverlay(flags.showJointAxesOverlay);
+      if (flags.showJointAxesOverlay !== undefined)
+        setShowJointAxesOverlay(flags.showJointAxesOverlay);
       if (flags.jointAxisSize !== undefined) setJointAxisSize(flags.jointAxisSize);
       if (flags.highlightMode !== undefined) setHighlightMode(flags.highlightMode);
       if (flags.modelOpacity !== undefined) setModelOpacity(flags.modelOpacity);
@@ -382,7 +449,7 @@ export const useURDFViewerController = ({
           'measure',
         ];
         const resolvedMode = allowedModes.includes(normalizedMode as ToolMode)
-          ? normalizedMode as ToolMode
+          ? (normalizedMode as ToolMode)
           : toolMode;
         const changed = resolvedMode !== toolMode;
 
@@ -393,11 +460,7 @@ export const useURDFViewerController = ({
             mode: resolvedMode,
           });
           if (resolvedMode !== 'measure') {
-            setMeasureState((prev) => (
-              !prev.hoverTarget
-                ? prev
-                : { ...prev, hoverTarget: null }
-            ));
+            setMeasureState((prev) => (!prev.hoverTarget ? prev : { ...prev, hoverTarget: null }));
           }
         }
 
@@ -457,10 +520,10 @@ export const useURDFViewerController = ({
     setHighlightMode,
     setJointAxisSize,
     setModelOpacity,
-      normalizedToolModeScopeKey,
-      setOriginSize,
-      setShowCoMOverlay,
-      setShowCenterOfMass,
+    normalizedToolModeScopeKey,
+    setOriginSize,
+    setShowCoMOverlay,
+    setShowCenterOfMass,
     setShowCollision,
     setShowCollisionAlwaysOnTop,
     setShowInertia,
@@ -485,65 +548,81 @@ export const useURDFViewerController = ({
     toolMode,
   ]);
 
-  const initializeJointControlState = useCallback((loadedRobot: any) => {
-    const preservePreviousAngles = jointStateScopeRef.current !== null && jointStateScopeRef.current === jointStateScopeKey;
-    const { currentAngles, defaultAngles } = resolveInitialJointControlState({
-      joints: loadedRobot?.joints,
-      previousAngles: jointAnglesRef.current,
-      preservePreviousAngles,
-      isControllableJoint: isSingleDofJoint,
-    });
-
-    replaceJointPanelAngles(currentAngles);
-    initialJointAnglesRef.current = defaultAngles;
-    setPanelActiveJoint(null);
-    jointStateScopeRef.current = jointStateScopeKey;
-  }, [jointStateScopeKey, replaceJointPanelAngles, setPanelActiveJoint]);
-
-  const handleRobotLoaded = useCallback((loadedRobot: any) => {
-    setJointPanelRobot(null);
-    setRobot(loadedRobot);
-    initializeJointControlState(loadedRobot);
-  }, [initializeJointControlState]);
-
-  const handleJointPanelRobotLoaded = useCallback((loadedRobot: any | null) => {
-    setJointPanelRobot(loadedRobot);
-    if (!loadedRobot) {
-      return;
-    }
-    initializeJointControlState(loadedRobot);
-  }, [initializeJointControlState]);
-
-  const handleRuntimeJointAnglesChange = useCallback((nextAngles: Record<string, number>) => {
-    if (!nextAngles || typeof nextAngles !== 'object') return;
-    const normalizedAngles = normalizeViewerJointAngleState(jointControlJoints, nextAngles);
-
-    if (jointControlRobot?.joints) {
-      Object.entries(normalizedAngles).forEach(([jointKey, angle]) => {
-        const joint = jointControlRobot.joints?.[jointKey];
-        if (joint && isSingleDofJoint(joint)) {
-          joint.angle = angle;
-          emitJointChangeToApp(joint.name || jointKey, angle);
-        }
+  const initializeJointControlState = useCallback(
+    (loadedRobot: any) => {
+      const preservePreviousAngles =
+        jointStateScopeRef.current !== null && jointStateScopeRef.current === jointStateScopeKey;
+      const { currentAngles, defaultAngles } = resolveInitialJointControlState({
+        joints: loadedRobot?.joints,
+        previousAngles: jointAnglesRef.current,
+        preservePreviousAngles,
+        isControllableJoint: isSingleDofJoint,
       });
-    }
 
-    patchJointPanelAngles(normalizedAngles);
-  }, [emitJointChangeToApp, jointControlJoints, jointControlRobot, patchJointPanelAngles]);
+      replaceJointPanelAngles(currentAngles);
+      initialJointAnglesRef.current = defaultAngles;
+      setPanelActiveJoint(null);
+      jointStateScopeRef.current = jointStateScopeKey;
+    },
+    [jointStateScopeKey, replaceJointPanelAngles, setPanelActiveJoint],
+  );
 
-  const handleRuntimeJointAngleChange = useCallback((jointName: string, angle: number) => {
-    const jointKey = resolveViewerJointKey(jointControlJoints, jointName);
-    if (!jointKey) {
-      return;
-    }
+  const handleRobotLoaded = useCallback(
+    (loadedRobot: any) => {
+      setJointPanelRobot(null);
+      setRobot(loadedRobot);
+      initializeJointControlState(loadedRobot);
+    },
+    [initializeJointControlState],
+  );
 
-    const joint = jointControlRobot?.joints?.[jointKey];
-    const resolvedAngle = Number.isFinite(Number(joint?.angle ?? joint?.jointValue))
-      ? Number(joint?.angle ?? joint?.jointValue)
-      : angle;
+  const handleJointPanelRobotLoaded = useCallback(
+    (loadedRobot: any | null) => {
+      setJointPanelRobot(loadedRobot);
+      if (!loadedRobot) {
+        return;
+      }
+      initializeJointControlState(loadedRobot);
+    },
+    [initializeJointControlState],
+  );
 
-    patchJointPanelAngles({ [jointKey]: resolvedAngle });
-  }, [jointControlJoints, jointControlRobot, patchJointPanelAngles]);
+  const handleRuntimeJointAnglesChange = useCallback(
+    (nextAngles: Record<string, number>) => {
+      if (!nextAngles || typeof nextAngles !== 'object') return;
+      const normalizedAngles = normalizeViewerJointAngleState(jointControlJoints, nextAngles);
+
+      if (jointControlRobot?.joints) {
+        Object.entries(normalizedAngles).forEach(([jointKey, angle]) => {
+          const joint = jointControlRobot.joints?.[jointKey];
+          if (joint && isSingleDofJoint(joint)) {
+            joint.angle = angle;
+            emitJointChangeToApp(joint.name || jointKey, angle);
+          }
+        });
+      }
+
+      patchJointPanelAngles(normalizedAngles);
+    },
+    [emitJointChangeToApp, jointControlJoints, jointControlRobot, patchJointPanelAngles],
+  );
+
+  const handleRuntimeJointAngleChange = useCallback(
+    (jointName: string, angle: number) => {
+      const jointKey = resolveViewerJointKey(jointControlJoints, jointName);
+      if (!jointKey) {
+        return;
+      }
+
+      const joint = jointControlRobot?.joints?.[jointKey];
+      const resolvedAngle = Number.isFinite(Number(joint?.angle ?? joint?.jointValue))
+        ? Number(joint?.angle ?? joint?.jointValue)
+        : angle;
+
+      patchJointPanelAngles({ [jointKey]: resolvedAngle });
+    },
+    [jointControlJoints, jointControlRobot, patchJointPanelAngles],
+  );
 
   const handleTransformPending = useCallback(
     (pending: boolean) => {
@@ -553,7 +632,7 @@ export const useURDFViewerController = ({
       }
       onTransformPendingChange?.(pending);
     },
-    [active, isDragging, onTransformPendingChange, setHoverFrozen]
+    [active, isDragging, onTransformPendingChange, setHoverFrozen],
   );
 
   useEffect(() => {
@@ -565,6 +644,11 @@ export const useURDFViewerController = ({
   }, [onTransformPendingChange, setHoverFrozen]);
 
   useEffect(() => {
+    previousAppliedJointAngleStateRef.current = {};
+    previousAppliedJointMotionStateRef.current = {};
+  }, [jointControlRobot, jointStateScopeKey]);
+
+  useEffect(() => {
     if (!jointControlRobot || (!jointAngleState && !jointMotionState)) return;
 
     const nextAngleState = jointMotionState
@@ -573,17 +657,25 @@ export const useURDFViewerController = ({
             .filter(([, motion]) => typeof motion?.angle === 'number')
             .map(([name, motion]) => [name, motion.angle as number]),
         )
-      : jointAngleState ?? {};
+      : (jointAngleState ?? {});
     const normalizedAngleState = normalizeViewerJointAngleState(jointControlJoints, nextAngleState);
+    const changedPanelAngles = Object.fromEntries(
+      Object.entries(normalizedAngleState).filter(
+        ([name, angle]) =>
+          !isSameJointAngle(previousAppliedJointAngleStateRef.current[name], angle),
+      ),
+    );
     let shouldRefresh = false;
 
-    if (Object.keys(normalizedAngleState).length > 0) {
-      if (patchJointPanelAngles(normalizedAngleState)) {
-        shouldRefresh = true;
-      }
+    if (Object.keys(changedPanelAngles).length > 0) {
+      patchJointPanelAngles(changedPanelAngles);
     }
 
     Object.entries(jointMotionState ?? {}).forEach(([name, motion]) => {
+      if (!motion || isSameJointMotion(previousAppliedJointMotionStateRef.current[name], motion)) {
+        return;
+      }
+
       const jointKey = resolveViewerJointKey(jointControlJoints, name);
       const joint = jointKey ? jointControlRobot.joints?.[jointKey] : undefined;
       if (!joint || !motion) {
@@ -591,30 +683,50 @@ export const useURDFViewerController = ({
       }
 
       if (typeof motion.angle === 'number' && isSingleDofJoint(joint)) {
-        joint.setJointValue?.(motion.angle);
-        shouldRefresh = true;
+        const currentAngle = Number(joint.angle ?? joint.jointValue);
+        if (!isSameJointAngle(currentAngle, motion.angle)) {
+          joint.setJointValue?.(motion.angle);
+          shouldRefresh = true;
+        }
       }
 
-      if (motion.quaternion && typeof (joint as any).setJointQuaternion === 'function') {
+      if (
+        motion.quaternion &&
+        typeof (joint as any).setJointQuaternion === 'function' &&
+        !isSameJointQuaternion((joint as any).quaternion, motion.quaternion)
+      ) {
         (joint as any).setJointQuaternion(motion.quaternion);
         shouldRefresh = true;
       }
     });
 
     if (!jointMotionState) {
-      Object.entries(normalizedAngleState).forEach(([name, angle]) => {
+      Object.entries(changedPanelAngles).forEach(([name, angle]) => {
         const joint = jointControlRobot.joints?.[name];
         if (isSingleDofJoint(joint)) {
-          joint.setJointValue?.(angle);
-          shouldRefresh = true;
+          const currentAngle = Number(joint.angle ?? joint.jointValue);
+          if (!isSameJointAngle(currentAngle, angle)) {
+            joint.setJointValue?.(angle);
+            shouldRefresh = true;
+          }
         }
       });
     }
 
+    previousAppliedJointAngleStateRef.current = normalizedAngleState;
+    previousAppliedJointMotionStateRef.current = jointMotionState ? { ...jointMotionState } : {};
+
     if (shouldRefresh) {
       requestSceneRefresh();
     }
-  }, [jointAngleState, jointControlJoints, jointControlRobot, jointMotionState, patchJointPanelAngles, requestSceneRefresh]);
+  }, [
+    jointAngleState,
+    jointControlJoints,
+    jointControlRobot,
+    jointMotionState,
+    patchJointPanelAngles,
+    requestSceneRefresh,
+  ]);
 
   const handleJointAngleChange = useCallback(
     (jointName: string, angle: number) => {
@@ -634,9 +746,7 @@ export const useURDFViewerController = ({
         ? Number(joint.angle ?? joint.jointValue)
         : angle;
 
-      if (patchJointPanelAngles({ [jointKey]: resolvedAngle })) {
-        shouldRefresh = true;
-      }
+      patchJointPanelAngles({ [jointKey]: resolvedAngle });
 
       emitJointChangeToApp(joint.name || jointKey || jointName, resolvedAngle);
 
@@ -644,19 +754,28 @@ export const useURDFViewerController = ({
         requestSceneRefresh();
       }
     },
-    [emitJointChangeToApp, jointControlJoints, jointControlRobot, patchJointPanelAngles, requestSceneRefresh]
+    [
+      emitJointChangeToApp,
+      jointControlJoints,
+      jointControlRobot,
+      patchJointPanelAngles,
+      requestSceneRefresh,
+    ],
   );
 
-  const handleActiveJointChange = useCallback((jointName: string | null) => {
-    if (!jointName) {
-      setPanelActiveJoint(null);
-      return;
-    }
+  const handleActiveJointChange = useCallback(
+    (jointName: string | null) => {
+      if (!jointName) {
+        setPanelActiveJoint(null);
+        return;
+      }
 
-    const jointKey = resolveViewerJointKey(jointControlJoints, jointName);
-    const joint = jointKey ? jointControlRobot?.joints?.[jointKey] : undefined;
-    setPanelActiveJoint(isSingleDofJoint(joint) ? jointKey : null);
-  }, [jointControlJoints, jointControlRobot, setPanelActiveJoint]);
+      const jointKey = resolveViewerJointKey(jointControlJoints, jointName);
+      const joint = jointKey ? jointControlRobot?.joints?.[jointKey] : undefined;
+      setPanelActiveJoint(isSingleDofJoint(joint) ? jointKey : null);
+    },
+    [jointControlJoints, jointControlRobot, setPanelActiveJoint],
+  );
 
   const handleJointChangeCommit = useCallback(
     (jointName: string, angle: number) => {
@@ -673,9 +792,7 @@ export const useURDFViewerController = ({
         : angle;
 
       if (jointKey) {
-        if (patchJointPanelAngles({ [jointKey]: resolvedAngle })) {
-          shouldRefresh = true;
-        }
+        patchJointPanelAngles({ [jointKey]: resolvedAngle });
       }
       (joint as { finalizeJointValue?: () => void } | undefined)?.finalizeJointValue?.();
 
@@ -686,7 +803,13 @@ export const useURDFViewerController = ({
       const resolvedJointName = joint?.name || jointKey || jointName;
       emitJointChangeToApp(resolvedJointName, resolvedAngle);
     },
-    [emitJointChangeToApp, jointControlJoints, jointControlRobot, patchJointPanelAngles, requestSceneRefresh]
+    [
+      emitJointChangeToApp,
+      jointControlJoints,
+      jointControlRobot,
+      patchJointPanelAngles,
+      requestSceneRefresh,
+    ],
   );
 
   const handleResetJoints = useCallback(() => {
@@ -710,7 +833,12 @@ export const useURDFViewerController = ({
   }, [handleJointAngleChange, handleJointChangeCommit, jointControlRobot]);
 
   const handleSelectWrapper = useCallback(
-    (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision', helperKind?: ViewerHelperKind) => {
+    (
+      type: 'link' | 'joint',
+      id: string,
+      subType?: 'visual' | 'collision',
+      helperKind?: ViewerHelperKind,
+    ) => {
       if (transformPendingRef.current) return;
 
       onSelect?.(type, id, subType, helperKind);
@@ -720,7 +848,7 @@ export const useURDFViewerController = ({
       );
       setPanelActiveJoint(activeJointKey);
     },
-    [jointControlJoints, jointControlRobot, onSelect, setPanelActiveJoint]
+    [jointControlJoints, jointControlRobot, onSelect, setPanelActiveJoint],
   );
 
   const handleHoverWrapper = useCallback(
@@ -733,7 +861,7 @@ export const useURDFViewerController = ({
     ) => {
       onHover?.(type, id, subType, objectIndex, helperKind);
     },
-    [onHover]
+    [onHover],
   );
 
   const handleAutoFitGround = useCallback(() => {
@@ -754,21 +882,20 @@ export const useURDFViewerController = ({
     requestSceneRefresh();
   }, [groundPlaneOffset, requestSceneRefresh, robot]);
 
-  const handleToolModeChange = useCallback((nextMode: ToolMode) => {
-    setToolModeState({
-      scopeKey: normalizedToolModeScopeKey,
-      explicit: true,
-      mode: nextMode,
-    });
+  const handleToolModeChange = useCallback(
+    (nextMode: ToolMode) => {
+      setToolModeState({
+        scopeKey: normalizedToolModeScopeKey,
+        explicit: true,
+        mode: nextMode,
+      });
 
-    if (nextMode !== 'measure') {
-      setMeasureState((prev) =>
-        !prev.hoverTarget
-          ? prev
-          : { ...prev, hoverTarget: null }
-      );
-    }
-  }, [normalizedToolModeScopeKey]);
+      if (nextMode !== 'measure') {
+        setMeasureState((prev) => (!prev.hoverTarget ? prev : { ...prev, hoverTarget: null }));
+      }
+    },
+    [normalizedToolModeScopeKey],
+  );
 
   const handleCloseMeasureTool = useCallback(() => {
     setMeasureState(createEmptyMeasureState());
@@ -815,10 +942,7 @@ export const useURDFViewerController = ({
 
   useEffect(() => {
     if (!jointControlRobot) return;
-    const activeJointKey = resolveActiveViewerJointKeyFromSelection(
-      jointControlJoints,
-      selection,
-    );
+    const activeJointKey = resolveActiveViewerJointKeyFromSelection(jointControlJoints, selection);
     setPanelActiveJoint(activeJointKey);
   }, [jointControlJoints, jointControlRobot, selection, setPanelActiveJoint]);
 

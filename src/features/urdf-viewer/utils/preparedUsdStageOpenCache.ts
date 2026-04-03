@@ -1,10 +1,10 @@
 import type { RobotFile } from '@/types';
 import type { PreparedUsdStageOpenData } from './usdStageOpenPreparation';
+import { collectUsdStageOpenRelevantVirtualPaths, toVirtualUsdPath } from './usdPreloadSources.ts';
 import {
-  collectUsdStageOpenRelevantVirtualPaths,
-  toVirtualUsdPath,
-} from './usdPreloadSources.ts';
-import { prepareUsdStageOpenDataCore } from './usdStageOpenPreparationCore.ts';
+  clearNormalizedUsdBlobCache,
+  prepareUsdStageOpenDataCore,
+} from './usdStageOpenPreparationCore.ts';
 import {
   buildBlobBackedLargeTextUsdSignature,
   isBlobBackedLargeTextUsd,
@@ -20,6 +20,7 @@ type PreparedUsdStageOpenWorkerLoader = (
   assets: Record<string, string>,
 ) => Promise<PreparedUsdStageOpenData>;
 type PreparedUsdStageOpenMainThreadLoader = PreparedUsdStageOpenWorkerLoader;
+type PreparedUsdStageOpenCacheNamespace = 'shared' | 'worker' | 'main-thread';
 
 const PREPARED_USD_STAGE_OPEN_CACHE_LIMIT = 8;
 const preparedUsdStageOpenCache = new Map<string, Promise<PreparedUsdStageOpenData>>();
@@ -56,15 +57,17 @@ function buildScopedAvailableFilesSignature(
   return availableFiles
     .filter((file) => file.format !== 'mesh' && relevantPathSet.has(toVirtualUsdPath(file.name)))
     .sort((left, right) => left.name.localeCompare(right.name))
-    .map((file) => [
-      file.name,
-      file.format,
-      file.blobUrl ?? '',
-      isBlobBackedLargeTextUsd(file)
-        ? buildBlobBackedLargeTextUsdSignature(file, hashString)
-        : hashString(file.content),
-      String(file.content.length),
-    ].join('\u0000'))
+    .map((file) =>
+      [
+        file.name,
+        file.format,
+        file.blobUrl ?? '',
+        isBlobBackedLargeTextUsd(file)
+          ? buildBlobBackedLargeTextUsdSignature(file, hashString)
+          : hashString(file.content),
+        String(file.content.length),
+      ].join('\u0000'),
+    )
     .join('\n');
 }
 
@@ -95,15 +98,23 @@ export function buildPreparedUsdStageOpenCacheKey(
   ].join('\n---\n');
 }
 
+function buildPreparedUsdStageOpenScopedCacheKey(
+  namespace: PreparedUsdStageOpenCacheNamespace,
+  sourceFile: StageOpenSourceFile,
+  availableFiles: StageOpenAvailableFile[],
+  assets: Record<string, string>,
+): string {
+  return `${namespace}\n===\n${buildPreparedUsdStageOpenCacheKey(sourceFile, availableFiles, assets)}`;
+}
+
 function hasPreparedRootStagePayload(result: PreparedUsdStageOpenData): boolean {
-  return result.preloadFiles.some((entry) => (
-    entry.path === result.stageSourcePath
-    && (
-      !!entry.blob
-      || ((entry.bytes instanceof ArrayBuffer || ArrayBuffer.isView(entry.bytes))
-        && entry.bytes.byteLength > 0)
-    )
-  ));
+  return result.preloadFiles.some(
+    (entry) =>
+      entry.path === result.stageSourcePath &&
+      (!!entry.blob ||
+        ((entry.bytes instanceof ArrayBuffer || ArrayBuffer.isView(entry.bytes)) &&
+          entry.bytes.byteLength > 0)),
+  );
 }
 
 export async function loadPreparedUsdStageOpenDataCached(
@@ -111,8 +122,14 @@ export async function loadPreparedUsdStageOpenDataCached(
   availableFiles: StageOpenAvailableFile[],
   assets: Record<string, string>,
   loader: () => Promise<PreparedUsdStageOpenData>,
+  cacheNamespace: PreparedUsdStageOpenCacheNamespace = 'shared',
 ): Promise<PreparedUsdStageOpenData> {
-  const cacheKey = buildPreparedUsdStageOpenCacheKey(sourceFile, availableFiles, assets);
+  const cacheKey = buildPreparedUsdStageOpenScopedCacheKey(
+    cacheNamespace,
+    sourceFile,
+    availableFiles,
+    assets,
+  );
   const cachedPromise = preparedUsdStageOpenCache.get(cacheKey);
   if (cachedPromise) {
     return cachedPromise;
@@ -154,10 +171,13 @@ export async function loadPreparedUsdStageOpenDataFromWorker(
     async () => {
       const result = await prepareWithWorker(sourceFile, availableFiles, assets);
       if (!hasPreparedRootStagePayload(result)) {
-        throw new Error(`USD stage worker returned no root stage payload for "${sourceFile.name}".`);
+        throw new Error(
+          `USD stage worker returned no root stage payload for "${sourceFile.name}".`,
+        );
       }
       return result;
     },
+    'worker',
   );
 }
 
@@ -174,15 +194,19 @@ export async function loadPreparedUsdStageOpenDataOnMainThread(
     async () => {
       const result = await prepareOnMainThread(sourceFile, availableFiles, assets);
       if (!hasPreparedRootStagePayload(result)) {
-        throw new Error(`USD stage preparation returned no root stage payload for "${sourceFile.name}".`);
+        throw new Error(
+          `USD stage preparation returned no root stage payload for "${sourceFile.name}".`,
+        );
       }
       return result;
     },
+    'main-thread',
   );
 }
 
 export function clearPreparedUsdStageOpenCache(): void {
   preparedUsdStageOpenCache.clear();
+  clearNormalizedUsdBlobCache();
 }
 
 export function prewarmPreparedUsdStageOpenDataInBackground(
@@ -190,11 +214,7 @@ export function prewarmPreparedUsdStageOpenDataInBackground(
   availableFiles: StageOpenAvailableFile[],
   assets: Record<string, string>,
 ): void {
-  void loadPreparedUsdStageOpenDataFromWorker(
-    sourceFile,
-    availableFiles,
-    assets,
-  ).catch((error) => {
+  void loadPreparedUsdStageOpenDataFromWorker(sourceFile, availableFiles, assets).catch((error) => {
     logRuntimeFailure(
       'prewarmPreparedUsdStageOpenDataInBackground',
       new Error(

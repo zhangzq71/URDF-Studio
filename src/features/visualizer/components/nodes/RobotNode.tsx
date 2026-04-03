@@ -2,7 +2,11 @@ import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { type AppMode, RobotState, UrdfJoint } from '@/types';
-import { getCollisionGeometryEntries, getVisualGeometryEntries, isTransparentDisplayLink } from '@/core/robot';
+import {
+  getCollisionGeometryEntries,
+  getVisualGeometryEntries,
+  isTransparentDisplayLink,
+} from '@/core/robot';
 import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
@@ -41,10 +45,16 @@ interface CommonVisualizerProps {
   assets: Record<string, string>;
   lang: Language;
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
+  collisionRevealComponentIdByLinkId?: ReadonlyMap<string, string>;
+  collisionRevealComponentId?: string;
+  revealedCollisionComponentIds?: ReadonlySet<string>;
+  prewarmedCollisionMeshLoadKeys?: ReadonlySet<string>;
+  readyCollisionMeshLoadKeys?: ReadonlySet<string>;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
   onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
   onMeshResolved?: (meshLoadKey: string) => void;
+  onPrewarmedMeshResolved?: (meshLoadKey: string) => void;
 }
 
 interface RobotNodeProps extends CommonVisualizerProps {
@@ -72,7 +82,7 @@ interface PropagationEventLike {
  * - Uses unified scene display toggles while runtime mode still drives
  *   interaction-specific branches such as transform behavior
  */
-export const RobotNode = memo(function RobotNode({
+export const RobotNode = memo<RobotNodeProps>(function RobotNode({
   linkId,
   robot,
   childJointsByParent,
@@ -98,10 +108,16 @@ export const RobotNode = memo(function RobotNode({
   assets,
   lang,
   colladaRootNormalizationHints,
+  collisionRevealComponentIdByLinkId,
+  collisionRevealComponentId,
+  revealedCollisionComponentIds,
+  prewarmedCollisionMeshLoadKeys,
+  readyCollisionMeshLoadKeys,
   onRegisterJointPivot,
   onRegisterJointMotion,
   onRegisterCollisionRef,
   onMeshResolved,
+  onPrewarmedMeshResolved,
 }: RobotNodeProps) {
   const t = translations[lang];
 
@@ -130,29 +146,51 @@ export const RobotNode = memo(function RobotNode({
   const isSelected = robot.selection.type === 'link' && robot.selection.id === linkId;
   const selectionSubType = robot.selection.subType;
   const isRoot = linkId === robot.rootLinkId;
-  const isHovered = useSelectionStore((state) => (
-    state.hoveredSelection.type === 'link' && state.hoveredSelection.id === linkId
-  ));
-  const isHelperHovered = useSelectionStore((state) => (
-    state.hoveredSelection.type === 'link'
-    && state.hoveredSelection.id === linkId
-    && state.hoveredSelection.subType === undefined
-    && state.hoveredSelection.objectIndex === undefined
-  ));
-  const isHelperSelected = isSelected && !selectionSubType && robot.selection.objectIndex === undefined;
+  const isHovered = useSelectionStore(
+    (state) => state.hoveredSelection.type === 'link' && state.hoveredSelection.id === linkId,
+  );
+  const isInertiaHovered = useSelectionStore(
+    (state) =>
+      state.hoveredSelection.type === 'link' &&
+      state.hoveredSelection.id === linkId &&
+      state.hoveredSelection.helperKind === 'inertia',
+  );
+  const isCenterOfMassHovered = useSelectionStore(
+    (state) =>
+      state.hoveredSelection.type === 'link' &&
+      state.hoveredSelection.id === linkId &&
+      state.hoveredSelection.helperKind === 'center-of-mass',
+  );
+  const isHelperSelected =
+    isSelected && !selectionSubType && robot.selection.objectIndex === undefined;
   const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
-  const linkHoverTarget = useMemo<VisualizerHoverTarget>(() => ({ type: 'link', id: linkId }), [linkId]);
+  const linkHoverTarget = useMemo<VisualizerHoverTarget>(
+    () => ({ type: 'link', id: linkId }),
+    [linkId],
+  );
+  const originAxesHoverTarget = useMemo<VisualizerHoverTarget>(
+    () => ({ type: 'link', id: linkId, helperKind: 'origin-axes' }),
+    [linkId],
+  );
+  const inertiaHoverTarget = useMemo<VisualizerHoverTarget>(
+    () => ({ type: 'link', id: linkId, helperKind: 'inertia' }),
+    [linkId],
+  );
+  const centerOfMassHoverTarget = useMemo<VisualizerHoverTarget>(
+    () => ({ type: 'link', id: linkId, helperKind: 'center-of-mass' }),
+    [linkId],
+  );
   const linkHoverUserData = useMemo(
-    () => createVisualizerHoverUserData(linkHoverTarget, 'origin-axes'),
-    [linkHoverTarget],
+    () => createVisualizerHoverUserData(originAxesHoverTarget, 'origin-axes'),
+    [originAxesHoverTarget],
   );
   const inertiaHoverUserData = useMemo(
-    () => createVisualizerHoverUserData(linkHoverTarget, 'inertia'),
-    [linkHoverTarget],
+    () => createVisualizerHoverUserData(inertiaHoverTarget, 'inertia'),
+    [inertiaHoverTarget],
   );
   const centerOfMassHoverUserData = useMemo(
-    () => createVisualizerHoverUserData(linkHoverTarget, 'center-of-mass'),
-    [linkHoverTarget],
+    () => createVisualizerHoverUserData(centerOfMassHoverTarget, 'center-of-mass'),
+    [centerOfMassHoverTarget],
   );
 
   // Refs for dragging selected collision geometry in the merged visualizer scene
@@ -162,9 +200,13 @@ export const RobotNode = memo(function RobotNode({
   const visualEntries = getVisualGeometryEntries(link);
   const collisionEntries = getCollisionGeometryEntries(link);
   const isCollisionSelected = isSelected && selectionSubType === 'collision';
-  const selectedCollisionObjectIndex = isCollisionSelected ? robot.selection.objectIndex ?? 0 : null;
+  const selectedCollisionObjectIndex = isCollisionSelected
+    ? (robot.selection.objectIndex ?? 0)
+    : null;
   const selectedCollisionRef =
-    selectedCollisionObjectIndex !== null ? collisionRefs[selectedCollisionObjectIndex] ?? null : null;
+    selectedCollisionObjectIndex !== null
+      ? (collisionRefs[selectedCollisionObjectIndex] ?? null)
+      : null;
 
   const getCollisionRefHandler = useCallback((objectIndex: number) => {
     if (!collisionRefHandlersRef.current[objectIndex]) {
@@ -181,18 +223,12 @@ export const RobotNode = memo(function RobotNode({
 
   // Register collision ref with parent when selected
   useEffect(() => {
-    if (
-      onRegisterCollisionRef &&
-      selectedCollisionObjectIndex !== null
-    ) {
+    if (onRegisterCollisionRef && selectedCollisionObjectIndex !== null) {
       onRegisterCollisionRef(linkId, selectedCollisionObjectIndex, selectedCollisionRef);
     }
 
     return () => {
-      if (
-        onRegisterCollisionRef &&
-        selectedCollisionObjectIndex !== null
-      ) {
+      if (onRegisterCollisionRef && selectedCollisionObjectIndex !== null) {
         onRegisterCollisionRef(linkId, selectedCollisionObjectIndex, null);
       }
     };
@@ -204,39 +240,64 @@ export const RobotNode = memo(function RobotNode({
 
   const handleLinkHoverLeave = useCallback(() => {
     const hovered = useSelectionStore.getState().hoveredSelection;
-    if (hovered.type === 'link' && hovered.id === linkId && !hovered.subType && hovered.objectIndex === undefined) {
+    if (
+      hovered.type === 'link' &&
+      hovered.id === linkId &&
+      !hovered.subType &&
+      hovered.objectIndex === undefined
+    ) {
       useSelectionStore.getState().clearHover();
     }
   }, [linkId]);
 
-  const handleHelperClick = useCallback((event: any) => {
-    const resolvedTarget = resolveVisualizerInteractionTargetFromHits(event.object ?? null, event.intersections ?? [], {
-      interactionLayerPriority,
-    });
-    handleLinkClick(event, resolvedTarget);
-  }, [handleLinkClick, interactionLayerPriority]);
+  const handleHelperClick = useCallback(
+    (event: any) => {
+      const resolvedTarget = resolveVisualizerInteractionTargetFromHits(
+        event.object ?? null,
+        event.intersections ?? [],
+        {
+          interactionLayerPriority,
+        },
+      );
+      handleLinkClick(event, resolvedTarget);
+    },
+    [handleLinkClick, interactionLayerPriority],
+  );
 
-  const handleHelperPointerOver = useCallback((event: any) => {
-    if (event.buttons !== 0) {
-      return;
-    }
+  const handleHelperPointerOver = useCallback(
+    (event: any, fallbackTarget: VisualizerHoverTarget) => {
+      if (event.buttons !== 0) {
+        return;
+      }
 
-    event.stopPropagation();
-    handleLinkHoverEnter();
-  }, [handleLinkHoverEnter]);
+      event.stopPropagation();
+      const resolvedTarget = resolveVisualizerInteractionTargetFromHits(
+        event.object ?? null,
+        event.intersections ?? [],
+        {
+          interactionLayerPriority,
+        },
+      );
+      setHoveredSelection(resolvedTarget ?? fallbackTarget);
+    },
+    [interactionLayerPriority, setHoveredSelection],
+  );
 
-  const handleHelperPointerOut = useCallback((event: any) => {
-    event.stopPropagation();
-    handleLinkHoverLeave();
-  }, [handleLinkHoverLeave]);
+  const handleHelperPointerOut = useCallback(
+    (event: any) => {
+      event.stopPropagation();
+      handleLinkHoverLeave();
+    },
+    [handleLinkHoverLeave],
+  );
 
   const showRootAxes = isRoot && showOrigin;
-  const shouldRenderGeometry = showGeometry
-    || showCollision
-    || visualEntries.length > 0
-    || collisionEntries.length > 0;
+  const shouldRenderGeometry =
+    showGeometry || showCollision || visualEntries.length > 0 || collisionEntries.length > 0;
   const showLinkLabel = showLabels;
   const showRootLabel = isRoot && showLabels;
+  const effectiveCollisionRevealComponentId =
+    collisionRevealComponentIdByLinkId?.get(linkId) ?? collisionRevealComponentId;
 
   if (isTransparentLink) {
     return (
@@ -269,10 +330,16 @@ export const RobotNode = memo(function RobotNode({
             assets={assets}
             lang={lang}
             colladaRootNormalizationHints={colladaRootNormalizationHints}
+            collisionRevealComponentIdByLinkId={collisionRevealComponentIdByLinkId}
+            collisionRevealComponentId={collisionRevealComponentId}
+            revealedCollisionComponentIds={revealedCollisionComponentIds}
+            prewarmedCollisionMeshLoadKeys={prewarmedCollisionMeshLoadKeys}
+            readyCollisionMeshLoadKeys={readyCollisionMeshLoadKeys}
             onRegisterJointPivot={onRegisterJointPivot}
             onRegisterJointMotion={onRegisterJointMotion}
             onRegisterCollisionRef={onRegisterCollisionRef}
             onMeshResolved={onMeshResolved}
+            onPrewarmedMeshResolved={onPrewarmedMeshResolved}
           />
         ))}
       </group>
@@ -285,36 +352,43 @@ export const RobotNode = memo(function RobotNode({
         <group
           userData={{ isHelper: true, ...linkHoverUserData }}
           onClick={handleHelperClick}
-          onPointerOver={handleHelperPointerOver}
+          onPointerOver={(event) => handleHelperPointerOver(event, originAxesHoverTarget)}
           onPointerOut={handleHelperPointerOut}
         >
-            <ThickerAxes size={frameSize} onClick={handleHelperClick} />
-            {showRootLabel && (
-                <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
-                    <div
-                        style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
-                        className="pointer-events-auto cursor-pointer select-none"
-                        onMouseEnter={handleLinkHoverEnter}
-                        onMouseLeave={handleLinkHoverLeave}
-                        onClick={handleLinkClick}
-                    >
-                      {(isSelected || isHovered) ? (
-                        <div
-                          className={`
+          <ThickerAxes size={frameSize} onClick={handleHelperClick} />
+          {showRootLabel && (
+            <Html
+              center
+              position={[0, 0, 0]}
+              distanceFactor={1.5}
+              className="pointer-events-none"
+              zIndexRange={[0, 0]}
+            >
+              <div
+                style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
+                className="pointer-events-auto cursor-pointer select-none"
+                onMouseEnter={handleLinkHoverEnter}
+                onMouseLeave={handleLinkHoverLeave}
+                onClick={handleLinkClick}
+              >
+                {isSelected || isHovered ? (
+                  <div
+                    className={`
                             px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
-                            ${isSelected
-                              ? 'bg-blue-600 text-white border-blue-400 z-50'
-                              : 'bg-white dark:bg-element-bg text-slate-800 dark:text-slate-200 border-slate-300 dark:border-border-black hover:bg-slate-100 dark:hover:bg-element-hover'
+                            ${
+                              isSelected
+                                ? 'bg-blue-600 text-white border-blue-400 z-50'
+                                : 'bg-white dark:bg-element-bg text-slate-800 dark:text-slate-200 border-slate-300 dark:border-border-black hover:bg-slate-100 dark:hover:bg-element-hover'
                             }
                           `}
-                        >
-                          {link.name} {t.baseLabelSuffix}
-                        </div>
-                      ) : (
-                        <div className="w-2 h-2 rounded-full bg-slate-400/80 hover:scale-150 transition-transform" />
-                      )}
-                    </div>
-                </Html>
+                  >
+                    {link.name} {t.baseLabelSuffix}
+                  </div>
+                ) : (
+                  <div className="w-2 h-2 rounded-full bg-slate-400/80 hover:scale-150 transition-transform" />
+                )}
+              </div>
+            </Html>
           )}
         </group>
       )}
@@ -340,7 +414,12 @@ export const RobotNode = memo(function RobotNode({
               geometryId={entry.bodyIndex === null ? 'primary' : `extra-${entry.bodyIndex + 1}`}
               objectIndex={entry.objectIndex}
               colladaRootNormalizationHints={colladaRootNormalizationHints}
+              collisionRevealComponentId={effectiveCollisionRevealComponentId}
+              revealedCollisionComponentIds={revealedCollisionComponentIds}
+              prewarmedCollisionMeshLoadKeys={prewarmedCollisionMeshLoadKeys}
+              readyCollisionMeshLoadKeys={readyCollisionMeshLoadKeys}
               onMeshResolved={onMeshResolved}
+              onPrewarmedMeshResolved={onPrewarmedMeshResolved}
             />
           ))}
 
@@ -363,7 +442,12 @@ export const RobotNode = memo(function RobotNode({
               geometryId={entry.bodyIndex === null ? 'primary' : `extra-${entry.bodyIndex + 1}`}
               objectIndex={entry.objectIndex}
               colladaRootNormalizationHints={colladaRootNormalizationHints}
+              collisionRevealComponentId={effectiveCollisionRevealComponentId}
+              revealedCollisionComponentIds={revealedCollisionComponentIds}
+              prewarmedCollisionMeshLoadKeys={prewarmedCollisionMeshLoadKeys}
+              readyCollisionMeshLoadKeys={readyCollisionMeshLoadKeys}
               onMeshResolved={onMeshResolved}
+              onPrewarmedMeshResolved={onPrewarmedMeshResolved}
             />
           ))}
         </>
@@ -374,10 +458,10 @@ export const RobotNode = memo(function RobotNode({
         <group
           userData={{ isHelper: true, ...inertiaHoverUserData }}
           onClick={handleHelperClick}
-          onPointerOver={handleHelperPointerOver}
+          onPointerOver={(event) => handleHelperPointerOver(event, inertiaHoverTarget)}
           onPointerOut={handleHelperPointerOut}
         >
-          <InertiaBox link={link} hovered={isHelperHovered} selected={isHelperSelected} />
+          <InertiaBox link={link} hovered={isInertiaHovered} selected={isHelperSelected} />
         </group>
       )}
 
@@ -386,10 +470,14 @@ export const RobotNode = memo(function RobotNode({
         <group
           userData={{ isHelper: true, ...centerOfMassHoverUserData }}
           onClick={handleHelperClick}
-          onPointerOver={handleHelperPointerOver}
+          onPointerOver={(event) => handleHelperPointerOver(event, centerOfMassHoverTarget)}
           onPointerOut={handleHelperPointerOut}
         >
-          <LinkCenterOfMass link={link} hovered={isHelperHovered} selected={isHelperSelected} />
+          <LinkCenterOfMass
+            link={link}
+            hovered={isCenterOfMassHovered}
+            selected={isHelperSelected}
+          />
         </group>
       )}
 
@@ -407,7 +495,13 @@ export const RobotNode = memo(function RobotNode({
       */}
 
       {showLinkLabel && (
-        <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[100, 0]}>
+        <Html
+          center
+          position={[0, 0, 0]}
+          distanceFactor={1.5}
+          className="pointer-events-none"
+          zIndexRange={[100, 0]}
+        >
           <div
             style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
             className="pointer-events-auto cursor-pointer select-none"
@@ -415,13 +509,14 @@ export const RobotNode = memo(function RobotNode({
             onMouseLeave={handleLinkHoverLeave}
             onClick={handleLinkClick}
           >
-            {(isSelected || isHovered) ? (
+            {isSelected || isHovered ? (
               <div
                 className={`
                   px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
-                  ${isSelected
-                    ? 'bg-blue-600 text-white border-blue-400 z-50'
-                    : 'bg-white dark:bg-element-bg text-blue-700 dark:text-blue-200 border-slate-300 dark:border-border-black hover:bg-slate-100 dark:hover:bg-element-hover'
+                  ${
+                    isSelected
+                      ? 'bg-blue-600 text-white border-blue-400 z-50'
+                      : 'bg-white dark:bg-element-bg text-blue-700 dark:text-blue-200 border-slate-300 dark:border-border-black hover:bg-slate-100 dark:hover:bg-element-hover'
                   }
                 `}
               >
@@ -434,7 +529,7 @@ export const RobotNode = memo(function RobotNode({
         </Html>
       )}
 
-      {childJoints.map(joint => (
+      {childJoints.map((joint) => (
         <JointNode
           key={joint.id}
           joint={joint}
@@ -459,15 +554,21 @@ export const RobotNode = memo(function RobotNode({
           interactionLayerPriority={interactionLayerPriority}
           transformMode={transformMode}
           depth={depth + 1}
-            assets={assets}
-            lang={lang}
-            colladaRootNormalizationHints={colladaRootNormalizationHints}
-            onRegisterJointPivot={onRegisterJointPivot}
-            onRegisterJointMotion={onRegisterJointMotion}
-            onRegisterCollisionRef={onRegisterCollisionRef}
-            onMeshResolved={onMeshResolved}
-          />
-        ))}
-      </group>
+          assets={assets}
+          lang={lang}
+          colladaRootNormalizationHints={colladaRootNormalizationHints}
+          collisionRevealComponentIdByLinkId={collisionRevealComponentIdByLinkId}
+          collisionRevealComponentId={collisionRevealComponentId}
+          revealedCollisionComponentIds={revealedCollisionComponentIds}
+          prewarmedCollisionMeshLoadKeys={prewarmedCollisionMeshLoadKeys}
+          readyCollisionMeshLoadKeys={readyCollisionMeshLoadKeys}
+          onRegisterJointPivot={onRegisterJointPivot}
+          onRegisterJointMotion={onRegisterJointMotion}
+          onRegisterCollisionRef={onRegisterCollisionRef}
+          onMeshResolved={onMeshResolved}
+          onPrewarmedMeshResolved={onPrewarmedMeshResolved}
+        />
+      ))}
+    </group>
   );
 });

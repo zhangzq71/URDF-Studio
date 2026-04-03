@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { InteractionHelperKind } from '@/types';
 import type { VisualizerInteractiveLayer } from './interactiveLayerPriority';
 import { isHoverSupportSurface } from '@/shared/utils/three/hoverSupportSurface';
 
@@ -7,6 +8,7 @@ export interface VisualizerHoverTarget {
   id: string;
   subType?: 'visual' | 'collision';
   objectIndex?: number;
+  helperKind?: InteractionHelperKind;
 }
 
 export const VISUALIZER_HOVER_TARGET_KEY = '__visualizerHoverTarget';
@@ -89,9 +91,11 @@ function hasOverlayMaterial(object: THREE.Object3D | null): boolean {
       depthWrite?: boolean;
     };
 
-    return materialWithOverlayFlags.depthTest === false
-      || materialWithOverlayFlags.depthWrite === false
-      || materialWithOverlayFlags.colorWrite === false;
+    return (
+      materialWithOverlayFlags.depthTest === false ||
+      materialWithOverlayFlags.depthWrite === false ||
+      materialWithOverlayFlags.colorWrite === false
+    );
   });
 }
 
@@ -129,7 +133,9 @@ function getVisualizerInteractiveLayer(
   let current = object;
 
   while (current) {
-    const layer = current.userData?.[VISUALIZER_INTERACTIVE_LAYER_KEY] as VisualizerInteractiveLayer | undefined;
+    const layer = current.userData?.[VISUALIZER_INTERACTIVE_LAYER_KEY] as
+      | VisualizerInteractiveLayer
+      | undefined;
     if (layer) {
       return layer;
     }
@@ -185,7 +191,14 @@ function getTargetLayerScore(
   );
   const collisionBias = interactionLayerBias === 0 && target.subType === 'collision' ? 10_000 : 0;
 
-  return overlayBias + interactionLayerBias + collisionBias + helperBias + renderOrder - supportSurfacePenalty;
+  return (
+    overlayBias +
+    interactionLayerBias +
+    collisionBias +
+    helperBias +
+    renderOrder -
+    supportSurfacePenalty
+  );
 }
 
 function preferVisualizerHitCandidate(
@@ -197,14 +210,14 @@ function preferVisualizerHitCandidate(
   }
 
   if (current.isHelper !== next.isHelper) {
-    const nextHelperInForeground = next.isHelper
-      && next.distance + HELPER_FOREGROUND_DISTANCE_EPSILON < current.distance;
+    const nextHelperInForeground =
+      next.isHelper && next.distance + HELPER_FOREGROUND_DISTANCE_EPSILON < current.distance;
     if (nextHelperInForeground) {
       return next;
     }
 
-    const currentHelperInForeground = current.isHelper
-      && current.distance + HELPER_FOREGROUND_DISTANCE_EPSILON < next.distance;
+    const currentHelperInForeground =
+      current.isHelper && current.distance + HELPER_FOREGROUND_DISTANCE_EPSILON < next.distance;
     if (currentHelperInForeground) {
       return current;
     }
@@ -247,7 +260,10 @@ function collectResolvedVisualizerHits(
       continue;
     }
 
-    if ((hitObject as THREE.Mesh).isMesh && !hasPickableMaterial((hitObject as THREE.Mesh).material)) {
+    if (
+      (hitObject as THREE.Mesh).isMesh &&
+      !hasPickableMaterial((hitObject as THREE.Mesh).material)
+    ) {
       continue;
     }
 
@@ -277,18 +293,23 @@ function shouldDeprioritizeSupportSurfaceHit(
     return false;
   }
 
-  return resolvedHits.some((otherHit) =>
-    otherHit !== hit
-    && !otherHit.isSupportSurface
-    && otherHit.distance + SUPPORT_SURFACE_FOREGROUND_DISTANCE_EPSILON < hit.distance,
+  return resolvedHits.some(
+    (otherHit) =>
+      otherHit !== hit &&
+      !otherHit.isSupportSurface &&
+      otherHit.distance + SUPPORT_SURFACE_FOREGROUND_DISTANCE_EPSILON < hit.distance,
   );
 }
 
-export function getVisualizerHoverTarget(object: THREE.Object3D | null): VisualizerHoverTarget | null {
+export function getVisualizerHoverTarget(
+  object: THREE.Object3D | null,
+): VisualizerHoverTarget | null {
   let current = object;
 
   while (current) {
-    const target = current.userData?.[VISUALIZER_HOVER_TARGET_KEY] as VisualizerHoverTarget | undefined;
+    const target = current.userData?.[VISUALIZER_HOVER_TARGET_KEY] as
+      | VisualizerHoverTarget
+      | undefined;
     if (target) {
       return target;
     }
@@ -302,12 +323,14 @@ export function createVisualizerHoverUserData(
   target: VisualizerHoverTarget,
   interactionLayer?: VisualizerInteractiveLayer,
 ) {
-  return interactionLayer ? {
-    [VISUALIZER_HOVER_TARGET_KEY]: target,
-    [VISUALIZER_INTERACTIVE_LAYER_KEY]: interactionLayer,
-  } : {
-    [VISUALIZER_HOVER_TARGET_KEY]: target,
-  };
+  return interactionLayer
+    ? {
+        [VISUALIZER_HOVER_TARGET_KEY]: target,
+        [VISUALIZER_INTERACTIVE_LAYER_KEY]: interactionLayer,
+      }
+    : {
+        [VISUALIZER_HOVER_TARGET_KEY]: target,
+      };
 }
 
 export function findNearestVisualizerTargetFromHits(

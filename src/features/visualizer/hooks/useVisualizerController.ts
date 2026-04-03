@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { isSyntheticWorldRoot, resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
+import {
+  isSyntheticWorldRoot,
+  resolveLinkKey,
+  updateCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import type { AppMode, RobotState } from '@/types';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
@@ -12,6 +16,7 @@ import { useJointPivots } from './useJointPivots';
 import { useTransformControls } from './useTransformControls';
 import { useVisualizerState } from './useVisualizerState';
 import { clearMaterialCache } from '../utils';
+import { resetSyntheticRootGroundOffset } from '../utils/groundAlignment';
 import { shouldEnableMergedVisualizerJointTransformControls } from '../utils/mergedVisualizerSceneMode';
 
 interface UseVisualizerControllerProps {
@@ -49,10 +54,7 @@ export const useVisualizerController = ({
     handleRegisterJointMotion,
     selectedJointPivot,
     selectedJointMotion,
-  } = useJointPivots(
-    robot.selection.type,
-    robot.selection.id ?? undefined
-  );
+  } = useJointPivots(robot.selection.type, robot.selection.id ?? undefined);
   const { handleRegisterCollisionRef, selectedCollisionRef } = useCollisionRefs(
     robot.selection.type,
     robot.selection.id ?? undefined,
@@ -78,7 +80,7 @@ export const useVisualizerController = ({
     {
       onPreviewObjectChange: closedLoopDragSync.previewConstraintCompensation,
       onResetPreview: closedLoopDragSync.resetConstraintPreview,
-    }
+    },
   );
 
   const handleAutoFitGround = useCallback(() => {
@@ -143,11 +145,19 @@ export const useVisualizerController = ({
   }, [handleAutoFitGround, robot]);
 
   useEffect(() => {
+    if (!isSyntheticWorldRoot(robot, robot.rootLinkId)) {
+      return;
+    }
+
+    // Workspace synthetic roots own grounding through component transforms.
+    // Clear any legacy single-robot auto-fit offset so it does not leak into assembly mode.
+    resetSyntheticRootGroundOffset(robotRootRef.current);
+  }, [robot.rootLinkId]);
+
+  useEffect(() => {
     if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
 
-    const timers = [0, 80, 220].map((delay) =>
-      window.setTimeout(handleAutoFitGround, delay)
-    );
+    const timers = [0, 80, 220].map((delay) => window.setTimeout(handleAutoFitGround, delay));
 
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));

@@ -8,10 +8,7 @@ import defaultMotorLibraryData from './defaultMotorLibrary.json';
 
 export type MotorLibrary = Record<string, MotorSpec[]>;
 
-const MOTOR_LIBRARY_CATALOG_FILE_NAMES = new Set([
-  'motor-library.json',
-  'motor_library.json',
-]);
+const MOTOR_LIBRARY_CATALOG_FILE_NAMES = new Set(['motor-library.json', 'motor_library.json']);
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -89,7 +86,10 @@ export function appendUniqueMotorSpec(target: MotorSpec[], incoming: MotorSpec):
   target.push({ ...incoming });
 }
 
-export function mergeMotorLibraries(baseLibrary: MotorLibrary, incomingLibrary: MotorLibrary): MotorLibrary {
+export function mergeMotorLibraries(
+  baseLibrary: MotorLibrary,
+  incomingLibrary: MotorLibrary,
+): MotorLibrary {
   const mergedLibrary = cloneMotorLibrary(baseLibrary);
 
   Object.entries(incomingLibrary).forEach(([brand, motors]) => {
@@ -118,8 +118,10 @@ export function isMotorLibraryDataFilePath(path: string): boolean {
     return true;
   }
 
-  return normalizedPath.includes('motor library')
-    && (normalizedPath.endsWith('.txt') || normalizedPath.endsWith('.json'));
+  return (
+    normalizedPath.includes('motor library') &&
+    (normalizedPath.endsWith('.txt') || normalizedPath.endsWith('.json'))
+  );
 }
 
 const defaultMotorLibraryCatalog = parseMotorLibraryCatalog(
@@ -136,18 +138,18 @@ export function normalizeMotorLibrary(
   const normalized = cloneMotorLibrary(DEFAULT_MOTOR_LIBRARY);
 
   if (!library || typeof library !== 'object' || Array.isArray(library)) {
-    console.warn(`[motorLibrary] Invalid library payload from ${context}; using default library.`);
-    return normalized;
+    throw new Error(`[motorLibrary] Invalid library payload from ${context}.`);
   }
 
   if (Object.keys(library).length === 0) {
-    console.warn(`[motorLibrary] Empty library payload from ${context}; using default library.`);
-    return normalized;
+    throw new Error(`[motorLibrary] Empty library payload from ${context}.`);
   }
 
   Object.entries(library).forEach(([brand, motors]) => {
     if (!Array.isArray(motors)) {
-      console.warn(`[motorLibrary] Brand "${brand}" from ${context} is not a motor array; skipping.`);
+      console.warn(
+        `[motorLibrary] Brand "${brand}" from ${context} is not a motor array; skipping.`,
+      );
       return;
     }
 

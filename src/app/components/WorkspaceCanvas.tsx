@@ -12,6 +12,7 @@ import {
   SnapshotManager,
   type SnapshotCaptureAction,
   useAdaptiveInteractionQuality,
+  WorkspaceCanvasInteractionStateProvider,
   UsageGuide,
   WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
@@ -107,19 +108,15 @@ export const WorkspaceCanvas = ({
   const effectiveTheme = useWorkspaceCanvasTheme(theme);
   const [contextLost, setContextLost] = useState(false);
   const contextMenuCleanupRef = useRef<(() => void) | null>(null);
-  const {
-    dpr,
-    isInteracting,
-    beginInteraction,
-    endInteraction,
-    pulseInteraction,
-  } = useAdaptiveInteractionQuality();
+  const { dpr, isInteracting, beginInteraction, endInteraction, pulseInteraction } =
+    useAdaptiveInteractionQuality();
   const resolvedEnvironmentIntensity = useMemo(
-    () => resolveWorkspaceCanvasEnvironmentIntensity({
-      effectiveTheme,
-      environmentIntensity,
-      environmentIntensityByTheme,
-    }),
+    () =>
+      resolveWorkspaceCanvasEnvironmentIntensity({
+        effectiveTheme,
+        environmentIntensity,
+        environmentIntensityByTheme,
+      }),
     [effectiveTheme, environmentIntensity, environmentIntensityByTheme],
   );
 
@@ -136,7 +133,7 @@ export const WorkspaceCanvas = ({
         orbitControlsProps?.onEnd?.();
       },
     }),
-    [beginInteraction, endInteraction, orbitControlsProps]
+    [beginInteraction, endInteraction, orbitControlsProps],
   );
 
   const handleCreated = useCallback(
@@ -153,9 +150,8 @@ export const WorkspaceCanvas = ({
 
       contextMenuCleanupRef.current?.();
       const cleanupCanvasBlocker = attachContextMenuBlocker(canvas);
-      const cleanupSurfaceBlocker = surfaceEventTarget === canvas
-        ? () => {}
-        : attachContextMenuBlocker(surfaceEventTarget);
+      const cleanupSurfaceBlocker =
+        surfaceEventTarget === canvas ? () => {} : attachContextMenuBlocker(surfaceEventTarget);
       contextMenuCleanupRef.current = () => {
         cleanupSurfaceBlocker();
         cleanupCanvasBlocker();
@@ -174,9 +170,11 @@ export const WorkspaceCanvas = ({
       canvas.addEventListener('webglcontextlost', handleContextLost, false);
       canvas.addEventListener('webglcontextrestored', handleContextRestored, false);
 
-      (canvas as HTMLCanvasElement & {
-        __workspaceCanvasCleanup?: () => void;
-      }).__workspaceCanvasCleanup = () => {
+      (
+        canvas as HTMLCanvasElement & {
+          __workspaceCanvasCleanup?: () => void;
+        }
+      ).__workspaceCanvasCleanup = () => {
         canvas.removeEventListener('webglcontextlost', handleContextLost);
         canvas.removeEventListener('webglcontextrestored', handleContextRestored);
         contextMenuCleanupRef.current?.();
@@ -185,7 +183,7 @@ export const WorkspaceCanvas = ({
 
       onCreated?.(state);
     },
-    [onCreated, sceneRef]
+    [onCreated, sceneRef],
   );
 
   useEffect(() => {
@@ -204,7 +202,7 @@ export const WorkspaceCanvas = ({
       beginInteraction();
       onPointerDownCapture?.(event);
     },
-    [beginInteraction, onPointerDownCapture]
+    [beginInteraction, onPointerDownCapture],
   );
 
   const handleMouseMove = useCallback<React.MouseEventHandler<HTMLDivElement>>(
@@ -214,7 +212,7 @@ export const WorkspaceCanvas = ({
       }
       onMouseMove?.(event);
     },
-    [beginInteraction, onMouseMove]
+    [beginInteraction, onMouseMove],
   );
 
   const handleMouseUp = useCallback<React.MouseEventHandler<HTMLDivElement>>(
@@ -222,7 +220,7 @@ export const WorkspaceCanvas = ({
       endInteraction();
       onMouseUp?.(event);
     },
-    [endInteraction, onMouseUp]
+    [endInteraction, onMouseUp],
   );
 
   const handleMouseLeave = useCallback<React.MouseEventHandler<HTMLDivElement>>(
@@ -230,7 +228,7 @@ export const WorkspaceCanvas = ({
       endInteraction(0);
       onMouseLeave?.(event);
     },
-    [endInteraction, onMouseLeave]
+    [endInteraction, onMouseLeave],
   );
 
   return (
@@ -269,44 +267,52 @@ export const WorkspaceCanvas = ({
         onPointerMissed={onPointerMissed}
         translate="no"
       >
-        <CanvasRenderKeyInvalidator renderKey={renderKey} />
-        <CanvasResizeSync />
-        <color attach="background" args={[effectiveTheme === 'light' ? background.light : background.dark]} />
-        {/* Keep async environment assets isolated so static canvas scaffolding never blanks out. */}
-        <Suspense fallback={null}>
-          {environment === 'hdr' && (
-            <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0} />
-          )}
-          {environment === 'studio' && <NeutralStudioEnvironment intensity={resolvedEnvironmentIntensity} />}
-        </Suspense>
-        <SceneLighting
-          theme={effectiveTheme}
-          cameraFollowPrimary={cameraFollowPrimary}
-          // Viewer orbiting should not toggle shadows on/off. The delayed
-          // re-enable causes a visible flash on dense models like Unitree B2.
-          enableShadows={cameraFollowPrimary ? true : !isInteracting}
-        />
-        <SnapshotManager
-          actionRef={snapshotAction}
-          robotName={robotName}
-          theme={effectiveTheme}
-          groundOffset={groundOffset}
-        />
-        {/* Model/scene loaders can suspend during imports, but the horizon/grid/controls must stay visible. */}
-        <Suspense fallback={null}>
-          {children}
-        </Suspense>
-        <AdaptiveGroundPlane theme={effectiveTheme} groundOffset={groundOffset} showShadow />
-        {showWorldOriginAxes && <WorldOriginAxes />}
-        <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
-        <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
-          <GizmoViewport
-            axisColors={['#ef4444', '#22c55e', '#3b82f6']}
-            labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
-            axisHeadScale={0.9}
-            scale={34}
+        <WorkspaceCanvasInteractionStateProvider isInteracting={isInteracting}>
+          <CanvasRenderKeyInvalidator renderKey={renderKey} />
+          <CanvasResizeSync />
+          <color
+            attach="background"
+            args={[effectiveTheme === 'light' ? background.light : background.dark]}
           />
-        </GizmoHelper>
+          {/* Keep async environment assets isolated so static canvas scaffolding never blanks out. */}
+          <Suspense fallback={null}>
+            {environment === 'hdr' && (
+              <Environment
+                files="/potsdamer_platz_1k.hdr"
+                environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0}
+              />
+            )}
+            {environment === 'studio' && (
+              <NeutralStudioEnvironment intensity={resolvedEnvironmentIntensity} />
+            )}
+          </Suspense>
+          <SceneLighting
+            theme={effectiveTheme}
+            cameraFollowPrimary={cameraFollowPrimary}
+            // Viewer orbiting should not toggle shadows on/off. The delayed
+            // re-enable causes a visible flash on dense models like Unitree B2.
+            enableShadows={cameraFollowPrimary ? true : !isInteracting}
+          />
+          <SnapshotManager
+            actionRef={snapshotAction}
+            robotName={robotName}
+            theme={effectiveTheme}
+            groundOffset={groundOffset}
+          />
+          {/* Model/scene loaders can suspend during imports, but the horizon/grid/controls must stay visible. */}
+          <Suspense fallback={null}>{children}</Suspense>
+          <AdaptiveGroundPlane theme={effectiveTheme} groundOffset={groundOffset} showShadow />
+          {showWorldOriginAxes && <WorldOriginAxes />}
+          <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
+          <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
+            <GizmoViewport
+              axisColors={['#ef4444', '#22c55e', '#3b82f6']}
+              labelColor={effectiveTheme === 'light' ? '#0f172a' : 'white'}
+              axisHeadScale={0.9}
+              scale={34}
+            />
+          </GizmoHelper>
+        </WorkspaceCanvasInteractionStateProvider>
       </Canvas>
 
       {lang && showUsageGuide ? <UsageGuide lang={lang} /> : null}

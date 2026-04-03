@@ -220,13 +220,14 @@ function createAssemblyState(): AssemblyState {
   };
 }
 
-function createPivot(lowestZ: number, x = 0): THREE.Group {
+function createPivot(lowestZ: number, x = 0, name?: string): THREE.Group {
   const pivot = new THREE.Group();
+  if (name) {
+    pivot.name = name;
+    (pivot as THREE.Group & { isURDFJoint?: boolean }).isURDFJoint = true;
+  }
   pivot.position.set(x, 0, 0);
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.2, 0.2, 0.2),
-    new THREE.MeshBasicMaterial(),
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), new THREE.MeshBasicMaterial());
   mesh.userData.isVisualMesh = true;
   mesh.position.z = lowestZ + 0.1;
   pivot.add(mesh);
@@ -246,7 +247,34 @@ test('resolveAssemblyAutoGrounding returns one-shot z corrections for individual
     groundPlaneOffset: 0,
   });
 
-  assert.deepEqual(result.measuredComponentIds, ['comp_floating']);
+  assert.deepEqual(result.measuredComponentIds, ['comp_grounded', 'comp_floating']);
+  assert.equal(result.adjustments.length, 1);
+  assert.equal(result.adjustments[0]?.componentId, 'comp_floating');
+  assert.ok(result.adjustments[0]);
+  assert.ok(Math.abs(result.adjustments[0]!.transform.position.z - 0.05) < 1e-6);
+});
+
+test('resolveAssemblyAutoGrounding does not ignore synthetic __workspace component pivots', () => {
+  const result = resolveAssemblyAutoGrounding({
+    robot: createRobotState(),
+    assemblyState: createAssemblyState(),
+    jointPivots: {
+      '__workspace_world__::component::comp_grounded': createPivot(
+        0,
+        0,
+        '__workspace_world__::component::comp_grounded',
+      ),
+      '__workspace_world__::component::comp_floating': createPivot(
+        0.3,
+        0.4,
+        '__workspace_world__::component::comp_floating',
+      ),
+      bridge_root: createPivot(0.05, 1.1, 'bridge_root'),
+    },
+    groundPlaneOffset: 0,
+  });
+
+  assert.deepEqual(result.measuredComponentIds, ['comp_grounded', 'comp_floating']);
   assert.equal(result.adjustments.length, 1);
   assert.equal(result.adjustments[0]?.componentId, 'comp_floating');
   assert.ok(result.adjustments[0]);
@@ -335,9 +363,7 @@ test('resolveReadyAssemblyAutoGroundComponentIds waits for only the pending comp
       'grounded_root|visual|primary|0|meshes/grounded.dae',
       'parent_root|visual|primary|0|meshes/parent.dae',
     ],
-    resolvedMeshLoadKeys: new Set([
-      'floating_root|visual|primary|0|meshes/floating.dae',
-    ]),
+    resolvedMeshLoadKeys: new Set(['floating_root|visual|primary|0|meshes/floating.dae']),
   });
 
   assert.deepEqual(readyComponentIds, ['comp_floating']);

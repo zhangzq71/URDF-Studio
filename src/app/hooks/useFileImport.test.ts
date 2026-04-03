@@ -194,11 +194,14 @@ function installRobotImportWorkerMock() {
   class FakeRobotImportWorker {
     private readonly listeners = new Map<string, Set<WorkerEventHandler>>();
 
-    private readonly contextSnapshots = new Map<string, {
-      availableFiles?: RobotFile[];
-      assets?: Record<string, string>;
-      allFileContents?: Record<string, string>;
-    }>();
+    private readonly contextSnapshots = new Map<
+      string,
+      {
+        availableFiles?: RobotFile[];
+        assets?: Record<string, string>;
+        allFileContents?: Record<string, string>;
+      }
+    >();
 
     addEventListener(type: string, handler: WorkerEventHandler): void {
       const handlers = this.listeners.get(type) ?? new Set<WorkerEventHandler>();
@@ -221,23 +224,27 @@ function installRobotImportWorkerMock() {
         const descriptors = Array.isArray(message.files) ? message.files : [];
 
         queueMicrotask(async () => {
-          const robotFiles = (await Promise.all(descriptors.map(async (descriptor: { file?: File; relativePath?: string }) => {
-            const file = descriptor.file;
-            if (!(file instanceof File)) {
-              return null;
-            }
+          const robotFiles = (
+            await Promise.all(
+              descriptors.map(async (descriptor: { file?: File; relativePath?: string }) => {
+                const file = descriptor.file;
+                if (!(file instanceof File)) {
+                  return null;
+                }
 
-            const name = descriptor.relativePath || file.webkitRelativePath || file.name;
-            if (!name.toLowerCase().endsWith('.urdf')) {
-              return null;
-            }
+                const name = descriptor.relativePath || file.webkitRelativePath || file.name;
+                if (!name.toLowerCase().endsWith('.urdf')) {
+                  return null;
+                }
 
-            return {
-              name,
-              format: 'urdf' as const,
-              content: await file.text(),
-            };
-          }))).filter(Boolean);
+                return {
+                  name,
+                  format: 'urdf' as const,
+                  content: await file.text(),
+                };
+              }),
+            )
+          ).filter(Boolean);
 
           this.listeners.get('message')?.forEach((handler) => {
             handler({
@@ -265,9 +272,7 @@ function installRobotImportWorkerMock() {
       }
 
       resolveRequestCount += 1;
-      const context = message.contextId
-        ? this.contextSnapshots.get(message.contextId)
-        : undefined;
+      const context = message.contextId ? this.contextSnapshots.get(message.contextId) : undefined;
       const options = {
         ...context,
         ...message.options,
@@ -492,8 +497,10 @@ test('useFileImport keeps editor mode when importing a project archive', async (
       importerCallCount += 1;
       return {
         manifest: {
+          name: 'project',
           version: '1.0',
           createdAt: '2026-03-30T00:00:00.000Z',
+          lastModified: '2026-03-30T00:00:00.000Z',
           assets: {
             logicalPaths: [],
             assetEntries: [],
@@ -505,9 +512,7 @@ test('useFileImport keeps editor mode when importing a project archive', async (
             },
           ],
           selectedFileName: 'robots/demo.urdf',
-          ui: {
-            appMode: 'editor',
-          },
+          ui: {},
           robotState: null,
           assemblyState: null,
         },
@@ -531,7 +536,7 @@ test('useFileImport keeps editor mode when importing a project archive', async (
         robotActivity: [],
         assemblyHistory: { past: [], future: [] },
         assemblyActivity: [],
-      };
+      } as any;
     },
   });
 

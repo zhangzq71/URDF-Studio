@@ -1,6 +1,11 @@
-import { Camera, Globe, Info, Moon, Monitor, Settings, Sun } from 'lucide-react';
+import { Camera, Globe, Moon, Monitor, Settings, Sun } from 'lucide-react';
 import type { Theme } from '@/types';
-import type { HeaderAction, HeaderResponsiveLayout, HeaderTranslations, HeaderMenuKey } from './types';
+import type {
+  HeaderAction,
+  HeaderResponsiveLayout,
+  HeaderTranslations,
+  HeaderMenuKey,
+} from './types';
 import { HeaderOverflowMenu } from './HeaderOverflowMenu';
 
 interface HeaderActionsProps {
@@ -21,7 +26,6 @@ interface HeaderActionsProps {
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
-  onOpenAbout: () => void;
   t: HeaderTranslations;
 }
 
@@ -43,7 +47,6 @@ export function HeaderActions({
   onPrefetchCodeViewer,
   onSnapshot,
   onOpenSettings,
-  onOpenAbout,
   t,
 }: HeaderActionsProps) {
   const {
@@ -53,7 +56,6 @@ export function HeaderActions({
     showSettingsInline,
     showLanguageInline,
     showThemeInline,
-    showAboutInline,
     showSecondaryActionInline,
     showSecondaryActionLabel,
     showDesktopOverflow,
@@ -88,18 +90,6 @@ export function HeaderActions({
         </button>
       )}
 
-      {showSettingsInline && (
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
-          title={t.settings}
-          aria-label={t.settings}
-        >
-          <Settings className="w-4 h-4" />
-        </button>
-      )}
-
       {showLanguageInline && (
         <button
           type="button"
@@ -128,11 +118,19 @@ export function HeaderActions({
           title={t.toggleTheme}
           aria-label={t.toggleTheme}
         >
-          {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {theme === 'system' ? (
+            <Monitor className="w-4 h-4" />
+          ) : theme === 'dark' ? (
+            <Sun className="w-4 h-4" />
+          ) : (
+            <Moon className="w-4 h-4" />
+          )}
         </button>
       )}
 
-      {(showThemeInline || showDesktopOverflow || showAboutInline) && <div className="w-px h-5 bg-border-black mx-1 hidden sm:block" />}
+      {(showThemeInline || showDesktopOverflow) && (
+        <div className="w-px h-5 bg-border-black mx-1 hidden sm:block" />
+      )}
 
       {showDesktopOverflow && (
         <HeaderOverflowMenu
@@ -153,7 +151,6 @@ export function HeaderActions({
           onPrefetchCodeViewer={onPrefetchCodeViewer}
           onSnapshot={onSnapshot}
           onOpenSettings={onOpenSettings}
-          onOpenAbout={onOpenAbout}
           t={t}
           showQuickAction={Boolean(quickAction) && !showQuickActionInline}
           showSourceCode={!responsive.showSourceInline}
@@ -162,21 +159,8 @@ export function HeaderActions({
           showSettings={!showSettingsInline}
           showLanguage={!showLanguageInline}
           showTheme={!showThemeInline}
-          showAbout={!showAboutInline}
           showSecondaryAction={Boolean(secondaryAction) && !showSecondaryActionInline}
         />
-      )}
-
-      {showAboutInline && (
-        <button
-          type="button"
-          onClick={onOpenAbout}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
-          title={t.about}
-          aria-label={t.about}
-        >
-          <Info className="w-4 h-4" />
-        </button>
       )}
 
       {showSecondaryActionInline && secondaryAction && SecondaryActionIcon && (
@@ -189,6 +173,18 @@ export function HeaderActions({
         >
           <SecondaryActionIcon className="w-4 h-4" />
           {showSecondaryActionLabel && <span>{secondaryAction.label}</span>}
+        </button>
+      )}
+
+      {showSettingsInline && (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex items-center justify-center w-8 h-8 rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-element-bg hover:text-slate-700 dark:hover:text-slate-200 transition-colors hidden sm:flex"
+          title={t.settings}
+          aria-label={t.settings}
+        >
+          <Settings className="w-4 h-4" />
         </button>
       )}
 
@@ -210,7 +206,6 @@ export function HeaderActions({
         onPrefetchCodeViewer={onPrefetchCodeViewer}
         onSnapshot={onSnapshot}
         onOpenSettings={onOpenSettings}
-        onOpenAbout={onOpenAbout}
         t={t}
         showQuickAction={Boolean(quickAction)}
         showSourceCode
@@ -219,7 +214,6 @@ export function HeaderActions({
         showSettings
         showLanguage
         showTheme
-        showAbout
         showSecondaryAction={Boolean(secondaryAction)}
       />
     </div>

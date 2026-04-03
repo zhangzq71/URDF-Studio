@@ -12,8 +12,25 @@ test('reports XML parse failures for xacro validation', () => {
   assert.ok(errors[0].message.toLowerCase().includes('xml'));
 });
 
-test('reports SDF root and structural issues', () => {
-  const errors = validateXmlDocumentByFlavor(`<?xml version="1.0"?>
+test('ignores URDF schema issues when the XML is well formed', () => {
+  const errors = validateXmlDocumentByFlavor(
+    `<?xml version="1.0"?>
+<robot name="demo">
+  <foo />
+  <joint name="bad_joint" type="spinny">
+    <parent link="base" />
+    <child link="tip" />
+  </joint>
+</robot>`,
+    'urdf',
+  );
+
+  assert.equal(errors.length, 0);
+});
+
+test('ignores SDF structural issues when the XML is well formed', () => {
+  const errors = validateXmlDocumentByFlavor(
+    `<?xml version="1.0"?>
 <sdf>
   <model>
     <link />
@@ -21,18 +38,16 @@ test('reports SDF root and structural issues', () => {
       <parent>base</parent>
     </joint>
   </model>
-</sdf>`, 'sdf');
+</sdf>`,
+    'sdf',
+  );
 
-  assert.ok(errors.some((error) => error.message.includes('version attribute')));
-  assert.ok(errors.some((error) => error.message.includes('model #1 missing name attribute')));
-  assert.ok(errors.some((error) => error.message.includes('link #1 missing name attribute')));
-  assert.ok(errors.some((error) => error.message.includes('joint #1 missing name attribute')));
-  assert.ok(errors.some((error) => error.message.includes('missing type attribute')));
-  assert.ok(errors.some((error) => error.message.includes('missing <child> element')));
+  assert.equal(errors.length, 0);
 });
 
-test('reports invalid SDF joint type enum values', () => {
-  const errors = validateXmlDocumentByFlavor(`<?xml version="1.0"?>
+test('ignores SDF enum-value issues when the XML is well formed', () => {
+  const errors = validateXmlDocumentByFlavor(
+    `<?xml version="1.0"?>
 <sdf version="1.10">
   <model name="demo">
     <link name="base"/>
@@ -42,27 +57,31 @@ test('reports invalid SDF joint type enum values', () => {
       <child>tip</child>
     </joint>
   </model>
-</sdf>`, 'sdf');
+</sdf>`,
+    'sdf',
+  );
 
-  assert.ok(errors.some((error) => error.message.includes('invalid type "spinny"')));
+  assert.equal(errors.length, 0);
 });
 
-test('reports invalid MJCF enum values and missing worldbody', () => {
-  const errors = validateXmlDocumentByFlavor(`<?xml version="1.0"?>
+test('ignores MJCF structural issues when the XML is well formed', () => {
+  const errors = validateXmlDocumentByFlavor(
+    `<?xml version="1.0"?>
 <mujoco model="demo">
   <body name="base">
     <geom type="polyhedron"/>
     <joint type="twist"/>
   </body>
-</mujoco>`, 'mjcf');
+</mujoco>`,
+    'mjcf',
+  );
 
-  assert.ok(errors.some((error) => error.message.includes('missing required <worldbody>')));
-  assert.ok(errors.some((error) => error.message.includes('invalid type "polyhedron"')));
-  assert.ok(errors.some((error) => error.message.includes('invalid type "twist"')));
+  assert.equal(errors.length, 0);
 });
 
-test('accepts minimal valid MJCF and SDF snippets', () => {
-  const mjcfErrors = validateXmlDocumentByFlavor(`<?xml version="1.0"?>
+test('accepts well-formed MJCF and SDF snippets', () => {
+  const mjcfErrors = validateXmlDocumentByFlavor(
+    `<?xml version="1.0"?>
 <mujoco model="demo">
   <worldbody>
     <body name="base">
@@ -70,14 +89,19 @@ test('accepts minimal valid MJCF and SDF snippets', () => {
       <joint type="hinge" axis="0 0 1"/>
     </body>
   </worldbody>
-</mujoco>`, 'mjcf');
+</mujoco>`,
+    'mjcf',
+  );
 
-  const sdfErrors = validateXmlDocumentByFlavor(`<?xml version="1.0"?>
+  const sdfErrors = validateXmlDocumentByFlavor(
+    `<?xml version="1.0"?>
 <sdf version="1.10">
   <model name="demo">
     <link name="base"/>
   </model>
-</sdf>`, 'sdf');
+</sdf>`,
+    'sdf',
+  );
 
   assert.equal(mjcfErrors.length, 0);
   assert.equal(sdfErrors.length, 0);

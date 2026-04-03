@@ -1,26 +1,23 @@
 import * as THREE from 'three';
-import {
-    findAssetByPath,
-    createPlaceholderMesh,
-} from '@/core/loaders';
+import { findAssetByPath } from '@/core/loaders';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import type { MJCFMesh } from './mjcfUtils';
 import { loadMJCFMeshObject, type MJCFMeshCache } from './mjcfMeshAssetLoader';
 import {
-    disposeTransientObject3D,
-    type MJCFLoadAbortSignal,
-    throwIfMJCFLoadAborted,
+  disposeTransientObject3D,
+  type MJCFLoadAbortSignal,
+  throwIfMJCFLoadAborted,
 } from './mjcfLoadLifecycle';
 
 export type { MJCFMeshCache } from './mjcfMeshAssetLoader';
 
 export interface MJCFGeometryDef {
-    name?: string;
-    type: string;
-    size?: number[];
-    mesh?: string;
-    hfield?: string;
-    fromto?: number[];
+  name?: string;
+  type: string;
+  size?: number[];
+  mesh?: string;
+  hfield?: string;
+  fromto?: number[];
 }
 
 /**
@@ -28,154 +25,156 @@ export interface MJCFGeometryDef {
  * Uses unified material factory for consistent appearance with URDF.
  */
 function createDefaultMaterial(): THREE.MeshStandardMaterial {
-    return createMatteMaterial({
-        color: 0x888888,
-        name: 'mjcf_default'
-    });
+  return createMatteMaterial({
+    color: 0x888888,
+    name: 'mjcf_default',
+  });
 }
 
 function mjcfQuatToThreeQuat(quat: [number, number, number, number]): THREE.Quaternion {
-    return new THREE.Quaternion(quat[1], quat[2], quat[3], quat[0]);
+  return new THREE.Quaternion(quat[1], quat[2], quat[3], quat[0]);
 }
 
 function createMuJoCoFromToQuaternion(direction: THREE.Vector3): THREE.Quaternion {
-    const normalizedDirection = direction.clone().normalize();
-    const localNegativeZ = new THREE.Vector3(0, 0, -1);
-    const dot = localNegativeZ.dot(normalizedDirection);
+  const normalizedDirection = direction.clone().normalize();
+  const localNegativeZ = new THREE.Vector3(0, 0, -1);
+  const dot = localNegativeZ.dot(normalizedDirection);
 
-    // MuJoCo uses a deterministic 180deg rotation around +X when fromto points
-    // exactly opposite the canonical local -Z axis.
-    if (dot <= -1 + 1e-9) {
-        return new THREE.Quaternion(1, 0, 0, 0);
-    }
+  // MuJoCo uses a deterministic 180deg rotation around +X when fromto points
+  // exactly opposite the canonical local -Z axis.
+  if (dot <= -1 + 1e-9) {
+    return new THREE.Quaternion(1, 0, 0, 0);
+  }
 
-    return new THREE.Quaternion().setFromUnitVectors(localNegativeZ, normalizedDirection);
+  return new THREE.Quaternion().setFromUnitVectors(localNegativeZ, normalizedDirection);
 }
 
 function normalizeScale(scale?: number[]): [number, number, number] | null {
-    if (!scale || scale.length === 0) {
-        return null;
-    }
+  if (!scale || scale.length === 0) {
+    return null;
+  }
 
-    return [
-        scale[0] ?? 1,
-        scale[1] ?? scale[0] ?? 1,
-        scale[2] ?? scale[0] ?? 1,
-    ];
+  return [scale[0] ?? 1, scale[1] ?? scale[0] ?? 1, scale[2] ?? scale[0] ?? 1];
 }
 
-export function applyMeshAssetTransform(meshObject: THREE.Object3D, meshDef: MJCFMesh): THREE.Object3D {
-    const normalizedScale = normalizeScale(meshDef.scale);
-    if (normalizedScale) {
-        meshObject.scale.set(normalizedScale[0], normalizedScale[1], normalizedScale[2]);
-    }
+export function applyMeshAssetTransform(
+  meshObject: THREE.Object3D,
+  meshDef: MJCFMesh,
+): THREE.Object3D {
+  const normalizedScale = normalizeScale(meshDef.scale);
+  if (normalizedScale) {
+    meshObject.scale.set(normalizedScale[0], normalizedScale[1], normalizedScale[2]);
+  }
 
-    if (!meshDef.refpos && !meshDef.refquat) {
-        return meshObject;
-    }
+  if (!meshDef.refpos && !meshDef.refquat) {
+    return meshObject;
+  }
 
-    const assetTransform = new THREE.Group();
-    assetTransform.add(meshObject);
+  const assetTransform = new THREE.Group();
+  assetTransform.add(meshObject);
 
+  if (meshDef.refquat) {
+    assetTransform.quaternion.copy(mjcfQuatToThreeQuat(meshDef.refquat).conjugate());
+  }
+
+  if (meshDef.refpos) {
+    assetTransform.position.set(-meshDef.refpos[0], -meshDef.refpos[1], -meshDef.refpos[2]);
     if (meshDef.refquat) {
-        assetTransform.quaternion.copy(mjcfQuatToThreeQuat(meshDef.refquat).conjugate());
+      assetTransform.position.applyQuaternion(assetTransform.quaternion);
     }
+  }
 
-    if (meshDef.refpos) {
-        assetTransform.position.set(-meshDef.refpos[0], -meshDef.refpos[1], -meshDef.refpos[2]);
-        if (meshDef.refquat) {
-            assetTransform.position.applyQuaternion(assetTransform.quaternion);
-        }
-    }
-
-    return assetTransform;
+  return assetTransform;
 }
 
 function normalizeLookupPath(path: string): string {
-    return path
-        .replace(/\\/g, '/')
-        .replace(/\/+/g, '/')
-        .replace(/^\/+/, '')
-        .replace(/\/+$/, '');
+  return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
 function pickDeterministicAssetMatch(matches: Array<{ key: string; url: string }>): string | null {
-    if (matches.length === 0) return null;
-    if (matches.length === 1) return matches[0].url;
-    matches.sort((a, b) => a.key.length - b.key.length || a.key.localeCompare(b.key));
-    return matches[0].url;
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].url;
+  matches.sort((a, b) => a.key.length - b.key.length || a.key.localeCompare(b.key));
+  return matches[0].url;
+}
+
+function createMJCFGeometryError(message: string, detail: string, cause?: unknown): Error {
+  return new Error(
+    `[MJCFLoader] ${message}: ${detail}`,
+    cause === undefined ? undefined : { cause },
+  );
 }
 
 export function resolveMJCFAssetUrl(
-    filePath: string,
-    assets: Record<string, string>,
-    sourceFileDir: string,
+  filePath: string,
+  assets: Record<string, string>,
+  sourceFileDir: string,
 ): string | null {
-    const direct = findAssetByPath(filePath, assets, sourceFileDir);
-    if (direct) return direct;
+  const direct = findAssetByPath(filePath, assets, sourceFileDir);
+  if (direct) return direct;
 
-    const normalizedFilePath = normalizeLookupPath(filePath);
-    const normalizedSourceDir = normalizeLookupPath(sourceFileDir);
-    const sourcePrefix = normalizedSourceDir ? `${normalizedSourceDir}/` : '';
-    const assetEntries = Object.entries(assets).map(([key, url]) => ({
-        key: normalizeLookupPath(key),
-        url,
-    }));
+  const normalizedFilePath = normalizeLookupPath(filePath);
+  const normalizedSourceDir = normalizeLookupPath(sourceFileDir);
+  const sourcePrefix = normalizedSourceDir ? `${normalizedSourceDir}/` : '';
+  const assetEntries = Object.entries(assets).map(([key, url]) => ({
+    key: normalizeLookupPath(key),
+    url,
+  }));
 
-    if (sourcePrefix) {
-        const fullSuffix = normalizeLookupPath(`${sourcePrefix}${normalizedFilePath}`);
-        const fullSuffixMatches = assetEntries.filter(({ key }) =>
-            key === fullSuffix || key.endsWith(`/${fullSuffix}`),
-        );
-        const fullSuffixResolved = pickDeterministicAssetMatch(fullSuffixMatches);
-        if (fullSuffixResolved) return fullSuffixResolved;
+  if (sourcePrefix) {
+    const fullSuffix = normalizeLookupPath(`${sourcePrefix}${normalizedFilePath}`);
+    const fullSuffixMatches = assetEntries.filter(
+      ({ key }) => key === fullSuffix || key.endsWith(`/${fullSuffix}`),
+    );
+    const fullSuffixResolved = pickDeterministicAssetMatch(fullSuffixMatches);
+    if (fullSuffixResolved) return fullSuffixResolved;
+  }
+
+  if (normalizedFilePath) {
+    const relativeMatches = assetEntries.filter(
+      ({ key }) => key === normalizedFilePath || key.endsWith(`/${normalizedFilePath}`),
+    );
+
+    if (relativeMatches.length === 1) {
+      return relativeMatches[0].url;
     }
 
-    if (normalizedFilePath) {
-        const relativeMatches = assetEntries.filter(({ key }) =>
-            key === normalizedFilePath || key.endsWith(`/${normalizedFilePath}`),
-        );
+    if (relativeMatches.length > 1 && sourcePrefix) {
+      const scopedRelativeMatches = relativeMatches.filter(
+        ({ key }) => key.includes(`/${sourcePrefix}`) || key.startsWith(sourcePrefix),
+      );
+      const scopedRelativeResolved = pickDeterministicAssetMatch(scopedRelativeMatches);
+      if (scopedRelativeResolved) return scopedRelativeResolved;
+    }
+  }
 
-        if (relativeMatches.length === 1) {
-            return relativeMatches[0].url;
-        }
+  const filename = normalizedFilePath.split('/').pop() || '';
+  if (filename) {
+    const filenameMatches = assetEntries.filter(
+      ({ key }) => key === filename || key.endsWith(`/${filename}`),
+    );
 
-        if (relativeMatches.length > 1 && sourcePrefix) {
-            const scopedRelativeMatches = relativeMatches.filter(({ key }) =>
-                key.includes(`/${sourcePrefix}`) || key.startsWith(sourcePrefix),
-            );
-            const scopedRelativeResolved = pickDeterministicAssetMatch(scopedRelativeMatches);
-            if (scopedRelativeResolved) return scopedRelativeResolved;
-        }
+    if (filenameMatches.length === 1) {
+      return filenameMatches[0].url;
     }
 
-    const filename = normalizedFilePath.split('/').pop() || '';
-    if (filename) {
-        const filenameMatches = assetEntries.filter(({ key }) =>
-            key === filename || key.endsWith(`/${filename}`),
-        );
-
-        if (filenameMatches.length === 1) {
-            return filenameMatches[0].url;
-        }
-
-        if (filenameMatches.length > 1 && sourcePrefix) {
-            const scopedFilenameMatches = filenameMatches.filter(({ key }) =>
-                key.includes(`/${sourcePrefix}`) || key.startsWith(sourcePrefix),
-            );
-            const scopedFilenameResolved = pickDeterministicAssetMatch(scopedFilenameMatches);
-            if (scopedFilenameResolved) return scopedFilenameResolved;
-        }
-
-        if (filenameMatches.length > 1) {
-            console.error(
-                `[MJCFLoader] Ambiguous mesh filename "${filename}" (${filenameMatches.length} matches), refusing unscoped fallback.`,
-            );
-            return null;
-        }
+    if (filenameMatches.length > 1 && sourcePrefix) {
+      const scopedFilenameMatches = filenameMatches.filter(
+        ({ key }) => key.includes(`/${sourcePrefix}`) || key.startsWith(sourcePrefix),
+      );
+      const scopedFilenameResolved = pickDeterministicAssetMatch(scopedFilenameMatches);
+      if (scopedFilenameResolved) return scopedFilenameResolved;
     }
 
-    return null;
+    if (filenameMatches.length > 1) {
+      console.error(
+        `[MJCFLoader] Ambiguous mesh filename "${filename}" (${filenameMatches.length} matches), refusing unscoped fallback.`,
+      );
+      return null;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -183,189 +182,197 @@ export function resolveMJCFAssetUrl(
  * fromto defines two endpoints, and we create a cylinder/capsule between them.
  */
 function createFromToGeometry(geom: MJCFGeometryDef, type: 'cylinder' | 'capsule'): THREE.Object3D {
-    const fromto = geom.fromto!;
-    const from = new THREE.Vector3(fromto[0], fromto[1], fromto[2]);
-    const to = new THREE.Vector3(fromto[3], fromto[4], fromto[5]);
+  const fromto = geom.fromto!;
+  const from = new THREE.Vector3(fromto[0], fromto[1], fromto[2]);
+  const to = new THREE.Vector3(fromto[3], fromto[4], fromto[5]);
 
-    const direction = new THREE.Vector3().subVectors(to, from);
-    const length = direction.length();
-    const center = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
-    const radius = geom.size?.[0] || 0.05;
+  const direction = new THREE.Vector3().subVectors(to, from);
+  const length = direction.length();
+  const center = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5);
+  const radius = geom.size?.[0] || 0.05;
 
-    const group = new THREE.Group();
-    const shapeGroup = new THREE.Group();
+  const group = new THREE.Group();
+  const shapeGroup = new THREE.Group();
 
-    if (type === 'cylinder') {
-        const geometry = new THREE.CylinderGeometry(radius, radius, length, 32);
-        geometry.rotateX(-Math.PI / 2);
-        const mesh = new THREE.Mesh(geometry, createDefaultMaterial());
-        shapeGroup.add(mesh);
-    } else {
-        // Capsule: cylinder + 2 hemispheres
-        const cylGeom = new THREE.CylinderGeometry(radius, radius, length, 32);
-        const cylMesh = new THREE.Mesh(cylGeom, createDefaultMaterial());
-        shapeGroup.add(cylMesh);
+  if (type === 'cylinder') {
+    const geometry = new THREE.CylinderGeometry(radius, radius, length, 32);
+    geometry.rotateX(-Math.PI / 2);
+    const mesh = new THREE.Mesh(geometry, createDefaultMaterial());
+    shapeGroup.add(mesh);
+  } else {
+    // Capsule: cylinder + 2 hemispheres
+    const cylGeom = new THREE.CylinderGeometry(radius, radius, length, 32);
+    const cylMesh = new THREE.Mesh(cylGeom, createDefaultMaterial());
+    shapeGroup.add(cylMesh);
 
-        const topSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
-        const topMesh = new THREE.Mesh(topSphere, createDefaultMaterial());
-        topMesh.position.y = length / 2;
-        shapeGroup.add(topMesh);
+    const topSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    const topMesh = new THREE.Mesh(topSphere, createDefaultMaterial());
+    topMesh.position.y = length / 2;
+    shapeGroup.add(topMesh);
 
-        const bottomSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
-        const bottomMesh = new THREE.Mesh(bottomSphere, createDefaultMaterial());
-        bottomMesh.position.y = -length / 2;
-        shapeGroup.add(bottomMesh);
+    const bottomSphere = new THREE.SphereGeometry(
+      radius,
+      32,
+      16,
+      0,
+      Math.PI * 2,
+      Math.PI / 2,
+      Math.PI / 2,
+    );
+    const bottomMesh = new THREE.Mesh(bottomSphere, createDefaultMaterial());
+    bottomMesh.position.y = -length / 2;
+    shapeGroup.add(bottomMesh);
 
-        // MuJoCo canonicalizes fromto capsules so the primitive points along local -Z.
-        shapeGroup.rotation.x = -Math.PI / 2;
-    }
+    // MuJoCo canonicalizes fromto capsules so the primitive points along local -Z.
+    shapeGroup.rotation.x = -Math.PI / 2;
+  }
 
-    group.add(shapeGroup);
+  group.add(shapeGroup);
 
-    // Position at center
-    group.position.copy(center);
+  // Position at center
+  group.position.copy(center);
 
-    // MuJoCo canonicalizes fromto cylinder/capsule primitives so local -Z points
-    // from the first endpoint to the second.
-    if (length > 0.0001) {
-        const quaternion = createMuJoCoFromToQuaternion(direction);
-        group.quaternion.copy(quaternion);
-    }
+  // MuJoCo canonicalizes fromto cylinder/capsule primitives so local -Z points
+  // from the first endpoint to the second.
+  if (length > 0.0001) {
+    const quaternion = createMuJoCoFromToQuaternion(direction);
+    group.quaternion.copy(quaternion);
+  }
 
-    return group;
+  return group;
 }
 
 export async function createGeometryMesh(
-    geom: MJCFGeometryDef,
-    meshMap: Map<string, MJCFMesh>,
-    assets: Record<string, string>,
-    meshCache: MJCFMeshCache,
-    sourceFileDir = '',
-    abortSignal?: MJCFLoadAbortSignal,
+  geom: MJCFGeometryDef,
+  meshMap: Map<string, MJCFMesh>,
+  assets: Record<string, string>,
+  meshCache: MJCFMeshCache,
+  sourceFileDir = '',
+  abortSignal?: MJCFLoadAbortSignal,
 ): Promise<THREE.Object3D | null> {
-    const type = geom.type?.trim() || (geom.mesh ? 'mesh' : '');
+  const type = geom.type?.trim() || (geom.mesh ? 'mesh' : '');
 
-    switch (type) {
-        case 'plane': {
-            const sx = ((geom.size?.[0] ?? 1) || 1) * 2;
-            const sy = ((geom.size?.[1] ?? geom.size?.[0] ?? 1) || 1) * 2;
-            const geometry = new THREE.PlaneGeometry(sx, sy, 1, 1);
-            return new THREE.Mesh(geometry, createDefaultMaterial());
-        }
-
-        case 'box': {
-            if (!geom.size || geom.size.length < 1) return null;
-            // MJCF size is half-size
-            const sx = (geom.size[0] || 0.05) * 2;
-            const sy = ((geom.size[1] ?? geom.size[0]) || 0.05) * 2;
-            const sz = ((geom.size[2] ?? geom.size[0]) || 0.05) * 2;
-            const geometry = new THREE.BoxGeometry(sx, sy, sz);
-            return new THREE.Mesh(geometry, createDefaultMaterial());
-        }
-
-        case 'sphere': {
-            const radius = geom.size?.[0] || 0.05;
-            const geometry = new THREE.SphereGeometry(radius, 32, 32);
-            return new THREE.Mesh(geometry, createDefaultMaterial());
-        }
-
-        case 'cylinder': {
-            // Handle fromto if specified
-            if (geom.fromto && geom.fromto.length === 6) {
-                return createFromToGeometry(geom, 'cylinder');
-            }
-            const radius = geom.size?.[0] || 0.05;
-            const halfHeight = geom.size?.[1] || 0.1;
-            const geometry = new THREE.CylinderGeometry(radius, radius, halfHeight * 2, 32);
-            geometry.rotateX(Math.PI / 2); // MJCF cylinder is along Z by default
-            return new THREE.Mesh(geometry, createDefaultMaterial());
-        }
-
-        case 'capsule': {
-            // Handle fromto if specified
-            if (geom.fromto && geom.fromto.length === 6) {
-                return createFromToGeometry(geom, 'capsule');
-            }
-            const radius = geom.size?.[0] || 0.05;
-            const halfHeight = geom.size?.[1] || 0.1;
-            // Create capsule using cylinder + 2 hemispheres
-            const group = new THREE.Group();
-
-            // Cylinder body
-            const cylGeom = new THREE.CylinderGeometry(radius, radius, halfHeight * 2, 32);
-            const cylMesh = new THREE.Mesh(cylGeom, createDefaultMaterial());
-            group.add(cylMesh);
-
-            // Top hemisphere
-            const topSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
-            const topMesh = new THREE.Mesh(topSphere, createDefaultMaterial());
-            topMesh.position.y = halfHeight;
-            group.add(topMesh);
-
-            // Bottom hemisphere
-            const bottomSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2);
-            const bottomMesh = new THREE.Mesh(bottomSphere, createDefaultMaterial());
-            bottomMesh.position.y = -halfHeight;
-            group.add(bottomMesh);
-
-            // MJCF capsule is along Z by default, rotate to align
-            group.rotation.x = Math.PI / 2;
-            return group;
-        }
-
-        case 'ellipsoid': {
-            const sx = geom.size?.[0] || 0.05;
-            const sy = geom.size?.[1] || sx;
-            const sz = geom.size?.[2] || sx;
-            const geometry = new THREE.SphereGeometry(1, 32, 32);
-            const mesh = new THREE.Mesh(geometry, createDefaultMaterial());
-            mesh.scale.set(sx, sy, sz);
-            return mesh;
-        }
-
-        case 'hfield': {
-            console.warn(`[MJCFLoader] Height field geom "${geom.name || geom.hfield || 'unnamed'}" is not rendered yet.`);
-            return null;
-        }
-
-        case 'mesh':
-        case 'sdf': {
-            if (!geom.mesh) return null;
-
-            const meshDef = meshMap.get(geom.mesh);
-            if (!meshDef) {
-                console.error(`[MJCFLoader] Mesh not defined in assets: ${geom.mesh}`);
-                return createPlaceholderMesh(geom.mesh);
-            }
-
-            const assetUrl = resolveMJCFAssetUrl(meshDef.file, assets, sourceFileDir);
-            if (!assetUrl) {
-                console.error(`[MJCFLoader] Mesh file definitely not found: ${meshDef.file}`);
-                const keys = Object.keys(assets);
-                if (keys.length === 0) {
-                    console.error('[MJCFLoader] No assets available!');
-                }
-                return createPlaceholderMesh(meshDef.file);
-            }
-
-            const loadedMesh = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache, abortSignal);
-            if (!loadedMesh) {
-                return createPlaceholderMesh(meshDef.file);
-            }
-
-            if (abortSignal?.aborted) {
-                disposeTransientObject3D(loadedMesh);
-                throwIfMJCFLoadAborted(abortSignal);
-            }
-
-            return applyMeshAssetTransform(loadedMesh, meshDef);
-        }
-
-        default:
-            // Unknown type - log warning and create default sphere
-            console.error(`[MJCFLoader] Unknown geom type "${type}", defaulting to sphere`);
-            const defaultRadius = geom.size?.[0] || 0.05;
-            const defaultGeometry = new THREE.SphereGeometry(defaultRadius, 32, 32);
-            return new THREE.Mesh(defaultGeometry, createDefaultMaterial());
+  switch (type) {
+    case 'plane': {
+      const sx = ((geom.size?.[0] ?? 1) || 1) * 2;
+      const sy = ((geom.size?.[1] ?? geom.size?.[0] ?? 1) || 1) * 2;
+      const geometry = new THREE.PlaneGeometry(sx, sy, 1, 1);
+      return new THREE.Mesh(geometry, createDefaultMaterial());
     }
+
+    case 'box': {
+      if (!geom.size || geom.size.length < 1) return null;
+      // MJCF size is half-size
+      const sx = (geom.size[0] || 0.05) * 2;
+      const sy = ((geom.size[1] ?? geom.size[0]) || 0.05) * 2;
+      const sz = ((geom.size[2] ?? geom.size[0]) || 0.05) * 2;
+      const geometry = new THREE.BoxGeometry(sx, sy, sz);
+      return new THREE.Mesh(geometry, createDefaultMaterial());
+    }
+
+    case 'sphere': {
+      const radius = geom.size?.[0] || 0.05;
+      const geometry = new THREE.SphereGeometry(radius, 32, 32);
+      return new THREE.Mesh(geometry, createDefaultMaterial());
+    }
+
+    case 'cylinder': {
+      // Handle fromto if specified
+      if (geom.fromto && geom.fromto.length === 6) {
+        return createFromToGeometry(geom, 'cylinder');
+      }
+      const radius = geom.size?.[0] || 0.05;
+      const halfHeight = geom.size?.[1] || 0.1;
+      const geometry = new THREE.CylinderGeometry(radius, radius, halfHeight * 2, 32);
+      geometry.rotateX(Math.PI / 2); // MJCF cylinder is along Z by default
+      return new THREE.Mesh(geometry, createDefaultMaterial());
+    }
+
+    case 'capsule': {
+      // Handle fromto if specified
+      if (geom.fromto && geom.fromto.length === 6) {
+        return createFromToGeometry(geom, 'capsule');
+      }
+      const radius = geom.size?.[0] || 0.05;
+      const halfHeight = geom.size?.[1] || 0.1;
+      // Create capsule using cylinder + 2 hemispheres
+      const group = new THREE.Group();
+
+      // Cylinder body
+      const cylGeom = new THREE.CylinderGeometry(radius, radius, halfHeight * 2, 32);
+      const cylMesh = new THREE.Mesh(cylGeom, createDefaultMaterial());
+      group.add(cylMesh);
+
+      // Top hemisphere
+      const topSphere = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+      const topMesh = new THREE.Mesh(topSphere, createDefaultMaterial());
+      topMesh.position.y = halfHeight;
+      group.add(topMesh);
+
+      // Bottom hemisphere
+      const bottomSphere = new THREE.SphereGeometry(
+        radius,
+        32,
+        16,
+        0,
+        Math.PI * 2,
+        Math.PI / 2,
+        Math.PI / 2,
+      );
+      const bottomMesh = new THREE.Mesh(bottomSphere, createDefaultMaterial());
+      bottomMesh.position.y = -halfHeight;
+      group.add(bottomMesh);
+
+      // MJCF capsule is along Z by default, rotate to align
+      group.rotation.x = Math.PI / 2;
+      return group;
+    }
+
+    case 'ellipsoid': {
+      const sx = geom.size?.[0] || 0.05;
+      const sy = geom.size?.[1] || sx;
+      const sz = geom.size?.[2] || sx;
+      const geometry = new THREE.SphereGeometry(1, 32, 32);
+      const mesh = new THREE.Mesh(geometry, createDefaultMaterial());
+      mesh.scale.set(sx, sy, sz);
+      return mesh;
+    }
+
+    case 'hfield': {
+      console.warn(
+        `[MJCFLoader] Height field geom "${geom.name || geom.hfield || 'unnamed'}" is not rendered yet.`,
+      );
+      return null;
+    }
+
+    case 'mesh':
+    case 'sdf': {
+      if (!geom.mesh) return null;
+
+      const meshDef = meshMap.get(geom.mesh);
+      if (!meshDef) {
+        throw createMJCFGeometryError('Mesh not defined in assets', geom.mesh);
+      }
+
+      const assetUrl = resolveMJCFAssetUrl(meshDef.file, assets, sourceFileDir);
+      if (!assetUrl) {
+        throw createMJCFGeometryError('Mesh file could not be resolved', meshDef.file);
+      }
+
+      const loadedMesh = await loadMJCFMeshObject(assetUrl, meshDef.file, meshCache, abortSignal);
+      if (abortSignal?.aborted) {
+        disposeTransientObject3D(loadedMesh);
+        throwIfMJCFLoadAborted(abortSignal);
+      }
+
+      return applyMeshAssetTransform(loadedMesh, meshDef);
+    }
+
+    default:
+      // Unknown type - log warning and create default sphere
+      console.error(`[MJCFLoader] Unknown geom type "${type}", defaulting to sphere`);
+      const defaultRadius = geom.size?.[0] || 0.05;
+      const defaultGeometry = new THREE.SphereGeometry(defaultRadius, 32, 32);
+      return new THREE.Mesh(defaultGeometry, createDefaultMaterial());
+  }
 }

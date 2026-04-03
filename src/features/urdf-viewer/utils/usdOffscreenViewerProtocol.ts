@@ -6,13 +6,21 @@ import type {
   UsdLoadingProgress,
 } from '../types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
+import type { UsdStageOpenPreparationWorkerContextSnapshot } from './usdStageOpenPreparationWorkerPayload';
 
-type OffscreenViewerSourceFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
-type OffscreenViewerAvailableFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
+type OffscreenViewerSourceFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl'>;
 export type OffscreenViewerInteractionSelection = Pick<
   InteractionSelection,
   'type' | 'id' | 'subType' | 'objectIndex' | 'helperKind'
 >;
+
+export interface UsdOffscreenViewerInteractionState {
+  toolMode: ToolMode;
+  selection: OffscreenViewerInteractionSelection | null;
+  hoveredSelection: OffscreenViewerInteractionSelection | null;
+  hoverSelectionEnabled: boolean;
+  interactionLayerPriority: ViewerInteractiveLayer[];
+}
 
 export interface UsdOffscreenViewerInitRequest {
   type: 'init';
@@ -26,8 +34,10 @@ export interface UsdOffscreenViewerInitRequest {
   showCollision: boolean;
   showCollisionAlwaysOnTop: boolean;
   sourceFile: OffscreenViewerSourceFile;
-  availableFiles: OffscreenViewerAvailableFile[];
-  assets: Record<string, string>;
+  stageOpenContextKey?: string;
+  stageOpenContext?: UsdStageOpenPreparationWorkerContextSnapshot | null;
+  stageOpenContextCacheHit?: boolean;
+  initialInteractionState?: UsdOffscreenViewerInteractionState | null;
 }
 
 export interface UsdOffscreenViewerResizeRequest {
@@ -89,17 +99,25 @@ export interface UsdOffscreenViewerSetActiveRequest {
 
 export interface UsdOffscreenViewerSetInteractionStateRequest {
   type: 'set-interaction-state';
-  toolMode: ToolMode;
-  selection: OffscreenViewerInteractionSelection | null;
-  hoveredSelection: OffscreenViewerInteractionSelection | null;
-  hoverSelectionEnabled: boolean;
-  interactionLayerPriority: ViewerInteractiveLayer[];
+  toolMode: UsdOffscreenViewerInteractionState['toolMode'];
+  selection: UsdOffscreenViewerInteractionState['selection'];
+  hoveredSelection: UsdOffscreenViewerInteractionState['hoveredSelection'];
+  hoverSelectionEnabled: UsdOffscreenViewerInteractionState['hoverSelectionEnabled'];
+  interactionLayerPriority: UsdOffscreenViewerInteractionState['interactionLayerPriority'];
 }
 
 export interface UsdOffscreenViewerSetJointAngleRequest {
   type: 'set-joint-angle';
   jointId: string;
   angleRad: number;
+}
+
+export interface UsdOffscreenViewerPrewarmRuntimeRequest {
+  type: 'prewarm-runtime';
+}
+
+export interface UsdOffscreenViewerDisposeStageRequest {
+  type: 'dispose-stage';
 }
 
 export interface UsdOffscreenViewerDisposeRequest {
@@ -119,6 +137,8 @@ export type UsdOffscreenViewerWorkerRequest =
   | UsdOffscreenViewerSetActiveRequest
   | UsdOffscreenViewerSetInteractionStateRequest
   | UsdOffscreenViewerSetJointAngleRequest
+  | UsdOffscreenViewerPrewarmRuntimeRequest
+  | UsdOffscreenViewerDisposeStageRequest
   | UsdOffscreenViewerDisposeRequest;
 
 export interface UsdOffscreenViewerProgressResponse {

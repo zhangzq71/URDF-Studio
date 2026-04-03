@@ -8,7 +8,14 @@ import { JSDOM } from 'jsdom';
 import { translations } from '@/shared/i18n';
 import { useAssemblySelectionStore } from '@/store/assemblySelectionStore';
 import { useSelectionStore } from '@/store/selectionStore';
-import { DEFAULT_JOINT, DEFAULT_LINK, JointType, type AssemblyState, type RobotData, type UrdfJoint } from '@/types';
+import {
+  DEFAULT_JOINT,
+  DEFAULT_LINK,
+  JointType,
+  type AssemblyState,
+  type RobotData,
+  type UrdfJoint,
+} from '@/types';
 import { AssemblyTreeView } from './AssemblyTreeView.tsx';
 
 function installDom() {
@@ -25,15 +32,20 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { KeyboardEvent?: typeof KeyboardEvent }).KeyboardEvent = dom.window.KeyboardEvent;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(dom.window.HTMLElement.prototype, 'attachEvent', {
     value: () => {},
@@ -123,9 +135,9 @@ function createAssemblyState(): AssemblyState {
 }
 
 function findButtonByText(text: string): HTMLButtonElement | null {
-  return Array.from(document.querySelectorAll('button')).find((button) => (
-    button.textContent?.includes(text)
-  )) as HTMLButtonElement | null;
+  return Array.from(document.querySelectorAll('button')).find((button) =>
+    button.textContent?.includes(text),
+  ) as HTMLButtonElement | null;
 }
 
 function findRowByTitle(container: HTMLElement, title: string): HTMLDivElement | null {
@@ -173,13 +185,15 @@ function dispatchReactKeyDown(input: HTMLInputElement, key: string) {
   const onKeyDown = reactProps.onKeyDown;
   assert.equal(typeof onKeyDown, 'function', 'React onKeyDown handler should exist');
 
-  (onKeyDown as (event: {
-    key: string;
-    target: HTMLInputElement;
-    currentTarget: HTMLInputElement;
-    preventDefault: () => void;
-    stopPropagation: () => void;
-  }) => void)({
+  (
+    onKeyDown as (event: {
+      key: string;
+      target: HTMLInputElement;
+      currentTarget: HTMLInputElement;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    }) => void
+  )({
     key,
     target: input,
     currentTarget: input,
@@ -193,12 +207,14 @@ function dispatchReactMouseHandler(node: Element, handlerName: 'onMouseEnter' | 
   const handler = reactProps[handlerName];
   assert.equal(typeof handler, 'function', `React ${handlerName} handler should exist`);
 
-  (handler as (event: {
-    currentTarget: Element;
-    target: Element;
-    preventDefault: () => void;
-    stopPropagation: () => void;
-  }) => void)({
+  (
+    handler as (event: {
+      currentTarget: Element;
+      target: Element;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    }) => void
+  )({
     currentTarget: node,
     target: node,
     preventDefault: () => {},
@@ -237,7 +253,7 @@ test('AssemblyTreeView supports assembly rename and bridge context menu actions'
           onRemoveBridge={(id) => {
             removedBridges.push(id);
           }}
-          mode="detail"
+          mode="editor"
           t={translations.en}
         />,
       );
@@ -245,29 +261,37 @@ test('AssemblyTreeView supports assembly rename and bridge context menu actions'
 
     const assemblyLabel = container.querySelector('[title="my_Robot"]') as HTMLSpanElement | null;
     assert.ok(assemblyLabel, 'assembly label should render');
-    assert.equal(assemblyLabel.className.includes('uppercase'), false, 'assembly label should not force uppercase styling');
+    assert.equal(
+      assemblyLabel.className.includes('uppercase'),
+      false,
+      'assembly label should not force uppercase styling',
+    );
 
     const assemblyRow = findRowByTitle(container, 'my_Robot');
     assert.ok(assemblyRow, 'assembly row should render');
 
     await act(async () => {
-      assemblyRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        clientX: 120,
-        clientY: 72,
-      }));
+      assemblyRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 120,
+          clientY: 72,
+        }),
+      );
     });
 
     const renameAssemblyButton = findButtonByText(translations.en.rename);
     assert.ok(renameAssemblyButton, 'assembly context menu should expose rename');
 
     await act(async () => {
-      renameAssemblyButton.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      renameAssemblyButton.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     const assemblyInput = container.querySelector('input') as HTMLInputElement | null;
@@ -281,13 +305,15 @@ test('AssemblyTreeView supports assembly rename and bridge context menu actions'
     assert.ok(bridgeRow, 'bridge row should render');
 
     await act(async () => {
-      bridgeRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        clientX: 156,
-        clientY: 138,
-      }));
+      bridgeRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 156,
+          clientY: 138,
+        }),
+      );
     });
 
     const renameBridgeButton = findButtonByText(translations.en.rename);
@@ -297,10 +323,12 @@ test('AssemblyTreeView supports assembly rename and bridge context menu actions'
     assert.ok(deleteBridgeButton, 'bridge context menu should expose delete');
 
     await act(async () => {
-      deleteBridgeButton.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      deleteBridgeButton.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     assert.deepEqual(removedBridges, ['bridge_1']);
@@ -339,7 +367,7 @@ test('AssemblyTreeView keeps component selection by default and routes component
           onUpdate={() => {}}
           onRenameAssembly={() => {}}
           onRemoveBridge={() => {}}
-          mode="detail"
+          mode="editor"
           t={translations.en}
         />,
       );
@@ -349,13 +377,18 @@ test('AssemblyTreeView keeps component selection by default and routes component
     assert.ok(componentRow, 'component row should render');
 
     await act(async () => {
-      componentRow.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      componentRow.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
-    assert.deepEqual(useAssemblySelectionStore.getState().selection, { type: 'component', id: 'comp_left' });
+    assert.deepEqual(useAssemblySelectionStore.getState().selection, {
+      type: 'component',
+      id: 'comp_left',
+    });
     assert.deepEqual(useSelectionStore.getState().selection, { type: null, id: null });
 
     await act(async () => {
@@ -365,14 +398,20 @@ test('AssemblyTreeView keeps component selection by default and routes component
     });
 
     await act(async () => {
-      componentRow.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      componentRow.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     assert.deepEqual(useAssemblySelectionStore.getState().selection, { type: null, id: null });
-    assert.deepEqual(useSelectionStore.getState().selection, { type: 'link', id: 'comp_left_base_link', subType: undefined });
+    assert.deepEqual(useSelectionStore.getState().selection, {
+      type: 'link',
+      id: 'comp_left_base_link',
+      subType: undefined,
+    });
   } finally {
     await destroyComponentRoot(dom, root);
   }
@@ -406,7 +445,7 @@ test('AssemblyTreeView highlights the owning component row when hover targets on
           onUpdate={() => {}}
           onRenameAssembly={() => {}}
           onRemoveBridge={() => {}}
-          mode="detail"
+          mode="editor"
           t={translations.en}
         />,
       );
@@ -414,7 +453,8 @@ test('AssemblyTreeView highlights the owning component row when hover targets on
 
     const componentRow = findRowByTitle(container, 'arm_module');
     assert.ok(componentRow, 'component row should render');
-    const hoveredRowStateClass = 'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15';
+    const hoveredRowStateClass =
+      'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15';
     assert.equal(componentRow.className.includes(hoveredRowStateClass), false);
 
     await act(async () => {
@@ -461,7 +501,7 @@ test('AssemblyTreeView writes an exact component root-link hover target so only 
           onUpdate={() => {}}
           onRenameAssembly={() => {}}
           onRemoveBridge={() => {}}
-          mode="detail"
+          mode="editor"
           t={translations.en}
         />,
       );
@@ -471,7 +511,8 @@ test('AssemblyTreeView writes an exact component root-link hover target so only 
     const rightComponentRow = findRowByTitle(container, 'hand_module');
     assert.ok(leftComponentRow, 'left component row should render');
     assert.ok(rightComponentRow, 'right component row should render');
-    const hoveredRowStateClass = 'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15';
+    const hoveredRowStateClass =
+      'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15';
 
     await act(async () => {
       dispatchReactMouseHandler(leftComponentRow, 'onMouseEnter');
@@ -532,7 +573,7 @@ test('AssemblyTreeView keeps labels non-selectable while supporting component an
             componentRenames.push({ id, name });
           }}
           onRemoveBridge={() => {}}
-          mode="detail"
+          mode="editor"
           t={translations.en}
         />,
       );
@@ -540,21 +581,33 @@ test('AssemblyTreeView keeps labels non-selectable while supporting component an
 
     const treeRoot = container.firstElementChild as HTMLDivElement | null;
     assert.ok(treeRoot, 'tree root should render');
-    assert.equal(treeRoot.className.includes('select-none'), true, 'assembly tree should disable text selection in display mode');
+    assert.equal(
+      treeRoot.className.includes('select-none'),
+      true,
+      'assembly tree should disable text selection in display mode',
+    );
 
-    const componentLabel = container.querySelector('[title="arm_module"]') as HTMLSpanElement | null;
+    const componentLabel = container.querySelector(
+      '[title="arm_module"]',
+    ) as HTMLSpanElement | null;
     assert.ok(componentLabel, 'component label should render');
 
     await act(async () => {
-      componentLabel.dispatchEvent(new dom.window.MouseEvent('dblclick', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      componentLabel.dispatchEvent(
+        new dom.window.MouseEvent('dblclick', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     let renameInput = container.querySelector('input') as HTMLInputElement | null;
     assert.ok(renameInput, 'component rename input should render on double click');
-    assert.equal(renameInput.className.includes('select-text'), true, 'rename input should remain selectable');
+    assert.equal(
+      renameInput.className.includes('select-text'),
+      true,
+      'rename input should remain selectable',
+    );
 
     await act(async () => {
       dispatchReactChange(renameInput, 'arm_module_v2');
@@ -573,10 +626,12 @@ test('AssemblyTreeView keeps labels non-selectable while supporting component an
     assert.ok(bridgeLabel, 'bridge label should render');
 
     await act(async () => {
-      bridgeLabel.dispatchEvent(new dom.window.MouseEvent('dblclick', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      bridgeLabel.dispatchEvent(
+        new dom.window.MouseEvent('dblclick', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     renameInput = container.querySelector('input') as HTMLInputElement | null;
@@ -601,23 +656,27 @@ test('AssemblyTreeView keeps labels non-selectable while supporting component an
     assert.ok(componentRow, 'component row should render');
 
     await act(async () => {
-      componentRow.dispatchEvent(new dom.window.MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        clientX: 112,
-        clientY: 94,
-      }));
+      componentRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 112,
+          clientY: 94,
+        }),
+      );
     });
 
     const renameMenuButton = findButtonByText(translations.en.rename);
     assert.ok(renameMenuButton, 'component context menu should expose rename');
 
     await act(async () => {
-      renameMenuButton.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      renameMenuButton.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     renameInput = container.querySelector('input') as HTMLInputElement | null;

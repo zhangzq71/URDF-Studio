@@ -27,16 +27,25 @@ import {
   resolveReadyAssemblyAutoGroundComponentIds,
   resolveNextAssemblyAutoGroundTrackingState,
 } from '../utils/assemblyAutoGrounding';
+import {
+  buildAssemblyComponentLinkOwnerMap,
+  buildAssemblyComponentMeshLoadKeyMap,
+  collectAssemblyMeshLoadKeysForComponents,
+  resolveReadyAssemblyMeshComponentIds,
+} from '../utils/assemblyMeshLoadState';
 import { shouldRenderMergedVisualizerConstraintOverlay } from '../utils/mergedVisualizerSceneMode';
 import { resolveMergedVisualizerRootPlacements } from '../utils/mergedVisualizerLayout';
+import { mergeResolvedMeshLoadKeys } from '../utils/meshResolutionState';
 import { collectVisualizerMeshLoadKeys } from '../utils/visualizerMeshLoading';
 import { buildVisualizerDocumentLoadEvent } from '../utils/visualizerDocumentLoad';
 import type { AssemblySelection } from '@/store/assemblySelectionStore';
+import { useCollisionMeshPrewarm } from '../hooks/useCollisionMeshPrewarm';
+import { recordVisualizerCollisionLoadDebug } from '@/shared/debug/visualizerCollisionLoadDebug';
 
 const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode }>(
   function GroundedGroup({ children }, ref) {
     return <group ref={ref}>{children}</group>;
-  }
+  },
 );
 
 interface VisualizerSceneProps {
@@ -51,6 +60,7 @@ interface VisualizerSceneProps {
   assemblyState?: AssemblyState | null;
   assemblyWorkspaceActive?: boolean;
   assemblySelection?: AssemblySelection;
+  sourceSceneAssemblyComponentId?: string | null;
   onAssemblyTransform?: (transform: {
     position: { x: number; y: number; z: number };
     rotation: { r: number; p: number; y: number };
@@ -83,349 +93,861 @@ interface VisualizerSceneProps {
   }) => void;
 }
 
-export const VisualizerScene = React.memo(({
-  robot,
-  onSelect,
-  onUpdate,
-  mode,
-  assets,
-  lang,
-  controller,
-  active = true,
-  assemblyState = null,
-  assemblyWorkspaceActive = false,
-  assemblySelection,
-  onAssemblyTransform,
-  onComponentTransform,
-  onBridgeTransform,
-  onTransformPendingChange,
-  onDocumentLoadEvent,
-}: VisualizerSceneProps) => {
-  const t = translations[lang];
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
-  const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
-  const collisionTransformControlRef = React.useRef<any>(null);
-  const assemblyRootRef = React.useRef<THREE.Group | null>(null);
-  const assemblyAutoGroundTrackingRef = React.useRef(createInitialAssemblyAutoGroundTrackingState());
-  const {
-    robotRootRef,
-    state,
-    jointPivots,
-    selectedJointPivot,
-    selectedCollisionRef,
-    handleRegisterJointPivot,
-    handleRegisterJointMotion,
-    handleRegisterCollisionRef,
-    transformControlsState,
-    handleCollisionTransformEnd,
-    requestGroundRealignment,
-  } = controller;
-  const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
-    const grouped: Record<string, UrdfJoint[]> = {};
-
-    Object.values(robot.joints).forEach((joint) => {
-      if (!grouped[joint.parentLinkId]) {
-        grouped[joint.parentLinkId] = [];
-      }
-
-      grouped[joint.parentLinkId].push(joint);
-    });
-
-    return grouped;
-  }, [robot.joints]);
-  const rootPlacements = React.useMemo(
-    () => resolveMergedVisualizerRootPlacements(robot),
-    [robot.joints, robot.links, robot.rootLinkId],
-  );
-  const colladaRootNormalizationHints = React.useMemo(
-    () => buildColladaRootNormalizationHints(robot.links),
-    [robot.links]
-  );
-  const expectedMeshLoadKeys = React.useMemo(() => collectVisualizerMeshLoadKeys({
+export const VisualizerScene = React.memo(
+  ({
     robot,
+    onSelect,
+    onUpdate,
     mode,
-    showGeometry: state.showGeometry,
-    showCollision: state.showCollision,
     assets,
-  }), [assets, mode, robot, state.showCollision, state.showGeometry]);
-  const expectedMeshLoadSignature = React.useMemo(
-    () => expectedMeshLoadKeys.join('\u0000'),
-    [expectedMeshLoadKeys],
-  );
-  const expectedMeshLoadKeySet = React.useMemo(
-    () => new Set(expectedMeshLoadKeys),
-    [expectedMeshLoadKeys],
-  );
-  const [meshLoadingState, setMeshLoadingState] = React.useState<{
-    signature: string;
-    resolvedKeys: Set<string>;
-  }>({
-    signature: expectedMeshLoadSignature,
-    resolvedKeys: new Set<string>(),
-  });
-  const resolvedMeshCount = meshLoadingState.signature === expectedMeshLoadSignature
-    ? meshLoadingState.resolvedKeys.size
-    : 0;
-  const isMeshLoading = expectedMeshLoadKeys.length > 0 && resolvedMeshCount < expectedMeshLoadKeys.length;
-  const loadingHudState = React.useMemo(() => buildLoadingHudState({
-    loadedCount: resolvedMeshCount,
-    totalCount: expectedMeshLoadKeys.length,
-    fallbackDetail: t.loadingRobotPreparing,
-  }), [expectedMeshLoadKeys.length, resolvedMeshCount, t.loadingRobotPreparing]);
-  const loadingStageLabel = resolvedMeshCount === 0
-    ? t.loadingRobotPreparing
-    : t.loadingRobotStreamingMeshes;
-  const loadingDetail = loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
-  const sceneCompileWarmupKey = React.useMemo(() => [
-    mode,
-    robot.rootLinkId,
-    String(Object.keys(robot.links).length),
-    String(Object.keys(robot.joints).length),
-    expectedMeshLoadSignature || 'inline-geometry',
-    state.showGeometry ? 'geometry-on' : 'geometry-off',
-    state.showVisual ? 'visual-on' : 'visual-off',
-    state.showCollision ? 'collision-on' : 'collision-off',
-  ].join('|'), [
-    expectedMeshLoadSignature,
-    mode,
-    robot.joints,
-    robot.links,
-    robot.rootLinkId,
-    state.showCollision,
-    state.showGeometry,
-    state.showVisual,
-  ]);
+    lang,
+    controller,
+    active = true,
+    assemblyState = null,
+    assemblyWorkspaceActive = false,
+    assemblySelection,
+    sourceSceneAssemblyComponentId = null,
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
+    onTransformPendingChange,
+    onDocumentLoadEvent,
+  }: VisualizerSceneProps) => {
+    const t = translations[lang];
+    const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+    const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
+    const collisionTransformControlRef = React.useRef<any>(null);
+    const [assemblyRootObject, setAssemblyRootObject] = React.useState<THREE.Group | null>(null);
+    const [sourceSceneComponentRootObject, setSourceSceneComponentRootObject] =
+      React.useState<THREE.Group | null>(null);
+    const assemblyAutoGroundTrackingRef = React.useRef(
+      createInitialAssemblyAutoGroundTrackingState(),
+    );
+    const {
+      robotRootRef,
+      state,
+      jointPivots,
+      selectedJointPivot,
+      selectedCollisionRef,
+      handleRegisterJointPivot,
+      handleRegisterJointMotion,
+      handleRegisterCollisionRef,
+      transformControlsState,
+      handleCollisionTransformEnd,
+      requestGroundRealignment,
+    } = controller;
+    const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
+      const grouped: Record<string, UrdfJoint[]> = {};
 
-  React.useEffect(() => {
-    setMeshLoadingState({
+      Object.values(robot.joints).forEach((joint) => {
+        if (!grouped[joint.parentLinkId]) {
+          grouped[joint.parentLinkId] = [];
+        }
+
+        grouped[joint.parentLinkId].push(joint);
+      });
+
+      return grouped;
+    }, [robot.joints]);
+    const rootPlacements = React.useMemo(
+      () => resolveMergedVisualizerRootPlacements(robot),
+      [robot.joints, robot.links, robot.rootLinkId],
+    );
+    const colladaRootNormalizationHints = React.useMemo(
+      () => buildColladaRootNormalizationHints(robot.links),
+      [robot.links],
+    );
+    const expectedMeshLoadKeys = React.useMemo(
+      () =>
+        collectVisualizerMeshLoadKeys({
+          robot,
+          mode,
+          showGeometry: state.showGeometry,
+          showCollision: state.showCollision,
+          assets,
+        }),
+      [assets, mode, robot, state.showCollision, state.showGeometry],
+    );
+    const expectedMeshLoadSignature = React.useMemo(
+      () => expectedMeshLoadKeys.join('\u0000'),
+      [expectedMeshLoadKeys],
+    );
+    const expectedMeshLoadKeySet = React.useMemo(
+      () => new Set(expectedMeshLoadKeys),
+      [expectedMeshLoadKeys],
+    );
+    const {
+      expectedMeshLoadKeys: expectedCollisionMeshLoadKeys,
+      meshLoadKeys: prewarmedCollisionMeshLoadKeys,
+      signature: prewarmedCollisionMeshLoadSignature,
+    } = useCollisionMeshPrewarm({
+      active,
+      assets,
+      robot,
+    });
+    const collisionComponentMeshLoadKeyMap = React.useMemo(
+      () =>
+        buildAssemblyComponentMeshLoadKeyMap({
+          assemblyState,
+          meshLoadKeys: expectedCollisionMeshLoadKeys,
+        }),
+      [assemblyState, expectedCollisionMeshLoadKeys],
+    );
+    const collisionRevealComponentIdByLinkId = React.useMemo(
+      () => buildAssemblyComponentLinkOwnerMap(assemblyState),
+      [assemblyState],
+    );
+    const revealableCollisionComponentIds = React.useMemo(
+      () =>
+        Object.values(assemblyState?.components ?? {})
+          .filter(
+            (component) =>
+              component.visible !== false &&
+              (collisionComponentMeshLoadKeyMap.get(component.id)?.size ?? 0) > 0,
+          )
+          .map((component) => component.id),
+      [assemblyState, collisionComponentMeshLoadKeyMap],
+    );
+    const [meshLoadingState, setMeshLoadingState] = React.useState<{
+      signature: string;
+      resolvedKeys: Set<string>;
+    }>({
       signature: expectedMeshLoadSignature,
       resolvedKeys: new Set<string>(),
     });
-  }, [expectedMeshLoadSignature]);
+    const [prewarmedMeshLoadingState, setPrewarmedMeshLoadingState] = React.useState<{
+      signature: string;
+      resolvedKeys: Set<string>;
+    }>({
+      signature: prewarmedCollisionMeshLoadSignature,
+      resolvedKeys: new Set<string>(),
+    });
+    const pendingResolvedMeshLoadKeysRef = React.useRef<Set<string>>(new Set<string>());
+    const pendingPrewarmedResolvedMeshLoadKeysRef = React.useRef<Set<string>>(new Set<string>());
+    const meshResolutionFlushFrameRef = React.useRef<number | null>(null);
+    const collisionRevealFlushFrameRef = React.useRef<number | null>(null);
+    const pendingCollisionRevealComponentIdsRef = React.useRef<Set<string>>(new Set<string>());
+    const collisionRevealDebugSessionRef = React.useRef<{
+      completed: boolean;
+      lastRevealedComponentCount: number;
+      sessionId: string;
+      signature: string;
+      startedAt: number;
+    } | null>(null);
+    const effectiveResolvedMeshLoadKeys = React.useMemo(() => {
+      const nextResolvedKeys = new Set<string>();
 
-  React.useEffect(() => {
-    if (!active || !onDocumentLoadEvent) {
-      return;
-    }
-
-    onDocumentLoadEvent(buildVisualizerDocumentLoadEvent({
-      resolvedCount: resolvedMeshCount,
-      totalCount: expectedMeshLoadKeys.length,
-    }));
-  }, [active, expectedMeshLoadKeys.length, onDocumentLoadEvent, resolvedMeshCount]);
-
-  const handleCollisionDraggingChanged = React.useCallback(
-    (event: { value?: boolean }) => {
-      const dragging = Boolean(event?.value);
-      setHoverFrozen(dragging);
-      if (dragging) return;
-      handleCollisionTransformEnd();
-    },
-    [handleCollisionTransformEnd, setHoverFrozen]
-  );
-
-  const handleMeshResolved = React.useCallback((meshLoadKey: string) => {
-    requestGroundRealignment();
-    setMeshLoadingState((current) => {
-      const resolvedKeys = current.signature === expectedMeshLoadSignature
-        ? current.resolvedKeys
-        : new Set<string>();
-
-      if (!expectedMeshLoadKeySet.has(meshLoadKey) || resolvedKeys.has(meshLoadKey)) {
-        if (current.signature === expectedMeshLoadSignature) {
-          return current;
-        }
-
-        return {
-          signature: expectedMeshLoadSignature,
-          resolvedKeys,
-        };
+      if (meshLoadingState.signature === expectedMeshLoadSignature) {
+        meshLoadingState.resolvedKeys.forEach((meshLoadKey) => {
+          if (expectedMeshLoadKeySet.has(meshLoadKey)) {
+            nextResolvedKeys.add(meshLoadKey);
+          }
+        });
       }
 
-      const nextResolvedKeys = new Set(resolvedKeys);
-      nextResolvedKeys.add(meshLoadKey);
-      return {
+      if (prewarmedMeshLoadingState.signature === prewarmedCollisionMeshLoadSignature) {
+        prewarmedMeshLoadingState.resolvedKeys.forEach((meshLoadKey) => {
+          if (expectedMeshLoadKeySet.has(meshLoadKey)) {
+            nextResolvedKeys.add(meshLoadKey);
+          }
+        });
+      }
+
+      return nextResolvedKeys;
+    }, [
+      expectedMeshLoadKeySet,
+      expectedMeshLoadSignature,
+      meshLoadingState.resolvedKeys,
+      meshLoadingState.signature,
+      prewarmedCollisionMeshLoadSignature,
+      prewarmedMeshLoadingState.resolvedKeys,
+      prewarmedMeshLoadingState.signature,
+    ]);
+    const readyCollisionComponentIds = React.useMemo(
+      () =>
+        resolveReadyAssemblyMeshComponentIds({
+          assemblyState,
+          componentMeshLoadKeyMap: collisionComponentMeshLoadKeyMap,
+          resolvedMeshLoadKeys: effectiveResolvedMeshLoadKeys,
+          includeEmptyComponents: false,
+        }),
+      [assemblyState, collisionComponentMeshLoadKeyMap, effectiveResolvedMeshLoadKeys],
+    );
+    const collisionComponentRevealSignature = React.useMemo(
+      () =>
+        [prewarmedCollisionMeshLoadSignature, ...revealableCollisionComponentIds].join('\u0000'),
+      [prewarmedCollisionMeshLoadSignature, revealableCollisionComponentIds],
+    );
+    const [revealedCollisionComponentState, setRevealedCollisionComponentState] = React.useState<{
+      componentIds: Set<string>;
+      signature: string;
+    }>({
+      componentIds: new Set<string>(),
+      signature: collisionComponentRevealSignature,
+    });
+    const revealedCollisionComponentIds = React.useMemo(
+      () =>
+        revealedCollisionComponentState.signature === collisionComponentRevealSignature
+          ? revealedCollisionComponentState.componentIds
+          : new Set<string>(),
+      [
+        collisionComponentRevealSignature,
+        revealedCollisionComponentState.componentIds,
+        revealedCollisionComponentState.signature,
+      ],
+    );
+    const revealedCollisionMeshLoadKeys = React.useMemo(
+      () =>
+        collectAssemblyMeshLoadKeysForComponents({
+          componentIds: revealedCollisionComponentIds,
+          componentMeshLoadKeyMap: collisionComponentMeshLoadKeyMap,
+        }),
+      [collisionComponentMeshLoadKeyMap, revealedCollisionComponentIds],
+    );
+    const resolvedMeshCount = effectiveResolvedMeshLoadKeys.size;
+    const isMeshLoading =
+      expectedMeshLoadKeys.length > 0 && resolvedMeshCount < expectedMeshLoadKeys.length;
+    const readyCollisionMeshLoadKeys = React.useMemo(
+      () =>
+        assemblyWorkspaceActive && state.showCollision ? revealedCollisionMeshLoadKeys : undefined,
+      [assemblyWorkspaceActive, revealedCollisionMeshLoadKeys, state.showCollision],
+    );
+    const loadingHudState = React.useMemo(
+      () =>
+        buildLoadingHudState({
+          loadedCount: resolvedMeshCount,
+          totalCount: expectedMeshLoadKeys.length,
+          fallbackDetail: t.loadingRobotPreparing,
+        }),
+      [expectedMeshLoadKeys.length, resolvedMeshCount, t.loadingRobotPreparing],
+    );
+    const loadingStageLabel =
+      resolvedMeshCount === 0 ? t.loadingRobotPreparing : t.loadingRobotStreamingMeshes;
+    const loadingDetail =
+      loadingHudState.detail === loadingStageLabel ? '' : loadingHudState.detail;
+    const sceneCompileWarmupKey = React.useMemo(
+      () =>
+        [
+          mode,
+          robot.rootLinkId,
+          String(Object.keys(robot.links).length),
+          String(Object.keys(robot.joints).length),
+          expectedMeshLoadSignature || 'inline-geometry',
+          state.showGeometry ? 'geometry-on' : 'geometry-off',
+          state.showVisual ? 'visual-on' : 'visual-off',
+          state.showCollision ? 'collision-on' : 'collision-off',
+        ].join('|'),
+      [
+        expectedMeshLoadSignature,
+        mode,
+        robot.joints,
+        robot.links,
+        robot.rootLinkId,
+        state.showCollision,
+        state.showGeometry,
+        state.showVisual,
+      ],
+    );
+
+    React.useEffect(() => {
+      pendingResolvedMeshLoadKeysRef.current.clear();
+      pendingPrewarmedResolvedMeshLoadKeysRef.current.clear();
+      if (meshResolutionFlushFrameRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(meshResolutionFlushFrameRef.current);
+        meshResolutionFlushFrameRef.current = null;
+      }
+      setMeshLoadingState({
         signature: expectedMeshLoadSignature,
-        resolvedKeys: nextResolvedKeys,
-      };
-    });
-  }, [expectedMeshLoadKeySet, expectedMeshLoadSignature, requestGroundRealignment]);
-
-  React.useEffect(() => {
-    assemblyAutoGroundTrackingRef.current = resolveNextAssemblyAutoGroundTrackingState({
-      previousState: assemblyAutoGroundTrackingRef.current,
-      assemblyState,
-    });
-  }, [assemblyState]);
-
-  React.useEffect(() => {
-    if (!assemblyWorkspaceActive || !assemblyState || !onComponentTransform) {
-      return;
-    }
-
-    const readyComponentIds = resolveReadyAssemblyAutoGroundComponentIds({
-      assemblyState,
-      pendingComponentIds: assemblyAutoGroundTrackingRef.current.pendingComponentIds,
-      expectedMeshLoadKeys,
-      resolvedMeshLoadKeys: meshLoadingState.resolvedKeys,
-    });
-    if (readyComponentIds.length === 0) {
-      return;
-    }
-
-    const { adjustments, measuredComponentIds } = resolveAssemblyAutoGrounding({
-      robot,
-      assemblyState,
-      jointPivots,
-      groundPlaneOffset,
-      componentIds: readyComponentIds,
-    });
-    if (measuredComponentIds.length === 0) {
-      return;
-    }
-
-    measuredComponentIds.forEach((componentId) => {
-      assemblyAutoGroundTrackingRef.current.pendingComponentIds.delete(componentId);
-    });
-    adjustments.forEach(({ componentId, transform }) => {
-      onComponentTransform(componentId, transform, {
-        skipHistory: true,
+        resolvedKeys: new Set<string>(),
       });
-    });
-  }, [
-    assemblyState,
-    assemblyWorkspaceActive,
-    expectedMeshLoadKeys,
-    groundPlaneOffset,
-    jointPivots,
-    meshLoadingState.resolvedKeys,
-    onComponentTransform,
-    robot,
-  ]);
-  const shouldRenderConstraintOverlay = shouldRenderMergedVisualizerConstraintOverlay(mode);
-  const assemblyTransform = React.useMemo(
-    () => cloneAssemblyTransform(assemblyWorkspaceActive ? assemblyState?.transform : null),
-    [assemblyState?.transform, assemblyWorkspaceActive],
-  );
+    }, [expectedMeshLoadSignature]);
 
-  return (
-    <>
-      <SceneCompileWarmup active={active && !isMeshLoading} warmupKey={sceneCompileWarmupKey} />
-      <VisualizerHoverController
-        robotRootRef={robotRootRef}
-        interactionLayerPriority={state.interactionLayerPriority}
-        active={active}
-      />
-      <group
-        ref={assemblyRootRef}
-        position={[
-          assemblyTransform.position.x,
-          assemblyTransform.position.y,
-          assemblyTransform.position.z,
-        ]}
-        rotation={[
-          assemblyTransform.rotation.r,
-          assemblyTransform.rotation.p,
-          assemblyTransform.rotation.y,
-        ]}
-      >
-        <GroundedGroup ref={robotRootRef}>
-          {shouldRenderConstraintOverlay && <ClosedLoopConstraintsOverlay robot={robot} />}
-          {rootPlacements.map(({ linkId, position }) => (
-            <group key={linkId} position={position}>
-              <RobotNode
-                linkId={linkId}
-                robot={robot}
-                onSelect={onSelect}
-                onUpdate={onUpdate}
-                mode={mode}
-                showGeometry={state.showGeometry}
-                showVisual={state.showVisual}
-                showOrigin={state.showOrigin}
-                showLabels={state.showLabels}
-                showJointAxes={state.showJointAxes}
-                jointAxisSize={state.jointAxisSize}
-                frameSize={state.frameSize}
-                labelScale={state.labelScale}
-                showCollision={state.showCollision}
-                modelOpacity={state.modelOpacity}
-                showInertia={state.showInertia}
-                showCenterOfMass={state.showCenterOfMass}
-                interactionLayerPriority={state.interactionLayerPriority}
-                transformMode={state.transformMode}
-                depth={0}
-                assets={assets}
-                lang={lang}
-                colladaRootNormalizationHints={colladaRootNormalizationHints}
-                childJointsByParent={childJointsByParent}
-                onRegisterJointPivot={handleRegisterJointPivot}
-                onRegisterJointMotion={handleRegisterJointMotion}
-                onRegisterCollisionRef={handleRegisterCollisionRef}
-                onMeshResolved={handleMeshResolved}
+    React.useEffect(() => {
+      pendingPrewarmedResolvedMeshLoadKeysRef.current.clear();
+      setPrewarmedMeshLoadingState({
+        signature: prewarmedCollisionMeshLoadSignature,
+        resolvedKeys: new Set<string>(),
+      });
+    }, [prewarmedCollisionMeshLoadSignature]);
+
+    React.useEffect(() => {
+      pendingCollisionRevealComponentIdsRef.current.clear();
+      collisionRevealDebugSessionRef.current = null;
+      if (collisionRevealFlushFrameRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(collisionRevealFlushFrameRef.current);
+        collisionRevealFlushFrameRef.current = null;
+      }
+      setRevealedCollisionComponentState({
+        componentIds: new Set<string>(),
+        signature: collisionComponentRevealSignature,
+      });
+    }, [collisionComponentRevealSignature]);
+
+    React.useEffect(() => {
+      return () => {
+        pendingResolvedMeshLoadKeysRef.current.clear();
+        pendingPrewarmedResolvedMeshLoadKeysRef.current.clear();
+        pendingCollisionRevealComponentIdsRef.current.clear();
+        if (meshResolutionFlushFrameRef.current !== null && typeof window !== 'undefined') {
+          window.cancelAnimationFrame(meshResolutionFlushFrameRef.current);
+          meshResolutionFlushFrameRef.current = null;
+        }
+        if (collisionRevealFlushFrameRef.current !== null && typeof window !== 'undefined') {
+          window.cancelAnimationFrame(collisionRevealFlushFrameRef.current);
+          collisionRevealFlushFrameRef.current = null;
+        }
+      };
+    }, []);
+
+    React.useEffect(() => {
+      if (!active || !onDocumentLoadEvent) {
+        return;
+      }
+
+      onDocumentLoadEvent(
+        buildVisualizerDocumentLoadEvent({
+          resolvedCount: resolvedMeshCount,
+          totalCount: expectedMeshLoadKeys.length,
+        }),
+      );
+    }, [active, expectedMeshLoadKeys.length, onDocumentLoadEvent, resolvedMeshCount]);
+
+    const handleCollisionDraggingChanged = React.useCallback(
+      (event: { value?: boolean }) => {
+        const dragging = Boolean(event?.value);
+        setHoverFrozen(dragging);
+        if (dragging) return;
+        handleCollisionTransformEnd();
+      },
+      [handleCollisionTransformEnd, setHoverFrozen],
+    );
+
+    const collisionRevealBatchSize = state.showCollision ? 2 : 8;
+    const flushRevealedCollisionComponents = React.useCallback(() => {
+      collisionRevealFlushFrameRef.current = null;
+
+      const pendingCollisionRevealComponentIds = pendingCollisionRevealComponentIdsRef.current;
+      if (pendingCollisionRevealComponentIds.size === 0) {
+        return;
+      }
+
+      const nextBatchComponentIds: string[] = [];
+      for (const componentId of pendingCollisionRevealComponentIds) {
+        nextBatchComponentIds.push(componentId);
+        if (nextBatchComponentIds.length >= collisionRevealBatchSize) {
+          break;
+        }
+      }
+
+      if (nextBatchComponentIds.length === 0) {
+        return;
+      }
+
+      nextBatchComponentIds.forEach((componentId) => {
+        pendingCollisionRevealComponentIds.delete(componentId);
+      });
+
+      React.startTransition(() => {
+        setRevealedCollisionComponentState((current) => {
+          const nextComponentIds =
+            current.signature === collisionComponentRevealSignature
+              ? new Set(current.componentIds)
+              : new Set<string>();
+
+          let changed = current.signature !== collisionComponentRevealSignature;
+          nextBatchComponentIds.forEach((componentId) => {
+            if (nextComponentIds.has(componentId)) {
+              return;
+            }
+
+            nextComponentIds.add(componentId);
+            changed = true;
+          });
+
+          if (!changed) {
+            return current;
+          }
+
+          return {
+            componentIds: nextComponentIds,
+            signature: collisionComponentRevealSignature,
+          };
+        });
+      });
+
+      if (pendingCollisionRevealComponentIds.size === 0) {
+        return;
+      }
+
+      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        flushRevealedCollisionComponents();
+        return;
+      }
+
+      collisionRevealFlushFrameRef.current = window.requestAnimationFrame(() => {
+        flushRevealedCollisionComponents();
+      });
+    }, [collisionComponentRevealSignature, collisionRevealBatchSize]);
+
+    React.useEffect(() => {
+      if (!assemblyWorkspaceActive || revealableCollisionComponentIds.length === 0) {
+        pendingCollisionRevealComponentIdsRef.current.clear();
+        if (collisionRevealFlushFrameRef.current !== null && typeof window !== 'undefined') {
+          window.cancelAnimationFrame(collisionRevealFlushFrameRef.current);
+          collisionRevealFlushFrameRef.current = null;
+        }
+        return;
+      }
+
+      let queued = false;
+      readyCollisionComponentIds.forEach((componentId) => {
+        if (revealedCollisionComponentIds.has(componentId)) {
+          return;
+        }
+        if (pendingCollisionRevealComponentIdsRef.current.has(componentId)) {
+          return;
+        }
+
+        pendingCollisionRevealComponentIdsRef.current.add(componentId);
+        queued = true;
+      });
+
+      if (!queued || collisionRevealFlushFrameRef.current !== null) {
+        return;
+      }
+
+      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        flushRevealedCollisionComponents();
+        return;
+      }
+
+      collisionRevealFlushFrameRef.current = window.requestAnimationFrame(() => {
+        flushRevealedCollisionComponents();
+      });
+    }, [
+      assemblyWorkspaceActive,
+      flushRevealedCollisionComponents,
+      readyCollisionComponentIds,
+      revealableCollisionComponentIds.length,
+      revealedCollisionComponentIds,
+    ]);
+
+    const flushResolvedMeshLoadKeys = React.useCallback(() => {
+      meshResolutionFlushFrameRef.current = null;
+
+      const pendingResolvedMeshLoadKeys = pendingResolvedMeshLoadKeysRef.current;
+      const pendingPrewarmedResolvedMeshLoadKeys = pendingPrewarmedResolvedMeshLoadKeysRef.current;
+      if (
+        pendingResolvedMeshLoadKeys.size === 0 &&
+        pendingPrewarmedResolvedMeshLoadKeys.size === 0
+      ) {
+        return;
+      }
+
+      pendingResolvedMeshLoadKeysRef.current = new Set<string>();
+      pendingPrewarmedResolvedMeshLoadKeysRef.current = new Set<string>();
+      requestGroundRealignment();
+
+      React.startTransition(() => {
+        if (pendingResolvedMeshLoadKeys.size > 0) {
+          setMeshLoadingState((current) => {
+            const nextState = mergeResolvedMeshLoadKeys({
+              currentResolvedKeys: current.resolvedKeys,
+              currentSignature: current.signature,
+              expectedMeshLoadKeySet,
+              expectedSignature: expectedMeshLoadSignature,
+              pendingResolvedKeys: pendingResolvedMeshLoadKeys,
+            });
+
+            return nextState ?? current;
+          });
+        }
+        if (pendingPrewarmedResolvedMeshLoadKeys.size > 0) {
+          setPrewarmedMeshLoadingState((current) => {
+            const nextState = mergeResolvedMeshLoadKeys({
+              currentResolvedKeys: current.resolvedKeys,
+              currentSignature: current.signature,
+              expectedMeshLoadKeySet: prewarmedCollisionMeshLoadKeys,
+              expectedSignature: prewarmedCollisionMeshLoadSignature,
+              pendingResolvedKeys: pendingPrewarmedResolvedMeshLoadKeys,
+            });
+
+            return nextState ?? current;
+          });
+        }
+      });
+    }, [
+      expectedMeshLoadKeySet,
+      expectedMeshLoadSignature,
+      prewarmedCollisionMeshLoadKeys,
+      prewarmedCollisionMeshLoadSignature,
+      requestGroundRealignment,
+    ]);
+
+    const handleMeshResolved = React.useCallback(
+      (meshLoadKey: string) => {
+        if (!expectedMeshLoadKeySet.has(meshLoadKey)) {
+          return;
+        }
+
+        pendingResolvedMeshLoadKeysRef.current.add(meshLoadKey);
+        if (meshResolutionFlushFrameRef.current !== null) {
+          return;
+        }
+
+        if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+          flushResolvedMeshLoadKeys();
+          return;
+        }
+
+        meshResolutionFlushFrameRef.current = window.requestAnimationFrame(() => {
+          flushResolvedMeshLoadKeys();
+        });
+      },
+      [expectedMeshLoadKeySet, flushResolvedMeshLoadKeys],
+    );
+
+    const handlePrewarmedMeshResolved = React.useCallback(
+      (meshLoadKey: string) => {
+        if (!prewarmedCollisionMeshLoadKeys.has(meshLoadKey)) {
+          return;
+        }
+
+        pendingPrewarmedResolvedMeshLoadKeysRef.current.add(meshLoadKey);
+        if (meshResolutionFlushFrameRef.current !== null) {
+          return;
+        }
+
+        if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+          flushResolvedMeshLoadKeys();
+          return;
+        }
+
+        meshResolutionFlushFrameRef.current = window.requestAnimationFrame(() => {
+          flushResolvedMeshLoadKeys();
+        });
+      },
+      [flushResolvedMeshLoadKeys, prewarmedCollisionMeshLoadKeys],
+    );
+
+    React.useEffect(() => {
+      assemblyAutoGroundTrackingRef.current = resolveNextAssemblyAutoGroundTrackingState({
+        previousState: assemblyAutoGroundTrackingRef.current,
+        assemblyState,
+      });
+    }, [assemblyState]);
+
+    React.useEffect(() => {
+      if (
+        !assemblyWorkspaceActive ||
+        !state.showCollision ||
+        revealableCollisionComponentIds.length === 0
+      ) {
+        collisionRevealDebugSessionRef.current = null;
+        return;
+      }
+
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (
+        !collisionRevealDebugSessionRef.current ||
+        collisionRevealDebugSessionRef.current.signature !== collisionComponentRevealSignature
+      ) {
+        collisionRevealDebugSessionRef.current = {
+          completed: false,
+          lastRevealedComponentCount: revealedCollisionComponentIds.size,
+          sessionId: `collision-reveal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          signature: collisionComponentRevealSignature,
+          startedAt: now,
+        };
+        recordVisualizerCollisionLoadDebug({
+          sessionId: collisionRevealDebugSessionRef.current.sessionId,
+          signature: collisionComponentRevealSignature,
+          phase: 'show-requested',
+          timestamp: Date.now(),
+          detail: {
+            readyComponentCount: readyCollisionComponentIds.length,
+            revealedComponentCount: revealedCollisionComponentIds.size,
+            totalComponentCount: revealableCollisionComponentIds.length,
+            totalMeshCount: expectedCollisionMeshLoadKeys.length,
+          },
+        });
+      }
+
+      const activeDebugSession = collisionRevealDebugSessionRef.current;
+      if (!activeDebugSession) {
+        return;
+      }
+
+      if (activeDebugSession.lastRevealedComponentCount !== revealedCollisionComponentIds.size) {
+        activeDebugSession.lastRevealedComponentCount = revealedCollisionComponentIds.size;
+        recordVisualizerCollisionLoadDebug({
+          sessionId: activeDebugSession.sessionId,
+          signature: collisionComponentRevealSignature,
+          phase: 'reveal-progress',
+          timestamp: Date.now(),
+          durationMs: now - activeDebugSession.startedAt,
+          detail: {
+            revealedComponentCount: revealedCollisionComponentIds.size,
+            revealedMeshCount: revealedCollisionMeshLoadKeys.size,
+            totalComponentCount: revealableCollisionComponentIds.length,
+            totalMeshCount: expectedCollisionMeshLoadKeys.length,
+          },
+        });
+      }
+
+      if (
+        !activeDebugSession.completed &&
+        revealedCollisionComponentIds.size >= revealableCollisionComponentIds.length
+      ) {
+        activeDebugSession.completed = true;
+        recordVisualizerCollisionLoadDebug({
+          sessionId: activeDebugSession.sessionId,
+          signature: collisionComponentRevealSignature,
+          phase: 'reveal-complete',
+          timestamp: Date.now(),
+          durationMs: now - activeDebugSession.startedAt,
+          detail: {
+            revealedComponentCount: revealedCollisionComponentIds.size,
+            revealedMeshCount: revealedCollisionMeshLoadKeys.size,
+            totalComponentCount: revealableCollisionComponentIds.length,
+            totalMeshCount: expectedCollisionMeshLoadKeys.length,
+          },
+        });
+      }
+    }, [
+      assemblyWorkspaceActive,
+      collisionComponentRevealSignature,
+      expectedCollisionMeshLoadKeys.length,
+      readyCollisionComponentIds.length,
+      revealableCollisionComponentIds.length,
+      revealedCollisionComponentIds.size,
+      revealedCollisionMeshLoadKeys.size,
+      state.showCollision,
+    ]);
+
+    React.useEffect(() => {
+      if (!assemblyWorkspaceActive || !assemblyState || !onComponentTransform) {
+        return;
+      }
+
+      const readyComponentIds = resolveReadyAssemblyAutoGroundComponentIds({
+        assemblyState,
+        pendingComponentIds: assemblyAutoGroundTrackingRef.current.pendingComponentIds,
+        expectedMeshLoadKeys,
+        resolvedMeshLoadKeys: effectiveResolvedMeshLoadKeys,
+      });
+      if (readyComponentIds.length === 0) {
+        return;
+      }
+
+      const { adjustments, measuredComponentIds } = resolveAssemblyAutoGrounding({
+        robot,
+        assemblyState,
+        jointPivots,
+        groundPlaneOffset,
+        componentIds: readyComponentIds,
+      });
+      if (measuredComponentIds.length === 0) {
+        return;
+      }
+
+      measuredComponentIds.forEach((componentId) => {
+        assemblyAutoGroundTrackingRef.current.pendingComponentIds.delete(componentId);
+      });
+      adjustments.forEach(({ componentId, transform }) => {
+        onComponentTransform(componentId, transform, {
+          skipHistory: true,
+        });
+      });
+    }, [
+      assemblyState,
+      assemblyWorkspaceActive,
+      effectiveResolvedMeshLoadKeys,
+      expectedMeshLoadKeys,
+      groundPlaneOffset,
+      jointPivots,
+      onComponentTransform,
+      robot,
+    ]);
+    const shouldRenderConstraintOverlay = shouldRenderMergedVisualizerConstraintOverlay(mode);
+    const sourceSceneAssemblyComponent = React.useMemo(() => {
+      if (!sourceSceneAssemblyComponentId || !assemblyState) {
+        return null;
+      }
+
+      const component = assemblyState.components[sourceSceneAssemblyComponentId];
+      if (!component || component.visible === false) {
+        return null;
+      }
+
+      return component;
+    }, [assemblyState, sourceSceneAssemblyComponentId]);
+    const assemblyTransform = React.useMemo(
+      () => cloneAssemblyTransform(assemblyWorkspaceActive ? assemblyState?.transform : null),
+      [assemblyState?.transform, assemblyWorkspaceActive],
+    );
+    const sourceSceneComponentTransform = React.useMemo(
+      () => cloneAssemblyTransform(sourceSceneAssemblyComponent?.transform),
+      [sourceSceneAssemblyComponent?.transform],
+    );
+    const showSourceSceneAssemblyComponentControls = Boolean(
+      sourceSceneAssemblyComponent &&
+      assemblySelection?.type === 'component' &&
+      assemblySelection.id === sourceSceneAssemblyComponent.id,
+    );
+    const shouldRenderAssemblyTransformControls =
+      assemblyWorkspaceActive || showSourceSceneAssemblyComponentControls;
+    const handleAssemblyRootRef = React.useCallback((node: THREE.Group | null) => {
+      setAssemblyRootObject((current) => (current === node ? current : node));
+    }, []);
+    const handleSourceSceneComponentRootRef = React.useCallback((node: THREE.Group | null) => {
+      setSourceSceneComponentRootObject((current) => (current === node ? current : node));
+    }, []);
+
+    return (
+      <>
+        <SceneCompileWarmup active={active && !isMeshLoading} warmupKey={sceneCompileWarmupKey} />
+        <VisualizerHoverController
+          robotRootRef={robotRootRef}
+          interactionLayerPriority={state.interactionLayerPriority}
+          active={active}
+        />
+        <group
+          ref={handleAssemblyRootRef}
+          position={[
+            assemblyTransform.position.x,
+            assemblyTransform.position.y,
+            assemblyTransform.position.z,
+          ]}
+          rotation={[
+            assemblyTransform.rotation.r,
+            assemblyTransform.rotation.p,
+            assemblyTransform.rotation.y,
+          ]}
+        >
+          <group
+            ref={handleSourceSceneComponentRootRef}
+            position={[
+              sourceSceneComponentTransform.position.x,
+              sourceSceneComponentTransform.position.y,
+              sourceSceneComponentTransform.position.z,
+            ]}
+            rotation={[
+              sourceSceneComponentTransform.rotation.r,
+              sourceSceneComponentTransform.rotation.p,
+              sourceSceneComponentTransform.rotation.y,
+            ]}
+          >
+            <GroundedGroup ref={robotRootRef}>
+              {shouldRenderConstraintOverlay && <ClosedLoopConstraintsOverlay robot={robot} />}
+              {rootPlacements.map(({ linkId, position }) => (
+                <group key={linkId} position={position}>
+                  <RobotNode
+                    linkId={linkId}
+                    robot={robot}
+                    onSelect={onSelect}
+                    onUpdate={onUpdate}
+                    mode={mode}
+                    showGeometry={state.showGeometry}
+                    showVisual={state.showVisual}
+                    showOrigin={state.showOrigin}
+                    showLabels={state.showLabels}
+                    showJointAxes={state.showJointAxes}
+                    jointAxisSize={state.jointAxisSize}
+                    frameSize={state.frameSize}
+                    labelScale={state.labelScale}
+                    showCollision={state.showCollision}
+                    modelOpacity={state.modelOpacity}
+                    showInertia={state.showInertia}
+                    showCenterOfMass={state.showCenterOfMass}
+                    interactionLayerPriority={state.interactionLayerPriority}
+                    transformMode={state.transformMode}
+                    depth={0}
+                    assets={assets}
+                    lang={lang}
+                    colladaRootNormalizationHints={colladaRootNormalizationHints}
+                    collisionRevealComponentIdByLinkId={collisionRevealComponentIdByLinkId}
+                    prewarmedCollisionMeshLoadKeys={prewarmedCollisionMeshLoadKeys}
+                    readyCollisionMeshLoadKeys={readyCollisionMeshLoadKeys}
+                    revealedCollisionComponentIds={revealedCollisionComponentIds}
+                    childJointsByParent={childJointsByParent}
+                    onRegisterJointPivot={handleRegisterJointPivot}
+                    onRegisterJointMotion={handleRegisterJointMotion}
+                    onRegisterCollisionRef={handleRegisterCollisionRef}
+                    onMeshResolved={handleMeshResolved}
+                    onPrewarmedMeshResolved={handlePrewarmedMeshResolved}
+                  />
+                </group>
+              ))}
+            </GroundedGroup>
+          </group>
+        </group>
+        {active && isMeshLoading ? (
+          <Html fullscreen>
+            <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
+              <LoadingHud
+                title={t.loadingRobot}
+                detail={loadingDetail}
+                progress={loadingHudState.progress}
+                statusLabel={loadingHudState.statusLabel}
+                stageLabel={loadingStageLabel}
+                delayMs={0}
               />
-            </group>
-          ))}
-        </GroundedGroup>
-      </group>
-      {active && isMeshLoading ? (
-        <Html fullscreen>
-          <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
-            <LoadingHud
-              title={t.loadingRobot}
-              detail={loadingDetail}
-              progress={loadingHudState.progress}
-              statusLabel={loadingHudState.statusLabel}
-              stageLabel={loadingStageLabel}
-              delayMs={0}
-            />
-          </div>
-        </Html>
-      ) : null}
+            </div>
+          </Html>
+        ) : null}
 
-      {!assemblyWorkspaceActive && (
-        <JointTransformControls
-          mode={mode}
-          selectedJointPivot={selectedJointPivot}
-          robot={robot}
-          transformMode="universal"
-          transformControlsState={transformControlsState}
-        />
-      )}
-
-      {assemblyWorkspaceActive && (
-        <AssemblyTransformControls
-          robot={robot}
-          assemblyState={assemblyState}
-          assemblySelection={assemblySelection}
-          transformMode={state.transformMode}
-          assemblyRoot={assemblyRootRef.current}
-          jointPivots={jointPivots}
-          onAssemblyTransform={onAssemblyTransform}
-          onComponentTransform={onComponentTransform}
-          onBridgeTransform={onBridgeTransform}
-          onTransformPendingChange={onTransformPendingChange}
-        />
-      )}
-
-      {selectedCollisionRef &&
-        robot.selection.type === 'link' &&
-        robot.selection.id &&
-        robot.selection.subType === 'collision' && (
-          <>
-            <UnifiedTransformControls
-              ref={collisionTransformControlRef}
-              object={selectedCollisionRef}
-              mode={state.transformMode}
-              size={VISUALIZER_UNIFIED_GIZMO_SIZE}
-              translateSpace="world"
-              rotateSpace="local"
-              hoverStyle="single-axis"
-              displayStyle="thick-primary"
-              onDraggingChanged={handleCollisionDraggingChanged}
-              onMouseUp={handleCollisionTransformEnd}
-            />
-          </>
+        {!shouldRenderAssemblyTransformControls && (
+          <JointTransformControls
+            mode={mode}
+            selectedJointPivot={selectedJointPivot}
+            robot={robot}
+            transformMode="universal"
+            transformControlsState={transformControlsState}
+          />
         )}
-    </>
-  );
-});
+
+        {shouldRenderAssemblyTransformControls && (
+          <AssemblyTransformControls
+            robot={robot}
+            assemblyState={assemblyState}
+            assemblySelection={assemblySelection}
+            transformMode={state.transformMode}
+            assemblyRoot={assemblyRootObject}
+            sourceSceneComponentRoot={
+              showSourceSceneAssemblyComponentControls ? sourceSceneComponentRootObject : null
+            }
+            sourceSceneComponentId={
+              showSourceSceneAssemblyComponentControls ? sourceSceneAssemblyComponent.id : null
+            }
+            jointPivots={jointPivots}
+            onAssemblyTransform={onAssemblyTransform}
+            onComponentTransform={onComponentTransform}
+            onBridgeTransform={onBridgeTransform}
+            onTransformPendingChange={onTransformPendingChange}
+          />
+        )}
+
+        {selectedCollisionRef &&
+          robot.selection.type === 'link' &&
+          robot.selection.id &&
+          robot.selection.subType === 'collision' && (
+            <>
+              <UnifiedTransformControls
+                ref={collisionTransformControlRef}
+                object={selectedCollisionRef}
+                mode={state.transformMode}
+                size={VISUALIZER_UNIFIED_GIZMO_SIZE}
+                translateSpace="world"
+                rotateSpace="local"
+                hoverStyle="single-axis"
+                displayStyle="thick-primary"
+                onDraggingChanged={handleCollisionDraggingChanged}
+                onMouseUp={handleCollisionTransformEnd}
+              />
+            </>
+          )}
+      </>
+    );
+  },
+);

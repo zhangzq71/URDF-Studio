@@ -49,11 +49,12 @@ async function serializePreparedUsdPreloadFile(
 ): Promise<PreparedUsdPreloadTransferFile> {
   const existingBytes = normalizePreparedUsdPreloadBytes(preloadFile.bytes);
   if (existingBytes) {
+    const transferableBytes = existingBytes.slice(0);
     return {
       path: preloadFile.path,
       mimeType: preloadFile.mimeType ?? preloadFile.blob?.type ?? '',
       blob: null,
-      bytes: existingBytes,
+      bytes: transferableBytes,
       error: preloadFile.error ?? null,
     };
   }
@@ -102,7 +103,9 @@ export async function serializePreparedUsdStageOpenDataForWorker(
       criticalDependencyPaths: payload.criticalDependencyPaths,
       preloadFiles,
     },
-    transferables: preloadFiles.flatMap((preloadFile) => (preloadFile.bytes ? [preloadFile.bytes] : [])),
+    transferables: preloadFiles.flatMap((preloadFile) =>
+      preloadFile.bytes ? [preloadFile.bytes] : [],
+    ),
   };
 }
 
@@ -112,6 +115,8 @@ export function hydratePreparedUsdStageOpenDataFromWorker(
   return {
     stageSourcePath: payload.stageSourcePath,
     criticalDependencyPaths: payload.criticalDependencyPaths,
-    preloadFiles: payload.preloadFiles.map((preloadFile) => hydratePreparedUsdPreloadFile(preloadFile)),
+    preloadFiles: payload.preloadFiles.map((preloadFile) =>
+      hydratePreparedUsdPreloadFile(preloadFile),
+    ),
   };
 }

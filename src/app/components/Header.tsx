@@ -25,7 +25,6 @@ interface HeaderProps {
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
-  onOpenAbout: () => void;
   quickAction?: HeaderAction;
   secondaryAction?: HeaderAction;
   // Snapshot
@@ -51,7 +50,6 @@ export function Header({
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onOpenSettings,
-  onOpenAbout,
   quickAction,
   secondaryAction,
   onSnapshot,
@@ -109,8 +107,13 @@ export function Header({
     >
       {/* Left Section - Logo & Menus */}
       <div className="flex items-center gap-1 min-w-0">
-        <div className="flex items-center gap-2 pr-3 mr-1 border-r border-border-black">
-          <img src="/logos/logo.png" alt="Logo" draggable={false} className="w-7 h-7 object-contain" />
+        <div className="mr-1 flex shrink-0 items-center gap-2 border-r border-border-black pr-3">
+          <img
+            src="/logos/logo.png"
+            alt="Logo"
+            draggable={false}
+            className="h-8 w-8 shrink-0 object-contain"
+          />
         </div>
 
         <HeaderMenus
@@ -139,7 +142,10 @@ export function Header({
         />
       </div>
 
-      <div className="hidden md:block" aria-hidden="true" />
+      <div
+        id="viewer-toolbar-dock-slot"
+        className="flex h-full min-w-[240px] items-center justify-center"
+      />
 
       <HeaderActions
         responsive={responsive}
@@ -159,7 +165,6 @@ export function Header({
         onPrefetchCodeViewer={onPrefetchCodeViewer}
         onSnapshot={onSnapshot}
         onOpenSettings={onOpenSettings}
-        onOpenAbout={onOpenAbout}
         t={t}
       />
     </header>

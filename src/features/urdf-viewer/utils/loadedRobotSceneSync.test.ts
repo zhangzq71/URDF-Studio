@@ -20,7 +20,8 @@ const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
 
 function toLinearTuple(r: number, g: number, b: number): number[] {
-  return new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace)
+  return new THREE.Color()
+    .setRGB(r, g, b, THREE.SRGBColorSpace)
     .toArray()
     .map((value) => Number(value.toFixed(4)));
 }
@@ -53,13 +54,10 @@ test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte mate
   const colladaScene = new THREE.Group();
   colladaScene.name = 'Scene';
 
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    [
-      new THREE.MeshLambertMaterial({ name: 'Material', color: new THREE.Color(1, 1, 1) }),
-      new THREE.MeshLambertMaterial({ name: 'dark-rubber', color: new THREE.Color(0, 0, 0) }),
-    ],
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [
+    new THREE.MeshLambertMaterial({ name: 'Material', color: new THREE.Color(1, 1, 1) }),
+    new THREE.MeshLambertMaterial({ name: 'dark-rubber', color: new THREE.Color(0, 0, 0) }),
+  ]);
 
   colladaScene.add(mesh);
   visual.add(colladaScene);
@@ -86,8 +84,8 @@ test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte mate
   assert.equal(primaryMaterial instanceof THREE.MeshStandardMaterial, true);
   assert.equal(secondaryMaterial instanceof THREE.MeshStandardMaterial, true);
   if (
-    !(primaryMaterial instanceof THREE.MeshStandardMaterial)
-    || !(secondaryMaterial instanceof THREE.MeshStandardMaterial)
+    !(primaryMaterial instanceof THREE.MeshStandardMaterial) ||
+    !(secondaryMaterial instanceof THREE.MeshStandardMaterial)
   ) {
     assert.fail('expected URDF visual materials to upgrade to MeshStandardMaterial');
   }
@@ -107,6 +105,36 @@ test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte mate
   assert.equal(primaryMaterial.envMapIntensity, MATERIAL_CONFIG.envMapIntensity);
   assert.equal(primaryMaterial.toneMapped, false);
   assert.equal(secondaryMaterial.toneMapped, false);
+});
+
+test('syncLoadedRobotScene indexes visual meshes attached directly to a root link object', () => {
+  const robot = new URDFLink();
+  robot.name = 'base_link';
+
+  const visual = new URDFVisual();
+  visual.name = 'base_visual';
+
+  const rootMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshPhongMaterial({ name: 'root_visual', color: new THREE.Color('#7f7f7f') }),
+  );
+
+  visual.add(rootMesh);
+  robot.add(visual);
+  (robot as any).links = { base_link: robot };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'urdf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.linkMeshMap.get('base_link:visual')?.includes(rootMesh), true);
+  assert.equal(rootMesh.userData.parentLinkName, 'base_link');
+  assert.equal(rootMesh.userData.isVisualMesh, true);
+  assert.equal(rootMesh.userData.isCollisionMesh, false);
 });
 
 test('syncLoadedRobotScene upgrades MJCF visual meshes to the shared matte viewer materials', () => {
@@ -265,8 +293,14 @@ test('syncLoadedRobotScene keeps MJCF visual and collision ownership on the same
     },
   });
 
-  assert.equal(result.linkMeshMap.get('comp_left_hand_base_link:visual')?.includes(visualMesh), true);
-  assert.equal(result.linkMeshMap.get('comp_left_hand_base_link:collision')?.includes(collisionMesh), true);
+  assert.equal(
+    result.linkMeshMap.get('comp_left_hand_base_link:visual')?.includes(visualMesh),
+    true,
+  );
+  assert.equal(
+    result.linkMeshMap.get('comp_left_hand_base_link:collision')?.includes(collisionMesh),
+    true,
+  );
   assert.equal(visualMesh.userData.parentLinkName, 'comp_left_hand_base_link');
   assert.equal(visualMesh.userData.runtimeParentLinkName, 'left_hand_base_link');
   assert.equal(collisionGroup.userData.parentLinkName, 'comp_left_hand_base_link');
@@ -282,10 +316,12 @@ test('syncLoadedRobotScene keeps all meshes inside one folded MJCF visual body o
 
   const mainVisual = new URDFVisual();
   mainVisual.name = 'base_visual';
-  mainVisual.add(new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshPhongMaterial({ name: 'base_main', color: new THREE.Color('#7f7f7f') }),
-  ));
+  mainVisual.add(
+    new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshPhongMaterial({ name: 'base_main', color: new THREE.Color('#7f7f7f') }),
+    ),
+  );
   link.add(mainVisual);
 
   const foldedAttachmentVisual = new URDFVisual();
@@ -418,10 +454,7 @@ test('syncLoadedRobotScene re-normalizes already-standard MJCF visual materials 
   driftedMaterial.emissiveIntensity = 1;
   driftedMaterial.roughnessMap = new THREE.Texture();
 
-  const mjcfMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    driftedMaterial,
-  );
+  const mjcfMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), driftedMaterial);
 
   visual.add(mjcfMesh);
   link.add(visual);
@@ -592,10 +625,7 @@ test('syncLoadedRobotScene skips hidden collider subtree processing when collisi
   (collisionGroup as any).isURDFCollider = true;
 
   const collisionMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const collisionMesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.1),
-    collisionMaterial,
-  );
+  const collisionMesh = new THREE.Mesh(new THREE.SphereGeometry(0.1), collisionMaterial);
   collisionGroup.add(collisionMesh);
   link.add(collisionGroup);
   robot.add(link);
@@ -638,10 +668,7 @@ test('syncLoadedRobotScene disposes replaced collision materials when normalizin
     materialDisposeCalls += 1;
   };
 
-  const collisionMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    previousMaterial,
-  );
+  const collisionMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), previousMaterial);
 
   collider.add(collisionMesh);
   link.add(collider);

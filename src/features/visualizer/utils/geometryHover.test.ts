@@ -9,21 +9,25 @@ import {
 test('visual hover targets match label-level hover selection without subtype metadata', () => {
   const target = createGeometryHoverTargetSelection('arm_link', 'visual', 0);
 
-  assert.equal(
-    matchesGeometryHoverSelection({ type: 'link', id: 'arm_link' }, target),
-    true,
-  );
+  assert.equal(matchesGeometryHoverSelection({ type: 'link', id: 'arm_link' }, target), true);
 });
 
 test('clear-path matching does not treat label-level hover as geometry-owned hover', () => {
   const target = createGeometryHoverTargetSelection('arm_link', 'visual', 0);
 
   assert.equal(
-    matchesGeometryHoverSelection(
-      { type: 'link', id: 'arm_link' },
-      target,
-      { allowLabelHoverFallback: false },
-    ),
+    matchesGeometryHoverSelection({ type: 'link', id: 'arm_link' }, target, {
+      allowLabelHoverFallback: false,
+    }),
+    false,
+  );
+});
+
+test('helper hover selections do not trigger visual label fallback', () => {
+  const target = createGeometryHoverTargetSelection('arm_link', 'visual', 0);
+
+  assert.equal(
+    matchesGeometryHoverSelection({ type: 'link', id: 'arm_link', helperKind: 'inertia' }, target),
     false,
   );
 });

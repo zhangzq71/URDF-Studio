@@ -1,6 +1,7 @@
 <div align="center">
 
 # URDF Studio
+
 [![React](https://img.shields.io/badge/React-19.2-blue?logo=react)](https://reactjs.org/)
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -219,7 +220,22 @@ npm run codex:key-router:deploy:dry
 
 ## 测试与验证
 
-当前仓库**没有**统一的根级 `npm test` 或 `npm run lint`。
+当前仓库已经提供统一的根级质量命令，用于格式化、Lint 和 CI 校验：
+
+- `npm run format`
+- `npm run format:check`
+- `npm run lint`
+- `npm run typecheck:quality`
+- `npm run check`
+
+`npm run typecheck` 仍保留为全仓 TypeScript 债务检查。CI 和 `npm run check` 当前使用 `npm run typecheck:quality`，它会先排除 test/spec 文件，以便在测试夹具持续迁移期间保持 runtime 编译为绿。
+
+Git hooks 通过 Husky + lint-staged + Commitlint 接入：
+
+- `pre-commit`：对 staged 文件执行格式化，并在 staged diff 上运行 ESLint / Stylelint
+- `commit-msg`：校验 Conventional Commit 提交信息
+
+目前仓库仍然**没有**强行统一成单一的根级 `npm test`，因为测试验证依旧以模块定向和 fixture 回归为主。
 
 通常通过以下方式完成验证：
 

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GeometryType } from '../../../types/geometry.ts';
 import type { RobotState, UrdfLink } from '../../../types/robot.ts';
-import { collectVisualizerMeshLoadKeys } from './visualizerMeshLoading.ts';
+import {
+  collectVisualizerCollisionMeshPreloadSpecs,
+  collectVisualizerMeshLoadKeys,
+  resolveVisualizerCollisionMeshPrewarmConcurrency,
+} from './visualizerMeshLoading.ts';
 
 function createMeshGeometry(meshPath: string) {
   return {
@@ -89,6 +93,25 @@ test('collectVisualizerMeshLoadKeys skips invisible visual links', () => {
   assert.deepEqual(keys, []);
 });
 
+test('collectVisualizerMeshLoadKeys skips collision meshes for hidden links', () => {
+  const robot = createRobotState({
+    visible: false,
+    collision: createMeshGeometry('meshes/collision.obj'),
+  });
+
+  const keys = collectVisualizerMeshLoadKeys({
+    robot,
+    mode: 'editor',
+    showGeometry: true,
+    showCollision: true,
+    assets: {
+      'meshes/collision.obj': 'blob:collision',
+    },
+  });
+
+  assert.deepEqual(keys, []);
+});
+
 test('collectVisualizerMeshLoadKeys skips hidden detail collisions until collision display is enabled', () => {
   const robot = createRobotState({
     collision: createMeshGeometry('meshes/collision.obj'),
@@ -157,4 +180,95 @@ test('collectVisualizerMeshLoadKeys ignores missing or unsupported mesh assets',
   });
 
   assert.deepEqual(keys, []);
+});
+
+test('collectVisualizerCollisionMeshPreloadSpecs deduplicates visible collision mesh assets', () => {
+  const sharedCollision = createMeshGeometry('meshes/shared_collision.dae');
+  const robot: RobotState = {
+    name: 'test-robot',
+    rootLinkId: 'base',
+    links: {
+      base: {
+        id: 'base',
+        name: 'base',
+        visual: createPrimitiveGeometry(),
+        collision: sharedCollision,
+        collisionBodies: [sharedCollision],
+      },
+      hidden: {
+        id: 'hidden',
+        name: 'hidden',
+        visible: false,
+        visual: createPrimitiveGeometry(),
+        collision: createMeshGeometry('meshes/hidden_collision.obj'),
+      },
+    },
+    joints: {},
+    selection: { type: null, id: null },
+  };
+
+  const specs = collectVisualizerCollisionMeshPreloadSpecs({
+    robot,
+    assets: {
+      'meshes/shared_collision.dae': 'blob:shared-collision',
+      'meshes/hidden_collision.obj': 'blob:hidden-collision',
+    },
+  });
+
+  assert.deepEqual(specs, [
+    {
+      assetBaseDir: 'meshes/',
+      assetUrl: 'blob:shared-collision',
+      extension: 'dae',
+      meshLoadKeys: [
+        'base|collision|primary|0|meshes/shared_collision.dae',
+        'base|collision|extra-1|1|meshes/shared_collision.dae',
+      ],
+      meshPath: 'meshes/shared_collision.dae',
+    },
+  ]);
+});
+
+test('resolveVisualizerCollisionMeshPrewarmConcurrency returns zero when no specs exist', () => {
+  assert.equal(
+    resolveVisualizerCollisionMeshPrewarmConcurrency({
+      specCount: 0,
+      hardwareConcurrency: 8,
+    }),
+    0,
+  );
+});
+
+test('resolveVisualizerCollisionMeshPrewarmConcurrency stays bounded by available specs', () => {
+  assert.equal(
+    resolveVisualizerCollisionMeshPrewarmConcurrency({
+      specCount: 2,
+      hardwareConcurrency: 16,
+    }),
+    2,
+  );
+});
+
+test('resolveVisualizerCollisionMeshPrewarmConcurrency scales background preload with cpu budget', () => {
+  assert.equal(
+    resolveVisualizerCollisionMeshPrewarmConcurrency({
+      specCount: 10,
+      hardwareConcurrency: 4,
+    }),
+    2,
+  );
+  assert.equal(
+    resolveVisualizerCollisionMeshPrewarmConcurrency({
+      specCount: 10,
+      hardwareConcurrency: 8,
+    }),
+    3,
+  );
+  assert.equal(
+    resolveVisualizerCollisionMeshPrewarmConcurrency({
+      specCount: 10,
+      hardwareConcurrency: 24,
+    }),
+    4,
+  );
 });

@@ -15,7 +15,7 @@ test('MeshAssetNode routes STL assets to STLRenderer', () => {
       meshPath: 'meshes/base.stl',
       assets: { 'meshes/base.stl': 'blob:stl' },
       material,
-    }) as React.ReactElement;
+    }) as React.ReactElement<React.ComponentProps<typeof STLRenderer>>;
 
     assert.equal(element.type, STLRenderer);
     assert.equal(element.props.url, 'blob:stl');
@@ -33,7 +33,7 @@ test('MeshAssetNode routes OBJ assets with the derived base directory', () => {
       assets: { 'robots/go2/meshes/thigh.obj': 'blob:obj' },
       material,
       color: '#abcdef',
-    }) as React.ReactElement;
+    }) as React.ReactElement<React.ComponentProps<typeof OBJRenderer>>;
 
     assert.equal(element.type, OBJRenderer);
     assert.equal(element.props.url, 'blob:obj');
@@ -55,7 +55,7 @@ test('MeshAssetNode routes Collada and GLTF assets with material preservation fl
       material: daeMaterial,
       normalizeRoot: true,
       preserveOriginalMaterial: true,
-    }) as React.ReactElement;
+    }) as React.ReactElement<React.ComponentProps<typeof DAERenderer>>;
     assert.equal(daeElement.type, DAERenderer);
     assert.equal(daeElement.props.normalizeRoot, true);
     assert.equal(daeElement.props.preserveOriginalMaterial, true);
@@ -65,7 +65,7 @@ test('MeshAssetNode routes Collada and GLTF assets with material preservation fl
       assets: { 'meshes/visual.glb': 'blob:gltf' },
       material: gltfMaterial,
       preserveOriginalMaterial: true,
-    }) as React.ReactElement;
+    }) as React.ReactElement<React.ComponentProps<typeof GLTFRenderer>>;
     assert.equal(gltfElement.type, GLTFRenderer);
     assert.equal(gltfElement.props.preserveOriginalMaterial, true);
   } finally {

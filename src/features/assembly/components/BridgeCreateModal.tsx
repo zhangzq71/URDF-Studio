@@ -10,11 +10,14 @@ import { useSelectionStore } from '@/store/selectionStore';
 import { useAssemblySelectionStore } from '@/store/assemblySelectionStore';
 import type { Language } from '@/store';
 import { degToRad, radToDeg } from '@/core/robot/transforms';
+import { formatNumberWithMaxDecimals, roundToMaxDecimals } from '@/core/utils/numberPrecision';
 import {
-  formatNumberWithMaxDecimals,
-  roundToMaxDecimals,
-} from '@/core/utils/numberPrecision';
-import { JointType, type AssemblyState, type BridgeJoint, type UrdfOrigin } from '@/types';
+  DEFAULT_JOINT,
+  JointType,
+  type AssemblyState,
+  type BridgeJoint,
+  type UrdfOrigin,
+} from '@/types';
 import { translations } from '@/shared/i18n';
 import {
   filterSelectableBridgeComponents,
@@ -33,6 +36,8 @@ import {
 
 const BRIDGE_ROTATION_SHORTCUT_DEGREES = 90;
 const BRIDGE_HALF_ROTATION_DEGREES = 180;
+const BRIDGE_STEPPER_REPEAT_DELAY_MS = 300;
+const BRIDGE_STEPPER_REPEAT_INTERVAL_MS = 60;
 const BRIDGE_FIELD_LABEL_CLASS =
   'mb-0.5 block text-[9px] font-semibold uppercase tracking-[0.1em] leading-4 text-text-tertiary';
 const BRIDGE_FIELD_GROUP_CLASS = 'min-w-0';
@@ -61,9 +66,14 @@ const BRIDGE_FOOTER_BUTTON_CLASS =
   'inline-flex h-6 items-center justify-center rounded-md px-2 text-[10px] font-medium transition-colors';
 const BRIDGE_SIDE_CARD_HEADER_LABEL_CLASS =
   'min-w-0 text-[9px] font-semibold uppercase tracking-[0.08em] leading-4 text-text-tertiary';
-const BRIDGE_SIDE_CARD_HEADER_ROW_CLASS =
-  'mb-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5';
+const BRIDGE_SIDE_CARD_HEADER_ROW_CLASS = 'grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2';
 const BRIDGE_SIDE_CARD_ACTIONS_CLASS = 'flex shrink-0 items-center gap-1.5 justify-self-end';
+const BRIDGE_SIDE_CARD_FIELD_LABEL_CLASS =
+  'mb-1 block text-[8px] font-semibold uppercase tracking-[0.12em] leading-3 text-text-tertiary';
+const BRIDGE_RELATION_GRID_CLASS =
+  'grid grid-cols-[minmax(0,1fr)_3.5rem_minmax(0,1fr)] items-stretch gap-2';
+const BRIDGE_RELATION_CONNECTOR_LINE_CLASS =
+  'w-px flex-1 bg-gradient-to-b from-border-black/0 via-border-black to-border-black/0';
 const BRIDGE_SECTION_CLASS =
   'rounded-lg border border-border-black bg-panel-bg/70 p-1.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_22%,transparent)]';
 const BRIDGE_SECTION_TITLE_CLASS =
@@ -71,6 +81,25 @@ const BRIDGE_SECTION_TITLE_CLASS =
 
 type BridgeRotationDisplayMode = 'euler_deg' | 'euler_rad' | 'quaternion';
 type BridgeEulerAxisKey = 'r' | 'p' | 'y';
+type BridgeAxisTone = 'x' | 'y' | 'z';
+
+const BRIDGE_AXIS_TONE_STYLES: Record<
+  BridgeAxisTone,
+  { badgeClassName: string; barClassName: string }
+> = {
+  x: {
+    badgeClassName: 'border-danger-border bg-danger-soft text-danger',
+    barClassName: 'bg-danger',
+  },
+  y: {
+    badgeClassName: 'border-success-border bg-success-soft text-success',
+    barClassName: 'bg-success',
+  },
+  z: {
+    badgeClassName: 'border-system-blue/25 bg-system-blue/10 text-system-blue',
+    barClassName: 'bg-system-blue',
+  },
+};
 
 interface BridgeInlineFieldRowProps {
   label: string;
@@ -104,10 +133,7 @@ function BridgeInlineFieldRow({
 
   if (layout === 'contents') {
     return (
-      <div
-        data-bridge-inline-field={fieldKey}
-        className={`contents ${className}`.trim()}
-      >
+      <div data-bridge-inline-field={fieldKey} className={`contents ${className}`.trim()}>
         {fieldLabel}
         {fieldControl}
       </div>
@@ -123,6 +149,88 @@ function BridgeInlineFieldRow({
       {fieldControl}
     </div>
   );
+}
+
+function useBridgePressAndHoldAction(
+  onAction: () => void,
+  repeatIntervalMs: number = BRIDGE_STEPPER_REPEAT_INTERVAL_MS,
+) {
+  const holdTimeoutRef = useRef<number | null>(null);
+  const holdIntervalRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+  const onActionRef = useRef(onAction);
+
+  useEffect(() => {
+    onActionRef.current = onAction;
+  }, [onAction]);
+
+  const clearTimers = useCallback(() => {
+    if (holdTimeoutRef.current !== null) {
+      window.clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    if (holdIntervalRef.current !== null) {
+      window.clearInterval(holdIntervalRef.current);
+      holdIntervalRef.current = null;
+    }
+  }, []);
+
+  const invokeAction = useCallback(() => {
+    onActionRef.current();
+  }, []);
+
+  const stopPressAndHold = useCallback(() => {
+    clearTimers();
+  }, [clearTimers]);
+
+  useEffect(() => clearTimers, [clearTimers]);
+
+  const startPressAndHold = useCallback(() => {
+    clearTimers();
+    suppressClickRef.current = true;
+    invokeAction();
+    holdTimeoutRef.current = window.setTimeout(() => {
+      holdIntervalRef.current = window.setInterval(() => {
+        invokeAction();
+      }, repeatIntervalMs);
+    }, BRIDGE_STEPPER_REPEAT_DELAY_MS);
+  }, [clearTimers, invokeAction, repeatIntervalMs]);
+
+  const buttonProps = useCallback(
+    (label: string) => ({
+      type: 'button' as const,
+      'aria-label': label,
+      onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        startPressAndHold();
+      },
+      onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
+        if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
+        }
+        stopPressAndHold();
+      },
+      onPointerCancel: () => {
+        stopPressAndHold();
+        suppressClickRef.current = false;
+      },
+      onLostPointerCapture: () => {
+        stopPressAndHold();
+      },
+      onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false;
+          event.preventDefault();
+          return;
+        }
+        invokeAction();
+      },
+    }),
+    [invokeAction, startPressAndHold, stopPressAndHold],
+  );
+
+  return { buttonProps };
 }
 
 interface BridgeFieldGroupProps {
@@ -157,28 +265,18 @@ function BridgeFieldGroup({
           >
             {label}
           </label>
-          <div className="min-w-0 flex-1">
-            {children}
-          </div>
+          <div className="min-w-0 flex-1">{children}</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div
-      data-bridge-field={fieldKey}
-      className={`${BRIDGE_FIELD_GROUP_CLASS} ${className}`.trim()}
-    >
-      <label
-        htmlFor={htmlFor}
-        className={`${BRIDGE_FIELD_LABEL_CLASS} ${labelClassName}`.trim()}
-      >
+    <div data-bridge-field={fieldKey} className={`${BRIDGE_FIELD_GROUP_CLASS} ${className}`.trim()}>
+      <label htmlFor={htmlFor} className={`${BRIDGE_FIELD_LABEL_CLASS} ${labelClassName}`.trim()}>
         {label}
       </label>
-      <div className="min-w-0">
-        {children}
-      </div>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }
@@ -209,6 +307,63 @@ function normalizeBridgeDegreesAngle(value: number): number {
   return Object.is(normalized, -0) ? 0 : normalized;
 }
 
+function sanitizeBridgeNamePart(value: string | null | undefined): string {
+  const sanitized = String(value ?? '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_./-]+|[_./-]+$/g, '');
+
+  return sanitized || 'robot';
+}
+
+function buildSuggestedBridgeName({
+  assemblyState,
+  parentComponentId,
+  childComponentId,
+}: {
+  assemblyState: AssemblyState;
+  parentComponentId: string;
+  childComponentId: string;
+}): string {
+  if (!parentComponentId || !childComponentId || parentComponentId === childComponentId) {
+    return '';
+  }
+
+  const parentComponent = assemblyState.components[parentComponentId];
+  const childComponent = assemblyState.components[childComponentId];
+  if (!parentComponent || !childComponent) {
+    return '';
+  }
+
+  const parentName = sanitizeBridgeNamePart(
+    parentComponent.name || parentComponent.robot.name || parentComponent.id,
+  );
+  const childName = sanitizeBridgeNamePart(
+    childComponent.name || childComponent.robot.name || childComponent.id,
+  );
+  const baseName = `${parentName}-${childName}`;
+  const existingNames = new Set(
+    Object.values(assemblyState.bridges)
+      .map((bridge) => bridge.name.trim())
+      .filter(Boolean),
+  );
+
+  if (!existingNames.has(baseName)) {
+    return baseName;
+  }
+
+  let duplicateIndex = 1;
+  let nextName = `${baseName}-${duplicateIndex}`;
+  while (existingNames.has(nextName)) {
+    duplicateIndex += 1;
+    nextName = `${baseName}-${duplicateIndex}`;
+  }
+
+  return nextName;
+}
+
 interface BridgeSpinnerFieldProps {
   label: string;
   value: number;
@@ -221,6 +376,48 @@ interface BridgeSpinnerFieldProps {
   inline?: boolean;
   fieldKey?: string;
   labelClassName?: string;
+}
+
+interface BridgeQuickRotateButtonGroupProps {
+  label: string;
+  decreaseLabel: string;
+  increaseLabel: string;
+  decreaseText: string;
+  increaseText: string;
+  onDecrease: () => void;
+  onIncrease: () => void;
+}
+
+function BridgeQuickRotateButtonGroup({
+  label,
+  decreaseLabel,
+  increaseLabel,
+  decreaseText,
+  increaseText,
+  onDecrease,
+  onIncrease,
+}: BridgeQuickRotateButtonGroupProps) {
+  const { buttonProps: decreaseButtonProps } = useBridgePressAndHoldAction(onDecrease);
+  const { buttonProps: increaseButtonProps } = useBridgePressAndHoldAction(onIncrease);
+
+  return (
+    <div className={BRIDGE_QUICK_ROTATE_BUTTON_GROUP_CLASS}>
+      <button
+        {...decreaseButtonProps(`${label} ${decreaseLabel}`)}
+        title={`${label} ${decreaseLabel}`}
+        className={BRIDGE_QUICK_ROTATE_BUTTON_CLASS}
+      >
+        {decreaseText}
+      </button>
+      <button
+        {...increaseButtonProps(`${label} ${increaseLabel}`)}
+        title={`${label} ${increaseLabel}`}
+        className={`${BRIDGE_QUICK_ROTATE_BUTTON_CLASS} border-l border-border-black/60`}
+      >
+        {increaseText}
+      </button>
+    </div>
+  );
 }
 
 function BridgeSpinnerField({
@@ -238,9 +435,11 @@ function BridgeSpinnerField({
 }: BridgeSpinnerFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = React.useId();
+  const currentValueRef = useRef(value);
   const [draftValue, setDraftValue] = useState(() => formatBridgeNumber(value, precision));
 
   useEffect(() => {
+    currentValueRef.current = value;
     if (document.activeElement === inputRef.current) {
       return;
     }
@@ -248,23 +447,30 @@ function BridgeSpinnerField({
     setDraftValue(formatBridgeNumber(value, precision));
   }, [precision, value]);
 
-  const commitValue = useCallback((nextValue: number) => {
-    const normalizedValue = roundToMaxDecimals(clampValue(nextValue, min, max), precision);
-    onChange(normalizedValue);
-    setDraftValue(formatBridgeNumber(normalizedValue, precision));
-  }, [max, min, onChange, precision]);
+  const commitValue = useCallback(
+    (nextValue: number) => {
+      const normalizedValue = roundToMaxDecimals(clampValue(nextValue, min, max), precision);
+      currentValueRef.current = normalizedValue;
+      onChange(normalizedValue);
+      setDraftValue(formatBridgeNumber(normalizedValue, precision));
+    },
+    [max, min, onChange, precision],
+  );
 
-  const handleInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextDraftValue = event.target.value;
-    setDraftValue(nextDraftValue);
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextDraftValue = event.target.value;
+      setDraftValue(nextDraftValue);
 
-    const parsedValue = Number.parseFloat(nextDraftValue);
-    if (!Number.isFinite(parsedValue)) {
-      return;
-    }
+      const parsedValue = Number.parseFloat(nextDraftValue);
+      if (!Number.isFinite(parsedValue)) {
+        return;
+      }
 
-    onChange(roundToMaxDecimals(clampValue(parsedValue, min, max), precision));
-  }, [max, min, onChange, precision]);
+      onChange(roundToMaxDecimals(clampValue(parsedValue, min, max), precision));
+    },
+    [max, min, onChange, precision],
+  );
 
   const handleBlur = useCallback(() => {
     const parsedValue = Number.parseFloat(draftValue);
@@ -275,6 +481,13 @@ function BridgeSpinnerField({
 
     commitValue(parsedValue);
   }, [commitValue, draftValue, precision, value]);
+
+  const { buttonProps: increaseButtonProps } = useBridgePressAndHoldAction(() =>
+    commitValue(currentValueRef.current + step),
+  );
+  const { buttonProps: decreaseButtonProps } = useBridgePressAndHoldAction(() =>
+    commitValue(currentValueRef.current - step),
+  );
 
   const inputControl = (
     <div className={BRIDGE_NUMBER_FIELD_SHELL_CLASS}>
@@ -292,11 +505,11 @@ function BridgeSpinnerField({
           }
           if (event.key === 'ArrowUp') {
             event.preventDefault();
-            commitValue(value + step);
+            commitValue(currentValueRef.current + step);
           }
           if (event.key === 'ArrowDown') {
             event.preventDefault();
-            commitValue(value - step);
+            commitValue(currentValueRef.current - step);
           }
         }}
         aria-label={label}
@@ -304,18 +517,14 @@ function BridgeSpinnerField({
       />
       <div className={BRIDGE_STEPPER_RAIL_CLASS}>
         <button
-          type="button"
-          onClick={() => commitValue(value + step)}
+          {...increaseButtonProps(`Increase ${label}`)}
           className={BRIDGE_STEPPER_BUTTON_CLASS}
-          aria-label={`Increase ${label}`}
         >
           <Plus className="h-[7px] w-[7px]" />
         </button>
         <button
-          type="button"
-          onClick={() => commitValue(value - step)}
+          {...decreaseButtonProps(`Decrease ${label}`)}
           className={`${BRIDGE_STEPPER_BUTTON_CLASS} border-t border-border-black/60`}
-          aria-label={`Decrease ${label}`}
         >
           <Minus className="h-[7px] w-[7px]" />
         </button>
@@ -347,6 +556,149 @@ function BridgeSpinnerField({
     >
       {inputControl}
     </BridgeFieldGroup>
+  );
+}
+
+interface BridgeAxisSpinnerFieldProps {
+  axis: BridgeAxisTone;
+  label: string;
+  value: number;
+  step: number;
+  onChange: (value: number) => void;
+  precision?: number;
+  min?: number;
+  max?: number;
+  className?: string;
+  fieldKey?: string;
+}
+
+function BridgeAxisSpinnerField({
+  axis,
+  label,
+  value,
+  step,
+  onChange,
+  precision = 4,
+  min,
+  max,
+  className = '',
+  fieldKey,
+}: BridgeAxisSpinnerFieldProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const inputId = React.useId();
+  const currentValueRef = useRef(value);
+  const [draftValue, setDraftValue] = useState(() => formatBridgeNumber(value, precision));
+  const toneStyles = BRIDGE_AXIS_TONE_STYLES[axis];
+
+  useEffect(() => {
+    currentValueRef.current = value;
+    if (document.activeElement === inputRef.current) {
+      return;
+    }
+
+    setDraftValue(formatBridgeNumber(value, precision));
+  }, [precision, value]);
+
+  const commitValue = useCallback(
+    (nextValue: number) => {
+      const normalizedValue = roundToMaxDecimals(clampValue(nextValue, min, max), precision);
+      currentValueRef.current = normalizedValue;
+      onChange(normalizedValue);
+      setDraftValue(formatBridgeNumber(normalizedValue, precision));
+    },
+    [max, min, onChange, precision],
+  );
+
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextDraftValue = event.target.value;
+      setDraftValue(nextDraftValue);
+
+      const parsedValue = Number.parseFloat(nextDraftValue);
+      if (!Number.isFinite(parsedValue)) {
+        return;
+      }
+
+      onChange(roundToMaxDecimals(clampValue(parsedValue, min, max), precision));
+    },
+    [max, min, onChange, precision],
+  );
+
+  const handleBlur = useCallback(() => {
+    const parsedValue = Number.parseFloat(draftValue);
+    if (!Number.isFinite(parsedValue)) {
+      setDraftValue(formatBridgeNumber(value, precision));
+      return;
+    }
+
+    commitValue(parsedValue);
+  }, [commitValue, draftValue, precision, value]);
+
+  const { buttonProps: increaseButtonProps } = useBridgePressAndHoldAction(() =>
+    commitValue(currentValueRef.current + step),
+  );
+  const { buttonProps: decreaseButtonProps } = useBridgePressAndHoldAction(() =>
+    commitValue(currentValueRef.current - step),
+  );
+
+  return (
+    <div
+      data-bridge-inline-field={fieldKey}
+      data-bridge-axis={axis}
+      className={`min-w-0 space-y-1 ${className}`.trim()}
+    >
+      <div className="flex min-w-0 items-stretch gap-1.5">
+        <label
+          htmlFor={inputId}
+          className={`inline-flex h-[22px] w-6 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold uppercase tracking-[0.08em] ${toneStyles.badgeClassName}`.trim()}
+        >
+          {label}
+        </label>
+        <div className="min-w-0 flex-1">
+          <div className={`${BRIDGE_NUMBER_FIELD_SHELL_CLASS} bg-panel-bg/80`.trim()}>
+            <input
+              id={inputId}
+              ref={inputRef}
+              type="text"
+              inputMode="decimal"
+              value={draftValue}
+              onChange={handleInputChange}
+              onBlur={handleBlur}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.currentTarget.blur();
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  commitValue(currentValueRef.current + step);
+                }
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  commitValue(currentValueRef.current - step);
+                }
+              }}
+              aria-label={label}
+              className={BRIDGE_NUMBER_INPUT_CLASS}
+            />
+            <div className={BRIDGE_STEPPER_RAIL_CLASS}>
+              <button
+                {...increaseButtonProps(`Increase ${label}`)}
+                className={BRIDGE_STEPPER_BUTTON_CLASS}
+              >
+                <Plus className="h-[7px] w-[7px]" />
+              </button>
+              <button
+                {...decreaseButtonProps(`Decrease ${label}`)}
+                className={`${BRIDGE_STEPPER_BUTTON_CLASS} border-t border-border-black/60`}
+              >
+                <Minus className="h-[7px] w-[7px]" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className={`h-1 rounded-full ${toneStyles.barClassName}`.trim()} />
+    </div>
   );
 }
 
@@ -435,6 +787,22 @@ interface BridgeSideCardProps {
   linkOptions: Array<{ id: string; name: string }>;
 }
 
+function BridgeRelationConnector() {
+  return (
+    <div
+      data-bridge-connector="joint-link"
+      aria-hidden="true"
+      className="flex min-h-[188px] flex-col items-center justify-center gap-2"
+    >
+      <div className={BRIDGE_RELATION_CONNECTOR_LINE_CLASS} />
+      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-system-blue/25 bg-element-bg text-system-blue shadow-[0_10px_24px_rgba(0,0,0,0.12),inset_0_0_0_1px_color-mix(in_srgb,var(--color-system-blue)_12%,transparent)]">
+        <Link2 className="h-4 w-4" />
+      </div>
+      <div className={BRIDGE_RELATION_CONNECTOR_LINE_CLASS} />
+    </div>
+  );
+}
+
 function BridgeSideCard({
   side,
   isActive,
@@ -454,6 +822,8 @@ function BridgeSideCard({
 }: BridgeSideCardProps) {
   const componentLabelId = React.useId();
   const linkLabelId = React.useId();
+  const summaryAlignmentClassName =
+    side === 'child' ? 'items-end text-right' : 'items-start text-left';
 
   return (
     <div
@@ -461,49 +831,55 @@ function BridgeSideCard({
       data-bridge-component-summary={componentSummary}
       data-bridge-link-summary={linkSummary}
       onFocusCapture={onActivate}
-      className={`rounded-lg border p-1.5 transition-colors ${
+      className={`flex h-full flex-col rounded-xl border p-2 transition-[border-color,background-color,box-shadow] ${
         isActive
-          ? 'border-system-blue/45 bg-system-blue/8 ring-1 ring-system-blue/20'
-          : 'border-border-black bg-element-bg/45'
+          ? 'border-system-blue/45 bg-system-blue/8 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-system-blue)_18%,transparent),0_12px_28px_rgba(0,0,0,0.12)] ring-1 ring-system-blue/20'
+          : 'border-border-black bg-element-bg/55 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_22%,transparent)]'
       }`}
     >
-      <div
-        data-bridge-side-header={side}
-        className={BRIDGE_SIDE_CARD_HEADER_ROW_CLASS}
-      >
-        <div
-          id={componentLabelId}
-          className={`${BRIDGE_SIDE_CARD_HEADER_LABEL_CLASS} text-center`}
-        >
-          {componentLabel}
-        </div>
-        <div
-          id={linkLabelId}
-          className={`${BRIDGE_SIDE_CARD_HEADER_LABEL_CLASS} text-center`}
-        >
-          {linkLabel}
+      <div data-bridge-side-header={side} className={BRIDGE_SIDE_CARD_HEADER_ROW_CLASS}>
+        <div className={`min-w-0 ${summaryAlignmentClassName}`}>
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`inline-flex items-center rounded-md border px-1.5 py-px text-[8px] font-semibold uppercase tracking-[0.12em] ${
+                isActive
+                  ? 'border-system-blue/30 bg-system-blue/12 text-system-blue'
+                  : 'border-border-black bg-panel-bg text-text-secondary'
+              }`}
+            >
+              {title}
+            </span>
+            <div className="h-px flex-1 bg-border-black/80" />
+          </div>
+          <div className={`mt-1 flex min-w-0 flex-col gap-0.5 ${summaryAlignmentClassName}`}>
+            <div id={componentLabelId} className={BRIDGE_SIDE_CARD_HEADER_LABEL_CLASS}>
+              {componentLabel}
+            </div>
+            <div className="truncate text-[11px] font-semibold leading-4 text-text-primary">
+              {componentSummary}
+            </div>
+          </div>
+          <div className={`mt-1 flex min-w-0 flex-col gap-0.5 ${summaryAlignmentClassName}`}>
+            <div id={linkLabelId} className={BRIDGE_SIDE_CARD_HEADER_LABEL_CLASS}>
+              {linkLabel}
+            </div>
+            <div className="truncate font-mono text-[10px] leading-4 text-text-secondary">
+              {linkSummary}
+            </div>
+          </div>
         </div>
         <div
           data-bridge-side-actions={side}
-          className={BRIDGE_SIDE_CARD_ACTIONS_CLASS}
+          className={`${BRIDGE_SIDE_CARD_ACTIONS_CLASS} self-start`}
         >
-          <span
-            className={`rounded-md border px-1 py-px text-[8px] font-semibold uppercase tracking-[0.12em] ${
-              isActive
-                ? 'border-system-blue/25 bg-system-blue/12 text-system-blue'
-                : 'border-border-black bg-panel-bg text-text-tertiary'
-            }`}
-          >
-            {title}
-          </span>
           <button
             type="button"
             aria-pressed={isActive}
             onClick={onActivate}
-            className={`${BRIDGE_PICK_BUTTON_CLASS} ${
+            className={`${BRIDGE_PICK_BUTTON_CLASS} border ${
               isActive
-                ? 'bg-system-blue/15 text-system-blue'
-                : 'text-text-tertiary hover:bg-element-hover hover:text-text-primary'
+                ? 'border-system-blue/25 bg-system-blue/15 text-system-blue'
+                : 'border-border-black bg-panel-bg text-text-tertiary hover:bg-element-hover hover:text-text-primary'
             }`}
           >
             {pickLabel}
@@ -511,11 +887,12 @@ function BridgeSideCard({
         </div>
       </div>
 
-      <div
-        data-bridge-side-fields={side}
-        className="grid grid-cols-2 gap-1.5"
-      >
-        <div data-bridge-field={`${side}-component`} className="min-w-0">
+      <div data-bridge-side-fields={side} className="mt-2 grid gap-1.5">
+        <div
+          data-bridge-field={`${side}-component`}
+          className="min-w-0 rounded-lg border border-border-black/80 bg-panel-bg/85 p-1.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_18%,transparent)]"
+        >
+          <div className={BRIDGE_SIDE_CARD_FIELD_LABEL_CLASS}>{componentLabel}</div>
           <select
             aria-labelledby={componentLabelId}
             value={componentValue}
@@ -532,7 +909,11 @@ function BridgeSideCard({
           </select>
         </div>
 
-        <div data-bridge-field={`${side}-link`} className="min-w-0">
+        <div
+          data-bridge-field={`${side}-link`}
+          className="min-w-0 rounded-lg border border-border-black/80 bg-panel-bg/85 p-1.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_18%,transparent)]"
+        >
+          <div className={BRIDGE_SIDE_CARD_FIELD_LABEL_CLASS}>{linkLabel}</div>
           <select
             aria-labelledby={linkLabelId}
             value={linkValue}
@@ -601,14 +982,14 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   lang,
 }) => {
   const t = translations[lang];
-  const sideCardTitle = lang === 'zh'
-    ? { parent: '父侧', child: '子侧' }
-    : { parent: 'Parent', child: 'Child' };
+  const sideCardTitle =
+    lang === 'zh' ? { parent: '父侧', child: '子侧' } : { parent: 'Parent', child: 'Child' };
+  const relationSectionTitle = lang === 'zh' ? '拼接关系' : 'Joint Relation';
   const compactLabelWidthClassName = lang === 'zh' ? 'w-[30px]' : 'w-[44px]';
   const axisLabelWidthClassName = 'w-4 justify-center';
   const nameInputId = React.useId();
   const jointTypeSelectId = React.useId();
-  const defaultWindowSize = useMemo(() => ({ width: 360, height: 304 }), []);
+  const defaultWindowSize = useMemo(() => ({ width: 680, height: 336 }), []);
   const comps = Object.values(assemblyState.components);
   const selection = useSelectionStore((state) => state.selection);
   const setInteractionGuard = useSelectionStore((state) => state.setInteractionGuard);
@@ -631,7 +1012,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     isOpen,
     defaultPosition,
     defaultSize: defaultWindowSize,
-    minSize: { width: 320, height: 284 },
+    minSize: { width: 560, height: 304 },
     centerOnMount: false,
     enableMinimize: false,
     enableMaximize: false,
@@ -646,26 +1027,26 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   const usesCadInspectorLayout = windowState.size.width >= 640;
   const topFieldGridClassName = usesInlineIdentityRow
     ? `grid items-center gap-x-1.5 gap-y-1 ${
-      lang === 'zh'
-        ? 'grid-cols-[30px_minmax(0,1fr)_30px_minmax(0,1fr)]'
-        : 'grid-cols-[44px_minmax(0,1fr)_44px_minmax(0,1fr)]'
-    }`
+        lang === 'zh'
+          ? 'grid-cols-[30px_minmax(0,1fr)_30px_minmax(0,1fr)]'
+          : 'grid-cols-[44px_minmax(0,1fr)_44px_minmax(0,1fr)]'
+      }`
     : 'space-y-1.5';
-  const originFieldGridClassName = windowState.size.width >= 360
-    ? 'grid grid-cols-3 gap-1.5'
-    : 'grid grid-cols-3 gap-1';
+  const originFieldGridClassName =
+    windowState.size.width >= 360 ? 'grid grid-cols-3 gap-1.5' : 'grid grid-cols-3 gap-1';
   const inspectorGridClassName = usesCadInspectorLayout
     ? 'grid grid-cols-[minmax(0,1.08fr)_minmax(240px,0.92fr)] gap-1.5'
     : 'space-y-1.5';
   const quaternionFieldGridClassName = usesCadInspectorLayout
     ? 'grid grid-cols-4 gap-1.5'
     : 'grid grid-cols-2 gap-1.5';
-  const eulerFieldGridClassName = usesCadInspectorLayout
-    ? 'grid grid-cols-3 gap-1.5'
-    : 'space-y-1';
-  const limitsGridClassName = usesCadInspectorLayout
-    ? 'grid grid-cols-2 gap-1.5'
-    : 'space-y-1';
+  const eulerFieldGridClassName = usesCadInspectorLayout ? 'grid grid-cols-3 gap-1.5' : 'space-y-1';
+  const limitsGridClassName = usesCadInspectorLayout ? 'grid grid-cols-2 gap-1.5' : 'space-y-1';
+  const defaultJointLimit = DEFAULT_JOINT.limit;
+  const defaultLimitLower = defaultJointLimit?.lower ?? -1.57;
+  const defaultLimitUpper = defaultJointLimit?.upper ?? 1.57;
+  const defaultLimitEffort = defaultJointLimit?.effort ?? 100;
+  const defaultLimitVelocity = defaultJointLimit?.velocity ?? 10;
 
   const [name, setName] = useState('');
   const [parentCompId, setParentCompId] = useState('');
@@ -676,7 +1057,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   const [originX, setOriginX] = useState(0);
   const [originY, setOriginY] = useState(0);
   const [originZ, setOriginZ] = useState(0);
-  const [rotationDisplayMode, setRotationDisplayMode] = useState<BridgeRotationDisplayMode>('euler_deg');
+  const [rotationDisplayMode, setRotationDisplayMode] =
+    useState<BridgeRotationDisplayMode>('euler_deg');
   const [rollDeg, setRollDeg] = useState(0);
   const [pitchDeg, setPitchDeg] = useState(0);
   const [yawDeg, setYawDeg] = useState(0);
@@ -687,18 +1069,22 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   const [axisX, setAxisX] = useState(0);
   const [axisY, setAxisY] = useState(0);
   const [axisZ, setAxisZ] = useState(1);
-  const [limitLower, setLimitLower] = useState(-1.57);
-  const [limitUpper, setLimitUpper] = useState(1.57);
+  const eulerDegreesRef = useRef({ r: 0, p: 0, y: 0 });
+  const [limitLower, setLimitLower] = useState(defaultLimitLower);
+  const [limitUpper, setLimitUpper] = useState(defaultLimitUpper);
+  const [limitEffort, setLimitEffort] = useState(defaultLimitEffort);
+  const [limitVelocity, setLimitVelocity] = useState(defaultLimitVelocity);
   const [pickTarget, setPickTarget] = useState<BridgePickTarget>('parent');
 
   const parentComp = parentCompId ? assemblyState.components[parentCompId] : null;
   const childComp = childCompId ? assemblyState.components[childCompId] : null;
   const blockedComponentId = useMemo(
-    () => resolveBlockedBridgeComponentId({
-      pickTarget,
-      parentComponentId: parentCompId,
-      childComponentId: childCompId,
-    }),
+    () =>
+      resolveBlockedBridgeComponentId({
+        pickTarget,
+        parentComponentId: parentCompId,
+        childComponentId: childCompId,
+      }),
     [childCompId, parentCompId, pickTarget],
   );
   const parentComponentOptions = useMemo(
@@ -711,17 +1097,33 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   );
   const parentLinks = parentComp ? Object.values(parentComp.robot.links) : [];
   const childLinks = childComp ? Object.values(childComp.robot.links) : [];
-  const parentLink = parentLinkId ? parentComp?.robot.links[parentLinkId] ?? null : null;
-  const childLink = childLinkId ? childComp?.robot.links[childLinkId] ?? null : null;
+  const parentLink = parentLinkId ? (parentComp?.robot.links[parentLinkId] ?? null) : null;
+  const childLink = childLinkId ? (childComp?.robot.links[childLinkId] ?? null) : null;
+  const suggestedBridgeName = useMemo(
+    () =>
+      buildSuggestedBridgeName({
+        assemblyState,
+        parentComponentId: parentCompId,
+        childComponentId: childCompId,
+      }),
+    [assemblyState, childCompId, parentCompId],
+  );
+  const effectiveBridgeName = name.trim() || suggestedBridgeName;
   const parentSummary = parentComp?.name ?? '--';
   const childSummary = childComp?.name ?? '--';
   const parentLinkSummary = parentLink?.name ?? '--';
   const childLinkSummary = childLink?.name ?? '--';
+  const jointSupportsAxisAndLimits = jointType !== JointType.FIXED;
+  const jointSupportsPositionLimits =
+    jointType === JointType.REVOLUTE || jointType === JointType.PRISMATIC;
+  const isLimitRangeInvalid = jointSupportsPositionLimits && limitLower > limitUpper;
+  const limitRangeValidationMessage = isLimitRangeInvalid ? t.bridgeLimitRangeInvalid : null;
   const rollRad = useMemo(() => degToRad(rollDeg), [rollDeg]);
   const pitchRad = useMemo(() => degToRad(pitchDeg), [pitchDeg]);
   const yawRad = useMemo(() => degToRad(yawDeg), [yawDeg]);
 
   const applyEulerRotation = useCallback((nextEulerDeg: { r: number; p: number; y: number }) => {
+    eulerDegreesRef.current = nextEulerDeg;
     setRollDeg(nextEulerDeg.r);
     setPitchDeg(nextEulerDeg.p);
     setYawDeg(nextEulerDeg.y);
@@ -733,70 +1135,89 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     setQuatW(nextQuaternion.w);
   }, []);
 
-  const applyQuaternionRotation = useCallback((nextQuaternionValue: { x: number; y: number; z: number; w: number }) => {
-    const normalizedQuaternion = normalizeBridgeQuaternion(nextQuaternionValue);
-    setQuatX(normalizedQuaternion.x);
-    setQuatY(normalizedQuaternion.y);
-    setQuatZ(normalizedQuaternion.z);
-    setQuatW(normalizedQuaternion.w);
+  const applyQuaternionRotation = useCallback(
+    (nextQuaternionValue: { x: number; y: number; z: number; w: number }) => {
+      const normalizedQuaternion = normalizeBridgeQuaternion(nextQuaternionValue);
+      setQuatX(normalizedQuaternion.x);
+      setQuatY(normalizedQuaternion.y);
+      setQuatZ(normalizedQuaternion.z);
+      setQuatW(normalizedQuaternion.w);
 
-    const nextEulerDegrees = bridgeQuaternionToEulerDegrees(normalizedQuaternion);
-    setRollDeg(nextEulerDegrees.r);
-    setPitchDeg(nextEulerDegrees.p);
-    setYawDeg(nextEulerDegrees.y);
-  }, []);
+      const nextEulerDegrees = bridgeQuaternionToEulerDegrees(normalizedQuaternion);
+      eulerDegreesRef.current = nextEulerDegrees;
+      setRollDeg(nextEulerDegrees.r);
+      setPitchDeg(nextEulerDegrees.p);
+      setYawDeg(nextEulerDegrees.y);
+    },
+    [],
+  );
 
-  const handleQuickRotate = useCallback((axis: BridgeEulerAxisKey, direction: 1 | -1) => {
-    const delta = BRIDGE_ROTATION_SHORTCUT_DEGREES * direction;
-    applyEulerRotation({
-      r: axis === 'r' ? normalizeBridgeDegreesAngle(rollDeg + delta) : rollDeg,
-      p: axis === 'p' ? normalizeBridgeDegreesAngle(pitchDeg + delta) : pitchDeg,
-      y: axis === 'y' ? normalizeBridgeDegreesAngle(yawDeg + delta) : yawDeg,
-    });
-  }, [applyEulerRotation, pitchDeg, rollDeg, yawDeg]);
+  const handleQuickRotate = useCallback(
+    (axis: BridgeEulerAxisKey, direction: 1 | -1) => {
+      const currentEuler = eulerDegreesRef.current;
+      const delta = BRIDGE_ROTATION_SHORTCUT_DEGREES * direction;
+      applyEulerRotation({
+        r: axis === 'r' ? normalizeBridgeDegreesAngle(currentEuler.r + delta) : currentEuler.r,
+        p: axis === 'p' ? normalizeBridgeDegreesAngle(currentEuler.p + delta) : currentEuler.p,
+        y: axis === 'y' ? normalizeBridgeDegreesAngle(currentEuler.y + delta) : currentEuler.y,
+      });
+    },
+    [applyEulerRotation],
+  );
 
-  const quickRotateButtonText = rotationDisplayMode === 'euler_rad'
-    ? { decrease: '-π/2', increase: '+π/2' }
-    : { decrease: '-90', increase: '+90' };
-  const quickRotateAriaLabelSuffix = rotationDisplayMode === 'euler_rad'
-    ? {
-        decrease: lang === 'zh' ? '减少 π/2' : 'decrease π/2',
-        increase: lang === 'zh' ? '增加 π/2' : 'increase π/2',
-      }
-    : {
-        decrease: lang === 'zh' ? `减少 ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°` : `decrease ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°`,
-        increase: lang === 'zh' ? `增加 ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°` : `increase ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°`,
-      };
+  const quickRotateButtonText =
+    rotationDisplayMode === 'euler_rad'
+      ? { decrease: '-π/2', increase: '+π/2' }
+      : { decrease: '-90', increase: '+90' };
+  const quickRotateAriaLabelSuffix =
+    rotationDisplayMode === 'euler_rad'
+      ? {
+          decrease: lang === 'zh' ? '减少 π/2' : 'decrease π/2',
+          increase: lang === 'zh' ? '增加 π/2' : 'increase π/2',
+        }
+      : {
+          decrease:
+            lang === 'zh'
+              ? `减少 ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°`
+              : `decrease ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°`,
+          increase:
+            lang === 'zh'
+              ? `增加 ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°`
+              : `increase ${BRIDGE_ROTATION_SHORTCUT_DEGREES}°`,
+        };
   const rotationAxisFields = [
     {
       key: 'r' as const,
       label: t.roll,
       value: rotationDisplayMode === 'euler_rad' ? rollRad : rollDeg,
-      onChange: (nextValue: number) => applyEulerRotation({
-        r: rotationDisplayMode === 'euler_rad' ? radToDeg(nextValue) : nextValue,
-        p: pitchDeg,
-        y: yawDeg,
-      }),
+      onChange: (nextValue: number) =>
+        applyEulerRotation({
+          r: rotationDisplayMode === 'euler_rad' ? radToDeg(nextValue) : nextValue,
+          p: pitchDeg,
+          y: yawDeg,
+        }),
     },
     {
       key: 'p' as const,
       label: t.pitch,
       value: rotationDisplayMode === 'euler_rad' ? pitchRad : pitchDeg,
-      onChange: (nextValue: number) => applyEulerRotation({
-        r: rollDeg,
-        p: rotationDisplayMode === 'euler_rad' ? radToDeg(nextValue) : nextValue,
-        y: yawDeg,
-      }),
+      onChange: (nextValue: number) =>
+        applyEulerRotation({
+          r: rollDeg,
+          p: rotationDisplayMode === 'euler_rad' ? radToDeg(nextValue) : nextValue,
+          y: yawDeg,
+        }),
     },
     {
       key: 'y' as const,
       label: t.yaw,
       value: rotationDisplayMode === 'euler_rad' ? yawRad : yawDeg,
-      onChange: (nextValue: number) => applyEulerRotation({
-        r: rollDeg,
-        p: pitchDeg,
-        y: rotationDisplayMode === 'euler_rad' ? radToDeg(nextValue) : nextValue,
-      }),
+      onChange: (nextValue: number) =>
+        applyEulerRotation({
+          r: rollDeg,
+          p: pitchDeg,
+          y: rotationDisplayMode === 'euler_rad' ? radToDeg(nextValue) : nextValue,
+        }),
     },
   ];
 
@@ -811,6 +1232,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     setOriginY(0);
     setOriginZ(0);
     setRotationDisplayMode('euler_deg');
+    eulerDegreesRef.current = { r: 0, p: 0, y: 0 };
     setRollDeg(0);
     setPitchDeg(0);
     setYawDeg(0);
@@ -821,104 +1243,123 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     setAxisX(0);
     setAxisY(0);
     setAxisZ(1);
-    setLimitLower(-1.57);
-    setLimitUpper(1.57);
+    setLimitLower(defaultLimitLower);
+    setLimitUpper(defaultLimitUpper);
+    setLimitEffort(defaultLimitEffort);
+    setLimitVelocity(defaultLimitVelocity);
     setPickTarget('parent');
     lastAppliedSelectionRef.current = null;
-  }, []);
+  }, [defaultLimitEffort, defaultLimitLower, defaultLimitUpper, defaultLimitVelocity]);
 
-  const previewBridge = useMemo(() => buildBridgePreview({
-    name,
-    parentComponentId: parentCompId,
-    parentLinkId,
-    childComponentId: childCompId,
-    childLinkId,
-    jointType,
-    originXyz: { x: originX, y: originY, z: originZ },
-    axis: { x: axisX, y: axisY, z: axisZ },
-    limitLower,
-    limitUpper,
-    rotationMode: rotationDisplayMode === 'quaternion' ? 'quaternion' : 'euler_deg',
-    rotationEulerDeg: { r: rollDeg, p: pitchDeg, y: yawDeg },
-    rotationQuaternion: { x: quatX, y: quatY, z: quatZ, w: quatW },
-  }), [
-    axisX,
-    axisY,
-    axisZ,
-    childCompId,
-    childLinkId,
-    jointType,
-    limitLower,
-    limitUpper,
-    name,
-    originX,
-    originY,
-    originZ,
-    parentCompId,
-    parentLinkId,
-    pitchDeg,
-    quatW,
-    quatX,
-    quatY,
-    quatZ,
-    rollDeg,
-    rotationDisplayMode,
-    yawDeg,
-  ]);
-  const submitJoint = useMemo(() => buildBridgeJointFromDraft({
-    name: name.trim(),
-    parentComponentId: parentCompId,
-    parentLinkId,
-    childComponentId: childCompId,
-    childLinkId,
-    jointType,
-    originXyz: { x: originX, y: originY, z: originZ },
-    axis: { x: axisX, y: axisY, z: axisZ },
-    limitLower,
-    limitUpper,
-    rotationMode: rotationDisplayMode === 'quaternion' ? 'quaternion' : 'euler_deg',
-    rotationEulerDeg: { r: rollDeg, p: pitchDeg, y: yawDeg },
-    rotationQuaternion: { x: quatX, y: quatY, z: quatZ, w: quatW },
-  }, name.trim() || 'bridge_joint'), [
-    axisX,
-    axisY,
-    axisZ,
-    childCompId,
-    childLinkId,
-    jointType,
-    limitLower,
-    limitUpper,
-    name,
-    originX,
-    originY,
-    originZ,
-    parentCompId,
-    parentLinkId,
-    pitchDeg,
-    quatW,
-    quatX,
-    quatY,
-    quatZ,
-    rollDeg,
-    rotationDisplayMode,
-    yawDeg,
-  ]);
-  const isConfirmDisabled = !name.trim()
-    || !submitJoint
-    || !parentCompId
-    || !parentLinkId
-    || !childCompId
-    || !childLinkId
-    || parentCompId === childCompId;
+  const previewBridge = useMemo(
+    () =>
+      buildBridgePreview({
+        name: effectiveBridgeName,
+        parentComponentId: parentCompId,
+        parentLinkId,
+        childComponentId: childCompId,
+        childLinkId,
+        jointType,
+        originXyz: { x: originX, y: originY, z: originZ },
+        axis: { x: axisX, y: axisY, z: axisZ },
+        limitLower,
+        limitUpper,
+        limitEffort,
+        limitVelocity,
+        rotationMode: rotationDisplayMode === 'quaternion' ? 'quaternion' : 'euler_deg',
+        rotationEulerDeg: { r: rollDeg, p: pitchDeg, y: yawDeg },
+        rotationQuaternion: { x: quatX, y: quatY, z: quatZ, w: quatW },
+      }),
+    [
+      axisX,
+      axisY,
+      axisZ,
+      childCompId,
+      childLinkId,
+      jointType,
+      limitLower,
+      limitUpper,
+      limitEffort,
+      limitVelocity,
+      effectiveBridgeName,
+      originX,
+      originY,
+      originZ,
+      parentCompId,
+      parentLinkId,
+      pitchDeg,
+      quatW,
+      quatX,
+      quatY,
+      quatZ,
+      rollDeg,
+      rotationDisplayMode,
+      yawDeg,
+    ],
+  );
+  const submitJoint = useMemo(
+    () =>
+      buildBridgeJointFromDraft(
+        {
+          name: effectiveBridgeName,
+          parentComponentId: parentCompId,
+          parentLinkId,
+          childComponentId: childCompId,
+          childLinkId,
+          jointType,
+          originXyz: { x: originX, y: originY, z: originZ },
+          axis: { x: axisX, y: axisY, z: axisZ },
+          limitLower,
+          limitUpper,
+          limitEffort,
+          limitVelocity,
+          rotationMode: rotationDisplayMode === 'quaternion' ? 'quaternion' : 'euler_deg',
+          rotationEulerDeg: { r: rollDeg, p: pitchDeg, y: yawDeg },
+          rotationQuaternion: { x: quatX, y: quatY, z: quatZ, w: quatW },
+        },
+        effectiveBridgeName || 'bridge_joint',
+      ),
+    [
+      axisX,
+      axisY,
+      axisZ,
+      childCompId,
+      childLinkId,
+      jointType,
+      limitLower,
+      limitUpper,
+      limitEffort,
+      limitVelocity,
+      effectiveBridgeName,
+      originX,
+      originY,
+      originZ,
+      parentCompId,
+      parentLinkId,
+      pitchDeg,
+      quatW,
+      quatX,
+      quatY,
+      quatZ,
+      rollDeg,
+      rotationDisplayMode,
+      yawDeg,
+    ],
+  );
+  const isBridgeSelectionIncomplete =
+    !parentCompId || !parentLinkId || !childCompId || !childLinkId || parentCompId === childCompId;
+
+  const isConfirmActuallyDisabled =
+    isBridgeSelectionIncomplete || !effectiveBridgeName || !submitJoint || isLimitRangeInvalid;
 
   const handleSubmit = useCallback(() => {
-    if (!submitJoint || isConfirmDisabled) {
+    if (!submitJoint || isConfirmActuallyDisabled) {
       return;
     }
 
     onPreviewChange?.(null);
     onCreate({
-      name: name.trim(),
+      name: effectiveBridgeName,
       parentComponentId: parentCompId,
       parentLinkId,
       childComponentId: childCompId,
@@ -938,8 +1379,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     axisZ,
     childCompId,
     childLinkId,
-    isConfirmDisabled,
-    name,
+    effectiveBridgeName,
+    isConfirmActuallyDisabled,
     onClose,
     onCreate,
     onPreviewChange,
@@ -955,6 +1396,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     onClose();
   }, [onClose, onPreviewChange, resetForm]);
 
+  const namePlaceholder = suggestedBridgeName || t.bridgeJointNamePlaceholder;
+
   useEffect(() => {
     if (!isOpen) {
       lastAppliedSelectionRef.current = null;
@@ -968,9 +1411,10 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     // Reusing a stale pre-open link selection can silently auto-fill a side,
     // flip the active pick target, and make hover/selection appear broken.
     const currentSelection = useSelectionStore.getState().selection;
-    ignoredInitialSelectionSignatureRef.current = currentSelection.type && currentSelection.id
-      ? `${currentSelection.type}:${currentSelection.id}:${currentSelection.subType ?? ''}:${currentSelection.objectIndex ?? ''}`
-      : null;
+    ignoredInitialSelectionSignatureRef.current =
+      currentSelection.type && currentSelection.id
+        ? `${currentSelection.type}:${currentSelection.id}:${currentSelection.subType ?? ''}:${currentSelection.objectIndex ?? ''}`
+        : null;
     clearAssemblySelection();
     clearInteractionSelection();
     clearHover();
@@ -989,11 +1433,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
       return undefined;
     }
 
-    setInteractionGuard((nextSelection) => isAssemblySelectionAllowedForBridge(
-      assemblyState,
-      nextSelection,
-      blockedComponentId,
-    ));
+    setInteractionGuard((nextSelection) =>
+      isAssemblySelectionAllowedForBridge(assemblyState, nextSelection, blockedComponentId),
+    );
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -1033,8 +1475,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     const selectionSignature = `${pickTarget}:${selection.type}:${selection.id}:${selection.subType ?? ''}:${selection.objectIndex ?? ''}`;
     const initialSelectionSignature = ignoredInitialSelectionSignatureRef.current;
     if (
-      initialSelectionSignature
-      && initialSelectionSignature === `${selection.type}:${selection.id}:${selection.subType ?? ''}:${selection.objectIndex ?? ''}`
+      initialSelectionSignature &&
+      initialSelectionSignature ===
+        `${selection.type}:${selection.id}:${selection.subType ?? ''}:${selection.objectIndex ?? ''}`
     ) {
       ignoredInitialSelectionSignatureRef.current = null;
       return;
@@ -1057,15 +1500,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
     setChildCompId(resolvedSelection.componentId);
     setChildLinkId(resolvedSelection.linkId);
-  }, [
-    assemblyState,
-    blockedComponentId,
-    childCompId,
-    childLinkId,
-    isOpen,
-    pickTarget,
-    selection,
-  ]);
+  }, [assemblyState, blockedComponentId, childCompId, childLinkId, isOpen, pickTarget, selection]);
 
   if (!isOpen) return null;
 
@@ -1073,16 +1508,18 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     <DraggableWindow
       window={windowState}
       onClose={handleClose}
-      title={(
+      title={
         <div className="flex min-w-0 items-center gap-2">
           <div className="rounded-md border border-border-black bg-element-bg p-1 text-system-blue">
             <Link2 className="h-3.5 w-3.5" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-semibold text-text-primary">{t.createBridge}</div>
+            <div className="truncate text-[13px] font-semibold text-text-primary">
+              {t.createBridge}
+            </div>
           </div>
         </div>
-      )}
+      }
       className="fixed z-[300] flex flex-col overflow-hidden rounded-xl border border-border-black bg-panel-bg text-text-primary shadow-2xl"
       headerClassName="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-black bg-element-bg px-2.5"
       headerLeftClassName="flex min-w-0 flex-1 items-center gap-2"
@@ -1097,7 +1534,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
       rightResizeHandleClassName="absolute right-0 top-0 bottom-0 z-20 w-2 cursor-ew-resize transition-colors hover:bg-system-blue/15 active:bg-system-blue/25"
       bottomResizeHandleClassName="absolute bottom-0 left-0 right-0 z-20 h-2 cursor-ns-resize transition-colors hover:bg-system-blue/15 active:bg-system-blue/25"
       cornerResizeHandleClassName="absolute bottom-0 right-0 z-30 flex h-6 w-6 cursor-nwse-resize items-end justify-end transition-colors hover:bg-system-blue/20 active:bg-system-blue/30"
-      cornerResizeHandle={<div className="mb-1 mr-1 h-2 w-2 border-b-2 border-r-2 border-border-strong" />}
+      cornerResizeHandle={
+        <div className="mb-1 mr-1 h-2 w-2 border-b-2 border-r-2 border-border-strong" />
+      }
       closeTitle={t.close}
       controlButtonClassName="rounded-md p-1 text-text-tertiary transition-colors hover:bg-element-hover"
       closeButtonClassName="rounded-md p-1 text-text-tertiary transition-colors hover:bg-red-500 hover:text-white"
@@ -1118,7 +1557,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                 type="text"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder={t.bridgeJointNamePlaceholder}
+                placeholder={namePlaceholder}
                 className={BRIDGE_SELECT_CLASS}
               />
             </BridgeInlineFieldRow>
@@ -1147,8 +1586,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
           <div className={inspectorGridClassName}>
             <div className="space-y-1.5">
-              <BridgeSection title={t.bridges}>
-                <div className="space-y-1.5">
+              <BridgeSection title={relationSectionTitle}>
+                <div className={BRIDGE_RELATION_GRID_CLASS}>
                   <BridgeSideCard
                     side="parent"
                     isActive={pickTarget === 'parent'}
@@ -1170,9 +1609,14 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       setPickTarget('parent');
                       setParentLinkId(value);
                     }}
-                    componentOptions={parentComponentOptions.map((component) => ({ id: component.id, name: component.name }))}
+                    componentOptions={parentComponentOptions.map((component) => ({
+                      id: component.id,
+                      name: component.name,
+                    }))}
                     linkOptions={parentLinks.map((link) => ({ id: link.id, name: link.name }))}
                   />
+
+                  <BridgeRelationConnector />
 
                   <BridgeSideCard
                     side="child"
@@ -1195,7 +1639,10 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       setPickTarget('child');
                       setChildLinkId(value);
                     }}
-                    componentOptions={childComponentOptions.map((component) => ({ id: component.id, name: component.name }))}
+                    componentOptions={childComponentOptions.map((component) => ({
+                      id: component.id,
+                      name: component.name,
+                    }))}
                     linkOptions={childLinks.map((link) => ({ id: link.id, name: link.name }))}
                   />
                 </div>
@@ -1205,8 +1652,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
             <div className="space-y-1.5">
               <BridgeSection title={t.originRelativeParent}>
                 <div data-bridge-row="origin" className={originFieldGridClassName}>
-                  <BridgeSpinnerField
-                    inline
+                  <BridgeAxisSpinnerField
+                    axis="x"
                     fieldKey="origin-x"
                     label="X"
                     value={originX}
@@ -1214,10 +1661,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                     precision={4}
                     onChange={setOriginX}
                     className="min-w-0"
-                    labelClassName={axisLabelWidthClassName}
                   />
-                  <BridgeSpinnerField
-                    inline
+                  <BridgeAxisSpinnerField
+                    axis="y"
                     fieldKey="origin-y"
                     label="Y"
                     value={originY}
@@ -1225,10 +1671,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                     precision={4}
                     onChange={setOriginY}
                     className="min-w-0"
-                    labelClassName={axisLabelWidthClassName}
                   />
-                  <BridgeSpinnerField
-                    inline
+                  <BridgeAxisSpinnerField
+                    axis="z"
                     fieldKey="origin-z"
                     label="Z"
                     value={originZ}
@@ -1236,7 +1681,6 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                     precision={4}
                     onChange={setOriginZ}
                     className="min-w-0"
-                    labelClassName={axisLabelWidthClassName}
                   />
                 </div>
               </BridgeSection>
@@ -1262,7 +1706,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       value={quatX}
                       step={0.001}
                       precision={4}
-                      onChange={(value) => applyQuaternionRotation({ x: value, y: quatY, z: quatZ, w: quatW })}
+                      onChange={(value) =>
+                        applyQuaternionRotation({ x: value, y: quatY, z: quatZ, w: quatW })
+                      }
                       className="min-w-0"
                     />
                     <BridgeSpinnerField
@@ -1271,7 +1717,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       value={quatY}
                       step={0.001}
                       precision={4}
-                      onChange={(value) => applyQuaternionRotation({ x: quatX, y: value, z: quatZ, w: quatW })}
+                      onChange={(value) =>
+                        applyQuaternionRotation({ x: quatX, y: value, z: quatZ, w: quatW })
+                      }
                       className="min-w-0"
                     />
                     <BridgeSpinnerField
@@ -1280,7 +1728,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       value={quatZ}
                       step={0.001}
                       precision={4}
-                      onChange={(value) => applyQuaternionRotation({ x: quatX, y: quatY, z: value, w: quatW })}
+                      onChange={(value) =>
+                        applyQuaternionRotation({ x: quatX, y: quatY, z: value, w: quatW })
+                      }
                       className="min-w-0"
                     />
                     <BridgeSpinnerField
@@ -1289,7 +1739,9 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       value={quatW}
                       step={0.001}
                       precision={4}
-                      onChange={(value) => applyQuaternionRotation({ x: quatX, y: quatY, z: quatZ, w: value })}
+                      onChange={(value) =>
+                        applyQuaternionRotation({ x: quatX, y: quatY, z: quatZ, w: value })
+                      }
                       className="min-w-0"
                     />
                   </div>
@@ -1306,26 +1758,15 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                           onChange={field.onChange}
                           className="min-w-0"
                         />
-                        <div className={BRIDGE_QUICK_ROTATE_BUTTON_GROUP_CLASS}>
-                          <button
-                            type="button"
-                            onClick={() => handleQuickRotate(field.key, -1)}
-                            aria-label={`${field.label} ${quickRotateAriaLabelSuffix.decrease}`}
-                            title={`${field.label} ${quickRotateAriaLabelSuffix.decrease}`}
-                            className={BRIDGE_QUICK_ROTATE_BUTTON_CLASS}
-                          >
-                            {quickRotateButtonText.decrease}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleQuickRotate(field.key, 1)}
-                            aria-label={`${field.label} ${quickRotateAriaLabelSuffix.increase}`}
-                            title={`${field.label} ${quickRotateAriaLabelSuffix.increase}`}
-                            className={`${BRIDGE_QUICK_ROTATE_BUTTON_CLASS} border-l border-border-black/60`}
-                          >
-                            {quickRotateButtonText.increase}
-                          </button>
-                        </div>
+                        <BridgeQuickRotateButtonGroup
+                          label={field.label}
+                          decreaseLabel={quickRotateAriaLabelSuffix.decrease}
+                          increaseLabel={quickRotateAriaLabelSuffix.increase}
+                          decreaseText={quickRotateButtonText.decrease}
+                          increaseText={quickRotateButtonText.increase}
+                          onDecrease={() => handleQuickRotate(field.key, -1)}
+                          onIncrease={() => handleQuickRotate(field.key, 1)}
+                        />
                       </div>
                     ))}
                   </div>
@@ -1346,33 +1787,22 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                           className="gap-1.5"
                           labelClassName="w-[34px]"
                         />
-                        <div className={BRIDGE_QUICK_ROTATE_BUTTON_GROUP_CLASS}>
-                          <button
-                            type="button"
-                            onClick={() => handleQuickRotate(field.key, -1)}
-                            aria-label={`${field.label} ${quickRotateAriaLabelSuffix.decrease}`}
-                            title={`${field.label} ${quickRotateAriaLabelSuffix.decrease}`}
-                            className={BRIDGE_QUICK_ROTATE_BUTTON_CLASS}
-                          >
-                            {quickRotateButtonText.decrease}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleQuickRotate(field.key, 1)}
-                            aria-label={`${field.label} ${quickRotateAriaLabelSuffix.increase}`}
-                            title={`${field.label} ${quickRotateAriaLabelSuffix.increase}`}
-                            className={`${BRIDGE_QUICK_ROTATE_BUTTON_CLASS} border-l border-border-black/60`}
-                          >
-                            {quickRotateButtonText.increase}
-                          </button>
-                        </div>
+                        <BridgeQuickRotateButtonGroup
+                          label={field.label}
+                          decreaseLabel={quickRotateAriaLabelSuffix.decrease}
+                          increaseLabel={quickRotateAriaLabelSuffix.increase}
+                          decreaseText={quickRotateButtonText.decrease}
+                          increaseText={quickRotateButtonText.increase}
+                          onDecrease={() => handleQuickRotate(field.key, -1)}
+                          onIncrease={() => handleQuickRotate(field.key, 1)}
+                        />
                       </div>
                     ))}
                   </div>
                 )}
               </BridgeSection>
 
-              {jointType !== JointType.FIXED ? (
+              {jointSupportsAxisAndLimits ? (
                 <>
                   <BridgeSection title={t.axisRotation}>
                     <div className={originFieldGridClassName}>
@@ -1414,7 +1844,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
 
                   <BridgeSection title={t.limits}>
                     <div className={limitsGridClassName}>
-                      {usesCadInspectorLayout ? (
+                      {jointSupportsPositionLimits && usesCadInspectorLayout ? (
                         <>
                           <BridgeSpinnerField
                             fieldKey="limit-lower"
@@ -1435,7 +1865,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                             className="min-w-0"
                           />
                         </>
-                      ) : (
+                      ) : jointSupportsPositionLimits ? (
                         <>
                           <BridgeSpinnerField
                             inline
@@ -1458,8 +1888,62 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                             labelClassName="w-[34px]"
                           />
                         </>
+                      ) : null}
+                      {usesCadInspectorLayout ? (
+                        <>
+                          <BridgeSpinnerField
+                            fieldKey="limit-effort"
+                            label={t.effort}
+                            value={limitEffort}
+                            step={1}
+                            precision={2}
+                            min={0}
+                            onChange={setLimitEffort}
+                            className="min-w-0"
+                          />
+                          <BridgeSpinnerField
+                            fieldKey="limit-velocity"
+                            label={t.velocity}
+                            value={limitVelocity}
+                            step={0.1}
+                            precision={3}
+                            min={0}
+                            onChange={setLimitVelocity}
+                            className="min-w-0"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <BridgeSpinnerField
+                            inline
+                            label={t.effort}
+                            value={limitEffort}
+                            step={1}
+                            precision={2}
+                            min={0}
+                            onChange={setLimitEffort}
+                            className="gap-1.5"
+                            labelClassName="w-[34px]"
+                          />
+                          <BridgeSpinnerField
+                            inline
+                            label={t.velocity}
+                            value={limitVelocity}
+                            step={0.1}
+                            precision={3}
+                            min={0}
+                            onChange={setLimitVelocity}
+                            className="gap-1.5"
+                            labelClassName="w-[34px]"
+                          />
+                        </>
                       )}
                     </div>
+                    {limitRangeValidationMessage ? (
+                      <p className="mt-1 text-[9px] font-medium text-red-500">
+                        {limitRangeValidationMessage}
+                      </p>
+                    ) : null}
                   </BridgeSection>
                 </>
               ) : null}
@@ -1478,7 +1962,7 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
         </button>
         <button
           onClick={handleSubmit}
-          disabled={isConfirmDisabled}
+          disabled={isConfirmActuallyDisabled}
           className={`${BRIDGE_FOOTER_BUTTON_CLASS} bg-system-blue-solid text-white hover:bg-system-blue-hover disabled:cursor-not-allowed disabled:opacity-50`}
           type="button"
         >

@@ -1,4 +1,13 @@
-import { ChevronDown, ChevronRight, Eye, EyeOff, FileCode, Plus, Shapes, Shield } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  FileCode,
+  Plus,
+  Shapes,
+  Shield,
+} from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import type { AppMode, AssemblyState, RobotState } from '@/types';
 import { AssemblyTreeView } from '../AssemblyTreeView';
@@ -25,7 +34,11 @@ interface TreeEditorStructureSectionProps {
   onAddChildFromSelection: () => void;
   onToggleVisuals: () => void;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
-  onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
+  onSelectGeometry?: (
+    linkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex?: number,
+  ) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
@@ -76,7 +89,10 @@ export function TreeEditorStructureSection({
   const useStoreDrivenTree = !isAssemblyView && !isReadOnly;
 
   return (
-    <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}>
+    <div
+      className="flex flex-col min-h-0 transition-all flex-1"
+      style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}
+    >
       <div
         className="flex items-center justify-between px-2.5 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
         onClick={onToggleOpen}
@@ -87,7 +103,7 @@ export function TreeEditorStructureSection({
           ) : (
             <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
           )}
-          <span className="shrink-0 text-[11px] leading-none font-semibold text-text-secondary uppercase tracking-[0.14em]">
+          <span className="shrink-0 text-[11px] leading-none font-semibold text-text-secondary tracking-[0.02em]">
             {isAssemblyView ? t.assemblyTree : t.structureTree}
           </span>
           {isReadOnly && (
@@ -134,7 +150,9 @@ export function TreeEditorStructureSection({
               onToggleGeometryDetails();
             }}
             title={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
-            aria-label={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
+            aria-label={
+              structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails
+            }
           >
             <Shapes size={11} />
             <Shield size={11} />
@@ -203,7 +221,9 @@ export function TreeEditorStructureSection({
                       robot={useStoreDrivenTree ? undefined : robot}
                       showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
                       childJointsByParent={useStoreDrivenTree ? undefined : childJointsByParent}
-                      selectionBranchLinkIds={useStoreDrivenTree ? undefined : selectionBranchLinkIds}
+                      selectionBranchLinkIds={
+                        useStoreDrivenTree ? undefined : selectionBranchLinkIds
+                      }
                       onSelect={onSelect}
                       onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}

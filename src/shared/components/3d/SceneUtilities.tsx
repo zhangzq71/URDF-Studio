@@ -45,6 +45,8 @@ export {
   RESTING_DPR_CAP,
   resolveCanvasDpr,
   useAdaptiveInteractionQuality,
+  useWorkspaceCanvasInteractionState,
+  WorkspaceCanvasInteractionStateProvider,
   WorkspaceOrbitControls,
   LIGHTING_CONFIG,
   STUDIO_ENVIRONMENT_INTENSITY,

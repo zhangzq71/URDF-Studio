@@ -49,12 +49,14 @@ export function isIdentityAssemblyTransform(transform?: AssemblyTransform | null
   }
 
   const normalized = cloneAssemblyTransform(transform);
-  return Math.abs(normalized.position.x) <= TRANSFORM_EPSILON
-    && Math.abs(normalized.position.y) <= TRANSFORM_EPSILON
-    && Math.abs(normalized.position.z) <= TRANSFORM_EPSILON
-    && Math.abs(normalized.rotation.r) <= TRANSFORM_EPSILON
-    && Math.abs(normalized.rotation.p) <= TRANSFORM_EPSILON
-    && Math.abs(normalized.rotation.y) <= TRANSFORM_EPSILON;
+  return (
+    Math.abs(normalized.position.x) <= TRANSFORM_EPSILON &&
+    Math.abs(normalized.position.y) <= TRANSFORM_EPSILON &&
+    Math.abs(normalized.position.z) <= TRANSFORM_EPSILON &&
+    Math.abs(normalized.rotation.r) <= TRANSFORM_EPSILON &&
+    Math.abs(normalized.rotation.p) <= TRANSFORM_EPSILON &&
+    Math.abs(normalized.rotation.y) <= TRANSFORM_EPSILON
+  );
 }
 
 export function isAssemblyComponentIndividuallyTransformable(
@@ -65,9 +67,9 @@ export function isAssemblyComponentIndividuallyTransformable(
     return false;
   }
 
-  return !Object.values(assemblyState.bridges).some((bridge) => (
-    bridge.parentComponentId === componentId || bridge.childComponentId === componentId
-  ));
+  return !Object.values(assemblyState.bridges).some(
+    (bridge) => bridge.parentComponentId === componentId || bridge.childComponentId === componentId,
+  );
 }
 
 function createSyntheticTransformLink(id: string, name: string): UrdfLink {
@@ -118,25 +120,31 @@ function createFixedTransformJoint(
 }
 
 function cloneVisibleAssemblyState(assemblyState: AssemblyState): AssemblyState {
+  const clonedAssembly = structuredClone(assemblyState);
   const visibleComponents = Object.fromEntries(
-    Object.entries(assemblyState.components).filter(([, component]) => component.visible !== false),
+    Object.entries(clonedAssembly.components).filter(
+      ([, component]) => component.visible !== false,
+    ),
   );
   const visibleComponentIds = new Set(Object.keys(visibleComponents));
   const visibleBridges = Object.fromEntries(
-    Object.entries(assemblyState.bridges).filter(([, bridge]) => (
-      visibleComponentIds.has(bridge.parentComponentId)
-      && visibleComponentIds.has(bridge.childComponentId)
-    )),
+    Object.entries(clonedAssembly.bridges).filter(
+      ([, bridge]) =>
+        visibleComponentIds.has(bridge.parentComponentId) &&
+        visibleComponentIds.has(bridge.childComponentId),
+    ),
   );
 
   return {
-    ...structuredClone(assemblyState),
+    ...clonedAssembly,
     components: visibleComponents,
     bridges: visibleBridges,
   };
 }
 
-function buildRootLinkComponentMap(components: Record<string, AssemblyComponent>): Map<string, string> {
+function buildRootLinkComponentMap(
+  components: Record<string, AssemblyComponent>,
+): Map<string, string> {
   const map = new Map<string, string>();
   Object.values(components).forEach((component) => {
     Object.keys(component.robot.links).forEach((linkId) => {
@@ -207,7 +215,10 @@ export function buildExportableAssemblyRobotData(assemblyState: AssemblyState): 
 
   const links: Record<string, UrdfLink> = {
     ...mergedRobot.links,
-    [ASSEMBLY_EXPORT_ROOT_LINK_ID]: createSyntheticTransformLink(ASSEMBLY_EXPORT_ROOT_LINK_ID, ASSEMBLY_EXPORT_ROOT_LINK_ID),
+    [ASSEMBLY_EXPORT_ROOT_LINK_ID]: createSyntheticTransformLink(
+      ASSEMBLY_EXPORT_ROOT_LINK_ID,
+      ASSEMBLY_EXPORT_ROOT_LINK_ID,
+    ),
   };
   const joints: Record<string, UrdfJoint> = {
     ...mergedRobot.joints,

@@ -24,15 +24,15 @@ function isCollisionGeometryVisible(
 ): boolean {
   if (!showCollision) return false;
   if (!linkData) return true;
+  if (linkData.visible === false) return false;
 
   const geometry = getCollisionGeometryByIndex(linkData, colliderIndex);
   return geometry ? geometry.visible !== false : true;
 }
 
 function getColliderIndex(collider: THREE.Object3D): number {
-  const linkObject = collider.parent && (collider.parent as any).isURDFLink
-    ? collider.parent
-    : null;
+  const linkObject =
+    collider.parent && (collider.parent as any).isURDFLink ? collider.parent : null;
   if (!linkObject) return 0;
 
   const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
@@ -81,8 +81,8 @@ export function syncCollisionGroupVisibility({
 
   syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop);
   if (
-    previousCollisionDepthTest !== collisionBaseMaterial.depthTest
-    || previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
+    previousCollisionDepthTest !== collisionBaseMaterial.depthTest ||
+    previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
   ) {
     changed = true;
   }
@@ -94,7 +94,9 @@ export function syncCollisionGroupVisibility({
   }
 
   getColliderMeshes(collider).forEach((inner) => {
-    const meshWithOriginalMaterial = inner as THREE.Mesh & { __origMaterial?: THREE.Material | THREE.Material[] };
+    const meshWithOriginalMaterial = inner as THREE.Mesh & {
+      __origMaterial?: THREE.Material | THREE.Material[];
+    };
 
     if (inner.userData.isCollisionMesh !== true) {
       changed = true;
@@ -122,7 +124,10 @@ export function syncCollisionGroupVisibility({
       inner.material = collisionBaseMaterial;
       disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
     } else {
-      meshWithOriginalMaterial.__origMaterial ??= inner.material as THREE.Material | THREE.Material[] | undefined;
+      meshWithOriginalMaterial.__origMaterial ??= inner.material as
+        | THREE.Material
+        | THREE.Material[]
+        | undefined;
     }
 
     const collisionRenderOrder = resolveCollisionRenderOrder(showCollisionAlwaysOnTop);

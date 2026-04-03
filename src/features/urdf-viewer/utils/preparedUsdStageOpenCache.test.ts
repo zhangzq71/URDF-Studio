@@ -5,6 +5,7 @@ import type { RobotFile } from '@/types';
 import {
   buildPreparedUsdStageOpenCacheKey,
   clearPreparedUsdStageOpenCache,
+  loadPreparedUsdStageOpenDataOnMainThread,
   loadPreparedUsdStageOpenDataFromWorker,
   loadPreparedUsdStageOpenDataCached,
 } from './preparedUsdStageOpenCache.ts';
@@ -15,12 +16,14 @@ const demoSourceFile: Pick<RobotFile, 'name' | 'content' | 'blobUrl'> = {
   blobUrl: undefined,
 };
 
-const demoAvailableFiles: Array<Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>> = [{
-  name: 'robots/go2/usd/go2.usd',
-  content: 'demo-stage',
-  blobUrl: undefined,
-  format: 'usd',
-}];
+const demoAvailableFiles: Array<Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>> = [
+  {
+    name: 'robots/go2/usd/go2.usd',
+    content: 'demo-stage',
+    blobUrl: undefined,
+    format: 'usd',
+  },
+];
 
 const demoAssets = {
   'robots/go2/usd/go2.usd': 'blob:go2-root',
@@ -37,11 +40,13 @@ test('loadPreparedUsdStageOpenDataCached reuses the same prepared preload payloa
     return {
       stageSourcePath: '/robots/go2/usd/go2.usd',
       criticalDependencyPaths: ['/robots/go2/usd/configuration/go2_description_base.usd'],
-      preloadFiles: [{
-        path: '/robots/go2/usd/go2.usd',
-        blob: new Blob(['go2-root']),
-        error: null,
-      }],
+      preloadFiles: [
+        {
+          path: '/robots/go2/usd/go2.usd',
+          blob: new Blob(['go2-root']),
+          error: null,
+        },
+      ],
     };
   };
 
@@ -74,11 +79,13 @@ test('loadPreparedUsdStageOpenDataCached drops incomplete root-stage results so 
       return {
         stageSourcePath: '/robots/go2/usd/go2.usd',
         criticalDependencyPaths: [],
-        preloadFiles: [{
-          path: '/robots/go2/usd/go2.usd',
-          blob: null,
-          error: 'missing-root',
-        }],
+        preloadFiles: [
+          {
+            path: '/robots/go2/usd/go2.usd',
+            blob: null,
+            error: 'missing-root',
+          },
+        ],
       };
     },
   );
@@ -92,11 +99,13 @@ test('loadPreparedUsdStageOpenDataCached drops incomplete root-stage results so 
       return {
         stageSourcePath: '/robots/go2/usd/go2.usd',
         criticalDependencyPaths: [],
-        preloadFiles: [{
-          path: '/robots/go2/usd/go2.usd',
-          blob: new Blob(['go2-root']),
-          error: null,
-        }],
+        preloadFiles: [
+          {
+            path: '/robots/go2/usd/go2.usd',
+            blob: new Blob(['go2-root']),
+            error: null,
+          },
+        ],
       };
     },
   );
@@ -119,13 +128,15 @@ test('loadPreparedUsdStageOpenDataCached keeps worker-hydrated root bytes as a v
       return {
         stageSourcePath: '/robots/go2/usd/go2.usd',
         criticalDependencyPaths: [],
-        preloadFiles: [{
-          path: '/robots/go2/usd/go2.usd',
-          blob: null,
-          bytes: rootBytes,
-          mimeType: 'application/octet-stream',
-          error: null,
-        }],
+        preloadFiles: [
+          {
+            path: '/robots/go2/usd/go2.usd',
+            blob: null,
+            bytes: rootBytes,
+            mimeType: 'application/octet-stream',
+            error: null,
+          },
+        ],
       };
     },
   );
@@ -146,7 +157,10 @@ test('loadPreparedUsdStageOpenDataCached keeps worker-hydrated root bytes as a v
 
   assert.equal(loadCount, 1);
   assert.strictEqual(secondResult, firstResult);
-  assert.deepEqual(Array.from(new Uint8Array(firstResult.preloadFiles[0]!.bytes!)), Array.from(rootBytes));
+  assert.deepEqual(
+    Array.from(new Uint8Array(firstResult.preloadFiles[0]!.bytes!)),
+    Array.from(rootBytes),
+  );
 });
 
 test('loadPreparedUsdStageOpenDataCached reuses semantically identical inputs even when object references change', async () => {
@@ -156,11 +170,13 @@ test('loadPreparedUsdStageOpenDataCached reuses semantically identical inputs ev
     return {
       stageSourcePath: '/robots/go2/usd/go2.usd',
       criticalDependencyPaths: ['/robots/go2/usd/configuration/go2_description_base.usd'],
-      preloadFiles: [{
-        path: '/robots/go2/usd/go2.usd',
-        blob: new Blob(['go2-root']),
-        error: null,
-      }],
+      preloadFiles: [
+        {
+          path: '/robots/go2/usd/go2.usd',
+          blob: new Blob(['go2-root']),
+          error: null,
+        },
+      ],
     };
   };
 
@@ -183,6 +199,55 @@ test('loadPreparedUsdStageOpenDataCached reuses semantically identical inputs ev
 
   assert.equal(loadCount, 1);
   assert.strictEqual(secondResult, firstResult);
+});
+
+test('worker and main-thread stage-open caches stay isolated for the same USD input', async () => {
+  let workerLoadCount = 0;
+  let mainThreadLoadCount = 0;
+
+  const workerResult = await loadPreparedUsdStageOpenDataFromWorker(
+    demoSourceFile,
+    demoAvailableFiles,
+    demoAssets,
+    async () => {
+      workerLoadCount += 1;
+      return {
+        stageSourcePath: '/robots/go2/usd/go2.usd',
+        criticalDependencyPaths: [],
+        preloadFiles: [
+          {
+            path: '/robots/go2/usd/go2.usd',
+            blob: new Blob(['worker-root']),
+            error: null,
+          },
+        ],
+      };
+    },
+  );
+
+  const mainThreadResult = await loadPreparedUsdStageOpenDataOnMainThread(
+    demoSourceFile,
+    demoAvailableFiles,
+    demoAssets,
+    async () => {
+      mainThreadLoadCount += 1;
+      return {
+        stageSourcePath: '/robots/go2/usd/go2.usd',
+        criticalDependencyPaths: [],
+        preloadFiles: [
+          {
+            path: '/robots/go2/usd/go2.usd',
+            blob: new Blob(['main-thread-root']),
+            error: null,
+          },
+        ],
+      };
+    },
+  );
+
+  assert.equal(workerLoadCount, 1);
+  assert.equal(mainThreadLoadCount, 1);
+  assert.notStrictEqual(mainThreadResult, workerResult);
 });
 
 test('buildPreparedUsdStageOpenCacheKey ignores unrelated sibling USD files and assets', () => {
@@ -268,11 +333,13 @@ test('loadPreparedUsdStageOpenDataFromWorker rejects incomplete worker payloads 
         return {
           stageSourcePath: '/robots/go2/usd/go2.usd',
           criticalDependencyPaths: [],
-          preloadFiles: [{
-            path: '/robots/go2/usd/go2.usd',
-            blob: null,
-            error: 'missing-root',
-          }],
+          preloadFiles: [
+            {
+              path: '/robots/go2/usd/go2.usd',
+              blob: null,
+              error: 'missing-root',
+            },
+          ],
         };
       },
     ),

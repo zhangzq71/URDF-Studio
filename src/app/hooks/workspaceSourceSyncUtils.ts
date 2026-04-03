@@ -1,5 +1,15 @@
 import * as THREE from 'three';
-import { computeLinkWorldMatrices, isSyntheticWorldRoot, mergeAssembly } from '@/core/robot';
+import {
+  computeLinkWorldMatrices,
+  estimateRobotGroundOffset,
+  isSyntheticWorldRoot,
+  mergeAssembly,
+  prepareAssemblyRobotData,
+} from '@/core/robot';
+import {
+  resolveAlignedAssemblyComponentTransformForBridge,
+  resolveAssemblyComponentLinkId,
+} from '@/core/robot/assemblyBridgeAlignment';
 import {
   cloneAssemblyTransform,
   isAssemblyComponentIndividuallyTransformable,
@@ -29,13 +39,7 @@ import {
 import { collectURDFMaterialsFromLinks } from '@/features/urdf-viewer';
 import { parseEditableRobotSourceWithWorker } from './robotImportWorkerBridge';
 
-type JsonLike =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonLike[]
-  | { [key: string]: JsonLike };
+type JsonLike = null | boolean | number | string | JsonLike[] | { [key: string]: JsonLike };
 
 function sortKeysDeep(value: unknown): JsonLike {
   if (Array.isArray(value)) {
@@ -55,10 +59,10 @@ function sortKeysDeep(value: unknown): JsonLike {
   }
 
   if (
-    value === null
-    || typeof value === 'boolean'
-    || typeof value === 'number'
-    || typeof value === 'string'
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'number' ||
+    typeof value === 'string'
   ) {
     return value as JsonLike;
   }
@@ -81,14 +85,16 @@ function sanitizeGeneratedWorkspaceUrdfStem(value: string): string {
 }
 
 export function createRobotSourceSnapshot(robot: RobotState): string {
-  return JSON.stringify(sortKeysDeep({
-    name: robot.name,
-    rootLinkId: robot.rootLinkId,
-    links: robot.links,
-    joints: robot.joints,
-    materials: robot.materials ?? null,
-    closedLoopConstraints: robot.closedLoopConstraints ?? null,
-  }));
+  return JSON.stringify(
+    sortKeysDeep({
+      name: robot.name,
+      rootLinkId: robot.rootLinkId,
+      links: robot.links,
+      joints: robot.joints,
+      materials: robot.materials ?? null,
+      closedLoopConstraints: robot.closedLoopConstraints ?? null,
+    }),
+  );
 }
 
 export function canUseLightweightWorkspaceViewerReloadContent(
@@ -97,8 +103,71 @@ export function canUseLightweightWorkspaceViewerReloadContent(
   return collectURDFMaterialsFromLinks(robotLinks).size > 0;
 }
 
+export function shouldUseGeneratedWorkspaceViewerReloadContent({
+  robotLinks,
+  hasActiveTransformTarget = false,
+}: {
+  robotLinks?: Record<string, UrdfLink> | null;
+  hasActiveTransformTarget?: boolean;
+}): boolean {
+  if (hasActiveTransformTarget) {
+    return true;
+  }
+
+  return !canUseLightweightWorkspaceViewerReloadContent(robotLinks);
+}
+
 export function buildLightweightWorkspaceViewerReloadContent(assemblyRevision: number): string {
   return `<robot name="workspace_viewer_${assemblyRevision}" />`;
+}
+
+export function buildWorkspaceAssemblyViewerState({
+  assemblyState,
+  bridgePreview = null,
+}: {
+  assemblyState: AssemblyState | null;
+  bridgePreview?: BridgeJoint | null;
+}): AssemblyState | null {
+  if (!assemblyState) {
+    return null;
+  }
+
+  if (!bridgePreview) {
+    return assemblyState;
+  }
+
+  const parentComponent = assemblyState.components[bridgePreview.parentComponentId];
+  const childComponent = assemblyState.components[bridgePreview.childComponentId];
+  if (
+    !parentComponent ||
+    !childComponent ||
+    parentComponent.visible === false ||
+    childComponent.visible === false
+  ) {
+    return assemblyState;
+  }
+
+  const hasParentLink = Boolean(parentComponent.robot.links[bridgePreview.parentLinkId]);
+  const hasChildLink = Boolean(childComponent.robot.links[bridgePreview.childLinkId]);
+  if (!hasParentLink || !hasChildLink) {
+    return assemblyState;
+  }
+
+  const nextAssemblyState = structuredClone(assemblyState);
+  nextAssemblyState.bridges[bridgePreview.id] = bridgePreview;
+
+  const alignedTransform = resolveAlignedAssemblyComponentTransformForBridge(
+    nextAssemblyState,
+    bridgePreview,
+  );
+  if (alignedTransform) {
+    const previewChildComponent = nextAssemblyState.components[bridgePreview.childComponentId];
+    if (previewChildComponent) {
+      previewChildComponent.transform = alignedTransform;
+    }
+  }
+
+  return nextAssemblyState;
 }
 
 export function isGeneratedWorkspaceUrdfFileName(fileName: string | null | undefined): boolean {
@@ -107,8 +176,10 @@ export function isGeneratedWorkspaceUrdfFileName(fileName: string | null | undef
     .replace(/^\/+/, '')
     .replace(/\\/g, '/');
 
-  return normalized.startsWith(`${GENERATED_WORKSPACE_URDF_FOLDER}/`)
-    && normalized.endsWith(GENERATED_WORKSPACE_URDF_SUFFIX);
+  return (
+    normalized.startsWith(`${GENERATED_WORKSPACE_URDF_FOLDER}/`) &&
+    normalized.endsWith(GENERATED_WORKSPACE_URDF_SUFFIX)
+  );
 }
 
 export function buildGeneratedWorkspaceUrdfFileName({
@@ -277,10 +348,10 @@ export function shouldUseEmptyRobotForUsdHydration({
   documentLoadFileName,
 }: UseEmptyRobotForUsdHydrationOptions): boolean {
   return (
-    selectedFileFormat === 'usd'
-    && documentLoadStatus === 'hydrating'
-    && Boolean(selectedFileName)
-    && selectedFileName === documentLoadFileName
+    selectedFileFormat === 'usd' &&
+    documentLoadStatus === 'hydrating' &&
+    Boolean(selectedFileName) &&
+    selectedFileName === documentLoadFileName
   );
 }
 
@@ -296,6 +367,34 @@ export function getViewerSourceFile({
   return shouldRenderAssembly ? workspaceSourceFile : selectedFile;
 }
 
+export type WorkspaceAssemblyRenderFailureReason =
+  | 'missing-merged-robot-data'
+  | 'missing-viewer-merged-robot-data';
+
+export function getWorkspaceAssemblyRenderFailureReason({
+  shouldRenderAssembly,
+  mergedRobotData,
+  viewerMergedRobotData,
+}: {
+  shouldRenderAssembly: boolean;
+  mergedRobotData: RobotData | null;
+  viewerMergedRobotData: RobotData | null;
+}): WorkspaceAssemblyRenderFailureReason | null {
+  if (!shouldRenderAssembly) {
+    return null;
+  }
+
+  if (!mergedRobotData) {
+    return 'missing-merged-robot-data';
+  }
+
+  if (!viewerMergedRobotData) {
+    return 'missing-viewer-merged-robot-data';
+  }
+
+  return null;
+}
+
 export function getSingleComponentWorkspaceMjcfViewerSource({
   assemblyState,
   availableFiles,
@@ -307,18 +406,20 @@ export function getSingleComponentWorkspaceMjcfViewerSource({
     return null;
   }
 
-  const visibleComponents = Object.values(assemblyState.components)
-    .filter((component) => component.visible !== false);
+  const visibleComponents = Object.values(assemblyState.components).filter(
+    (component) => component.visible !== false,
+  );
 
   if (visibleComponents.length !== 1) {
     return null;
   }
 
   const visibleComponentIds = new Set(visibleComponents.map((component) => component.id));
-  const hasVisibleBridges = Object.values(assemblyState.bridges).some((bridge) => (
-    visibleComponentIds.has(bridge.parentComponentId)
-    && visibleComponentIds.has(bridge.childComponentId)
-  ));
+  const hasVisibleBridges = Object.values(assemblyState.bridges).some(
+    (bridge) =>
+      visibleComponentIds.has(bridge.parentComponentId) &&
+      visibleComponentIds.has(bridge.childComponentId),
+  );
 
   if (hasVisibleBridges) {
     return null;
@@ -347,44 +448,18 @@ export function getWorkspaceAssemblyViewerRobotData({
   }
 
   if (!bridgePreview) {
-    return fallbackMergedRobotData ?? null;
+    return fallbackMergedRobotData ?? mergeAssembly(assemblyState);
   }
 
-  const visibleComponents = Object.fromEntries(
-    Object.entries(assemblyState.components).filter(([, component]) => component.visible !== false),
-  );
-  const visibleComponentIds = new Set(Object.keys(visibleComponents));
-
-  if (visibleComponentIds.size === 0) {
+  const viewerAssemblyState = buildWorkspaceAssemblyViewerState({
+    assemblyState,
+    bridgePreview,
+  });
+  if (!viewerAssemblyState) {
     return null;
   }
 
-  const visibleBridges = Object.fromEntries(
-    Object.entries(assemblyState.bridges).filter(([, bridge]) => (
-      visibleComponentIds.has(bridge.parentComponentId)
-      && visibleComponentIds.has(bridge.childComponentId)
-    )),
-  );
-
-  if (
-    visibleComponentIds.has(bridgePreview.parentComponentId)
-    && visibleComponentIds.has(bridgePreview.childComponentId)
-  ) {
-    const parentComponent = visibleComponents[bridgePreview.parentComponentId];
-    const childComponent = visibleComponents[bridgePreview.childComponentId];
-    const hasParentLink = Boolean(parentComponent?.robot.links[bridgePreview.parentLinkId]);
-    const hasChildLink = Boolean(childComponent?.robot.links[bridgePreview.childLinkId]);
-
-    if (hasParentLink && hasChildLink) {
-      visibleBridges[bridgePreview.id] = bridgePreview;
-    }
-  }
-
-  return mergeAssembly({
-    ...assemblyState,
-    components: visibleComponents,
-    bridges: visibleBridges,
-  });
+  return mergeAssembly(viewerAssemblyState);
 }
 
 function buildWorkspaceViewerComponentRootJointId(componentId: string): string {
@@ -419,17 +494,10 @@ function buildAssemblyTransformMatrix(
 ) {
   const normalized = cloneAssemblyTransform(transform);
   return new THREE.Matrix4().compose(
-    new THREE.Vector3(
-      normalized.position.x,
-      normalized.position.y,
-      normalized.position.z,
+    new THREE.Vector3(normalized.position.x, normalized.position.y, normalized.position.z),
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(normalized.rotation.r, normalized.rotation.p, normalized.rotation.y, 'ZYX'),
     ),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(
-      normalized.rotation.r,
-      normalized.rotation.p,
-      normalized.rotation.y,
-      'ZYX',
-    )),
     new THREE.Vector3(1, 1, 1),
   );
 }
@@ -502,6 +570,19 @@ function resolveWorkspaceViewerRootComponentIds({
   };
 }
 
+function hasIncomingRootBridge(assemblyState: AssemblyState, componentId: string): boolean {
+  const component = assemblyState.components[componentId];
+  if (!component) {
+    return false;
+  }
+
+  return Object.values(assemblyState.bridges).some(
+    (bridge) =>
+      bridge.childComponentId === componentId &&
+      resolveAssemblyComponentLinkId(component, bridge.childLinkId) === component.robot.rootLinkId,
+  );
+}
+
 export function buildWorkspaceAssemblyViewerDisplayRobotData({
   assemblyState,
   mergedRobotData,
@@ -549,7 +630,9 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
       name: mergedRobotData.name,
       version: mergedRobotData.version,
       links: {
-        [WORKSPACE_VIEWER_WORLD_ROOT_ID]: buildWorkspaceViewerSyntheticRootLink(WORKSPACE_VIEWER_WORLD_ROOT_ID),
+        [WORKSPACE_VIEWER_WORLD_ROOT_ID]: buildWorkspaceViewerSyntheticRootLink(
+          WORKSPACE_VIEWER_WORLD_ROOT_ID,
+        ),
         ...component.robot.links,
       },
       joints,
@@ -562,19 +645,15 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
 
   const childJointsByParent = buildChildJointsByParent(mergedRobotData.joints);
   const linkWorldMatrices = computeLinkWorldMatrices(mergedRobotData);
-  const {
-    rootComponentByComponentId,
-    rootComponentIds,
-  } = resolveWorkspaceViewerRootComponentIds({
+  const { rootComponentByComponentId, rootComponentIds } = resolveWorkspaceViewerRootComponentIds({
     componentEntries,
     mergedRobotData,
   });
 
   const rootOffsetByComponentId = new Map<string, number>();
-  const hasExplicitRootPlacement = rootComponentIds.some((componentId) => (
-    isAssemblyComponentIndividuallyTransformable(assemblyState, componentId)
-    && !isIdentityAssemblyTransform(visibleComponents[componentId]?.transform)
-  ));
+  const hasExplicitRootPlacement = componentEntries.some(
+    ([, component]) => !isIdentityAssemblyTransform(component.transform),
+  );
 
   if (rootComponentIds.length <= 1 || hasExplicitRootPlacement) {
     rootComponentIds.forEach((componentId) => {
@@ -590,8 +669,9 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
         linkWorldMatrices,
       );
     });
-    const totalWidth = layoutIntervals.reduce((sum, interval) => sum + interval.width, 0)
-      + WORKSPACE_VIEWER_ROOT_LAYOUT_GAP * Math.max(0, layoutIntervals.length - 1);
+    const totalWidth =
+      layoutIntervals.reduce((sum, interval) => sum + interval.width, 0) +
+      WORKSPACE_VIEWER_ROOT_LAYOUT_GAP * Math.max(0, layoutIntervals.length - 1);
 
     let cursor = -totalWidth / 2;
     rootComponentIds.forEach((componentId, index) => {
@@ -602,7 +682,9 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
   }
 
   const links: RobotData['links'] = {
-    [WORKSPACE_VIEWER_WORLD_ROOT_ID]: buildWorkspaceViewerSyntheticRootLink(WORKSPACE_VIEWER_WORLD_ROOT_ID),
+    [WORKSPACE_VIEWER_WORLD_ROOT_ID]: buildWorkspaceViewerSyntheticRootLink(
+      WORKSPACE_VIEWER_WORLD_ROOT_ID,
+    ),
   };
   const joints: RobotData['joints'] = {};
 
@@ -614,15 +696,31 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
       joints[jointId] = joint;
     });
 
-    const semanticRootMatrix = linkWorldMatrices[component.robot.rootLinkId]?.clone() ?? new THREE.Matrix4().identity();
+    const semanticRootMatrix =
+      linkWorldMatrices[component.robot.rootLinkId]?.clone() ?? new THREE.Matrix4().identity();
     const rootComponentId = rootComponentByComponentId.get(componentId) ?? componentId;
     const rootOffsetX = rootOffsetByComponentId.get(rootComponentId) ?? 0;
     const offsetMatrix = new THREE.Matrix4().makeTranslation(rootOffsetX, 0, 0);
-    const componentTransformMatrix = isAssemblyComponentIndividuallyTransformable(assemblyState, componentId)
+    const hasIncomingBridgeAtRoot = hasIncomingRootBridge(assemblyState, componentId);
+    const shouldApplyComponentTransform =
+      isAssemblyComponentIndividuallyTransformable(assemblyState, componentId) ||
+      !hasIncomingBridgeAtRoot;
+    const componentTransformMatrix = shouldApplyComponentTransform
       ? buildAssemblyTransformMatrix(component.transform)
       : new THREE.Matrix4().identity();
+    const displayGroundLiftMatrix =
+      !hasIncomingBridgeAtRoot && isIdentityAssemblyTransform(component.transform)
+        ? new THREE.Matrix4().makeTranslation(
+            0,
+            0,
+            estimateRobotGroundOffset(component.robot, {
+              renderableBounds: component.renderableBounds,
+            }),
+          )
+        : new THREE.Matrix4().identity();
     const worldMatrix = offsetMatrix
       .clone()
+      .multiply(displayGroundLiftMatrix)
       .multiply(componentTransformMatrix)
       .multiply(semanticRootMatrix);
     const syntheticJointId = buildWorkspaceViewerComponentRootJointId(componentId);
@@ -663,8 +761,8 @@ export function normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource(
 
   Object.entries(robot.joints).forEach(([jointId, joint]) => {
     if (
-      joint.parentLinkId === WORKSPACE_VIEWER_WORLD_ROOT_ID
-      && jointId.startsWith(WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX)
+      joint.parentLinkId === WORKSPACE_VIEWER_WORLD_ROOT_ID &&
+      jointId.startsWith(WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX)
     ) {
       joints[jointId] = {
         ...joint,
@@ -713,91 +811,58 @@ export function shouldReseedSingleComponentAssemblyFromActiveFile({
 }
 
 function sanitizeWorkspaceSeedNameFromFile(fileName: string): string {
-  const base = fileName.split('/').pop()?.replace(/\.[^/.]+$/, '') ?? 'robot';
+  const base =
+    fileName
+      .split('/')
+      .pop()
+      ?.replace(/\.[^/.]+$/, '') ?? 'robot';
   const sanitized = base.replace(/[^a-zA-Z0-9_]/g, '_');
   return sanitized || 'robot';
 }
 
-function buildAssemblySeedRobotFromSourceSnapshot({
-  sourceSnapshot,
-  component,
-}: {
-  sourceSnapshot: string;
-  component: Pick<AssemblyComponent, 'id' | 'name'>;
-}): RobotState | null {
-  let parsedSnapshot: RobotData | null = null;
+function parseRobotSourceSnapshot(sourceSnapshot: string | null): RobotData | null {
+  if (!sourceSnapshot) {
+    return null;
+  }
 
   try {
-    parsedSnapshot = JSON.parse(sourceSnapshot) as RobotData;
+    return JSON.parse(sourceSnapshot) as RobotData;
   } catch {
     return null;
   }
+}
+
+function buildAssemblySeedRobotFromSourceBaseline({
+  sourceRobotData,
+  sourceSnapshot,
+  component,
+  sourceFile,
+}: {
+  sourceRobotData?: RobotData | null;
+  sourceSnapshot?: string | null;
+  component: Pick<AssemblyComponent, 'id' | 'name'>;
+  sourceFile: RobotFile | null;
+}): RobotState | null {
+  const parsedSnapshot = sourceRobotData ?? parseRobotSourceSnapshot(sourceSnapshot ?? null);
 
   if (!parsedSnapshot?.rootLinkId || !parsedSnapshot.links || !parsedSnapshot.joints) {
     return null;
   }
 
-  const idPrefix = `${component.id}_`;
-  const linkIdMap: Record<string, string> = {};
-  const linkNameMap: Record<string, string> = {};
-  const links: RobotData['links'] = {};
-  const joints: RobotData['joints'] = {};
-  const materials: NonNullable<RobotData['materials']> = {};
-
-  Object.entries(parsedSnapshot.links).forEach(([id, link]) => {
-    const nextId = `${idPrefix}${id}`;
-    const originalName = link.name?.trim() || id;
-    const isRootLink = id === parsedSnapshot?.rootLinkId;
-    const nextName = isRootLink ? component.name : `${component.name}_${originalName}`;
-
-    linkIdMap[id] = nextId;
-    linkNameMap[originalName] = nextId;
-
-    links[nextId] = {
-      ...link,
-      id: nextId,
-      name: nextName,
-    };
+  const preparedRobotData = prepareAssemblyRobotData(parsedSnapshot, {
+    componentId: component.id,
+    rootName: component.name,
+    sourceFilePath: sourceFile?.name ?? null,
+    sourceFormat: sourceFile?.format ?? null,
   });
-
-  Object.entries(parsedSnapshot.materials || {}).forEach(([key, material]) => {
-    const targetLinkId = linkIdMap[key] || linkNameMap[key] || key;
-    materials[targetLinkId] = { ...material };
-  });
-
-  Object.entries(parsedSnapshot.joints).forEach(([id, joint]) => {
-    const nextId = `${idPrefix}${id}`;
-    const originalName = joint.name?.trim() || id;
-    joints[nextId] = {
-      ...joint,
-      id: nextId,
-      name: `${component.name}_${originalName}`,
-      parentLinkId: linkIdMap[joint.parentLinkId] ?? `${idPrefix}${joint.parentLinkId}`,
-      childLinkId: linkIdMap[joint.childLinkId] ?? `${idPrefix}${joint.childLinkId}`,
-    };
-  });
-
-  const closedLoopConstraints = (parsedSnapshot.closedLoopConstraints || []).map((constraint) => ({
-    ...constraint,
-    id: `${idPrefix}${constraint.id}`,
-    linkAId: linkIdMap[constraint.linkAId] ?? `${idPrefix}${constraint.linkAId}`,
-    linkBId: linkIdMap[constraint.linkBId] ?? `${idPrefix}${constraint.linkBId}`,
-    source: constraint.source
-      ? {
-          ...constraint.source,
-          body1Name: `${component.name}_${constraint.source.body1Name}`,
-          body2Name: `${component.name}_${constraint.source.body2Name}`,
-        }
-      : undefined,
-  }));
 
   return {
-    name: parsedSnapshot.name,
-    rootLinkId: linkIdMap[parsedSnapshot.rootLinkId] ?? `${idPrefix}${parsedSnapshot.rootLinkId}`,
-    links,
-    joints,
-    materials: Object.keys(materials).length > 0 ? materials : undefined,
-    closedLoopConstraints: closedLoopConstraints.length > 0 ? closedLoopConstraints : undefined,
+    name: preparedRobotData.name,
+    rootLinkId: preparedRobotData.rootLinkId,
+    links: preparedRobotData.links,
+    joints: preparedRobotData.joints,
+    materials: preparedRobotData.materials,
+    closedLoopConstraints: preparedRobotData.closedLoopConstraints,
     selection: { type: null, id: null },
   };
 }
@@ -806,17 +871,20 @@ export function shouldReuseSourceViewerForSingleComponentAssembly({
   assemblyState,
   activeFile,
   sourceSnapshot,
+  sourceRobotData,
 }: {
   assemblyState: AssemblyState | null;
   activeFile: RobotFile | null;
   sourceSnapshot: string | null;
+  sourceRobotData?: RobotData | null;
 }): boolean {
   if (!assemblyState || !activeFile || activeFile.format === 'mesh') {
     return false;
   }
 
-  const visibleComponents = Object.values(assemblyState.components)
-    .filter((component) => component.visible !== false);
+  const visibleComponents = Object.values(assemblyState.components).filter(
+    (component) => component.visible !== false,
+  );
 
   if (visibleComponents.length !== 1 || Object.keys(assemblyState.bridges).length > 0) {
     return false;
@@ -827,61 +895,67 @@ export function shouldReuseSourceViewerForSingleComponentAssembly({
   }
 
   const [component] = visibleComponents;
-  if (!isIdentityAssemblyTransform(component.transform)) {
-    return false;
-  }
   const expectedSeedName = sanitizeWorkspaceSeedNameFromFile(activeFile.name);
 
   if (
-    component.sourceFile !== activeFile.name
-    || component.name !== expectedSeedName
-    || component.id !== `comp_${expectedSeedName}`
+    component.sourceFile !== activeFile.name ||
+    component.name !== expectedSeedName ||
+    component.id !== `comp_${expectedSeedName}`
   ) {
     return false;
   }
 
-  if (!sourceSnapshot) {
+  if (!sourceSnapshot && !sourceRobotData) {
     return true;
   }
 
-  const expectedSeedRobot = buildAssemblySeedRobotFromSourceSnapshot({
+  const expectedSeedRobot = buildAssemblySeedRobotFromSourceBaseline({
+    sourceRobotData,
     sourceSnapshot,
     component,
+    sourceFile: activeFile,
   });
 
   if (!expectedSeedRobot) {
     return false;
   }
 
-  return createRobotSourceSnapshot(expectedSeedRobot) === createRobotSourceSnapshot({
-    ...component.robot,
-    selection: { type: null, id: null },
-  });
+  return (
+    createRobotSourceSnapshot(expectedSeedRobot) ===
+    createRobotSourceSnapshot({
+      ...component.robot,
+      selection: { type: null, id: null },
+    })
+  );
 }
 
 export function shouldKeepPristineSingleComponentWorkspaceOnSourceViewer({
   assemblyState,
   activeFile,
   sourceSnapshot,
+  sourceRobotData,
   assemblySelectionType,
 }: {
   assemblyState: AssemblyState | null;
   activeFile: RobotFile | null;
   sourceSnapshot: string | null;
+  sourceRobotData?: RobotData | null;
   assemblySelectionType?: 'assembly' | 'component' | null;
 }): boolean {
-  if (!shouldReuseSourceViewerForSingleComponentAssembly({
-    assemblyState,
-    activeFile,
-    sourceSnapshot,
-  })) {
+  if (
+    !shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState,
+      activeFile,
+      sourceSnapshot,
+      sourceRobotData,
+    })
+  ) {
     return false;
   }
 
-  // Keep the current-file viewer stable while the workspace is still just the
-  // untouched single-component seed. A component-row selection should not swap
-  // rendering paths underneath the user before the assembly has actually
-  // diverged.
+  // Keep the current-file viewer stable for the seeded single-component path,
+  // including component-row transforms. Assembly-level transforms still hand
+  // off to the workspace viewer.
   return assemblySelectionType !== 'assembly';
 }
 
@@ -901,9 +975,7 @@ interface WorkspaceViewerRootLayoutInterval {
   width: number;
 }
 
-function buildChildJointsByParent(
-  joints: Record<string, UrdfJoint>,
-): Record<string, UrdfJoint[]> {
+function buildChildJointsByParent(joints: Record<string, UrdfJoint>): Record<string, UrdfJoint[]> {
   const grouped: Record<string, UrdfJoint[]> = {};
 
   Object.values(joints).forEach((joint) => {
@@ -956,8 +1028,9 @@ function estimateWorkspaceViewerRootLayoutInterval(
   childJointsByParent: Record<string, UrdfJoint[]>,
   linkWorldMatrices: Record<string, MatrixWithElements>,
 ): WorkspaceViewerRootLayoutInterval {
-  const subtreeLinkIds = collectRootSubtreeLinkIds(rootLinkId, childJointsByParent)
-    .filter((linkId) => Boolean(robot.links[linkId]));
+  const subtreeLinkIds = collectRootSubtreeLinkIds(rootLinkId, childJointsByParent).filter(
+    (linkId) => Boolean(robot.links[linkId]),
+  );
 
   if (subtreeLinkIds.length === 0) {
     return buildDefaultWorkspaceViewerRootLayoutInterval();
@@ -1017,11 +1090,10 @@ function collectWorkspaceViewerRootLinkIds(
   const rootLinkIds = [
     robot.rootLinkId,
     ...Object.keys(robot.links).filter((linkId) => !childLinkIds.has(linkId)),
-  ].filter((linkId, index, values): linkId is string => (
-    Boolean(linkId)
-    && Boolean(robot.links[linkId])
-    && values.indexOf(linkId) === index
-  ));
+  ].filter(
+    (linkId, index, values): linkId is string =>
+      Boolean(linkId) && Boolean(robot.links[linkId]) && values.indexOf(linkId) === index,
+  );
 
   if (rootLinkIds.length > 0) {
     return rootLinkIds;
@@ -1031,9 +1103,7 @@ function collectWorkspaceViewerRootLinkIds(
   return fallbackLinkId ? [fallbackLinkId] : [];
 }
 
-function buildWorkspaceViewerSyntheticRootLink(
-  syntheticRootLinkId: string,
-) {
+function buildWorkspaceViewerSyntheticRootLink(syntheticRootLinkId: string) {
   return {
     ...DEFAULT_LINK,
     id: syntheticRootLinkId,
@@ -1071,11 +1141,17 @@ export function buildWorkspaceViewerRobotData(robot: RobotData): RobotData {
 
   const childJointsByParent = buildChildJointsByParent(robot.joints);
   const linkWorldMatrices = computeLinkWorldMatrices(robot);
-  const layoutIntervals = rootLinkIds.map((rootLinkId) => (
-    estimateWorkspaceViewerRootLayoutInterval(rootLinkId, robot, childJointsByParent, linkWorldMatrices)
-  ));
-  const totalWidth = layoutIntervals.reduce((sum, interval) => sum + interval.width, 0)
-    + WORKSPACE_VIEWER_ROOT_LAYOUT_GAP * Math.max(0, layoutIntervals.length - 1);
+  const layoutIntervals = rootLinkIds.map((rootLinkId) =>
+    estimateWorkspaceViewerRootLayoutInterval(
+      rootLinkId,
+      robot,
+      childJointsByParent,
+      linkWorldMatrices,
+    ),
+  );
+  const totalWidth =
+    layoutIntervals.reduce((sum, interval) => sum + interval.width, 0) +
+    WORKSPACE_VIEWER_ROOT_LAYOUT_GAP * Math.max(0, layoutIntervals.length - 1);
 
   let cursor = -totalWidth / 2;
   const syntheticRootLinkId = robot.links[WORKSPACE_VIEWER_WORLD_ROOT_ID]
@@ -1130,12 +1206,7 @@ interface CreatePreviewRobotStateOptions {
 
 export function createPreviewRobotState(
   file: RobotFile,
-  {
-    availableFiles,
-    assets,
-    allFileContents,
-    usdRobotData,
-  }: CreatePreviewRobotStateOptions,
+  { availableFiles, assets, allFileContents, usdRobotData }: CreatePreviewRobotStateOptions,
 ): RobotState | null {
   const resolved = resolveRobotFileData(file, {
     availableFiles,

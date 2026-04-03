@@ -12,10 +12,17 @@ scripts/*
 !scripts/regression/
 scripts/regression/*
 !scripts/regression/validate_sdf_cli_truth.ts
-.github/
+!scripts/mujoco/
+scripts/mujoco/*
+!scripts/mujoco/mjcf_compare.ts
+.github/*
+!.github/workflows/
+.github/workflows/*
+!.github/workflows/quality.yml
 output/
 tmp/
 .playwright-mcp/
+.eslintcache
 
 .claude/
 .codex/

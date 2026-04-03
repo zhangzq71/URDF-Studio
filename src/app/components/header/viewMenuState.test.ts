@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  ensureOptionsPanelsVisible,
-  ensureViewPanelVisible,
-} from './viewMenuState.js';
+import { toggleOptionsPanels, toggleViewPanel } from './viewMenuState.js';
 
-test('ensureViewPanelVisible marks a single panel as visible without changing other fields', () => {
-  const next = ensureViewPanelVisible({
-    showToolbar: false,
-    showOptionsPanel: false,
-    showVisualizerOptionsPanel: false,
-    showJointPanel: false,
-  }, 'showToolbar');
+test('toggleViewPanel marks a single panel as visible without changing other fields', () => {
+  const next = toggleViewPanel(
+    {
+      showToolbar: false,
+      showOptionsPanel: false,
+      showVisualizerOptionsPanel: false,
+      showJointPanel: false,
+    },
+    'showToolbar',
+  );
 
   assert.deepEqual(next, {
     showToolbar: true,
@@ -22,8 +22,8 @@ test('ensureViewPanelVisible marks a single panel as visible without changing ot
   });
 });
 
-test('ensureOptionsPanelsVisible opens both viewer and visualizer options together', () => {
-  const next = ensureOptionsPanelsVisible({
+test('toggleOptionsPanels opens both viewer and visualizer options together', () => {
+  const next = toggleOptionsPanels({
     showToolbar: false,
     showOptionsPanel: false,
     showVisualizerOptionsPanel: false,
@@ -38,7 +38,7 @@ test('ensureOptionsPanelsVisible opens both viewer and visualizer options togeth
   });
 });
 
-test('ensureOptionsPanelsVisible is idempotent when both panels are already visible', () => {
+test('toggleOptionsPanels closes both option panels when either is visible', () => {
   const current = {
     showToolbar: true,
     showOptionsPanel: true,
@@ -46,5 +46,10 @@ test('ensureOptionsPanelsVisible is idempotent when both panels are already visi
     showJointPanel: false,
   };
 
-  assert.equal(ensureOptionsPanelsVisible(current), current);
+  assert.deepEqual(toggleOptionsPanels(current), {
+    showToolbar: true,
+    showOptionsPanel: false,
+    showVisualizerOptionsPanel: false,
+    showJointPanel: false,
+  });
 });

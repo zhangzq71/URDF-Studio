@@ -9,10 +9,7 @@ import { Eye, Box, Waypoints } from 'lucide-react';
 import type { DetailLinkTab, RobotState, AppMode, MotorSpec, UrdfLink } from '@/types';
 import { translations } from '@/shared/i18n';
 import { useUIStore, type Language } from '@/store';
-import {
-  MAX_PROPERTY_DECIMALS,
-  formatNumberWithMaxDecimals,
-} from '@/core/utils/numberPrecision';
+import { MAX_PROPERTY_DECIMALS, formatNumberWithMaxDecimals } from '@/core/utils/numberPrecision';
 import {
   composeInertiaTensorFromDerivedValues,
   computeInertialDerivedValues,
@@ -103,18 +100,28 @@ interface LinkPropertiesProps {
   motorLibrary: Record<string, MotorSpec[]>;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
-  t: typeof translations['en'];
+  t: (typeof translations)['en'];
   lang: Language;
 }
 
 export const LinkProperties: React.FC<LinkPropertiesProps> = ({
-  data, robot, selection, onUpdate, assets, onUploadAsset, t, lang
+  data,
+  robot,
+  selection,
+  onUpdate,
+  assets,
+  onUploadAsset,
+  t,
+  lang,
 }) => {
   const linkTab = useUIStore((state) => state.detailLinkTab);
   const setDetailLinkTab = useUIStore((state) => state.setDetailLinkTab);
   const inertial = data.inertial ?? DEFAULT_INERTIAL;
   const densityResult = useMemo(() => computeLinkDensity(data), [data]);
-  const derivedInertial = useMemo(() => computeInertialDerivedValues(data.inertial), [data.inertial]);
+  const derivedInertial = useMemo(
+    () => computeInertialDerivedValues(data.inertial),
+    [data.inertial],
+  );
   const densityLabel = t.density;
 
   const handleTabChange = (tab: DetailLinkTab) => {
@@ -128,11 +135,13 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     inertial.inertia.iyy,
     inertial.inertia.izz,
   ];
-  const principalAxes = derivedInertial?.principalAxes ?? (DEFAULT_PRINCIPAL_AXES as [
-    { x: number; y: number; z: number },
-    { x: number; y: number; z: number },
-    { x: number; y: number; z: number },
-  ]);
+  const principalAxes =
+    derivedInertial?.principalAxes ??
+    (DEFAULT_PRINCIPAL_AXES as [
+      { x: number; y: number; z: number },
+      { x: number; y: number; z: number },
+      { x: number; y: number; z: number },
+    ]);
 
   const handleDiagonalInertiaChange = (index: 0 | 1 | 2, value: number) => {
     const nextDiagonalInertia = [...diagonalInertiaValues] as [number, number, number];
@@ -142,10 +151,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
       ...data,
       inertial: {
         ...inertial,
-        inertia: composeInertiaTensorFromDerivedValues(
-          nextDiagonalInertia,
-          principalAxes,
-        ),
+        inertia: composeInertiaTensorFromDerivedValues(nextDiagonalInertia, principalAxes),
       },
     });
   };
@@ -171,16 +177,18 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
         <NumberInput
           value={inertial.mass}
           min={0}
-          onChange={(v: number) => onUpdate('link', selection.id!, {
-            ...data,
-            inertial: { ...inertial, mass: v }
-          })}
+          onChange={(v: number) =>
+            onUpdate('link', selection.id!, {
+              ...data,
+              inertial: { ...inertial, mass: v },
+            })
+          }
         />
       </InlineInputGroup>
 
       <div className="mb-1 overflow-hidden rounded-md border border-border-black/60">
-        <div className="bg-element-bg/70 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-text-secondary">
-          {t.centerOfMass || "Center of Mass"}
+        <div className="bg-element-bg/70 px-2 py-1 text-[9px] font-semibold tracking-[0.02em] text-text-secondary">
+          {t.centerOfMass || 'Center of Mass'}
         </div>
         <div className="border-t border-border-black/60 bg-panel-bg px-1.5 py-1">
           <TransformFields
@@ -188,41 +196,49 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             positionValue={inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
             rotationValue={inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
             compact={false}
-            onPositionChange={(xyz) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: {
-                ...inertial,
-                origin: {
-                  xyz: xyz as { x: number; y: number; z: number },
-                  rpy: inertial.origin?.rpy || { r: 0, p: 0, y: 0 },
+            onPositionChange={(xyz) =>
+              onUpdate('link', selection.id!, {
+                ...data,
+                inertial: {
+                  ...inertial,
+                  origin: {
+                    xyz: xyz as { x: number; y: number; z: number },
+                    rpy: inertial.origin?.rpy || { r: 0, p: 0, y: 0 },
+                  },
                 },
-              },
-            })}
-            onRotationChange={(rpy) => onUpdate('link', selection.id!, {
-              ...data,
-              inertial: {
-                ...inertial,
-                origin: {
-                  xyz: inertial.origin?.xyz || { x: 0, y: 0, z: 0 },
-                  rpy,
+              })
+            }
+            onRotationChange={(rpy) =>
+              onUpdate('link', selection.id!, {
+                ...data,
+                inertial: {
+                  ...inertial,
+                  origin: {
+                    xyz: inertial.origin?.xyz || { x: 0, y: 0, z: 0 },
+                    rpy,
+                  },
                 },
-              },
-            })}
+              })
+            }
           />
         </div>
       </div>
 
       <div className="mt-3 border-t border-border-black/60 pt-2">
-        <h4 className="mb-2 text-[10px] font-bold uppercase text-text-tertiary">{t.inertiaTensor}</h4>
+        <h4 className="mb-2 text-[10px] font-semibold tracking-[0.02em] text-text-tertiary">
+          {t.inertiaTensor}
+        </h4>
         <div className="grid grid-cols-2 gap-x-2 gap-y-1">
           {inertiaTensorFields.map((field) => (
             <InlineInputGroup key={field} label={field} labelWidthClassName="w-7" className="mb-0">
               <NumberInput
                 value={inertial.inertia[field]}
-                onChange={(v) => onUpdate('link', selection.id!, {
-                  ...data,
-                  inertial: { ...inertial, inertia: { ...inertial.inertia, [field]: v } }
-                })}
+                onChange={(v) =>
+                  onUpdate('link', selection.id!, {
+                    ...data,
+                    inertial: { ...inertial, inertia: { ...inertial.inertia, [field]: v } },
+                  })
+                }
               />
             </InlineInputGroup>
           ))}
@@ -238,9 +254,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
       storageKey="property_editor_link_derived_values"
     >
       <InlineInputGroup label={densityLabel} labelWidthClassName="w-16" align="start">
-        <ReadonlyValueField>
-          {formatReadonlyNumber(densityResult.value)}
-        </ReadonlyValueField>
+        <ReadonlyValueField>{formatReadonlyNumber(densityResult.value)}</ReadonlyValueField>
       </InlineInputGroup>
 
       <InlineInputGroup label={t.diagonalInertia} labelWidthClassName="w-16" align="start">
@@ -265,7 +279,12 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
         </div>
       </InlineInputGroup>
 
-      <InlineInputGroup label={t.principalAxes} labelWidthClassName="w-16" align="start" className="mb-0">
+      <InlineInputGroup
+        label={t.principalAxes}
+        labelWidthClassName="w-16"
+        align="start"
+        className="mb-0"
+      >
         <div className="space-y-1.5">
           <ReadonlyVectorStatHeader />
           {principalAxisLabels.map((label, index) => {

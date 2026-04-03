@@ -67,20 +67,34 @@ export interface UsdExportBundle {
   resolution: ViewerRobotDataResolution;
 }
 
-export type PreparedUsdExportCacheResult =
-  UsdPreparedExportCache & { resolution: ViewerRobotDataResolution };
+export type PreparedUsdExportCacheResult = UsdPreparedExportCache & {
+  resolution: ViewerRobotDataResolution;
+};
 
-type SnapshotHost = {
-  renderInterface?: {
-    getCachedRobotSceneSnapshot?: (stageSourcePath?: string | null) => unknown;
-    getPreferredVisualMaterialForLink?: (linkPath: string, requestingMeshId?: string | null) => unknown;
-    getPreferredLinkWorldTransform?: (linkPath: string) => unknown;
-    getWorldTransformForPrimPath?: (primPath: string) => unknown;
-  } | null;
-} | null | undefined;
+type PreparedUsdExportCacheTransferBytesCarrier = {
+  __meshFileBytes?: Record<string, Uint8Array>;
+};
+
+type SnapshotHost =
+  | {
+      renderInterface?: {
+        getCachedRobotSceneSnapshot?: (stageSourcePath?: string | null) => unknown;
+        getPreferredVisualMaterialForLink?: (
+          linkPath: string,
+          requestingMeshId?: string | null,
+        ) => unknown;
+        getPreferredLinkWorldTransform?: (linkPath: string) => unknown;
+        getWorldTransformForPrimPath?: (primPath: string) => unknown;
+      } | null;
+    }
+  | null
+  | undefined;
 
 function normalizeUsdPath(path: string | null | undefined): string {
-  const normalized = String(path || '').trim().replace(/[<>]/g, '').replace(/\\/g, '/');
+  const normalized = String(path || '')
+    .trim()
+    .replace(/[<>]/g, '')
+    .replace(/\\/g, '/');
   if (!normalized) return '';
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
@@ -101,7 +115,9 @@ function sanitizeFileToken(value: string): string {
 }
 
 function buildUsdSnapshotLookupPaths(stageSourcePath?: string | null): Array<string | null> {
-  const rawStagePath = String(stageSourcePath || '').trim().split('?')[0];
+  const rawStagePath = String(stageSourcePath || '')
+    .trim()
+    .split('?')[0];
   if (!rawStagePath) {
     return [null];
   }
@@ -121,31 +137,39 @@ function normalizeSemanticToken(value: string | null | undefined): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .split('_')
-    .filter((token) => token.length > 0 && ![
-      'link',
-      'joint',
-      'visual',
-      'visuals',
-      'collision',
-      'collisions',
-      'mesh',
-      'geom',
-      'geometry',
-      'proto',
-      'id',
-      'usd',
-      'xform',
-      'body',
-    ].includes(token))
+    .filter(
+      (token) =>
+        token.length > 0 &&
+        ![
+          'link',
+          'joint',
+          'visual',
+          'visuals',
+          'collision',
+          'collisions',
+          'mesh',
+          'geom',
+          'geometry',
+          'proto',
+          'id',
+          'usd',
+          'xform',
+          'body',
+        ].includes(token),
+    )
     .join('_');
 }
 
 function isGenericDescriptorName(value: string | null | undefined): boolean {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase();
   if (!raw) return true;
-  return /^mesh(?:[_-]?\d+)?$/.test(raw)
-    || /^geom(?:[_-]?\d+)?$/.test(raw)
-    || /^proto(?:[_-].*)?$/.test(raw);
+  return (
+    /^mesh(?:[_-]?\d+)?$/.test(raw) ||
+    /^geom(?:[_-]?\d+)?$/.test(raw) ||
+    /^proto(?:[_-].*)?$/.test(raw)
+  );
 }
 
 function getDescriptorSemanticName(descriptor: SnapshotMeshDescriptor): string {
@@ -164,16 +188,19 @@ function getDescriptorSemanticName(descriptor: SnapshotMeshDescriptor): string {
   return '';
 }
 
-function getDescriptorGeomSubsetSections(descriptor: SnapshotMeshDescriptor): SnapshotGeomSubsetSection[] {
-  const geometry = descriptor.geometry && typeof descriptor.geometry === 'object'
-    ? descriptor.geometry as {
-        geomSubsetSections?: Array<{
-          start?: unknown;
-          length?: unknown;
-          materialId?: unknown;
-        }> | null;
-      }
-    : null;
+function getDescriptorGeomSubsetSections(
+  descriptor: SnapshotMeshDescriptor,
+): SnapshotGeomSubsetSection[] {
+  const geometry =
+    descriptor.geometry && typeof descriptor.geometry === 'object'
+      ? (descriptor.geometry as {
+          geomSubsetSections?: Array<{
+            start?: unknown;
+            length?: unknown;
+            materialId?: unknown;
+          }> | null;
+        })
+      : null;
   const rawSections = Array.isArray(geometry?.geomSubsetSections)
     ? geometry.geomSubsetSections
     : [];
@@ -200,10 +227,7 @@ function getDescriptorMaterialId(
   materialIdOverride?: string | null,
 ): string {
   return normalizeUsdPath(
-    materialIdOverride
-    || descriptor.materialId
-    || descriptor.geometry?.materialId
-    || '',
+    materialIdOverride || descriptor.materialId || descriptor.geometry?.materialId || '',
   );
 }
 
@@ -218,7 +242,9 @@ function colorArrayToHex(
 ): string | null {
   const source = Array.isArray(value)
     ? value
-    : (value && typeof value.length === 'number' ? Array.from(value) : null);
+    : value && typeof value.length === 'number'
+      ? Array.from(value)
+      : null;
   if (!source || source.length < 3) {
     return null;
   }
@@ -230,21 +256,15 @@ function colorArrayToHex(
     return null;
   }
 
-  const to255 = (channel: number) => (
-    Math.abs(channel) <= 1
-      ? channel * 255
-      : channel
-  );
+  const to255 = (channel: number) => (Math.abs(channel) <= 1 ? channel * 255 : channel);
 
-  const useNormalizedLinearChannels = Math.abs(r) <= 1
-    && Math.abs(g) <= 1
-    && Math.abs(b) <= 1;
+  const useNormalizedLinearChannels = Math.abs(r) <= 1 && Math.abs(g) <= 1 && Math.abs(b) <= 1;
   const linearColor = useNormalizedLinearChannels
     ? new Color(
-      Math.max(0, Math.min(1, r)),
-      Math.max(0, Math.min(1, g)),
-      Math.max(0, Math.min(1, b)),
-    )
+        Math.max(0, Math.min(1, r)),
+        Math.max(0, Math.min(1, g)),
+        Math.max(0, Math.min(1, b)),
+      )
     : null;
 
   const a = opacityOverride ?? (source.length >= 4 ? Number(source[3]) : null);
@@ -304,9 +324,7 @@ function normalizeColorMaterialValue(value: unknown): [number, number, number] |
   if (typeof candidate.length === 'number') {
     const source = Array.from(value as ArrayLike<number>);
     if (source.length >= 3) {
-      const normalized = source
-        .slice(0, 3)
-        .map((channel) => Number(channel));
+      const normalized = source.slice(0, 3).map((channel) => Number(channel));
       if (normalized.every((channel) => Number.isFinite(channel))) {
         return normalized as [number, number, number];
       }
@@ -336,9 +354,7 @@ function normalizeVector2MaterialValue(value: unknown): [number, number] | null 
   if (typeof candidate.length === 'number') {
     const source = Array.from(value as ArrayLike<number>);
     if (source.length >= 2) {
-      const normalized = source
-        .slice(0, 2)
-        .map((channel) => Number(channel));
+      const normalized = source.slice(0, 2).map((channel) => Number(channel));
       if (normalized.every((channel) => Number.isFinite(channel))) {
         return normalized as [number, number];
       }
@@ -368,15 +384,13 @@ function normalizeTextureMaterialPath(value: unknown): string | null {
       usdSourcePath?: unknown;
     } | null;
   };
-  const normalized = String(
-    candidate.userData?.usdSourcePath
-    || candidate.name
-    || '',
-  ).trim();
+  const normalized = String(candidate.userData?.usdSourcePath || candidate.name || '').trim();
   return normalized || null;
 }
 
-function hasSnapshotMaterialRecordContent(material: SnapshotMaterialRecord | null | undefined): boolean {
+function hasSnapshotMaterialRecordContent(
+  material: SnapshotMaterialRecord | null | undefined,
+): boolean {
   if (!material || typeof material !== 'object') {
     return false;
   }
@@ -408,8 +422,8 @@ function resolveSnapshotMaterialColorHex(
 
   const opacity = normalizeScalarMaterialValue(material?.opacity, { clamp01: true });
   const hasPrimaryTexture = Boolean(
-    normalizeTextureMaterialPath(material?.mapPath)
-    || normalizeTextureMaterialPath(material?.alphaMapPath),
+    normalizeTextureMaterialPath(material?.mapPath) ||
+    normalizeTextureMaterialPath(material?.alphaMapPath),
   );
 
   if (hasPrimaryTexture && opacity !== null && opacity < 0.999) {
@@ -424,7 +438,9 @@ function colorArrayToVertexColor(
 ): [number, number, number] | null {
   const source = Array.isArray(value)
     ? value
-    : (value && typeof value.length === 'number' ? Array.from(value) : null);
+    : value && typeof value.length === 'number'
+      ? Array.from(value)
+      : null;
   if (!source || source.length < 3) {
     return null;
   }
@@ -434,11 +450,10 @@ function colorArrayToVertexColor(
     return null;
   }
 
-  const normalizeChannel = (channel: number) => (
+  const normalizeChannel = (channel: number) =>
     Math.abs(channel) <= 1
       ? Math.max(0, Math.min(1, channel))
-      : Math.max(0, Math.min(1, channel / 255))
-  );
+      : Math.max(0, Math.min(1, channel / 255));
 
   return [
     normalizeChannel(channels[0]),
@@ -447,9 +462,7 @@ function colorArrayToVertexColor(
   ];
 }
 
-function colorHexToVertexColor(
-  value: string | null | undefined,
-): [number, number, number] | null {
+function colorHexToVertexColor(value: string | null | undefined): [number, number, number] | null {
   const normalized = String(value || '').trim();
   if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(normalized)) {
     return null;
@@ -460,13 +473,17 @@ function colorHexToVertexColor(
 }
 
 function shouldAdoptSnapshotColor(color: string | null | undefined): boolean {
-  const normalized = String(color || '').trim().toLowerCase();
+  const normalized = String(color || '')
+    .trim()
+    .toLowerCase();
   if (!normalized) {
     return true;
   }
 
-  return normalized === DEFAULT_LINK.visual.color.toLowerCase()
-    || normalized === DEFAULT_LINK.collision.color.toLowerCase();
+  return (
+    normalized === DEFAULT_LINK.visual.color.toLowerCase() ||
+    normalized === DEFAULT_LINK.collision.color.toLowerCase()
+  );
 }
 
 function getDescriptorLinkPath(descriptor: SnapshotMeshDescriptor): string {
@@ -475,7 +492,11 @@ function getDescriptorLinkPath(descriptor: SnapshotMeshDescriptor): string {
     const markerIndex = meshId.indexOf('.proto_');
     if (markerIndex > 0) {
       let linkPath = meshId.slice(0, markerIndex);
-      if (linkPath.endsWith('/visuals') || linkPath.endsWith('/collisions') || linkPath.endsWith('/colliders')) {
+      if (
+        linkPath.endsWith('/visuals') ||
+        linkPath.endsWith('/collisions') ||
+        linkPath.endsWith('/colliders')
+      ) {
         const parentSlash = linkPath.lastIndexOf('/');
         if (parentSlash > 0) {
           linkPath = linkPath.slice(0, parentSlash);
@@ -492,7 +513,9 @@ function getDescriptorLinkPath(descriptor: SnapshotMeshDescriptor): string {
     const normalized = normalizeUsdPath(candidate || '');
     if (!normalized) continue;
 
-    const authoredPathMatch = normalized.match(/^(.*?)(?:\/(?:visuals?|coll(?:isions?|iders?)))(?:$|[/.])/i);
+    const authoredPathMatch = normalized.match(
+      /^(.*?)(?:\/(?:visuals?|coll(?:isions?|iders?)))(?:$|[/.])/i,
+    );
     if (authoredPathMatch?.[1]) {
       return normalizeUsdPath(authoredPathMatch[1]);
     }
@@ -502,12 +525,15 @@ function getDescriptorLinkPath(descriptor: SnapshotMeshDescriptor): string {
 }
 
 function getDescriptorRole(descriptor: SnapshotMeshDescriptor): DescriptorRole {
-  const sectionName = String(descriptor.sectionName || '').trim().toLowerCase();
+  const sectionName = String(descriptor.sectionName || '')
+    .trim()
+    .toLowerCase();
   if (sectionName === 'collisions' || sectionName === 'collision') {
     return 'collision';
   }
 
-  const candidateText = `${descriptor.meshId || ''} ${descriptor.resolvedPrimPath || ''}`.toLowerCase();
+  const candidateText =
+    `${descriptor.meshId || ''} ${descriptor.resolvedPrimPath || ''}`.toLowerCase();
   return /\/coll(?:isions?|iders?)(?:$|[/.])/.test(candidateText) ? 'collision' : 'visual';
 }
 
@@ -537,7 +563,10 @@ function getDescriptorRanges(
   return buffers?.rangesByMeshId?.[meshId] || null;
 }
 
-function readRangeValues(source: ArrayLike<number> | null | undefined, range: MeshRange | null | undefined): number[] {
+function readRangeValues(
+  source: ArrayLike<number> | null | undefined,
+  range: MeshRange | null | undefined,
+): number[] {
   if (!source || !range) return [];
   const offset = Math.max(0, Number(range.offset || 0));
   const count = Math.max(0, Number(range.count || 0));
@@ -558,12 +587,14 @@ function hasNonIdentityOrigin(
     return false;
   }
 
-  return Math.abs(origin.xyz?.x || 0) > 1e-9
-    || Math.abs(origin.xyz?.y || 0) > 1e-9
-    || Math.abs(origin.xyz?.z || 0) > 1e-9
-    || Math.abs(origin.rpy?.r || 0) > 1e-9
-    || Math.abs(origin.rpy?.p || 0) > 1e-9
-    || Math.abs(origin.rpy?.y || 0) > 1e-9;
+  return (
+    Math.abs(origin.xyz?.x || 0) > 1e-9 ||
+    Math.abs(origin.xyz?.y || 0) > 1e-9 ||
+    Math.abs(origin.xyz?.z || 0) > 1e-9 ||
+    Math.abs(origin.rpy?.r || 0) > 1e-9 ||
+    Math.abs(origin.rpy?.p || 0) > 1e-9 ||
+    Math.abs(origin.rpy?.y || 0) > 1e-9
+  );
 }
 
 function cloneVisualOrigin(
@@ -591,12 +622,14 @@ function originsApproximatelyEqual(
     return false;
   }
 
-  return Math.abs((left.xyz?.x || 0) - (right.xyz?.x || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.xyz?.y || 0) - (right.xyz?.y || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.xyz?.z || 0) - (right.xyz?.z || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.rpy?.r || 0) - (right.rpy?.r || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.rpy?.p || 0) - (right.rpy?.p || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.rpy?.y || 0) - (right.rpy?.y || 0)) <= ORIGIN_EPSILON;
+  return (
+    Math.abs((left.xyz?.x || 0) - (right.xyz?.x || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.xyz?.y || 0) - (right.xyz?.y || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.xyz?.z || 0) - (right.xyz?.z || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.rpy?.r || 0) - (right.rpy?.r || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.rpy?.p || 0) - (right.rpy?.p || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.rpy?.y || 0) - (right.rpy?.y || 0)) <= ORIGIN_EPSILON
+  );
 }
 
 function stripSyntheticMeshApproximationOrigin(
@@ -629,48 +662,54 @@ function stripSyntheticMeshApproximationOrigin(
 function buildObjBlobFromDescriptor(
   descriptor: ExportDescriptor,
   buffers: SnapshotBuffers | null | undefined,
-): Blob | null {
+): { blob: Blob; bytes: Uint8Array } | null {
   const ranges = getDescriptorRanges(descriptor.descriptor, buffers);
   const positionValues = readRangeValues(buffers?.positions, ranges?.positions);
   if (positionValues.length < 9) {
     return null;
   }
 
-  const indexValues = readRangeValues(buffers?.indices, ranges?.indices).map((value) => Number(value));
+  const indexValues = readRangeValues(buffers?.indices, ranges?.indices).map((value) =>
+    Number(value),
+  );
   const uvValues = readRangeValues(buffers?.uvs, ranges?.uvs);
   const transformValues = readRangeValues(buffers?.transforms, ranges?.transform);
 
-  const transform = transformValues.length >= 16
-    ? new Matrix4().fromArray(transformValues.slice(0, 16))
-    : null;
+  const transform =
+    transformValues.length >= 16 ? new Matrix4().fromArray(transformValues.slice(0, 16)) : null;
   const shouldBakeTransform = descriptor.bakeTransformIntoMesh !== false;
   const tempVector = new Vector3();
   const vertexColor = descriptor.displayColor || null;
 
-  const lines: string[] = [`o ${sanitizeFileToken(`${descriptor.linkId}_${descriptor.role}_${descriptor.ordinal}`)}`];
+  const lines: string[] = [
+    `o ${sanitizeFileToken(`${descriptor.linkId}_${descriptor.role}_${descriptor.ordinal}`)}`,
+  ];
 
   for (let index = 0; index + 2 < positionValues.length; index += 3) {
     tempVector.set(positionValues[index], positionValues[index + 1], positionValues[index + 2]);
     if (transform && shouldBakeTransform) {
       tempVector.applyMatrix4(transform);
     }
-    lines.push(vertexColor
-      ? `v ${formatObjNumber(tempVector.x)} ${formatObjNumber(tempVector.y)} ${formatObjNumber(tempVector.z)} ${formatObjNumber(vertexColor[0])} ${formatObjNumber(vertexColor[1])} ${formatObjNumber(vertexColor[2])}`
-      : `v ${formatObjNumber(tempVector.x)} ${formatObjNumber(tempVector.y)} ${formatObjNumber(tempVector.z)}`);
+    lines.push(
+      vertexColor
+        ? `v ${formatObjNumber(tempVector.x)} ${formatObjNumber(tempVector.y)} ${formatObjNumber(tempVector.z)} ${formatObjNumber(vertexColor[0])} ${formatObjNumber(vertexColor[1])} ${formatObjNumber(vertexColor[2])}`
+        : `v ${formatObjNumber(tempVector.x)} ${formatObjNumber(tempVector.y)} ${formatObjNumber(tempVector.z)}`,
+    );
   }
 
   const vertexCount = Math.floor(positionValues.length / 3);
-  const fullTriangleIndices = indexValues.length >= 3
-    ? indexValues
-    : Array.from({ length: vertexCount }, (_, index) => index);
+  const fullTriangleIndices =
+    indexValues.length >= 3
+      ? indexValues
+      : Array.from({ length: vertexCount }, (_, index) => index);
   const subsetStart = descriptor.subsetSection
     ? Math.max(0, Math.min(fullTriangleIndices.length, descriptor.subsetSection.start))
     : 0;
   const subsetEnd = descriptor.subsetSection
     ? Math.max(
-      subsetStart,
-      Math.min(fullTriangleIndices.length, subsetStart + descriptor.subsetSection.length),
-    )
+        subsetStart,
+        Math.min(fullTriangleIndices.length, subsetStart + descriptor.subsetSection.length),
+      )
     : fullTriangleIndices.length;
   const triangleIndices = descriptor.subsetSection
     ? (() => {
@@ -687,12 +726,16 @@ function buildObjBlobFromDescriptor(
   if (hasFaceVaryingUvs) {
     for (let uvIndex = subsetStart; uvIndex < subsetEnd; uvIndex += 1) {
       const offset = uvIndex * uvStride;
-      lines.push(`vt ${formatObjNumber(uvValues[offset] || 0)} ${formatObjNumber(uvValues[offset + 1] || 0)}`);
+      lines.push(
+        `vt ${formatObjNumber(uvValues[offset] || 0)} ${formatObjNumber(uvValues[offset + 1] || 0)}`,
+      );
     }
   } else if (hasPerVertexUvs) {
     for (let vertexIndex = 0; vertexIndex < vertexCount; vertexIndex += 1) {
       const offset = vertexIndex * uvStride;
-      lines.push(`vt ${formatObjNumber(uvValues[offset] || 0)} ${formatObjNumber(uvValues[offset + 1] || 0)}`);
+      lines.push(
+        `vt ${formatObjNumber(uvValues[offset] || 0)} ${formatObjNumber(uvValues[offset + 1] || 0)}`,
+      );
     }
   }
 
@@ -723,16 +766,23 @@ function buildObjBlobFromDescriptor(
     return null;
   }
 
-  return new Blob([`${lines.join('\n')}\n`], { type: 'text/plain;charset=utf-8' });
+  const objText = `${lines.join('\n')}\n`;
+  const bytes = new TextEncoder().encode(objText);
+
+  return {
+    blob: new Blob([objText], { type: 'text/plain;charset=utf-8' }),
+    bytes,
+  };
 }
 
 function cloneRobotState(input: RobotLike): RobotState {
   const cloned = structuredClone(input) as RobotLike;
   return {
     ...cloned,
-    selection: 'selection' in cloned
-      ? { ...(cloned.selection || { type: null, id: null }) }
-      : { type: null, id: null },
+    selection:
+      'selection' in cloned
+        ? { ...(cloned.selection || { type: null, id: null }) }
+        : { type: null, id: null },
   };
 }
 
@@ -744,9 +794,11 @@ function dimensionsApproximatelyEqual(
     return false;
   }
 
-  return Math.abs((left.x || 0) - (right.x || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.y || 0) - (right.y || 0)) <= ORIGIN_EPSILON
-    && Math.abs((left.z || 0) - (right.z || 0)) <= ORIGIN_EPSILON;
+  return (
+    Math.abs((left.x || 0) - (right.x || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.y || 0) - (right.y || 0)) <= ORIGIN_EPSILON &&
+    Math.abs((left.z || 0) - (right.z || 0)) <= ORIGIN_EPSILON
+  );
 }
 
 function canReuseFallbackMeshPath(current: UrdfVisual, fallback?: UrdfVisual): boolean {
@@ -754,8 +806,10 @@ function canReuseFallbackMeshPath(current: UrdfVisual, fallback?: UrdfVisual): b
     return false;
   }
 
-  return dimensionsApproximatelyEqual(current.dimensions, fallback.dimensions)
-    && originsApproximatelyEqual(current.origin, fallback.origin);
+  return (
+    dimensionsApproximatelyEqual(current.dimensions, fallback.dimensions) &&
+    originsApproximatelyEqual(current.origin, fallback.origin)
+  );
 }
 
 function fillMeshPath(current: UrdfVisual, fallback?: UrdfVisual): UrdfVisual {
@@ -773,7 +827,10 @@ function fillMeshPath(current: UrdfVisual, fallback?: UrdfVisual): UrdfVisual {
   };
 }
 
-function mergeGeometryWithSnapshot(current: UrdfVisual | undefined, fallback?: UrdfVisual): UrdfVisual | undefined {
+function mergeGeometryWithSnapshot(
+  current: UrdfVisual | undefined,
+  fallback?: UrdfVisual,
+): UrdfVisual | undefined {
   if (!current) {
     return fallback;
   }
@@ -793,12 +850,15 @@ function mergeLinkWithSnapshotMeshPaths(current: UrdfLink, fallback?: UrdfLink):
   const fallbackBodies = fallback.collisionBodies || [];
   const currentBodies = current.collisionBodies || [];
   const usedFallbackBodyIndexes = new Set<number>();
-  const resolveFallbackBody = (currentBody: UrdfVisual, bodyIndex: number): UrdfVisual | undefined => {
+  const resolveFallbackBody = (
+    currentBody: UrdfVisual,
+    bodyIndex: number,
+  ): UrdfVisual | undefined => {
     const indexedFallbackBody = fallbackBodies[bodyIndex];
     if (
-      indexedFallbackBody
-      && !usedFallbackBodyIndexes.has(bodyIndex)
-      && canReuseFallbackMeshPath(currentBody, indexedFallbackBody)
+      indexedFallbackBody &&
+      !usedFallbackBodyIndexes.has(bodyIndex) &&
+      canReuseFallbackMeshPath(currentBody, indexedFallbackBody)
     ) {
       usedFallbackBodyIndexes.add(bodyIndex);
       return indexedFallbackBody;
@@ -823,19 +883,21 @@ function mergeLinkWithSnapshotMeshPaths(current: UrdfLink, fallback?: UrdfLink):
 
   // Keep the live robot as source of truth for geometry existence. Snapshot fallback
   // may only supplement missing meshPath on already-existing geometry records.
-  const mergedBodies = currentBodies.length > 0
-    ? currentBodies
-      .map((currentBody, index) => (
-        mergeGeometryWithSnapshot(currentBody, resolveFallbackBody(currentBody, index))
-      ))
-      .filter((body): body is UrdfVisual => Boolean(body))
-    : current.collisionBodies;
+  const mergedBodies =
+    currentBodies.length > 0
+      ? currentBodies
+          .map((currentBody, index) =>
+            mergeGeometryWithSnapshot(currentBody, resolveFallbackBody(currentBody, index)),
+          )
+          .filter((body): body is UrdfVisual => Boolean(body))
+      : current.collisionBodies;
 
   return {
     ...fallback,
     ...current,
     visual: mergeGeometryWithSnapshot(current.visual, fallback.visual) || current.visual,
-    collision: mergeGeometryWithSnapshot(current.collision, fallback.collision) || current.collision,
+    collision:
+      mergeGeometryWithSnapshot(current.collision, fallback.collision) || current.collision,
     collisionBodies: mergedBodies,
   };
 }
@@ -846,10 +908,7 @@ function mergeCurrentRobotWithSnapshotMeshPaths(
 ): RobotState {
   const baseRobot = cloneRobotState(currentRobot);
   const mergedLinks: Record<string, UrdfLink> = {};
-  const linkIds = new Set([
-    ...Object.keys(snapshotRobot.links),
-    ...Object.keys(baseRobot.links),
-  ]);
+  const linkIds = new Set([...Object.keys(snapshotRobot.links), ...Object.keys(baseRobot.links)]);
 
   linkIds.forEach((linkId) => {
     const currentLink = baseRobot.links[linkId];
@@ -864,9 +923,10 @@ function mergeCurrentRobotWithSnapshotMeshPaths(
   return {
     ...snapshotRobot,
     ...baseRobot,
-    rootLinkId: snapshotRobot.rootLinkId && mergedLinks[snapshotRobot.rootLinkId]
-      ? snapshotRobot.rootLinkId
-      : baseRobot.rootLinkId,
+    rootLinkId:
+      snapshotRobot.rootLinkId && mergedLinks[snapshotRobot.rootLinkId]
+        ? snapshotRobot.rootLinkId
+        : baseRobot.rootLinkId,
     links: mergedLinks,
     joints: {
       ...snapshotRobot.joints,
@@ -877,9 +937,10 @@ function mergeCurrentRobotWithSnapshotMeshPaths(
       ...(baseRobot.materials || {}),
     },
     closedLoopConstraints: baseRobot.closedLoopConstraints || snapshotRobot.closedLoopConstraints,
-    selection: 'selection' in currentRobot
-      ? { ...((currentRobot as RobotState).selection || { type: null, id: null }) }
-      : { type: null, id: null },
+    selection:
+      'selection' in currentRobot
+        ? { ...((currentRobot as RobotState).selection || { type: null, id: null }) }
+        : { type: null, id: null },
   };
 }
 
@@ -888,9 +949,11 @@ function isSyntheticWorldLink(link: UrdfLink | undefined): boolean {
     return false;
   }
 
-  return getVisualGeometryEntries(link).length === 0
-    && link.collision.type === GeometryType.NONE
-    && (link.inertial?.mass || 0) <= 1e-9;
+  return (
+    getVisualGeometryEntries(link).length === 0 &&
+    link.collision.type === GeometryType.NONE &&
+    (link.inertial?.mass || 0) <= 1e-9
+  );
 }
 
 function stripSyntheticWorldRootForExport(robot: RobotState): RobotState {
@@ -898,9 +961,9 @@ function stripSyntheticWorldRootForExport(robot: RobotState): RobotState {
     return robot;
   }
 
-  const worldChildJoints = Object.values(robot.joints).filter((joint) => (
-    joint.parentLinkId === 'world'
-  ));
+  const worldChildJoints = Object.values(robot.joints).filter(
+    (joint) => joint.parentLinkId === 'world',
+  );
   if (worldChildJoints.length !== 1) {
     return robot;
   }
@@ -947,7 +1010,8 @@ export function resolveUsdExportResolution(
     return null;
   }
 
-  const host = options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
+  const host =
+    options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
   const hydratedResolution = hydrateUsdViewerRobotResolutionFromRuntime(
     initialResolution,
     snapshot,
@@ -957,19 +1021,23 @@ export function resolveUsdExportResolution(
   return hydratedResolution || initialResolution;
 }
 
-function ensureMeshDimensions(dimensions: UrdfVisual['dimensions'] | null | undefined): UrdfVisual['dimensions'] {
+function ensureMeshDimensions(
+  dimensions: UrdfVisual['dimensions'] | null | undefined,
+): UrdfVisual['dimensions'] {
   if (!dimensions) {
     return { x: 1, y: 1, z: 1 };
   }
 
   const values = [dimensions.x, dimensions.y, dimensions.z];
-  const hasMeaningfulDimension = values.some((value) => Number.isFinite(value) && Math.abs(value) > 1e-9);
-  return hasMeaningfulDimension
-    ? dimensions
-    : { x: 1, y: 1, z: 1 };
+  const hasMeaningfulDimension = values.some(
+    (value) => Number.isFinite(value) && Math.abs(value) > 1e-9,
+  );
+  return hasMeaningfulDimension ? dimensions : { x: 1, y: 1, z: 1 };
 }
 
-function getSnapshotMaterialLookup(snapshot: UsdExportSnapshot): Map<string, SnapshotMaterialRecord> {
+function getSnapshotMaterialLookup(
+  snapshot: UsdExportSnapshot,
+): Map<string, SnapshotMaterialRecord> {
   const lookup = new Map<string, SnapshotMaterialRecord>();
   const materials = Array.from(snapshot.render?.materials || []);
 
@@ -1027,12 +1095,24 @@ function serializeLivePreferredMaterialRecord(material: unknown): SnapshotMateri
     ...(normalizeBooleanMaterialValue(candidate.emissiveEnabled) !== null
       ? { emissiveEnabled: normalizeBooleanMaterialValue(candidate.emissiveEnabled) }
       : {}),
-    ...(normalizeColorMaterialValue(candidate.color) ? { color: normalizeColorMaterialValue(candidate.color) } : {}),
-    ...(normalizeColorMaterialValue(candidate.emissive) ? { emissive: normalizeColorMaterialValue(candidate.emissive) } : {}),
-    ...(normalizeColorMaterialValue(candidate.specularColor) ? { specularColor: normalizeColorMaterialValue(candidate.specularColor) } : {}),
-    ...(normalizeColorMaterialValue(candidate.attenuationColor) ? { attenuationColor: normalizeColorMaterialValue(candidate.attenuationColor) } : {}),
-    ...(normalizeColorMaterialValue(candidate.sheenColor) ? { sheenColor: normalizeColorMaterialValue(candidate.sheenColor) } : {}),
-    ...(normalizeVector2MaterialValue(candidate.normalScale) ? { normalScale: normalizeVector2MaterialValue(candidate.normalScale) } : {}),
+    ...(normalizeColorMaterialValue(candidate.color)
+      ? { color: normalizeColorMaterialValue(candidate.color) }
+      : {}),
+    ...(normalizeColorMaterialValue(candidate.emissive)
+      ? { emissive: normalizeColorMaterialValue(candidate.emissive) }
+      : {}),
+    ...(normalizeColorMaterialValue(candidate.specularColor)
+      ? { specularColor: normalizeColorMaterialValue(candidate.specularColor) }
+      : {}),
+    ...(normalizeColorMaterialValue(candidate.attenuationColor)
+      ? { attenuationColor: normalizeColorMaterialValue(candidate.attenuationColor) }
+      : {}),
+    ...(normalizeColorMaterialValue(candidate.sheenColor)
+      ? { sheenColor: normalizeColorMaterialValue(candidate.sheenColor) }
+      : {}),
+    ...(normalizeVector2MaterialValue(candidate.normalScale)
+      ? { normalScale: normalizeVector2MaterialValue(candidate.normalScale) }
+      : {}),
     ...(normalizeVector2MaterialValue(candidate.clearcoatNormalScale)
       ? { clearcoatNormalScale: normalizeVector2MaterialValue(candidate.clearcoatNormalScale) }
       : {}),
@@ -1052,10 +1132,18 @@ function serializeLivePreferredMaterialRecord(material: unknown): SnapshotMateri
       ? { clearcoat: normalizeScalarMaterialValue(candidate.clearcoat, { clamp01: true }) }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.clearcoatRoughness, { clamp01: true }) !== null
-      ? { clearcoatRoughness: normalizeScalarMaterialValue(candidate.clearcoatRoughness, { clamp01: true }) }
+      ? {
+          clearcoatRoughness: normalizeScalarMaterialValue(candidate.clearcoatRoughness, {
+            clamp01: true,
+          }),
+        }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.specularIntensity, { clamp01: true }) !== null
-      ? { specularIntensity: normalizeScalarMaterialValue(candidate.specularIntensity, { clamp01: true }) }
+      ? {
+          specularIntensity: normalizeScalarMaterialValue(candidate.specularIntensity, {
+            clamp01: true,
+          }),
+        }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.transmission, { clamp01: true }) !== null
       ? { transmission: normalizeScalarMaterialValue(candidate.transmission, { clamp01: true }) }
@@ -1064,16 +1152,24 @@ function serializeLivePreferredMaterialRecord(material: unknown): SnapshotMateri
       ? { thickness: normalizeScalarMaterialValue(candidate.thickness, { min: 0 }) }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.attenuationDistance, { min: 0 }) !== null
-      ? { attenuationDistance: normalizeScalarMaterialValue(candidate.attenuationDistance, { min: 0 }) }
+      ? {
+          attenuationDistance: normalizeScalarMaterialValue(candidate.attenuationDistance, {
+            min: 0,
+          }),
+        }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.aoMapIntensity, { clamp01: true }) !== null
-      ? { aoMapIntensity: normalizeScalarMaterialValue(candidate.aoMapIntensity, { clamp01: true }) }
+      ? {
+          aoMapIntensity: normalizeScalarMaterialValue(candidate.aoMapIntensity, { clamp01: true }),
+        }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.sheen, { clamp01: true }) !== null
       ? { sheen: normalizeScalarMaterialValue(candidate.sheen, { clamp01: true }) }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.sheenRoughness, { clamp01: true }) !== null
-      ? { sheenRoughness: normalizeScalarMaterialValue(candidate.sheenRoughness, { clamp01: true }) }
+      ? {
+          sheenRoughness: normalizeScalarMaterialValue(candidate.sheenRoughness, { clamp01: true }),
+        }
       : {}),
     ...(normalizeScalarMaterialValue(candidate.iridescence, { clamp01: true }) !== null
       ? { iridescence: normalizeScalarMaterialValue(candidate.iridescence, { clamp01: true }) }
@@ -1093,7 +1189,9 @@ function serializeLivePreferredMaterialRecord(material: unknown): SnapshotMateri
     ...(normalizeScalarMaterialValue(candidate.ior, { min: 1 }) !== null
       ? { ior: normalizeScalarMaterialValue(candidate.ior, { min: 1 }) }
       : {}),
-    ...(normalizeTextureMaterialPath(candidate.map) ? { mapPath: normalizeTextureMaterialPath(candidate.map) } : {}),
+    ...(normalizeTextureMaterialPath(candidate.map)
+      ? { mapPath: normalizeTextureMaterialPath(candidate.map) }
+      : {}),
     ...(normalizeTextureMaterialPath(candidate.emissiveMap)
       ? { emissiveMapPath: normalizeTextureMaterialPath(candidate.emissiveMap) }
       : {}),
@@ -1146,7 +1244,11 @@ function serializeLivePreferredMaterialRecord(material: unknown): SnapshotMateri
       ? { iridescenceMapPath: normalizeTextureMaterialPath(candidate.iridescenceMap) }
       : {}),
     ...(normalizeTextureMaterialPath(candidate.iridescenceThicknessMap)
-      ? { iridescenceThicknessMapPath: normalizeTextureMaterialPath(candidate.iridescenceThicknessMap) }
+      ? {
+          iridescenceThicknessMapPath: normalizeTextureMaterialPath(
+            candidate.iridescenceThicknessMap,
+          ),
+        }
       : {}),
   };
 
@@ -1206,8 +1308,7 @@ function enrichSnapshotWithLivePreferredMaterials(
 }
 
 function shouldAdoptSnapshotMaterialColor(color: string | null | undefined): boolean {
-  return shouldAdoptSnapshotColor(color)
-    || String(color || '').trim().length === 0;
+  return shouldAdoptSnapshotColor(color) || String(color || '').trim().length === 0;
 }
 
 function mergeLinkMaterial(
@@ -1219,14 +1320,19 @@ function mergeLinkMaterial(
     usdMaterial?: SnapshotMaterialRecord | null;
   },
 ): void {
-  if (!payload.color && !payload.texture && !hasSnapshotMaterialRecordContent(payload.usdMaterial)) {
+  if (
+    !payload.color &&
+    !payload.texture &&
+    !hasSnapshotMaterialRecordContent(payload.usdMaterial)
+  ) {
     return;
   }
 
   const current = robot.materials?.[linkId] || {};
-  const nextColor = payload.color && shouldAdoptSnapshotMaterialColor(current.color)
-    ? payload.color
-    : current.color;
+  const nextColor =
+    payload.color && shouldAdoptSnapshotMaterialColor(current.color)
+      ? payload.color
+      : current.color;
   const nextTexture = current.texture || payload.texture;
   const nextUsdMaterial = hasSnapshotMaterialRecordContent(payload.usdMaterial)
     ? structuredClone(payload.usdMaterial)
@@ -1242,7 +1348,9 @@ function mergeLinkMaterial(
       ...(current || {}),
       ...(nextColor ? { color: nextColor } : {}),
       ...(nextTexture ? { texture: nextTexture } : {}),
-      ...(hasSnapshotMaterialRecordContent(nextUsdMaterial) ? { usdMaterial: nextUsdMaterial } : {}),
+      ...(hasSnapshotMaterialRecordContent(nextUsdMaterial)
+        ? { usdMaterial: nextUsdMaterial }
+        : {}),
     },
   };
 }
@@ -1284,10 +1392,13 @@ function applySnapshotMaterialRecordToLink(
 function applyVisualMaterialFallbackToLink(
   robot: RobotState,
   linkId: string,
-  material: {
-    color?: string;
-    texture?: string;
-  } | null | undefined,
+  material:
+    | {
+        color?: string;
+        texture?: string;
+      }
+    | null
+    | undefined,
 ): boolean {
   const color = material?.color?.trim() || undefined;
   const texture = material?.texture?.trim() || undefined;
@@ -1330,16 +1441,16 @@ function resolveGeometryMaterialFallback(
   const authoredMaterials = Array.isArray(geometry.authoredMaterials)
     ? geometry.authoredMaterials
     : [];
-  const authoredCandidate = authoredMaterials[preferredIndex]
-    || (authoredMaterials.length === 1 ? authoredMaterials[0] : null)
-    || authoredMaterials.find((material) => Boolean(material?.color || material?.texture))
-    || null;
+  const authoredCandidate =
+    authoredMaterials[preferredIndex] ||
+    (authoredMaterials.length === 1 ? authoredMaterials[0] : null) ||
+    authoredMaterials.find((material) => Boolean(material?.color || material?.texture)) ||
+    null;
   const authoredColor = authoredCandidate?.color?.trim() || undefined;
   const authoredTexture = authoredCandidate?.texture?.trim() || undefined;
   const directColor = geometry.color?.trim() || undefined;
-  const usableDirectColor = directColor && !shouldAdoptSnapshotColor(directColor)
-    ? directColor
-    : undefined;
+  const usableDirectColor =
+    directColor && !shouldAdoptSnapshotColor(directColor) ? directColor : undefined;
 
   if (authoredColor || authoredTexture) {
     return {
@@ -1372,7 +1483,10 @@ function resolveVisualMaterialFallbackForDescriptor(
     : visualDescriptorIndex;
 
   if (descriptor.subsetSection) {
-    const primarySubsetMaterial = resolveGeometryMaterialFallback(sourceLink.visual, authoredMaterialIndex);
+    const primarySubsetMaterial = resolveGeometryMaterialFallback(
+      sourceLink.visual,
+      authoredMaterialIndex,
+    );
     if (primarySubsetMaterial) {
       return primarySubsetMaterial;
     }
@@ -1395,12 +1509,9 @@ function getDescriptorMaterialRecord(
   descriptor: Pick<ExportDescriptor, 'descriptor' | 'materialIdOverride'> | SnapshotMeshDescriptor,
   materialLookup: Map<string, SnapshotMaterialRecord>,
 ): SnapshotMaterialRecord | null {
-  const sourceDescriptor = 'descriptor' in descriptor
-    ? descriptor.descriptor
-    : descriptor;
-  const materialIdOverride = 'materialIdOverride' in descriptor
-    ? descriptor.materialIdOverride
-    : null;
+  const sourceDescriptor = 'descriptor' in descriptor ? descriptor.descriptor : descriptor;
+  const materialIdOverride =
+    'materialIdOverride' in descriptor ? descriptor.materialIdOverride : null;
   const materialId = getDescriptorMaterialId(sourceDescriptor, materialIdOverride);
   if (!materialId) {
     return null;
@@ -1463,10 +1574,9 @@ function getGeomSuffixOrder(candidate: string, parentLinkId: string, parentName:
 }
 
 function getLinkSemanticCandidates(link: UrdfLink): string[] {
-  const candidates = [
-    normalizeSemanticToken(link.id),
-    normalizeSemanticToken(link.name),
-  ].filter(Boolean);
+  const candidates = [normalizeSemanticToken(link.id), normalizeSemanticToken(link.name)].filter(
+    Boolean,
+  );
 
   return Array.from(new Set(candidates));
 }
@@ -1497,21 +1607,31 @@ function scoreDescriptorAgainstLink(descriptor: SnapshotMeshDescriptor, link: Ur
   return bestScore;
 }
 
-function isVisualAttachmentLink(link: UrdfLink | undefined, parentLinkId: string, parentName: string): boolean {
+function isVisualAttachmentLink(
+  link: UrdfLink | undefined,
+  parentLinkId: string,
+  parentName: string,
+): boolean {
   if (!link) {
     return false;
   }
 
   const zeroMass = (link.inertial?.mass || 0) <= 1e-9;
   const visualPresent = link.visual.type !== GeometryType.NONE;
-  const collisionOnly = link.visual.type === GeometryType.NONE && link.collision.type !== GeometryType.NONE;
-  const syntheticName = getGeomSuffixOrder(link.id, parentLinkId, parentName) !== Number.POSITIVE_INFINITY
-    || getGeomSuffixOrder(link.name, parentLinkId, parentName) !== Number.POSITIVE_INFINITY;
+  const collisionOnly =
+    link.visual.type === GeometryType.NONE && link.collision.type !== GeometryType.NONE;
+  const syntheticName =
+    getGeomSuffixOrder(link.id, parentLinkId, parentName) !== Number.POSITIVE_INFINITY ||
+    getGeomSuffixOrder(link.name, parentLinkId, parentName) !== Number.POSITIVE_INFINITY;
 
   return !collisionOnly && (syntheticName || (zeroMass && visualPresent));
 }
 
-function sortVisualAttachmentLinkIds(robot: RobotState, parentLinkId: string, candidateIds: string[]): string[] {
+function sortVisualAttachmentLinkIds(
+  robot: RobotState,
+  parentLinkId: string,
+  candidateIds: string[],
+): string[] {
   const parent = robot.links[parentLinkId];
   const parentName = parent?.name || parentLinkId;
 
@@ -1541,14 +1661,11 @@ function collectVisualAttachmentLinkIds(
     return [];
   }
 
-  const childIds = (fixedChildrenByParent.get(parentLinkId) || []).filter((childId) => (
-    isVisualAttachmentLink(robot.links[childId], parentLinkId, parent.name)
-  ));
+  const childIds = (fixedChildrenByParent.get(parentLinkId) || []).filter((childId) =>
+    isVisualAttachmentLink(robot.links[childId], parentLinkId, parent.name),
+  );
 
-  return [
-    parentLinkId,
-    ...sortVisualAttachmentLinkIds(robot, parentLinkId, childIds),
-  ];
+  return [parentLinkId, ...sortVisualAttachmentLinkIds(robot, parentLinkId, childIds)];
 }
 
 function createUniqueRobotRecordKey(
@@ -1656,9 +1773,10 @@ function assignVisualDescriptorToLink(
   const descriptorMaterialRecord = getDescriptorMaterialRecord(entry, materialLookup);
   const explicitFallbackColor = colorHexToVertexColor(explicitMaterialFallback?.color);
   const preferredFallbackColor = colorArrayToVertexColor(preferredMaterialRecord?.color);
-  entry.displayColor = colorArrayToVertexColor(descriptorMaterialRecord?.color)
-    || explicitFallbackColor
-    || preferredFallbackColor;
+  entry.displayColor =
+    colorArrayToVertexColor(descriptorMaterialRecord?.color) ||
+    explicitFallbackColor ||
+    preferredFallbackColor;
 
   const primitiveGeometry = resolvePrimitiveGeometryFromDescriptor(entry.descriptor, link.visual);
   if (primitiveGeometry) {
@@ -1670,13 +1788,17 @@ function assignVisualDescriptorToLink(
       origin: link.visual?.origin || { ...DEFAULT_LINK.visual.origin },
     };
     const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry, materialLookup);
-    if (!appliedMaterial && !applyVisualMaterialFallbackToLink(robot, linkId, explicitMaterialFallback)) {
+    if (
+      !appliedMaterial &&
+      !applyVisualMaterialFallbackToLink(robot, linkId, explicitMaterialFallback)
+    ) {
       applySnapshotMaterialRecordToLink(robot, linkId, preferredMaterialRecord);
     }
     return;
   }
 
-  const visual = stripSyntheticMeshApproximationOrigin(link.visual, entry.descriptor, snapshot) || link.visual;
+  const visual =
+    stripSyntheticMeshApproximationOrigin(link.visual, entry.descriptor, snapshot) || link.visual;
   link.visual = {
     ...DEFAULT_LINK.visual,
     ...(visual || {}),
@@ -1688,7 +1810,10 @@ function assignVisualDescriptorToLink(
   entry.bakeTransformIntoMesh = !hasNonIdentityOrigin(link.visual.origin);
   descriptorByPath.set(entry.exportPath, entry);
   const appliedMaterial = applyDescriptorMaterialToLink(robot, linkId, entry, materialLookup);
-  if (!appliedMaterial && !applyVisualMaterialFallbackToLink(robot, linkId, explicitMaterialFallback)) {
+  if (
+    !appliedMaterial &&
+    !applyVisualMaterialFallbackToLink(robot, linkId, explicitMaterialFallback)
+  ) {
     applySnapshotMaterialRecordToLink(robot, linkId, preferredMaterialRecord);
   }
 }
@@ -1706,10 +1831,12 @@ function assignCollisionDescriptorToLink(
     return;
   }
 
-  const currentCollision = collisionIndex === 0
-    ? link.collision
-    : link.collisionBodies?.[collisionIndex - 1];
-  const primitiveGeometry = resolvePrimitiveGeometryFromDescriptor(entry.descriptor, currentCollision);
+  const currentCollision =
+    collisionIndex === 0 ? link.collision : link.collisionBodies?.[collisionIndex - 1];
+  const primitiveGeometry = resolvePrimitiveGeometryFromDescriptor(
+    entry.descriptor,
+    currentCollision,
+  );
   if (primitiveGeometry) {
     const nextCollision = {
       ...DEFAULT_LINK.collision,
@@ -1730,8 +1857,9 @@ function assignCollisionDescriptorToLink(
     return;
   }
 
-  const sanitizedCollision = stripSyntheticMeshApproximationOrigin(currentCollision, entry.descriptor, snapshot)
-    || currentCollision;
+  const sanitizedCollision =
+    stripSyntheticMeshApproximationOrigin(currentCollision, entry.descriptor, snapshot) ||
+    currentCollision;
   if (collisionIndex === 0) {
     link.collision = {
       ...DEFAULT_LINK.collision,
@@ -1784,20 +1912,26 @@ function assignLinkDescriptors(
 
   visualDescriptors.forEach((entry, index) => {
     let targetLinkId: string | undefined;
-    const explicitMaterialFallback = resolveVisualMaterialFallbackForDescriptor(sourceLink, entry, index);
+    const explicitMaterialFallback = resolveVisualMaterialFallbackForDescriptor(
+      sourceLink,
+      entry,
+      index,
+    );
 
     if (index === 0) {
       targetLinkId = linkId;
     } else {
-      const availableLinkIds = visualLinkIds.filter((candidateId) => (
-        candidateId !== linkId && !usedVisualLinkIds.has(candidateId)
-      ));
+      const availableLinkIds = visualLinkIds.filter(
+        (candidateId) => candidateId !== linkId && !usedVisualLinkIds.has(candidateId),
+      );
 
       let bestMatchId: string | undefined;
       let bestScore = 0;
       availableLinkIds.forEach((candidateId) => {
         const candidateLink = robot.links[candidateId];
-        const score = candidateLink ? scoreDescriptorAgainstLink(entry.descriptor, candidateLink) : 0;
+        const score = candidateLink
+          ? scoreDescriptorAgainstLink(entry.descriptor, candidateLink)
+          : 0;
         if (score > bestScore) {
           bestScore = score;
           bestMatchId = candidateId;
@@ -1818,9 +1952,9 @@ function assignLinkDescriptors(
       const sourceOrigin = robot.links[linkId]?.visual?.origin;
       const targetLink = robot.links[targetLinkId];
       if (
-        targetLink
-        && hasNonIdentityOrigin(sourceOrigin)
-        && !hasNonIdentityOrigin(targetLink.visual.origin)
+        targetLink &&
+        hasNonIdentityOrigin(sourceOrigin) &&
+        !hasNonIdentityOrigin(targetLink.visual.origin)
       ) {
         targetLink.visual = {
           ...targetLink.visual,
@@ -1900,37 +2034,38 @@ function createDescriptorExportMap(
     const ordinal = parseDescriptorOrdinal(descriptor, index);
     const key = `${linkId}:${role}`;
     const current = descriptorsByLinkRole.get(key) || [];
-    const geomSubsetSections = role === 'visual'
-      ? getDescriptorGeomSubsetSections(descriptor)
-      : [];
-    const expandedEntries = geomSubsetSections.length > 0
-      ? geomSubsetSections.map((subsetSection, subsetIndex) => {
-          const hasMultipleSubsets = geomSubsetSections.length > 1;
-          return {
-            descriptor,
-            meshId: normalizeUsdPath(descriptor.meshId || ''),
-            linkPath,
-            linkId,
-            role,
-            exportPath: `${sanitizeFileToken(linkId)}_${role}_${ordinal}${hasMultipleSubsets ? `_section_${subsetIndex}` : ''}.obj`,
-            ordinal,
-            subsetIndex,
-            subsetSection,
-            materialIdOverride: subsetSection.materialId || null,
-          } satisfies ExportDescriptor;
-        })
-      : [{
-          descriptor,
-          meshId: normalizeUsdPath(descriptor.meshId || ''),
-          linkPath,
-          linkId,
-          role,
-          exportPath: `${sanitizeFileToken(linkId)}_${role}_${ordinal}.obj`,
-          ordinal,
-          subsetIndex: 0,
-          subsetSection: null,
-          materialIdOverride: null,
-        } satisfies ExportDescriptor];
+    const geomSubsetSections = role === 'visual' ? getDescriptorGeomSubsetSections(descriptor) : [];
+    const expandedEntries =
+      geomSubsetSections.length > 0
+        ? geomSubsetSections.map((subsetSection, subsetIndex) => {
+            const hasMultipleSubsets = geomSubsetSections.length > 1;
+            return {
+              descriptor,
+              meshId: normalizeUsdPath(descriptor.meshId || ''),
+              linkPath,
+              linkId,
+              role,
+              exportPath: `${sanitizeFileToken(linkId)}_${role}_${ordinal}${hasMultipleSubsets ? `_section_${subsetIndex}` : ''}.obj`,
+              ordinal,
+              subsetIndex,
+              subsetSection,
+              materialIdOverride: subsetSection.materialId || null,
+            } satisfies ExportDescriptor;
+          })
+        : [
+            {
+              descriptor,
+              meshId: normalizeUsdPath(descriptor.meshId || ''),
+              linkPath,
+              linkId,
+              role,
+              exportPath: `${sanitizeFileToken(linkId)}_${role}_${ordinal}.obj`,
+              ordinal,
+              subsetIndex: 0,
+              subsetSection: null,
+              materialIdOverride: null,
+            } satisfies ExportDescriptor,
+          ];
 
     current.push(...expandedEntries);
     descriptorsByLinkRole.set(key, current);
@@ -1975,7 +2110,8 @@ function createDescriptorExportMap(
 export function getCurrentUsdViewerSceneSnapshot(
   options: { stageSourcePath?: string | null; targetWindow?: SnapshotHost } = {},
 ): UsdExportSnapshot | null {
-  const host = options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
+  const host =
+    options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
   for (const stageSourcePath of buildUsdSnapshotLookupPaths(options.stageSourcePath)) {
     const snapshot = host?.renderInterface?.getCachedRobotSceneSnapshot?.(stageSourcePath);
     if (snapshot && typeof snapshot === 'object') {
@@ -1993,7 +2129,8 @@ export function resolveUsdExportSceneSnapshot(
     targetWindow?: SnapshotHost;
   } = {},
 ): UsdExportSnapshot | null {
-  const host = options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
+  const host =
+    options.targetWindow ?? (typeof window !== 'undefined' ? (window as SnapshotHost) : null);
   if (options.cachedSnapshot && typeof options.cachedSnapshot === 'object') {
     return enrichSnapshotWithLivePreferredMaterials(options.cachedSnapshot, host);
   }
@@ -2007,21 +2144,31 @@ export function resolveUsdExportSceneSnapshot(
 export function prepareUsdExportCacheFromResolvedSnapshot(
   snapshot: UsdExportSnapshot,
   resolution: ViewerRobotDataResolution,
+  options: {
+    includeTransferBytes?: boolean;
+  } = {},
 ): PreparedUsdExportCacheResult {
-  const { robot: snapshotRobot, descriptorByPath } = createDescriptorExportMap(snapshot, resolution);
+  const { robot: snapshotRobot, descriptorByPath } = createDescriptorExportMap(
+    snapshot,
+    resolution,
+  );
   const meshFiles: Record<string, Blob> = {};
+  const meshFileBytes: Record<string, Uint8Array> = {};
 
   collectReferencedMeshPaths(snapshotRobot).forEach((meshPath) => {
     const descriptor = descriptorByPath.get(meshPath);
     if (!descriptor) return;
 
-    const blob = buildObjBlobFromDescriptor(descriptor, snapshot.buffers || null);
-    if (!blob) return;
+    const asset = buildObjBlobFromDescriptor(descriptor, snapshot.buffers || null);
+    if (!asset) return;
 
-    meshFiles[meshPath] = blob;
+    meshFiles[meshPath] = asset.blob;
+    if (options.includeTransferBytes) {
+      meshFileBytes[meshPath] = asset.bytes;
+    }
   });
 
-  return {
+  const result: PreparedUsdExportCacheResult & PreparedUsdExportCacheTransferBytesCarrier = {
     stageSourcePath: snapshot.stageSourcePath || resolution.stageSourcePath || null,
     robotData: {
       name: snapshotRobot.name,
@@ -2034,6 +2181,17 @@ export function prepareUsdExportCacheFromResolvedSnapshot(
     meshFiles,
     resolution,
   };
+
+  if (options.includeTransferBytes && Object.keys(meshFileBytes).length > 0) {
+    Object.defineProperty(result, '__meshFileBytes', {
+      value: meshFileBytes,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+
+  return result;
 }
 
 export function prepareUsdExportCacheFromSnapshot(
@@ -2067,9 +2225,11 @@ export function buildUsdExportBundleFromPreparedCache(
     ...preparedCache.robotData,
     selection: { type: null, id: null },
   });
-  const robot = stripSyntheticWorldRootForExport(options.currentRobot
-    ? mergeCurrentRobotWithSnapshotMeshPaths(options.currentRobot, snapshotRobot)
-    : snapshotRobot);
+  const robot = stripSyntheticWorldRootForExport(
+    options.currentRobot
+      ? mergeCurrentRobotWithSnapshotMeshPaths(options.currentRobot, snapshotRobot)
+      : snapshotRobot,
+  );
 
   return {
     robot,
@@ -2100,17 +2260,21 @@ export function buildUsdExportBundleFromSnapshot(
     return null;
   }
 
-  const { robot, descriptorByPath } = createDescriptorExportMap(snapshot, resolution, options.currentRobot);
+  const { robot, descriptorByPath } = createDescriptorExportMap(
+    snapshot,
+    resolution,
+    options.currentRobot,
+  );
   const meshFiles = new Map<string, Blob>();
 
   collectReferencedMeshPaths(robot).forEach((meshPath) => {
     const descriptor = descriptorByPath.get(meshPath);
     if (!descriptor) return;
 
-    const blob = buildObjBlobFromDescriptor(descriptor, snapshot.buffers || null);
-    if (!blob) return;
+    const asset = buildObjBlobFromDescriptor(descriptor, snapshot.buffers || null);
+    if (!asset) return;
 
-    meshFiles.set(meshPath, blob);
+    meshFiles.set(meshPath, asset.blob);
   });
 
   return {

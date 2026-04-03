@@ -110,6 +110,26 @@ test('handleViewerSelect preserves collision objectIndex when re-selecting the s
   assert.deepEqual(pulsedSelection, nextSelection);
 });
 
+test('handleViewerSelect does not pin hover for regular selection clicks', () => {
+  resetSelectionStore();
+  resetUiStore();
+
+  let nextHoveredSelection: InteractionSelection | null = null;
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: (selection) => {
+      nextHoveredSelection = selection;
+    },
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerSelect('link', 'arm_link', 'visual');
+
+  assert.equal(nextHoveredSelection, null);
+});
+
 test('handleSelect does not carry collision objectIndex across different links', () => {
   resetSelectionStore();
   resetUiStore();
@@ -157,6 +177,26 @@ test('handleViewerMeshSelect seeds the detail tab from visual mesh clicks while 
   hook.handleViewerMeshSelect('arm_link', 'shoulder_joint', 0, 'visual');
 
   assert.equal(useUIStore.getState().detailLinkTab, 'visual');
+});
+
+test('handleViewerMeshSelect does not pin hover while selecting a body', () => {
+  resetSelectionStore();
+  resetUiStore();
+
+  let nextHoveredSelection: InteractionSelection | null = null;
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: (selection) => {
+      nextHoveredSelection = selection;
+    },
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerMeshSelect('arm_link', 'shoulder_joint', 0, 'collision');
+
+  assert.equal(nextHoveredSelection, null);
 });
 
 test('handleViewerSelect routes inertial helpers to the physics tab without pinning hover', () => {

@@ -16,6 +16,7 @@ workerScope.addEventListener('message', (event: MessageEvent<XmlEditorWorkerRequ
   if (!message) {
     return;
   }
+  const requestId = message.requestId;
 
   try {
     if (message.type === 'xml-completion') {
@@ -32,11 +33,7 @@ workerScope.addEventListener('message', (event: MessageEvent<XmlEditorWorkerRequ
       const response: XmlEditorWorkerResponse = {
         type: 'xml-validation-result',
         requestId: message.requestId,
-        errors: validateXmlDocumentByFlavor(
-          message.code,
-          message.documentFlavor,
-          message.texts,
-        ),
+        errors: validateXmlDocumentByFlavor(message.code, message.documentFlavor, message.texts),
       };
       workerScope.postMessage(response);
       return;
@@ -44,12 +41,11 @@ workerScope.addEventListener('message', (event: MessageEvent<XmlEditorWorkerRequ
 
     const response: XmlEditorWorkerResponse = {
       type: 'xml-worker-error',
-      requestId: message.requestId,
+      requestId,
       error: `Unsupported XML worker request type: ${(message as { type?: string }).type || 'unknown'}`,
     };
     workerScope.postMessage(response);
   } catch (error) {
-    const requestId = 'requestId' in message ? message.requestId : -1;
     const response: XmlEditorWorkerResponse = {
       type: 'xml-worker-error',
       requestId,

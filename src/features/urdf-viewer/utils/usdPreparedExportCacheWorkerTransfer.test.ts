@@ -76,6 +76,43 @@ test('usdPreparedExportCache transfer serialization preserves mesh blobs across 
 
   assert.equal(hydrated.stageSourcePath, payload.stageSourcePath);
   assert.equal(hydrated.resolution.stageSourcePath, payload.resolution.stageSourcePath);
-  assert.equal(await hydrated.meshFiles['meshes/base_link_visual_0.obj']?.text(), 'o base_link_visual_0\n');
+  assert.equal(
+    await hydrated.meshFiles['meshes/base_link_visual_0.obj']?.text(),
+    'o base_link_visual_0\n',
+  );
   assert.equal(hydrated.meshFiles['meshes/base_link_visual_0.obj']?.type, 'text/plain');
+});
+
+test('usdPreparedExportCache transfer serialization prefers prepared mesh bytes over blob rereads', async () => {
+  const throwingBlob = {
+    type: 'text/plain',
+    arrayBuffer: async () => {
+      throw new Error('blob read should be bypassed');
+    },
+  } as unknown as Blob;
+
+  const payload: PreparedUsdExportCacheResult = {
+    stageSourcePath: '/robots/demo/demo.usd',
+    robotData: demoRobotData,
+    meshFiles: {
+      'meshes/base_link_collision_0.obj': throwingBlob,
+    },
+    resolution: demoResolution,
+  };
+
+  Object.defineProperty(payload, '__meshFileBytes', {
+    value: {
+      'meshes/base_link_collision_0.obj': new TextEncoder().encode('o base_link_collision_0\n'),
+    },
+    enumerable: false,
+  });
+
+  const serialized = await serializePreparedUsdExportCacheForWorker(payload);
+  const hydrated = hydratePreparedUsdExportCacheFromWorker(serialized.payload);
+
+  assert.equal(
+    await hydrated.meshFiles['meshes/base_link_collision_0.obj']?.text(),
+    'o base_link_collision_0\n',
+  );
+  assert.equal(serialized.transferables.length, 1);
 });

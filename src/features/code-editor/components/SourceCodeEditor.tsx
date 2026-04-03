@@ -2,7 +2,15 @@
  * SourceCodeEditor - Unified Monaco source window for editable and read-only code.
  * Supports URDF, Xacro, MJCF, USD text, and equivalent MJCF previews in one reusable shell.
  */
-import React, { Suspense, useState, useEffect, useRef, useCallback, useMemo, startTransition } from 'react';
+import React, {
+  Suspense,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  startTransition,
+} from 'react';
 import {
   AlertCircle,
   Check,
@@ -19,7 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Theme } from '@/types';
-import type { Language } from '@/store';
+import { useUIStore, type CodeEditorFontFamily, type Language } from '@/store';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import type { SourceCodeDocumentFlavor } from '../types';
@@ -185,7 +193,9 @@ const HEADER_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover';
 const HEADER_PRIMARY_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors';
-const MonacoEditor = React.lazy(() => import('@monaco-editor/react').then((module) => ({ default: module.default })));
+const MonacoEditor = React.lazy(() =>
+  import('@monaco-editor/react').then((module) => ({ default: module.default })),
+);
 
 const formatContentSize = (content: string): string => {
   const bytes = new Blob([content]).size;
@@ -193,6 +203,18 @@ const formatContentSize = (content: string): string => {
     return `${bytes} B`;
   }
   return `${(bytes / 1024).toFixed(1)} KB`;
+};
+
+const resolveCodeEditorFontFamily = (fontFamily: CodeEditorFontFamily): string => {
+  switch (fontFamily) {
+    case 'fira-code':
+      return "'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace";
+    case 'system-mono':
+      return "ui-monospace, 'SFMono-Regular', 'Consolas', 'Monaco', 'Liberation Mono', 'Courier New', monospace";
+    case 'jetbrains-mono':
+    default:
+      return "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace";
+  }
 };
 
 const getDocumentMeta = (
@@ -278,11 +300,13 @@ const attachFindWidgetTooltipSuppression = (
 const toWorkerValidationError = (
   error: unknown,
   t: (typeof editorTexts)['en'],
-): ValidationError[] => [{
-  line: 1,
-  column: 1,
-  message: `${t.cannotParseXml}: ${error instanceof Error ? error.message : String(error)}`,
-}];
+): ValidationError[] => [
+  {
+    line: 1,
+    column: 1,
+    message: `${t.cannotParseXml}: ${error instanceof Error ? error.message : String(error)}`,
+  },
+];
 
 export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   code,
@@ -296,13 +320,12 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   autoApplyEnabled = true,
   onDownload,
 }) => {
+  const codeEditorFontFamily = useUIStore((state) => state.codeEditorFontFamily);
+  const codeEditorFontSize = useUIStore((state) => state.codeEditorFontSize);
   const t = editorTexts[lang];
   const isEquivalentMjcfPreview = documentFlavor === 'equivalent-mjcf';
   const isReadOnly = readOnly || documentFlavor === 'equivalent-mjcf';
-  const documentMeta = useMemo(
-    () => getDocumentMeta(documentFlavor, t),
-    [documentFlavor, t],
-  );
+  const documentMeta = useMemo(() => getDocumentMeta(documentFlavor, t), [documentFlavor, t]);
   const [isDirty, setIsDirty] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const [isValidationPending, setIsValidationPending] = useState(documentMeta.supportsValidation);
@@ -349,20 +372,16 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, []);
 
   useEffect(() => {
-    const awaitingParentApplySync = (
-      pendingAppliedCodeRef.current !== null
-      && pendingAppliedCodeRef.current === currentCode
-      && code === pendingAppliedBaseCodeRef.current
-    );
+    const awaitingParentApplySync =
+      pendingAppliedCodeRef.current !== null &&
+      pendingAppliedCodeRef.current === currentCode &&
+      code === pendingAppliedBaseCodeRef.current;
 
     if (awaitingParentApplySync) {
       return;
     }
 
-    if (
-      pendingAppliedCodeRef.current !== null
-      && code !== pendingAppliedBaseCodeRef.current
-    ) {
+    if (pendingAppliedCodeRef.current !== null && code !== pendingAppliedBaseCodeRef.current) {
       pendingAppliedCodeRef.current = null;
       pendingAppliedBaseCodeRef.current = null;
     }
@@ -425,13 +444,11 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
   useEffect(() => {
     if (
-      !monacoInstance
-      || (
-        documentFlavor !== 'urdf'
-        && documentFlavor !== 'xacro'
-        && documentFlavor !== 'sdf'
-        && documentFlavor !== 'mjcf'
-      )
+      !monacoInstance ||
+      (documentFlavor !== 'urdf' &&
+        documentFlavor !== 'xacro' &&
+        documentFlavor !== 'sdf' &&
+        documentFlavor !== 'mjcf')
     ) {
       return undefined;
     }
@@ -534,53 +551,64 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     monacoInstance.editor.setModelMarkers(model, 'urdf-validator', markers);
   }, [documentMeta.supportsValidation, monacoInstance, validationErrors]);
 
-  const handleApply = useCallback(async (trigger: 'manual' | 'auto' = 'manual') => {
-    if (isReadOnly || !editorRef.current || isApplying) {
-      return false;
-    }
+  const handleApply = useCallback(
+    async (trigger: 'manual' | 'auto' = 'manual') => {
+      if (isReadOnly || !editorRef.current || isApplying) {
+        return false;
+      }
 
-    const value = editorRef.current.getValue();
-    if (documentMeta.supportsValidation) {
-      void requestXmlValidationWithWorker(value, documentFlavor, t)
-        .then((nextErrors) => {
-          startTransition(() => {
-            setValidationErrors(nextErrors);
+      const value = editorRef.current.getValue();
+      if (documentMeta.supportsValidation) {
+        void requestXmlValidationWithWorker(value, documentFlavor, t)
+          .then((nextErrors) => {
+            startTransition(() => {
+              setValidationErrors(nextErrors);
+            });
+          })
+          .catch((error) => {
+            console.error('XML validation worker request failed during apply:', error);
+            startTransition(() => {
+              setValidationErrors(toWorkerValidationError(error, t));
+            });
           });
-        })
-        .catch((error) => {
-          console.error('XML validation worker request failed during apply:', error);
-          startTransition(() => {
-            setValidationErrors(toWorkerValidationError(error, t));
-          });
-        });
-    }
-
-    setIsApplying(true);
-
-    try {
-      const didApply = await Promise.resolve(onCodeChange(value));
-      if (didApply) {
-        pendingAppliedCodeRef.current = value;
-        pendingAppliedBaseCodeRef.current = code;
-        setIsDirty(false);
-        setAutoApplyBlockedCode(null);
-        return true;
       }
 
-      if (trigger === 'auto') {
-        setAutoApplyBlockedCode(value);
+      setIsApplying(true);
+
+      try {
+        const didApply = await Promise.resolve(onCodeChange(value));
+        if (didApply) {
+          pendingAppliedCodeRef.current = value;
+          pendingAppliedBaseCodeRef.current = code;
+          setIsDirty(false);
+          setAutoApplyBlockedCode(null);
+          return true;
+        }
+
+        if (trigger === 'auto') {
+          setAutoApplyBlockedCode(value);
+        }
+        return false;
+      } catch (error) {
+        if (trigger === 'auto') {
+          setAutoApplyBlockedCode(value);
+        }
+        console.error('Failed to apply source code changes:', error);
+        return false;
+      } finally {
+        setIsApplying(false);
       }
-      return false;
-    } catch (error) {
-      if (trigger === 'auto') {
-        setAutoApplyBlockedCode(value);
-      }
-      console.error('Failed to apply source code changes:', error);
-      return false;
-    } finally {
-      setIsApplying(false);
-    }
-  }, [code, documentFlavor, documentMeta.supportsValidation, isApplying, isReadOnly, onCodeChange, t]);
+    },
+    [
+      code,
+      documentFlavor,
+      documentMeta.supportsValidation,
+      isApplying,
+      isReadOnly,
+      onCodeChange,
+      t,
+    ],
+  );
 
   const handleEditorChange = useCallback(
     (value: string | undefined) => {
@@ -735,7 +763,11 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
               title={t.saveTooltip}
               type="button"
             >
-              {isApplying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              {isApplying ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Save className="h-3 w-3" />
+              )}
               <span>{t.save}</span>
             </button>
           ) : null}
@@ -811,9 +843,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
             onChange={handleEditorChange}
             options={{
               minimap: { enabled: false },
-              fontSize: 13,
-              fontFamily:
-                "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace",
+              fontSize: codeEditorFontSize,
+              fontFamily: resolveCodeEditorFontFamily(codeEditorFontFamily),
               fontLigatures: true,
               scrollBeyondLastLine: false,
               wordWrap: 'on',
@@ -892,7 +923,9 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           ) : null}
           <span>{documentMeta.label}</span>
           <span aria-hidden="true">•</span>
-          <span>{isMaximized ? t.maximized : `${Math.round(size.width)} × ${Math.round(size.height)}`}</span>
+          <span>
+            {isMaximized ? t.maximized : `${Math.round(size.width)} × ${Math.round(size.height)}`}
+          </span>
         </div>
       </div>
     </DraggableWindow>

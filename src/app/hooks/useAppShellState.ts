@@ -30,12 +30,13 @@ const DEFAULT_VIEW_CONFIG: AppViewConfig = {
 
 export function useAppShellState() {
   const [toast, setToast] = useState<AppToastState>(DEFAULT_TOAST_STATE);
-  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(null);
+  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(
+    null,
+  );
   const [viewConfig, setViewConfig] = useState<AppViewConfig>(DEFAULT_VIEW_CONFIG);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,8 +69,6 @@ export function useAppShellState() {
     setToast,
     closeToast,
     showToast,
-    isAboutOpen,
-    setIsAboutOpen,
     isAIModalOpen,
     setIsAIModalOpen,
     isCodeViewerOpen,

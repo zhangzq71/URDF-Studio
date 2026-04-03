@@ -4,7 +4,7 @@ import type {
 } from '@/core/parsers/importRobotFile';
 import type { RobotFile } from '@/types';
 import type { ParseEditableRobotSourceOptions } from './parseEditableRobotSource';
-import type { RobotData, RobotState } from '@/types';
+import type { AssemblyTransform, RenderableBounds, RobotData, RobotState } from '@/types';
 
 export interface RobotImportWorkerContextSnapshot {
   availableFiles?: RobotFile[];
@@ -33,11 +33,21 @@ export interface ParseEditableRobotSourceWorkerRequest {
   contextId?: string;
 }
 
+export interface AssemblyPlacementWorkerComponent {
+  renderableBounds?: RenderableBounds | null;
+  transform?: AssemblyTransform | null;
+  robotData?: RobotData | null;
+}
+
+export interface PrepareAssemblyComponentWorkerOptions extends ResolveRobotFileDataOptions {
+  existingPlacementComponents?: AssemblyPlacementWorkerComponent[];
+}
+
 export interface PrepareAssemblyComponentWorkerRequest {
   type: 'prepare-assembly-component';
   requestId: number;
   file: RobotFile;
-  options: ResolveRobotFileDataOptions;
+  options: PrepareAssemblyComponentWorkerOptions;
   componentId: string;
   rootName: string;
   contextId?: string;
@@ -47,6 +57,8 @@ export interface PreparedAssemblyComponentResult {
   componentId: string;
   displayName: string;
   robotData: RobotData;
+  renderableBounds?: RenderableBounds | null;
+  suggestedTransform?: AssemblyTransform;
   resolvedUrdfContent: string | null;
   resolvedUrdfSourceFilePath: string | null;
 }

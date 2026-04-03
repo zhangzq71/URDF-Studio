@@ -1,6 +1,7 @@
 <div align="center">
 
 # URDF Studio
+
 [![React](https://img.shields.io/badge/React-19.2-blue?logo=react)](https://reactjs.org/)
 [![Three.js](https://img.shields.io/badge/Three.js-0.181-black?logo=three.js)](https://threejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -219,7 +220,22 @@ Additional script families under `scripts/` include URDF inspection helpers, rob
 
 ## Testing and Verification
 
-This repository currently does **not** expose a single root `npm test` or `npm run lint` command.
+This repository now exposes root quality commands for formatting, linting, and CI validation:
+
+- `npm run format`
+- `npm run format:check`
+- `npm run lint`
+- `npm run typecheck:quality`
+- `npm run check`
+
+`npm run typecheck` remains available as the full-repo TypeScript debt check. CI and `npm run check` use `npm run typecheck:quality`, which currently excludes test/spec files so runtime compilation can stay green while test fixtures are still being updated.
+
+Git hooks are wired through Husky + lint-staged + Commitlint:
+
+- `pre-commit`: formats staged files and runs ESLint / Stylelint on the staged diff
+- `commit-msg`: validates Conventional Commit messages
+
+The repository still does **not** force a single root `npm test` command because verification remains module- and fixture-driven.
 
 Validation is typically done through:
 

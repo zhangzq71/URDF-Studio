@@ -89,9 +89,51 @@ function toCollisionPrimitiveCounts(value) {
     }
     return output;
 }
+function buildInvalidRenderRobotMetadataError(snapshot, context) {
+    const details = [];
+    if (snapshot?.stale === true) {
+        details.push("stale");
+    }
+    if (Array.isArray(snapshot?.errorFlags) && snapshot.errorFlags.length > 0) {
+        details.push(`errorFlags=${snapshot.errorFlags.join(",")}`);
+    }
+    if (snapshot?.truthLoadError) {
+        details.push(`truthLoadError=${snapshot.truthLoadError}`);
+    }
+    const suffix = details.length > 0
+        ? ` (${details.join("; ")})`
+        : "";
+    return new Error(`${context}${suffix}`);
+}
+function buildRenderRobotMetadataReadError(stageSourcePath, cause) {
+    const target = stageSourcePath || "active-stage";
+    return new Error(`Failed to read cached render robot metadata snapshot for "${target}".`, {
+        cause,
+    });
+}
+function isRenderRobotMetadataSnapshotReady(snapshot) {
+    if (!snapshot || typeof snapshot !== "object")
+        return false;
+    if (snapshot.stale === true)
+        return false;
+    if (Array.isArray(snapshot.errorFlags) && snapshot.errorFlags.length > 0)
+        return false;
+    if (typeof snapshot.truthLoadError === "string" && snapshot.truthLoadError.trim().length > 0)
+        return false;
+    return true;
+}
 export function normalizeRenderRobotMetadataSnapshot(raw) {
     if (!raw || typeof raw !== "object")
         return null;
+    const normalizedErrorFlags = (Array.isArray(raw.errorFlags)
+        ? raw.errorFlags
+        : (raw.errorFlags && typeof raw.errorFlags.length === "number"
+            ? Array.from(raw.errorFlags)
+            : []))
+        .map((entry) => String(entry || "").trim())
+        .filter((entry) => entry.length > 0);
+    const truthLoadError = String(raw.truthLoadError || "").trim() || null;
+    const stale = raw.stale === true || normalizedErrorFlags.length > 0 || !!truthLoadError;
     const normalizedJointCatalogEntries = [];
     const rawJointCatalogEntries = Array.isArray(raw.jointCatalogEntries)
         ? raw.jointCatalogEntries
@@ -194,16 +236,25 @@ export function normalizeRenderRobotMetadataSnapshot(raw) {
         jointCatalogEntries: normalizedJointCatalogEntries,
         linkDynamicsEntries: normalizedLinkDynamicsEntries,
         meshCountsByLinkPath,
+        ...(stale ? { stale: true } : {}),
+        ...(normalizedErrorFlags.length > 0 ? { errorFlags: normalizedErrorFlags } : {}),
+        ...(truthLoadError ? { truthLoadError } : {}),
     };
 }
-export function getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath = null) {
+export function getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath = null, options = {}) {
     const getter = renderInterface?.getCachedRobotMetadataSnapshot;
     if (typeof getter !== "function")
         return null;
     try {
-        return normalizeRenderRobotMetadataSnapshot(getter.call(renderInterface, stageSourcePath || null));
+        const snapshot = normalizeRenderRobotMetadataSnapshot(getter.call(renderInterface, stageSourcePath || null));
+        return isRenderRobotMetadataSnapshotReady(snapshot) ? snapshot : null;
     }
-    catch {
+    catch (error) {
+        const wrappedError = buildRenderRobotMetadataReadError(stageSourcePath, error);
+        console.error(`[robot-metadata] ${wrappedError.message}`, error);
+        if (options?.strictErrors === true) {
+            throw wrappedError;
+        }
         return null;
     }
 }
@@ -213,19 +264,31 @@ export async function warmupRenderRobotMetadataSnapshot(renderInterface, options
     const starterOptions = { ...options };
     delete starterOptions.stageSourcePath;
     if (typeof starter !== "function") {
-        return getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath);
+        return getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath, { strictErrors: true });
     }
+    let maybePromise;
     try {
-        const maybePromise = stageSourcePath
+        maybePromise = stageSourcePath
             ? starter.call(renderInterface, stageSourcePath, starterOptions)
             : starter.call(renderInterface, starterOptions);
-        if (maybePromise && typeof maybePromise.then === "function") {
-            const resolved = await maybePromise;
-            return normalizeRenderRobotMetadataSnapshot(resolved) || getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath);
-        }
-        return normalizeRenderRobotMetadataSnapshot(maybePromise) || getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath);
     }
-    catch {
-        return getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath);
+    catch (error) {
+        throw new Error(`Failed to warm up render robot metadata snapshot for "${stageSourcePath || "active-stage"}".`, {
+            cause: error,
+        });
     }
+    const resolved = (maybePromise && typeof maybePromise.then === "function")
+        ? await maybePromise
+        : maybePromise;
+    const snapshot = normalizeRenderRobotMetadataSnapshot(resolved)
+        || getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath, { strictErrors: true });
+    if (!snapshot)
+        return null;
+    if (!isRenderRobotMetadataSnapshotReady(snapshot)) {
+        throw buildInvalidRenderRobotMetadataError(
+            snapshot,
+            `Render robot metadata snapshot for "${stageSourcePath || snapshot.stageSourcePath || "active-stage"}" is not usable.`,
+        );
+    }
+    return snapshot;
 }

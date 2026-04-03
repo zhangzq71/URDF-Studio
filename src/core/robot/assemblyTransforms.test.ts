@@ -15,6 +15,17 @@ import {
   isAssemblyComponentIndividuallyTransformable,
 } from './assemblyTransforms.ts';
 
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    Object.freeze(value);
+    Object.values(value as Record<string, unknown>).forEach((entry) => {
+      deepFreeze(entry);
+    });
+  }
+
+  return value;
+}
+
 function createRobotData(rootId: string, rootName: string): RobotData {
   return {
     name: rootName,
@@ -102,10 +113,19 @@ test('buildExportableAssemblyRobotData wraps isolated components and the whole a
   assert.deepEqual(assemblyWrapperJoint.origin.rpy, assembly.transform.rotation);
 
   const componentWrapperJoint = exportRobot.joints.__assembly_component_joint_comp_left;
-  assert.ok(componentWrapperJoint, 'expected component wrapper joint for isolated component transform');
+  assert.ok(
+    componentWrapperJoint,
+    'expected component wrapper joint for isolated component transform',
+  );
   assert.equal(componentWrapperJoint.childLinkId, 'comp_left_base_link');
-  assert.deepEqual(componentWrapperJoint.origin.xyz, assembly.components.comp_left.transform?.position);
-  assert.deepEqual(componentWrapperJoint.origin.rpy, assembly.components.comp_left.transform?.rotation);
+  assert.deepEqual(
+    componentWrapperJoint.origin.xyz,
+    assembly.components.comp_left.transform?.position,
+  );
+  assert.deepEqual(
+    componentWrapperJoint.origin.rpy,
+    assembly.components.comp_left.transform?.rotation,
+  );
 
   assert.equal(
     exportRobot.joints.__assembly_root_joint_comp_right.childLinkId,
@@ -144,5 +164,26 @@ test('buildExportableAssemblyRobotData does not apply component wrappers to brid
     '__assembly_component_joint_comp_right' in exportRobot.joints,
     false,
     'connected components should not keep an individual wrapper joint',
+  );
+});
+
+test('buildExportableAssemblyRobotData does not mutate frozen assembly component state', () => {
+  const assembly = deepFreeze(createAssemblyState());
+
+  const exportRobot = buildExportableAssemblyRobotData(assembly);
+
+  assert.equal(assembly.components.comp_left.robot.rootLinkId, 'comp_left_base_link');
+  assert.equal(
+    assembly.components.comp_left.robot.links.__assembly_component_root_comp_left,
+    undefined,
+    'the source assembly component should stay untouched',
+  );
+  assert.ok(
+    exportRobot.links.__assembly_component_root_comp_left,
+    'the export result should still include a synthetic wrapper root',
+  );
+  assert.ok(
+    exportRobot.joints.__assembly_component_joint_comp_left,
+    'the export result should still include a synthetic wrapper joint',
   );
 });

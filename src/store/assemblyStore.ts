@@ -4,17 +4,13 @@
  */
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import {
-  applyPatches,
-  enablePatches,
-  produceWithPatches,
-  type Patch,
-} from 'immer';
+import { applyPatches, enablePatches, produceWithPatches, type Patch } from 'immer';
 import type {
   AssemblyState,
   AssemblyComponent,
   AssemblyTransform,
   BridgeJoint,
+  RenderableBounds,
   RobotClosedLoopConstraint,
   RobotData,
   RobotFile,
@@ -35,6 +31,7 @@ import {
   cloneAssemblyTransform,
   IDENTITY_ASSEMBLY_TRANSFORM,
 } from '@/core/robot/assemblyTransforms';
+import { resolveAlignedAssemblyComponentTransformForBridge } from '@/core/robot/assemblyBridgeAlignment';
 import { failFastInDev } from '@/core/utils/runtimeDiagnostics';
 
 interface AssemblyContext {
@@ -47,12 +44,44 @@ interface AssemblyContext {
     componentId: string;
     displayName: string;
     robotData: RobotData;
+    renderableBounds?: RenderableBounds | null;
+    suggestedTransform?: AssemblyTransform | null;
   } | null;
 }
 
 interface UpdateOptions {
   skipHistory?: boolean;
   label?: string;
+}
+
+function shouldRecomputeBridgeAlignedChildTransform(
+  currentBridge: BridgeJoint,
+  updates: Partial<BridgeJoint>,
+): boolean {
+  if (
+    Object.prototype.hasOwnProperty.call(updates, 'parentComponentId') ||
+    Object.prototype.hasOwnProperty.call(updates, 'parentLinkId') ||
+    Object.prototype.hasOwnProperty.call(updates, 'childComponentId') ||
+    Object.prototype.hasOwnProperty.call(updates, 'childLinkId')
+  ) {
+    return true;
+  }
+
+  const nextJoint = updates.joint;
+  if (!nextJoint) {
+    return false;
+  }
+
+  return (
+    nextJoint.parentLinkId !== currentBridge.joint.parentLinkId ||
+    nextJoint.childLinkId !== currentBridge.joint.childLinkId ||
+    nextJoint.origin?.xyz?.x !== currentBridge.joint.origin?.xyz?.x ||
+    nextJoint.origin?.xyz?.y !== currentBridge.joint.origin?.xyz?.y ||
+    nextJoint.origin?.xyz?.z !== currentBridge.joint.origin?.xyz?.z ||
+    nextJoint.origin?.rpy?.r !== currentBridge.joint.origin?.rpy?.r ||
+    nextJoint.origin?.rpy?.p !== currentBridge.joint.origin?.rpy?.p ||
+    nextJoint.origin?.rpy?.y !== currentBridge.joint.origin?.rpy?.y
+  );
 }
 
 enablePatches();
@@ -79,14 +108,18 @@ function replaceAssemblySourcePathPrefix(path: string, fromPath: string, toPath:
   return normalizedPath;
 }
 
-function buildAssemblyComponentImportError(file: RobotFile, importResult: Exclude<RobotImportResult, { status: 'ready' }>): Error {
-  const detail = importResult.status === 'needs_hydration'
-    ? 'USD scene data is not hydrated yet.'
-    : importResult.reason === 'unsupported_format'
-      ? `Unsupported format "${file.format}".`
-      : importResult.reason === 'source_only_fragment'
-        ? 'The selected source file is only a fragment and cannot be assembled as a standalone component.'
-        : 'Source parsing failed.';
+function buildAssemblyComponentImportError(
+  file: RobotFile,
+  importResult: Exclude<RobotImportResult, { status: 'ready' }>,
+): Error {
+  const detail =
+    importResult.status === 'needs_hydration'
+      ? 'USD scene data is not hydrated yet.'
+      : importResult.reason === 'unsupported_format'
+        ? `Unsupported format "${file.format}".`
+        : importResult.reason === 'source_only_fragment'
+          ? 'The selected source file is only a fragment and cannot be assembled as a standalone component.'
+          : 'Source parsing failed.';
 
   return new Error(`Failed to add assembly component from "${file.name}". ${detail}`);
 }
@@ -96,14 +129,15 @@ interface AssemblyActions {
   initAssembly: (name?: string) => void;
   exitAssembly: () => void;
 
-  addComponent: (
-    file: RobotFile,
-    context?: AssemblyContext
-  ) => AssemblyComponent | null;
+  addComponent: (file: RobotFile, context?: AssemblyContext) => AssemblyComponent | null;
   removeComponent: (id: string) => void;
   renameComponentSourceFolder: (fromPath: string, toPath: string, options?: UpdateOptions) => void;
   updateComponentName: (id: string, name: string, options?: UpdateOptions) => void;
-  updateComponentTransform: (id: string, transform: AssemblyTransform, options?: UpdateOptions) => void;
+  updateComponentTransform: (
+    id: string,
+    transform: AssemblyTransform,
+    options?: UpdateOptions,
+  ) => void;
   updateComponentRobot: (id: string, robot: Partial<RobotData>, options?: UpdateOptions) => void;
   toggleComponentVisibility: (id: string, visible?: boolean) => void;
   updateAssemblyTransform: (transform: AssemblyTransform, options?: UpdateOptions) => void;
@@ -171,7 +205,9 @@ const createChangeLogEntry = (label: string): ChangeLogEntry => ({
   label,
 });
 
-function createAssemblyHistorySnapshotEntry(snapshot: AssemblySnapshot): AssemblyHistorySnapshotEntry {
+function createAssemblyHistorySnapshotEntry(
+  snapshot: AssemblySnapshot,
+): AssemblyHistorySnapshotEntry {
   return {
     kind: 'snapshot',
     snapshot: cloneAssemblySnapshot(snapshot),
@@ -189,12 +225,18 @@ function createAssemblyHistoryPatchEntry(
   };
 }
 
-function isAssemblyHistoryPatchEntry(entry: AssemblyHistoryEntry): entry is AssemblyHistoryPatchEntry {
+function isAssemblyHistoryPatchEntry(
+  entry: AssemblyHistoryEntry,
+): entry is AssemblyHistoryPatchEntry {
   return Boolean(entry && typeof entry === 'object' && 'kind' in entry && entry.kind === 'patch');
 }
 
-function isAssemblyHistorySnapshotEntry(entry: AssemblyHistoryEntry): entry is AssemblyHistorySnapshotEntry {
-  return Boolean(entry && typeof entry === 'object' && 'kind' in entry && entry.kind === 'snapshot');
+function isAssemblyHistorySnapshotEntry(
+  entry: AssemblyHistoryEntry,
+): entry is AssemblyHistorySnapshotEntry {
+  return Boolean(
+    entry && typeof entry === 'object' && 'kind' in entry && entry.kind === 'snapshot',
+  );
 }
 
 function cloneAssemblyHistoryEntry(entry: AssemblyHistoryEntry): AssemblyHistoryEntry {
@@ -241,9 +283,13 @@ export const useAssemblyStore = create<
     let cachedMergedRobotData: RobotData | null = null;
     const appendHistoryEntry = (entry: AssemblyHistoryEntry, label: string) => {
       set((state) => {
-        state._history.past = [...state._history.past, cloneAssemblyHistoryEntry(entry)].slice(-MAX_HISTORY);
+        state._history.past = [...state._history.past, cloneAssemblyHistoryEntry(entry)].slice(
+          -MAX_HISTORY,
+        );
         state._history.future = [];
-        state._activity = [...state._activity, createChangeLogEntry(label)].slice(-MAX_ACTIVITY_LOG);
+        state._activity = [...state._activity, createChangeLogEntry(label)].slice(
+          -MAX_ACTIVITY_LOG,
+        );
       });
     };
     const appendHistorySnapshot = (snapshot: AssemblySnapshot, label: string) => {
@@ -271,7 +317,9 @@ export const useAssemblyStore = create<
         if (!options?.skipHistory) {
           state._history.past = [...state._history.past, historyEntry].slice(-MAX_HISTORY);
           state._history.future = [];
-          state._activity = [...state._activity, createChangeLogEntry(label)].slice(-MAX_ACTIVITY_LOG);
+          state._activity = [...state._activity, createChangeLogEntry(label)].slice(
+            -MAX_ACTIVITY_LOG,
+          );
         }
         state.assemblyRevision += 1;
       });
@@ -305,37 +353,40 @@ export const useAssemblyStore = create<
         const state = get().assemblyState;
         const preparedComponent = context.preparedComponent;
         const existingComponentIds = state ? Object.keys(state.components) : [];
-        const existingComponentNames = state ? Object.values(state.components).map((component) => component.name) : [];
-        const canUsePreparedComponent = Boolean(preparedComponent)
-          && !existingComponentIds.includes(preparedComponent.componentId)
-          && !existingComponentNames.includes(preparedComponent.displayName);
-        const identity = canUsePreparedComponent && preparedComponent
-          ? {
-            componentId: preparedComponent.componentId,
-            displayName: preparedComponent.displayName,
-          }
-          : buildAssemblyComponentIdentity({
-            fileName: file.name,
-            existingComponentIds,
-            existingComponentNames,
-          });
+        const existingComponentNames = state
+          ? Object.values(state.components).map((component) => component.name)
+          : [];
+        const canUsePreparedComponent =
+          Boolean(preparedComponent) &&
+          !existingComponentIds.includes(preparedComponent.componentId) &&
+          !existingComponentNames.includes(preparedComponent.displayName);
+        const identity =
+          canUsePreparedComponent && preparedComponent
+            ? {
+                componentId: preparedComponent.componentId,
+                displayName: preparedComponent.displayName,
+              }
+            : buildAssemblyComponentIdentity({
+                fileName: file.name,
+                existingComponentIds,
+                existingComponentNames,
+              });
 
         const namespacedRobot = (() => {
           if (canUsePreparedComponent && preparedComponent) {
             return preparedComponent.robotData;
           }
 
-          const importResult = (
-            context.preResolvedImportResult?.status === 'ready'
-            && context.preResolvedImportResult.format === file.format
-            ? context.preResolvedImportResult
-            : resolveRobotFileData(file, {
-              availableFiles: context.availableFiles,
-              assets: context.assets,
-              allFileContents: context.allFileContents,
-              usdRobotData: context.preResolvedRobotData ?? null,
-            })
-          );
+          const importResult =
+            context.preResolvedImportResult?.status === 'ready' &&
+            context.preResolvedImportResult.format === file.format
+              ? context.preResolvedImportResult
+              : resolveRobotFileData(file, {
+                  availableFiles: context.availableFiles,
+                  assets: context.assets,
+                  allFileContents: context.allFileContents,
+                  usdRobotData: context.preResolvedRobotData ?? null,
+                });
 
           if (importResult.status !== 'ready') {
             failFastInDev(
@@ -362,10 +413,14 @@ export const useAssemblyStore = create<
           name: identity.displayName,
           sourceFile: file.name,
           robot: namespacedRobot,
-          transform: buildDefaultAssemblyComponentPlacementTransform({
-            robot: namespacedRobot,
-            existingComponents: Object.values(state?.components ?? {}),
-          }),
+          renderableBounds: preparedComponent?.renderableBounds ?? undefined,
+          transform: preparedComponent?.suggestedTransform
+            ? cloneAssemblyTransform(preparedComponent.suggestedTransform)
+            : buildDefaultAssemblyComponentPlacementTransform({
+                robot: namespacedRobot,
+                renderableBounds: preparedComponent?.renderableBounds ?? null,
+                existingComponents: Object.values(state?.components ?? {}),
+              }),
           visible: true,
         };
 
@@ -412,9 +467,9 @@ export const useAssemblyStore = create<
           return;
         }
 
-        const hasMatchingComponent = Object.values(currentAssembly.components).some((component) => (
-          isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath)
-        ));
+        const hasMatchingComponent = Object.values(currentAssembly.components).some((component) =>
+          isSameOrNestedAssemblySourcePath(component.sourceFile, normalizedFromPath),
+        );
 
         if (!hasMatchingComponent) {
           return;
@@ -475,7 +530,10 @@ export const useAssemblyStore = create<
               return;
             }
 
-            const hasExplicitMaterials = Object.prototype.hasOwnProperty.call(robotUpdates, 'materials');
+            const hasExplicitMaterials = Object.prototype.hasOwnProperty.call(
+              robotUpdates,
+              'materials',
+            );
             let nextMaterials = hasExplicitMaterials
               ? robotUpdates.materials
               : component.robot.materials;
@@ -565,6 +623,16 @@ export const useAssemblyStore = create<
             bridges: {},
           };
           nextDraft.bridges[id] = bridge;
+          const alignedTransform = resolveAlignedAssemblyComponentTransformForBridge(
+            nextDraft,
+            bridge,
+          );
+          if (alignedTransform) {
+            const childComponent = nextDraft.components[bridge.childComponentId];
+            if (childComponent) {
+              childComponent.transform = alignedTransform;
+            }
+          }
           return draft ? undefined : nextDraft;
         });
 
@@ -585,9 +653,40 @@ export const useAssemblyStore = create<
           (draft) => {
             const bridge = draft?.bridges[id];
             if (bridge) {
+              const shouldRealignChild = shouldRecomputeBridgeAlignedChildTransform(
+                bridge,
+                updates,
+              );
               Object.assign(bridge, updates);
+              if (updates.name) {
+                bridge.joint.name = updates.name;
+              }
+              if (updates.parentLinkId) {
+                bridge.joint.parentLinkId = updates.parentLinkId;
+              }
+              if (updates.childLinkId) {
+                bridge.joint.childLinkId = updates.childLinkId;
+              }
+              if (updates.joint?.parentLinkId) {
+                bridge.parentLinkId = updates.joint.parentLinkId;
+              }
+              if (updates.joint?.childLinkId) {
+                bridge.childLinkId = updates.joint.childLinkId;
+              }
               if (!updates.name && updates.joint?.name) {
                 bridge.name = updates.joint.name;
+              }
+              if (shouldRealignChild) {
+                const alignedTransform = resolveAlignedAssemblyComponentTransformForBridge(
+                  draft,
+                  bridge,
+                );
+                if (alignedTransform) {
+                  const childComponent = draft.components[bridge.childComponentId];
+                  if (childComponent) {
+                    childComponent.transform = alignedTransform;
+                  }
+                }
               }
             }
           },
@@ -655,15 +754,15 @@ export const useAssemblyStore = create<
           return null;
         }
 
-      // Filter visible components
-      const visibleComponents: Record<string, AssemblyComponent> = {};
-      const visibleCompIds = new Set<string>();
-      Object.entries(assemblyState.components).forEach(([id, comp]) => {
-        if (comp.visible !== false) {
-          visibleComponents[id] = comp;
-          visibleCompIds.add(id);
-        }
-      });
+        // Filter visible components
+        const visibleComponents: Record<string, AssemblyComponent> = {};
+        const visibleCompIds = new Set<string>();
+        Object.entries(assemblyState.components).forEach(([id, comp]) => {
+          if (comp.visible !== false) {
+            visibleComponents[id] = comp;
+            visibleCompIds.add(id);
+          }
+        });
 
         if (Object.keys(visibleComponents).length === 0) {
           cachedAssemblyState = assemblyState;
@@ -671,13 +770,16 @@ export const useAssemblyStore = create<
           return null;
         }
 
-      // Filter bridges that connect visible components
-      const visibleBridges: Record<string, BridgeJoint> = {};
-      Object.entries(assemblyState.bridges).forEach(([id, bridge]) => {
-        if (visibleCompIds.has(bridge.parentComponentId) && visibleCompIds.has(bridge.childComponentId)) {
-          visibleBridges[id] = bridge;
-        }
-      });
+        // Filter bridges that connect visible components
+        const visibleBridges: Record<string, BridgeJoint> = {};
+        Object.entries(assemblyState.bridges).forEach(([id, bridge]) => {
+          if (
+            visibleCompIds.has(bridge.parentComponentId) &&
+            visibleCompIds.has(bridge.childComponentId)
+          ) {
+            visibleBridges[id] = bridge;
+          }
+        });
 
         cachedAssemblyState = assemblyState;
         cachedMergedRobotData = mergeAssembly({
@@ -689,8 +791,9 @@ export const useAssemblyStore = create<
         return cachedMergedRobotData;
       },
     };
-  })
+  }),
 );
 
 export const useAssemblyCanUndo = () => useAssemblyStore((state) => state._history.past.length > 0);
-export const useAssemblyCanRedo = () => useAssemblyStore((state) => state._history.future.length > 0);
+export const useAssemblyCanRedo = () =>
+  useAssemblyStore((state) => state._history.future.length > 0);

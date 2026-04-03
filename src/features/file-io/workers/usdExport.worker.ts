@@ -1,14 +1,11 @@
 import { exportRobotToUsd } from '../utils/usdExportCoordinator.ts';
-import type {
-  UsdExportWorkerRequest,
-  UsdExportWorkerResponse,
-} from '../utils/usdExportWorker.ts';
+import type { UsdExportWorkerRequest, UsdExportWorkerResponse } from '../utils/usdExportWorker.ts';
 import {
   hydrateUsdExportRequestFromWorker,
   serializeUsdExportResultForWorker,
 } from '../utils/usdExportWorkerTransfer.ts';
 
-const workerScope = self as DedicatedWorkerGlobalScope;
+const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
 function toWorkerErrorMessage(error: unknown): string {
   if (error instanceof Error) {

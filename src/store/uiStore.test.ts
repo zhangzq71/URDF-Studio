@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 type UIStoreModule = typeof import('./uiStore.ts');
-const UI_STORE_PERSIST_VERSION = 8;
+const UI_STORE_PERSIST_VERSION = 10;
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -44,10 +44,13 @@ async function loadUIStore(seedState?: Record<string, unknown>) {
   const dom = installDom();
 
   if (seedState) {
-    dom.window.localStorage.setItem('urdf-studio-ui', JSON.stringify({
-      state: seedState,
-      version: UI_STORE_PERSIST_VERSION,
-    }));
+    dom.window.localStorage.setItem(
+      'urdf-studio-ui',
+      JSON.stringify({
+        state: seedState,
+        version: UI_STORE_PERSIST_VERSION,
+      }),
+    );
   }
 
   const moduleUrl = new URL(`./uiStore.ts?test=${Date.now()}-${Math.random()}`, import.meta.url);

@@ -34,14 +34,23 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLButtonElement?: typeof HTMLButtonElement }).HTMLButtonElement = dom.window.HTMLButtonElement;
-  (globalThis as { HTMLDivElement?: typeof HTMLDivElement }).HTMLDivElement = dom.window.HTMLDivElement;
+  (globalThis as { HTMLButtonElement?: typeof HTMLButtonElement }).HTMLButtonElement =
+    dom.window.HTMLButtonElement;
+  (globalThis as { HTMLDivElement?: typeof HTMLDivElement }).HTMLDivElement =
+    dom.window.HTMLDivElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
+  (globalThis as { HTMLSelectElement?: typeof HTMLSelectElement }).HTMLSelectElement =
+    dom.window.HTMLSelectElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver = undefined;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,28 +80,44 @@ test('SettingsModal removes drag listeners when unmounted mid-drag', async () =>
   const originalWindowAdd = window.addEventListener.bind(window);
   const originalWindowRemove = window.removeEventListener.bind(window);
 
-  document.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+  document.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ) => {
     const listeners = addedDocumentListeners.get(type) ?? [];
     listeners.push(listener);
     addedDocumentListeners.set(type, listeners);
     originalDocumentAdd(type, listener, options);
   }) as typeof document.addEventListener;
 
-  document.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions | boolean) => {
+  document.removeEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: EventListenerOptions | boolean,
+  ) => {
     const listeners = removedDocumentListeners.get(type) ?? [];
     listeners.push(listener);
     removedDocumentListeners.set(type, listeners);
     originalDocumentRemove(type, listener, options);
   }) as typeof document.removeEventListener;
 
-  window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
+  window.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ) => {
     const listeners = addedWindowListeners.get(type) ?? [];
     listeners.push(listener);
     addedWindowListeners.set(type, listeners);
     originalWindowAdd(type, listener, options);
   }) as typeof window.addEventListener;
 
-  window.removeEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: EventListenerOptions | boolean) => {
+  window.removeEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: EventListenerOptions | boolean,
+  ) => {
     const listeners = removedWindowListeners.get(type) ?? [];
     listeners.push(listener);
     removedWindowListeners.set(type, listeners);
@@ -113,11 +138,13 @@ test('SettingsModal removes drag listeners when unmounted mid-drag', async () =>
     assert.ok(dragHandle, 'settings modal should render a draggable header');
 
     await act(async () => {
-      dragHandle.dispatchEvent(new dom.window.MouseEvent('mousedown', {
-        bubbles: true,
-        clientX: 180,
-        clientY: 160,
-      }));
+      dragHandle.dispatchEvent(
+        new dom.window.MouseEvent('mousedown', {
+          bubbles: true,
+          clientX: 180,
+          clientY: 160,
+        }),
+      );
     });
 
     const addedMoveHandler = addedDocumentListeners.get('mousemove')?.at(-1);
@@ -152,6 +179,66 @@ test('SettingsModal removes drag listeners when unmounted mid-drag', async () =>
     document.removeEventListener = originalDocumentRemove;
     window.addEventListener = originalWindowAdd;
     window.removeEventListener = originalWindowRemove;
+    useUIStore.setState(initialState);
+    dom.window.close();
+  }
+});
+
+test('SettingsModal updates source code editor typography preferences', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const initialState = useUIStore.getState();
+
+  try {
+    useUIStore.setState({
+      isSettingsOpen: true,
+      settingsPos: { x: 48, y: 64 },
+      codeEditorFontFamily: 'jetbrains-mono',
+      codeEditorFontSize: 13,
+    });
+
+    await act(async () => {
+      root.render(React.createElement(SettingsModal));
+    });
+
+    const sourceCodeButton = container.querySelector(
+      '[data-settings-page="sourceCode"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(sourceCodeButton, 'settings navigation should expose a source code page');
+
+    await act(async () => {
+      sourceCodeButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    const fontFamilySelect = container.querySelector(
+      '[data-testid="settings-code-editor-font-family"]',
+    ) as HTMLSelectElement | null;
+    assert.ok(fontFamilySelect, 'source code settings should render a font family select');
+
+    await act(async () => {
+      fontFamilySelect.value = 'fira-code';
+      fontFamilySelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    });
+
+    const fontSizeInput = container.querySelector(
+      '[data-testid="settings-code-editor-font-size"]',
+    ) as HTMLInputElement | null;
+    assert.ok(fontSizeInput, 'source code settings should render a font size input');
+    const increaseButton = container.querySelector(
+      '[data-testid="settings-code-editor-font-size-increase"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(increaseButton, 'source code settings should render a font size increment button');
+
+    await act(async () => {
+      increaseButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      increaseButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    assert.equal(useUIStore.getState().codeEditorFontFamily, 'fira-code');
+    assert.equal(useUIStore.getState().codeEditorFontSize, 14);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
     useUIStore.setState(initialState);
     dom.window.close();
   }

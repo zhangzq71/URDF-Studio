@@ -1,5 +1,6 @@
 import type { Object3D as ThreeObject3D } from 'three';
 import type { RobotFile } from '@/types';
+import type { AssemblyTransform } from '@/types';
 import type { URDFViewerController } from '../hooks/useURDFViewerController';
 import type { ToolMode, URDFViewerProps, ViewerDocumentLoadEvent, ViewerSceneMode } from '../types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
@@ -32,6 +33,13 @@ interface BuildURDFViewerScenePropsArgs {
   onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
   isMeshPreview?: boolean;
   runtimeInstanceKey?: number;
+  sourceSceneAssemblyComponentId?: string | null;
+  sourceSceneAssemblyComponentTransform?: AssemblyTransform | null;
+  showSourceSceneAssemblyComponentControls?: boolean;
+  onSourceSceneAssemblyComponentTransform?: (
+    componentId: string,
+    transform: AssemblyTransform,
+  ) => void;
 }
 
 export interface URDFViewerSceneBaseProps extends BuildURDFViewerScenePropsArgs {
@@ -66,6 +74,10 @@ export function buildURDFViewerSceneProps({
   onCollisionTransform,
   isMeshPreview = false,
   runtimeInstanceKey = 0,
+  sourceSceneAssemblyComponentId,
+  sourceSceneAssemblyComponentTransform,
+  showSourceSceneAssemblyComponentControls = false,
+  onSourceSceneAssemblyComponentTransform,
 }: BuildURDFViewerScenePropsArgs): URDFViewerSceneBaseProps {
   return {
     controller,
@@ -95,6 +107,10 @@ export function buildURDFViewerSceneProps({
     onCollisionTransform,
     isMeshPreview,
     runtimeInstanceKey,
+    sourceSceneAssemblyComponentId,
+    sourceSceneAssemblyComponentTransform,
+    showSourceSceneAssemblyComponentControls,
+    onSourceSceneAssemblyComponentTransform,
     toolMode: controller.toolMode,
   };
 }

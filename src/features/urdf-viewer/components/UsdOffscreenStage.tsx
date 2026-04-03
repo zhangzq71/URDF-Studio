@@ -1,5 +1,13 @@
 import { Html } from '@react-three/drei';
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from 'react';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotFile } from '@/types';
 import type {
@@ -14,7 +22,7 @@ import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
 import type {
   OffscreenViewerInteractionSelection,
   UsdOffscreenViewerInitRequest,
-  UsdOffscreenViewerLoadDebugEntry,
+  UsdOffscreenViewerInteractionState,
   UsdOffscreenViewerWorkerRequest,
   UsdOffscreenViewerWorkerResponse,
 } from '../utils/usdOffscreenViewerProtocol';
@@ -22,6 +30,11 @@ import { normalizeUsdBootstrapDocumentLoadEvent } from '../utils/usdBootstrapDoc
 import { createUsdViewerRuntimeRobot } from '../utils/usdViewerRuntimeRobot';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 import { supportsUsdWorkerRenderer } from '../utils/usdWorkerRendererSupport';
+import {
+  disposeUsdOffscreenViewerStageInBackground,
+  prepareSharedUsdOffscreenViewerStageOpenDispatch,
+} from '../utils/usdOffscreenViewerWorkerClient';
+import { recordUsdStageLoadDebug } from '@/shared/debug/usdStageLoadDebug';
 
 interface UsdOffscreenStageProps {
   active?: boolean;
@@ -48,27 +61,6 @@ interface UsdOffscreenStageProps {
   retainReadyAsLoadingDuringBootstrapHandoff?: boolean;
 }
 
-const USD_STAGE_LOAD_DEBUG_HISTORY_LIMIT = 24;
-
-type RuntimeWindowWithDebug = Window & {
-  __usdStageLoadDebug?: UsdOffscreenViewerLoadDebugEntry;
-  __usdStageLoadDebugHistory?: UsdOffscreenViewerLoadDebugEntry[];
-};
-
-function recordUsdOffscreenLoadDebug(entry: UsdOffscreenViewerLoadDebugEntry): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  const runtimeWindow = window as RuntimeWindowWithDebug;
-  runtimeWindow.__usdStageLoadDebug = entry;
-  const history = Array.isArray(runtimeWindow.__usdStageLoadDebugHistory)
-    ? runtimeWindow.__usdStageLoadDebugHistory.slice(-(USD_STAGE_LOAD_DEBUG_HISTORY_LIMIT - 1))
-    : [];
-  history.push(entry);
-  runtimeWindow.__usdStageLoadDebugHistory = history;
-}
-
 function toOffscreenInteractionSelection(
   selection?: URDFViewerProps['selection'] | URDFViewerProps['hoveredSelection'],
 ): OffscreenViewerInteractionSelection | null {
@@ -85,7 +77,32 @@ function toOffscreenInteractionSelection(
   };
 }
 
-function getCanvasPointerPosition(event: ReactPointerEvent<HTMLCanvasElement>): { x: number; y: number } {
+function buildInitialInteractionState({
+  toolMode,
+  selection,
+  hoveredSelection,
+  hoverSelectionEnabled,
+  interactionLayerPriority,
+}: {
+  toolMode: ToolMode;
+  selection?: URDFViewerProps['selection'];
+  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  hoverSelectionEnabled: boolean;
+  interactionLayerPriority?: readonly ViewerInteractiveLayer[];
+}): UsdOffscreenViewerInteractionState {
+  return {
+    toolMode,
+    selection: toOffscreenInteractionSelection(selection),
+    hoveredSelection: toOffscreenInteractionSelection(hoveredSelection),
+    hoverSelectionEnabled,
+    interactionLayerPriority: interactionLayerPriority ? [...interactionLayerPriority] : [],
+  };
+}
+
+function getCanvasPointerPosition(event: ReactPointerEvent<HTMLCanvasElement>): {
+  x: number;
+  y: number;
+} {
   const rect = event.currentTarget.getBoundingClientRect();
   return {
     x: event.clientX - rect.left,
@@ -128,11 +145,16 @@ export function UsdOffscreenStage({
   const onRobotDataResolvedRef = useRef(onRobotDataResolved);
   const onHoverRef = useRef(onHover);
   const onMeshSelectRef = useRef(onMeshSelect);
-  const jointInfoByLinkPathRef = useRef(new Map<string, {
-    angleDeg?: number;
-    lowerLimitDeg?: number;
-    upperLimitDeg?: number;
-  }>());
+  const jointInfoByLinkPathRef = useRef(
+    new Map<
+      string,
+      {
+        angleDeg?: number;
+        lowerLimitDeg?: number;
+        upperLimitDeg?: number;
+      }
+    >(),
+  );
   const lastRobotResolutionRef = useRef<ViewerRobotDataResolution | null>(null);
   const runtimeRobotProxyRef = useRef<any | null>(null);
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
@@ -221,6 +243,7 @@ export function UsdOffscreenStage({
 
     let resizeObserver: ResizeObserver | null = null;
     let worker: Worker | null = null;
+    let disposed = false;
 
     const handleWorkerMessage = (event: MessageEvent<UsdOffscreenViewerWorkerResponse>) => {
       const message = event.data;
@@ -230,10 +253,10 @@ export function UsdOffscreenStage({
 
       switch (message.type) {
         case 'progress': {
-            setLoadingProgress({
-              status: 'loading',
-              phase: message.progress.phase,
-              message: message.progress.message ?? null,
+          setLoadingProgress({
+            status: 'loading',
+            phase: message.progress.phase,
+            message: message.progress.message ?? null,
             progressPercent: message.progress.progressPercent ?? null,
             loadedCount: message.progress.loadedCount ?? null,
             totalCount: message.progress.totalCount ?? null,
@@ -262,37 +285,44 @@ export function UsdOffscreenStage({
         case 'robot-data': {
           lastRobotResolutionRef.current = message.resolution;
           jointInfoByLinkPathRef.current = new Map(
-            Object.entries(message.resolution.childLinkPathByJointId).flatMap(([jointId, childLinkPath]) => {
-              const joint = message.resolution.robotData.joints[jointId];
-              if (!joint || !childLinkPath) {
-                return [];
-              }
+            Object.entries(message.resolution.childLinkPathByJointId).flatMap(
+              ([jointId, childLinkPath]) => {
+                const joint = message.resolution.robotData.joints[jointId];
+                if (!joint || !childLinkPath) {
+                  return [];
+                }
 
-              return [[childLinkPath, {
-                angleDeg: radiansToDegrees(joint.angle),
-                lowerLimitDeg: radiansToDegrees(joint.limit?.lower),
-                upperLimitDeg: radiansToDegrees(joint.limit?.upper),
-              }]];
-            }),
+                return [
+                  [
+                    childLinkPath,
+                    {
+                      angleDeg: radiansToDegrees(joint.angle),
+                      lowerLimitDeg: radiansToDegrees(joint.limit?.lower),
+                      upperLimitDeg: radiansToDegrees(joint.limit?.upper),
+                    },
+                  ],
+                ];
+              },
+            ),
           );
           runtimeRobotProxyRef.current = createUsdViewerRuntimeRobot({
             resolution: message.resolution,
             linkRotationController: {
               apply: () => false,
-              getJointInfoForLink: (linkPath: string) => (
-                jointInfoByLinkPathRef.current.get(linkPath) ?? null
-              ),
+              getJointInfoForLink: (linkPath: string) =>
+                jointInfoByLinkPathRef.current.get(linkPath) ?? null,
               setJointAngleForLink: (linkPath: string, angleDeg: number) => {
                 const resolution = lastRobotResolutionRef.current;
-                const jointId = Object.entries(resolution?.childLinkPathByJointId || {}).find(([, candidatePath]) => (
-                  candidatePath === linkPath
-                ))?.[0];
+                const jointId = Object.entries(resolution?.childLinkPathByJointId || {}).find(
+                  ([, candidatePath]) => candidatePath === linkPath,
+                )?.[0];
                 const joint = jointId ? resolution?.robotData.joints[jointId] : undefined;
                 const lowerLimitDeg = radiansToDegrees(joint?.limit?.lower);
                 const upperLimitDeg = radiansToDegrees(joint?.limit?.upper);
-                const clampedAngleDeg = Number.isFinite(lowerLimitDeg) && Number.isFinite(upperLimitDeg)
-                  ? Math.min(Math.max(angleDeg, lowerLimitDeg!), upperLimitDeg!)
-                  : angleDeg;
+                const clampedAngleDeg =
+                  Number.isFinite(lowerLimitDeg) && Number.isFinite(upperLimitDeg)
+                    ? Math.min(Math.max(angleDeg, lowerLimitDeg!), upperLimitDeg!)
+                    : angleDeg;
                 const nextInfo = {
                   angleDeg: clampedAngleDeg,
                   lowerLimitDeg,
@@ -307,7 +337,8 @@ export function UsdOffscreenStage({
                     angleRad: (clampedAngleDeg * Math.PI) / 180,
                   });
                   if (runtimeRobotProxyRef.current?.joints?.[jointId]) {
-                    runtimeRobotProxyRef.current.joints[jointId].angle = (clampedAngleDeg * Math.PI) / 180;
+                    runtimeRobotProxyRef.current.joints[jointId].angle =
+                      (clampedAngleDeg * Math.PI) / 180;
                   }
                 }
 
@@ -359,7 +390,7 @@ export function UsdOffscreenStage({
             Object.entries(message.jointAngles).forEach(([jointId, angleRad]) => {
               const childLinkPath = resolution.childLinkPathByJointId[jointId];
               const existingInfo = childLinkPath
-                ? jointInfoByLinkPathRef.current.get(childLinkPath) ?? {}
+                ? (jointInfoByLinkPathRef.current.get(childLinkPath) ?? {})
                 : {};
               if (childLinkPath) {
                 jointInfoByLinkPathRef.current.set(childLinkPath, {
@@ -377,7 +408,7 @@ export function UsdOffscreenStage({
           return;
         }
         case 'load-debug': {
-          recordUsdOffscreenLoadDebug(message.entry);
+          recordUsdStageLoadDebug(message.entry);
           return;
         }
         case 'fatal-error': {
@@ -392,9 +423,10 @@ export function UsdOffscreenStage({
     };
 
     const handleWorkerError = (event: ErrorEvent) => {
-      const nextError = event.error instanceof Error
-        ? event.error.message
-        : event.message || 'USD offscreen worker crashed';
+      const nextError =
+        event.error instanceof Error
+          ? event.error.message
+          : event.message || 'USD offscreen worker crashed';
       setIsLoading(false);
       setErrorMessage(nextError);
       onDocumentLoadEventRef.current?.({
@@ -423,81 +455,19 @@ export function UsdOffscreenStage({
       });
     };
 
-    try {
-      setIsLoading(true);
-      setErrorMessage(null);
-      onDocumentLoadEventRef.current?.({
-        status: 'loading',
-        phase: 'checking-path',
-        message: null,
-        progressPercent: 0,
-        loadedCount: null,
-        totalCount: null,
-      });
+    const detachWorkerListeners = () => {
+      if (!worker) {
+        return;
+      }
 
-      worker = new Worker(
-        new URL('../workers/usdOffscreenViewer.worker.ts', import.meta.url),
-        { type: 'module' },
-      );
-      workerRef.current = worker;
+      worker.removeEventListener('message', handleWorkerMessage);
+      worker.removeEventListener('error', handleWorkerError);
+      worker.removeEventListener('messageerror', handleWorkerMessageError);
+    };
 
-      worker.addEventListener('message', handleWorkerMessage);
-      worker.addEventListener('error', handleWorkerError);
-      worker.addEventListener('messageerror', handleWorkerMessageError);
-
-      const rect = containerElement.getBoundingClientRect();
-      const offscreenCanvas = canvasElement.transferControlToOffscreen();
-      const initRequest: UsdOffscreenViewerInitRequest = {
-        type: 'init',
-        canvas: offscreenCanvas,
-        width: Math.max(1, Math.round(rect.width)),
-        height: Math.max(1, Math.round(rect.height)),
-        devicePixelRatio: window.devicePixelRatio || 1,
-        active,
-        groundPlaneOffset,
-        showVisual,
-        showCollision,
-        showCollisionAlwaysOnTop,
-        sourceFile,
-        availableFiles,
-        assets,
-      };
-
-      worker.postMessage(initRequest, [offscreenCanvas]);
-      worker.postMessage({
-        type: 'set-interaction-state',
-        toolMode,
-        selection: toOffscreenInteractionSelection(selection),
-        hoveredSelection: toOffscreenInteractionSelection(hoveredSelection),
-        hoverSelectionEnabled,
-        interactionLayerPriority: interactionLayerPriority ? [...interactionLayerPriority] : [],
-      });
-      initCompleteRef.current = true;
-
-      resizeObserver = new ResizeObserver((entries) => {
-        const nextEntry = entries[0];
-        if (!nextEntry) {
-          return;
-        }
-
-        const nextRect = nextEntry.contentRect;
-        postWorkerMessage({
-          type: 'resize',
-          width: Math.max(1, Math.round(nextRect.width)),
-          height: Math.max(1, Math.round(nextRect.height)),
-          devicePixelRatio: window.devicePixelRatio || 1,
-        });
-      });
-
-      resizeObserver.observe(containerElement);
-    } catch (error) {
-      const nextError = error instanceof Error
-        ? error.message
-        : 'Failed to start USD offscreen worker';
-      try {
-        worker?.terminate();
-      } catch {}
-      workerRef.current = null;
+    const reportInitializationError = (error: unknown) => {
+      const nextError =
+        error instanceof Error ? error.message : 'Failed to start USD offscreen worker';
       setIsLoading(false);
       setErrorMessage(nextError);
       onDocumentLoadEventRef.current?.({
@@ -509,22 +479,100 @@ export function UsdOffscreenStage({
         totalCount: null,
         error: nextError,
       });
-      return;
-    }
+    };
+
+    const initializeWorker = async () => {
+      try {
+        setIsLoading(true);
+        setErrorMessage(null);
+        onDocumentLoadEventRef.current?.({
+          status: 'loading',
+          phase: 'checking-path',
+          message: null,
+          progressPercent: 0,
+          loadedCount: null,
+          totalCount: null,
+        });
+
+        const stageOpenDispatch = prepareSharedUsdOffscreenViewerStageOpenDispatch(
+          sourceFile,
+          availableFiles,
+          assets,
+        );
+        worker = stageOpenDispatch.worker as Worker;
+        workerRef.current = worker;
+        worker.addEventListener('message', handleWorkerMessage);
+        worker.addEventListener('error', handleWorkerError);
+        worker.addEventListener('messageerror', handleWorkerMessageError);
+        if (disposed) {
+          detachWorkerListeners();
+          return;
+        }
+
+        const rect = containerElement.getBoundingClientRect();
+        const offscreenCanvas = canvasElement.transferControlToOffscreen();
+        const initRequest: UsdOffscreenViewerInitRequest = {
+          type: 'init',
+          canvas: offscreenCanvas,
+          width: Math.max(1, Math.round(rect.width)),
+          height: Math.max(1, Math.round(rect.height)),
+          devicePixelRatio: window.devicePixelRatio || 1,
+          active,
+          groundPlaneOffset,
+          showVisual,
+          showCollision,
+          showCollisionAlwaysOnTop,
+          sourceFile: stageOpenDispatch.sourceFile,
+          stageOpenContextKey: stageOpenDispatch.stageOpenContextKey,
+          stageOpenContext: stageOpenDispatch.stageOpenContext,
+          stageOpenContextCacheHit: stageOpenDispatch.stageOpenContextCacheHit,
+          initialInteractionState: buildInitialInteractionState({
+            toolMode,
+            selection,
+            hoveredSelection,
+            hoverSelectionEnabled,
+            interactionLayerPriority,
+          }),
+        };
+
+        worker.postMessage(initRequest, [offscreenCanvas]);
+        stageOpenDispatch.commitStageOpenContext();
+        initCompleteRef.current = true;
+
+        resizeObserver = new ResizeObserver((entries) => {
+          const nextEntry = entries[0];
+          if (!nextEntry) {
+            return;
+          }
+
+          const nextRect = nextEntry.contentRect;
+          postWorkerMessage({
+            type: 'resize',
+            width: Math.max(1, Math.round(nextRect.width)),
+            height: Math.max(1, Math.round(nextRect.height)),
+            devicePixelRatio: window.devicePixelRatio || 1,
+          });
+        });
+
+        resizeObserver.observe(containerElement);
+      } catch (error) {
+        detachWorkerListeners();
+        workerRef.current = null;
+        disposeUsdOffscreenViewerStageInBackground();
+        if (!disposed) {
+          reportInitializationError(error);
+        }
+      }
+    };
+
+    void initializeWorker();
 
     return () => {
+      disposed = true;
       initCompleteRef.current = false;
       resizeObserver?.disconnect();
-      if (!worker) {
-        return;
-      }
-      worker.removeEventListener('message', handleWorkerMessage);
-      worker.removeEventListener('error', handleWorkerError);
-      worker.removeEventListener('messageerror', handleWorkerMessageError);
-      try {
-        worker.postMessage({ type: 'dispose' });
-      } catch {}
-      worker.terminate();
+      detachWorkerListeners();
+      disposeUsdOffscreenViewerStageInBackground();
       workerRef.current = null;
     };
   }, [canvasElement, containerElement]);
@@ -570,91 +618,108 @@ export function UsdOffscreenStage({
     toolMode,
   ]);
 
-  const loadingHudState = useMemo(() => buildViewerLoadingHudState({
-    detailLabel: loadingDetailLabel,
-    loadedCount: loadingProgress?.loadedCount,
-    progressPercent: loadingProgress?.progressPercent,
-    totalCount: loadingProgress?.totalCount,
-  }), [
-    loadingDetailLabel,
-    loadingProgress?.loadedCount,
-    loadingProgress?.progressPercent,
-    loadingProgress?.totalCount,
-  ]);
+  const loadingHudState = useMemo(
+    () =>
+      buildViewerLoadingHudState({
+        fallbackDetail: loadingDetailLabel,
+        loadedCount: loadingProgress?.loadedCount,
+        progressPercent: loadingProgress?.progressPercent,
+        totalCount: loadingProgress?.totalCount,
+      }),
+    [
+      loadingDetailLabel,
+      loadingProgress?.loadedCount,
+      loadingProgress?.progressPercent,
+      loadingProgress?.totalCount,
+    ],
+  );
 
   const loadingDetail = loadingProgress?.message || loadingDetailLabel;
-  const loadingStageLabel = loadingProgress?.phase
-    && loadingProgress.phase !== 'ready'
-    && loadingProgress.phase in loadingPhaseLabels
-    ? loadingPhaseLabels[loadingProgress.phase as keyof typeof loadingPhaseLabels]
-    : undefined;
+  const loadingStageLabel =
+    loadingProgress?.phase &&
+    loadingProgress.phase !== 'ready' &&
+    loadingProgress.phase in loadingPhaseLabels
+      ? loadingPhaseLabels[loadingProgress.phase as keyof typeof loadingPhaseLabels]
+      : undefined;
 
-  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!active) {
-      return;
-    }
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      if (!active) {
+        return;
+      }
 
-    const pointer = getCanvasPointerPosition(event);
-    activePointerIdRef.current = event.pointerId;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    postWorkerMessage({
-      type: 'pointer-down',
-      pointerId: event.pointerId,
-      button: event.button,
-      localX: pointer.x,
-      localY: pointer.y,
-    });
-  }, [active, postWorkerMessage]);
+      const pointer = getCanvasPointerPosition(event);
+      activePointerIdRef.current = event.pointerId;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      postWorkerMessage({
+        type: 'pointer-down',
+        pointerId: event.pointerId,
+        button: event.button,
+        localX: pointer.x,
+        localY: pointer.y,
+      });
+    },
+    [active, postWorkerMessage],
+  );
 
-  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!active) {
-      return;
-    }
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      if (!active) {
+        return;
+      }
 
-    const pointer = getCanvasPointerPosition(event);
-    postWorkerMessage({
-      type: 'pointer-move',
-      pointerId: event.pointerId,
-      buttons: event.buttons,
-      localX: pointer.x,
-      localY: pointer.y,
-    });
-  }, [active, postWorkerMessage]);
+      const pointer = getCanvasPointerPosition(event);
+      postWorkerMessage({
+        type: 'pointer-move',
+        pointerId: event.pointerId,
+        buttons: event.buttons,
+        localX: pointer.x,
+        localY: pointer.y,
+      });
+    },
+    [active, postWorkerMessage],
+  );
 
-  const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const pointer = getCanvasPointerPosition(event);
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      const pointer = getCanvasPointerPosition(event);
 
-    if (activePointerIdRef.current === event.pointerId) {
-      activePointerIdRef.current = null;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    postWorkerMessage({
-      type: 'pointer-up',
-      pointerId: event.pointerId,
-      buttons: event.buttons,
-      localX: pointer.x,
-      localY: pointer.y,
-    });
-  }, [postWorkerMessage]);
+      if (activePointerIdRef.current === event.pointerId) {
+        activePointerIdRef.current = null;
+      }
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      postWorkerMessage({
+        type: 'pointer-up',
+        pointerId: event.pointerId,
+        buttons: event.buttons,
+        localX: pointer.x,
+        localY: pointer.y,
+      });
+    },
+    [postWorkerMessage],
+  );
 
   const handlePointerLeave = useCallback(() => {
     activePointerIdRef.current = null;
     postWorkerMessage({ type: 'pointer-leave' });
   }, [postWorkerMessage]);
 
-  const handleWheel = useCallback((event: ReactWheelEvent<HTMLCanvasElement>) => {
-    if (!active) {
-      return;
-    }
+  const handleWheel = useCallback(
+    (event: ReactWheelEvent<HTMLCanvasElement>) => {
+      if (!active) {
+        return;
+      }
 
-    event.preventDefault();
-    postWorkerMessage({
-      type: 'wheel',
-      deltaY: event.deltaY,
-    });
-  }, [active, postWorkerMessage]);
+      event.preventDefault();
+      postWorkerMessage({
+        type: 'wheel',
+        deltaY: event.deltaY,
+      });
+    },
+    [active, postWorkerMessage],
+  );
 
   return (
     <Html fullscreen>

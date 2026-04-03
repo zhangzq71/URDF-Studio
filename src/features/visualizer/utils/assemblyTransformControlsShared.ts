@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import { isAssemblyComponentIndividuallyTransformable } from '@/core/robot/assemblyTransforms';
+import { resolveAssemblyComponentLinkId } from '@/core/robot/assemblyBridgeAlignment';
 import type { AssemblyState, RobotData, UrdfOrigin } from '@/types';
 
 export type AssemblyComponentTransformTarget =
@@ -39,26 +40,32 @@ export function resolveAssemblyComponentTransformTarget({
   }
 
   if (!isAssemblyComponentIndividuallyTransformable(assemblyState, componentId)) {
-    const incomingRootBridges = Object.values(assemblyState.bridges).filter((bridge) => (
-      bridge.childComponentId === componentId
-      && bridge.childLinkId === component.robot.rootLinkId
-    ));
+    const incomingRootBridges = Object.values(assemblyState.bridges).filter(
+      (bridge) =>
+        bridge.childComponentId === componentId &&
+        resolveAssemblyComponentLinkId(component, bridge.childLinkId) ===
+          component.robot.rootLinkId,
+    );
 
-    if (incomingRootBridges.length !== 1) {
-      return null;
+    if (incomingRootBridges.length === 1) {
+      const bridge = incomingRootBridges[0]!;
+      return {
+        kind: 'bridge',
+        bridgeId: bridge.id,
+        object: jointPivots[bridge.id] ?? null,
+      };
     }
 
-    const bridge = incomingRootBridges[0]!;
     return {
-      kind: 'bridge',
-      bridgeId: bridge.id,
-      object: jointPivots[bridge.id] ?? null,
+      kind: 'component',
+      componentId,
+      object: jointPivots[`__workspace_world__::component::${componentId}`] ?? null,
     };
   }
 
-  const rootJoint = Object.values(robot.joints).find((joint) => (
-    joint.childLinkId === component.robot.rootLinkId
-  ));
+  const rootJoint = Object.values(robot.joints).find(
+    (joint) => joint.childLinkId === component.robot.rootLinkId,
+  );
   if (!rootJoint) {
     return null;
   }

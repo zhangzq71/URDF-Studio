@@ -12,8 +12,10 @@ export class MJCFLoadAbortedError extends Error {
 }
 
 export function isMJCFLoadAbortedError(error: unknown): error is MJCFLoadAbortedError {
-  return error instanceof MJCFLoadAbortedError
-    || (error instanceof Error && error.name === 'MJCFLoadAbortedError');
+  return (
+    error instanceof MJCFLoadAbortedError ||
+    (error instanceof Error && error.name === 'MJCFLoadAbortedError')
+  );
 }
 
 export function throwIfMJCFLoadAborted(signal?: MJCFLoadAbortSignal): void {
@@ -26,7 +28,7 @@ function disposeMaterialTextures(
   material: THREE.Material,
   disposedTextures: Set<THREE.Texture>,
 ): void {
-  for (const value of Object.values(material as Record<string, unknown>)) {
+  for (const value of Object.values(material as unknown as Record<string, unknown>)) {
     if (!(value instanceof THREE.Texture) || disposedTextures.has(value)) {
       continue;
     }
@@ -51,7 +53,11 @@ export function disposeTransientObject3D(root: THREE.Object3D | null | undefined
 
   root.traverse((child) => {
     const skinnedMesh = child as THREE.SkinnedMesh;
-    if (skinnedMesh.isSkinnedMesh && skinnedMesh.skeleton && !disposedSkeletons.has(skinnedMesh.skeleton)) {
+    if (
+      skinnedMesh.isSkinnedMesh &&
+      skinnedMesh.skeleton &&
+      !disposedSkeletons.has(skinnedMesh.skeleton)
+    ) {
       disposedSkeletons.add(skinnedMesh.skeleton);
       skinnedMesh.skeleton.dispose?.();
     }

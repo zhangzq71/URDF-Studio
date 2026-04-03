@@ -2,7 +2,9 @@
 
 import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
 import { prepareAssemblyRobotData } from '@/core/robot/assemblyComponentPreparation';
+import { buildDefaultAssemblyComponentPlacementTransform } from '@/core/robot/assemblyPlacement';
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
+import { computeRobotRenderableBoundsFromAssets } from '@/app/utils/assemblyRenderableBounds';
 import type {
   PrepareAssemblyComponentWorkerResponse,
   RobotImportWorkerContextSnapshot,
@@ -17,7 +19,7 @@ const workerContextSnapshots = new Map<string, RobotImportWorkerContextSnapshot>
 const workerContextOrder: string[] = [];
 const WORKER_CONTEXT_CACHE_LIMIT = 24;
 
-ensureWorkerXmlDomApis(workerScope as typeof globalThis);
+ensureWorkerXmlDomApis(workerScope as unknown as typeof globalThis);
 
 function syncWorkerContextSnapshot(
   contextId: string,
@@ -42,10 +44,7 @@ function syncWorkerContextSnapshot(
   }
 }
 
-function applyWorkerContextSnapshot<T extends Record<string, unknown>>(
-  options: T,
-  contextId?: string,
-): T {
+function applyWorkerContextSnapshot<T extends object>(options: T, contextId?: string): T {
   if (!contextId) {
     return options;
   }
@@ -55,16 +54,22 @@ function applyWorkerContextSnapshot<T extends Record<string, unknown>>(
     return options;
   }
 
+  const optionsWithContext = options as T & {
+    availableFiles?: RobotImportWorkerContextSnapshot['availableFiles'];
+    assets?: RobotImportWorkerContextSnapshot['assets'];
+    allFileContents?: RobotImportWorkerContextSnapshot['allFileContents'];
+  };
+
   return {
     ...context,
-    ...options,
-    availableFiles: options.availableFiles ?? context.availableFiles,
-    assets: options.assets ?? context.assets,
-    allFileContents: options.allFileContents ?? context.allFileContents,
+    ...optionsWithContext,
+    availableFiles: optionsWithContext.availableFiles ?? context.availableFiles,
+    assets: optionsWithContext.assets ?? context.assets,
+    allFileContents: optionsWithContext.allFileContents ?? context.allFileContents,
   } as T;
 }
 
-workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRequest>) => {
+async function handleWorkerMessage(event: MessageEvent<RobotImportWorkerRequest>): Promise<void> {
   const message = event.data;
   if (!message) {
     return;
@@ -91,10 +96,8 @@ workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRe
     }
 
     if (message.type === 'prepare-assembly-component') {
-      const resolvedImportResult = resolveRobotFileData(
-        message.file,
-        applyWorkerContextSnapshot(message.options, message.contextId),
-      );
+      const resolvedOptions = applyWorkerContextSnapshot(message.options, message.contextId);
+      const resolvedImportResult = resolveRobotFileData(message.file, resolvedOptions);
 
       if (resolvedImportResult.status !== 'ready') {
         const response: PrepareAssemblyComponentWorkerResponse = {
@@ -106,18 +109,37 @@ workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRe
         return;
       }
 
+      const robotData = prepareAssemblyRobotData(resolvedImportResult.robotData, {
+        componentId: message.componentId,
+        rootName: message.rootName,
+        sourceFilePath: message.file.name,
+        sourceFormat: message.file.format,
+      });
+      const renderableBounds = await computeRobotRenderableBoundsFromAssets(
+        robotData,
+        resolvedOptions.assets,
+      );
+      const suggestedTransform = buildDefaultAssemblyComponentPlacementTransform({
+        robot: robotData,
+        renderableBounds,
+        existingComponents: (message.options.existingPlacementComponents ?? []).map(
+          (component) => ({
+            robot: component.robotData ?? null,
+            renderableBounds: component.renderableBounds ?? null,
+            transform: component.transform ?? undefined,
+          }),
+        ),
+      });
+
       const response: PrepareAssemblyComponentWorkerResponse = {
         type: 'prepare-assembly-component-result',
         requestId: message.requestId,
         result: {
           componentId: message.componentId,
           displayName: message.rootName,
-          robotData: prepareAssemblyRobotData(resolvedImportResult.robotData, {
-            componentId: message.componentId,
-            rootName: message.rootName,
-            sourceFilePath: message.file.name,
-            sourceFormat: message.file.format,
-          }),
+          robotData,
+          renderableBounds,
+          suggestedTransform,
           resolvedUrdfContent: resolvedImportResult.resolvedUrdfContent,
           resolvedUrdfSourceFilePath: resolvedImportResult.resolvedUrdfSourceFilePath,
         },
@@ -142,26 +164,33 @@ workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRe
       return;
     }
 
-    const response: ResolveRobotImportWorkerResponse | ParseEditableRobotSourceWorkerResponse | PrepareAssemblyComponentWorkerResponse =
+    const response:
+      | ResolveRobotImportWorkerResponse
+      | ParseEditableRobotSourceWorkerResponse
+      | PrepareAssemblyComponentWorkerResponse =
       message.type === 'parse-editable-robot-source'
         ? {
-          type: 'parse-editable-robot-source-error',
-          requestId: message.requestId,
-          error: error instanceof Error ? error.message : 'Editable source parse worker failed',
-        }
+            type: 'parse-editable-robot-source-error',
+            requestId: message.requestId,
+            error: error instanceof Error ? error.message : 'Editable source parse worker failed',
+          }
         : message.type === 'prepare-assembly-component'
           ? {
-            type: 'prepare-assembly-component-error',
-            requestId: message.requestId,
-            error: error instanceof Error ? error.message : 'Assembly component worker failed',
-          }
-        : {
-          type: 'resolve-robot-file-error',
-          requestId: message.requestId,
-          error: error instanceof Error ? error.message : 'Robot import worker failed',
-        };
+              type: 'prepare-assembly-component-error',
+              requestId: message.requestId,
+              error: error instanceof Error ? error.message : 'Assembly component worker failed',
+            }
+          : {
+              type: 'resolve-robot-file-error',
+              requestId: message.requestId,
+              error: error instanceof Error ? error.message : 'Robot import worker failed',
+            };
     workerScope.postMessage(response);
   }
+}
+
+workerScope.addEventListener('message', (event: MessageEvent<RobotImportWorkerRequest>) => {
+  void handleWorkerMessage(event);
 });
 
 export {};

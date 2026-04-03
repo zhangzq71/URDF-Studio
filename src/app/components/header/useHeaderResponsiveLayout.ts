@@ -11,16 +11,14 @@ const OPTIONAL_ACTION_WIDTH_BONUS = 96;
 
 export function getHeaderResponsiveLayout(
   width: number,
-  {
-    hasQuickAction,
-    hasSecondaryAction,
-  }: HeaderResponsiveLayoutOptions,
+  { hasQuickAction, hasSecondaryAction }: HeaderResponsiveLayoutOptions,
 ): HeaderResponsiveLayout {
   // When optional header actions are absent, reclaim that space so desktop
   // layouts can keep more controls inline before collapsing into overflow.
-  const effectiveWidth = width
-    + (hasQuickAction ? 0 : OPTIONAL_ACTION_WIDTH_BONUS)
-    + (hasSecondaryAction ? 0 : OPTIONAL_ACTION_WIDTH_BONUS);
+  const effectiveWidth =
+    width +
+    (hasQuickAction ? 0 : OPTIONAL_ACTION_WIDTH_BONUS) +
+    (hasSecondaryAction ? 0 : OPTIONAL_ACTION_WIDTH_BONUS);
 
   const showMenuLabels = effectiveWidth >= 1080;
   const showSourceInline = effectiveWidth >= 1120;
@@ -32,7 +30,6 @@ export function getHeaderResponsiveLayout(
   const showSettingsInline = effectiveWidth >= 960;
   const showLanguageInline = effectiveWidth >= 900;
   const showThemeInline = effectiveWidth >= 840;
-  const showAboutInline = effectiveWidth >= 780;
   const showSecondaryActionInline = effectiveWidth >= 780;
   const showSecondaryActionLabel = effectiveWidth >= 1360;
 
@@ -47,22 +44,18 @@ export function getHeaderResponsiveLayout(
     showSettingsInline,
     showLanguageInline,
     showThemeInline,
-    showAboutInline,
     showSecondaryActionInline,
     showSecondaryActionLabel,
     showDesktopOverflow:
       width >= 640 &&
-      (
-        !showQuickActionInline ||
+      (!showQuickActionInline ||
         !showSourceInline ||
         !showUndoRedoInline ||
         !showSnapshotInline ||
         !showSettingsInline ||
         !showLanguageInline ||
         !showThemeInline ||
-        !showAboutInline ||
-        !showSecondaryActionInline
-      ),
+        !showSecondaryActionInline),
   };
 }
 
@@ -70,7 +63,9 @@ export function useHeaderResponsiveLayout(
   headerRef: RefObject<HTMLElement | null>,
   options: HeaderResponsiveLayoutOptions,
 ): HeaderResponsiveLayout {
-  const [headerWidth, setHeaderWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 0));
+  const [headerWidth, setHeaderWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 0,
+  );
 
   useEffect(() => {
     const node = headerRef.current;
@@ -92,8 +87,5 @@ export function useHeaderResponsiveLayout(
     };
   }, [headerRef]);
 
-  return useMemo(
-    () => getHeaderResponsiveLayout(headerWidth, options),
-    [headerWidth, options],
-  );
+  return useMemo(() => getHeaderResponsiveLayout(headerWidth, options), [headerWidth, options]);
 }

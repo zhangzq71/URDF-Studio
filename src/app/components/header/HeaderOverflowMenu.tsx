@@ -1,4 +1,15 @@
-import { Camera, Code, Globe, Info, Moon, Monitor, MoreHorizontal, Redo, Settings, Sun, Undo } from 'lucide-react';
+import {
+  Camera,
+  Code,
+  Globe,
+  Moon,
+  Monitor,
+  MoreHorizontal,
+  Redo,
+  Settings,
+  Sun,
+  Undo,
+} from 'lucide-react';
 import type { HeaderOverflowMenuProps } from './types';
 
 export function HeaderOverflowMenu({
@@ -19,7 +30,6 @@ export function HeaderOverflowMenu({
   onPrefetchCodeViewer,
   onSnapshot,
   onOpenSettings,
-  onOpenAbout,
   t,
   showQuickAction,
   showSourceCode,
@@ -28,13 +38,13 @@ export function HeaderOverflowMenu({
   showSettings,
   showLanguage,
   showTheme,
-  showAbout,
   showSecondaryAction,
 }: HeaderOverflowMenuProps) {
   const QuickActionIcon = quickAction?.icon;
   const SecondaryActionIcon = secondaryAction?.icon;
   const showPrimaryGroup = showQuickAction || showSourceCode || showUndoRedo;
-  const showSecondaryGroup = showSnapshot || showSettings || showLanguage || showTheme || showAbout || showSecondaryAction;
+  const showSecondaryGroup =
+    showSnapshot || showSettings || showLanguage || showTheme || showSecondaryAction;
 
   return (
     <div className={`relative ${className}`.trim()}>
@@ -78,7 +88,10 @@ export function HeaderOverflowMenu({
                 {showSourceCode && (
                   <button
                     type="button"
-                    onClick={() => { onOpenCodeViewer(); setActiveMenu(null); }}
+                    onClick={() => {
+                      onOpenCodeViewer();
+                      setActiveMenu(null);
+                    }}
                     onMouseEnter={onPrefetchCodeViewer}
                     onFocus={onPrefetchCodeViewer}
                     onTouchStart={onPrefetchCodeViewer}
@@ -91,7 +104,10 @@ export function HeaderOverflowMenu({
                   <>
                     <button
                       type="button"
-                      onClick={() => { undo(); setActiveMenu(null); }}
+                      onClick={() => {
+                        undo();
+                        setActiveMenu(null);
+                      }}
                       disabled={!canUndo}
                       className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
                     >
@@ -99,7 +115,10 @@ export function HeaderOverflowMenu({
                     </button>
                     <button
                       type="button"
-                      onClick={() => { redo(); setActiveMenu(null); }}
+                      onClick={() => {
+                        redo();
+                        setActiveMenu(null);
+                      }}
                       disabled={!canRedo}
                       className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3 disabled:opacity-50"
                     >
@@ -131,7 +150,10 @@ export function HeaderOverflowMenu({
                 {showSnapshot && (
                   <button
                     type="button"
-                    onClick={() => { onSnapshot(); setActiveMenu(null); }}
+                    onClick={() => {
+                      onSnapshot();
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
                     <Camera className="w-4 h-4" /> {t.snapshot}
@@ -140,7 +162,10 @@ export function HeaderOverflowMenu({
                 {showSettings && (
                   <button
                     type="button"
-                    onClick={() => { onOpenSettings(); setActiveMenu(null); }}
+                    onClick={() => {
+                      onOpenSettings();
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
                     <Settings className="w-4 h-4" /> {t.settings}
@@ -149,7 +174,10 @@ export function HeaderOverflowMenu({
                 {showLanguage && (
                   <button
                     type="button"
-                    onClick={() => { setLang(lang === 'en' ? 'zh' : 'en'); setActiveMenu(null); }}
+                    onClick={() => {
+                      setLang(lang === 'en' ? 'zh' : 'en');
+                      setActiveMenu(null);
+                    }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
                     <Globe className="w-4 h-4" /> {t.switchLanguage}
@@ -160,7 +188,9 @@ export function HeaderOverflowMenu({
                     type="button"
                     onClick={() => {
                       if (theme === 'system') {
-                        const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        const isSystemDark = window.matchMedia(
+                          '(prefers-color-scheme: dark)',
+                        ).matches;
                         setTheme(isSystemDark ? 'light' : 'dark');
                       } else {
                         setTheme(theme === 'dark' ? 'light' : 'dark');
@@ -169,16 +199,14 @@ export function HeaderOverflowMenu({
                     }}
                     className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
                   >
-                    {theme === 'system' ? <Monitor className="w-4 h-4" /> : theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />} {t.toggleTheme}
-                  </button>
-                )}
-                {showAbout && (
-                  <button
-                    type="button"
-                    onClick={() => { onOpenAbout(); setActiveMenu(null); }}
-                    className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center gap-3"
-                  >
-                    <Info className="w-4 h-4" /> {t.about}
+                    {theme === 'system' ? (
+                      <Monitor className="w-4 h-4" />
+                    ) : theme === 'dark' ? (
+                      <Sun className="w-4 h-4" />
+                    ) : (
+                      <Moon className="w-4 h-4" />
+                    )}{' '}
+                    {t.toggleTheme}
                   </button>
                 )}
               </>

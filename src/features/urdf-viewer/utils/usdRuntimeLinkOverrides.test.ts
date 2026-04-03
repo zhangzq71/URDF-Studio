@@ -28,10 +28,11 @@ test('resolves collision geometry by runtime object index', () => {
     ],
   };
 
-  assert.deepEqual(
-    resolveUsdRuntimeGeometry(link, 'collision', 1)?.dimensions,
-    { x: 4, y: 5, z: 6 },
-  );
+  assert.deepEqual(resolveUsdRuntimeGeometry(link, 'collision', 1)?.dimensions, {
+    x: 4,
+    y: 5,
+    z: 6,
+  });
 });
 
 test('treats collision meshes without a runtime object index as absent', () => {
@@ -98,7 +99,10 @@ test('reuses a stable authored local matrix so repeated USD overrides do not dri
     dimensions: { x: 1, y: 1, z: 1 },
   };
 
-  const stableBaseLocalMatrix = linkWorldMatrix.clone().invert().multiply(authoredWorldMatrix.clone());
+  const stableBaseLocalMatrix = linkWorldMatrix
+    .clone()
+    .invert()
+    .multiply(authoredWorldMatrix.clone());
   const first = composeUsdMeshOverrideWorldMatrixFromBaseLocal({
     baseLocalMatrix: stableBaseLocalMatrix,
     geometry,
@@ -206,6 +210,24 @@ test('derives USD runtime visibility from link and geometry flags', () => {
     }),
     false,
   );
+
+  assert.equal(
+    isUsdRuntimeGeometryVisible({
+      link: {
+        ...DEFAULT_LINK,
+        visible: false,
+        collision: {
+          ...DEFAULT_LINK.collision,
+          visible: true,
+        },
+      },
+      role: 'collision',
+      objectIndex: 0,
+      showVisual: false,
+      showCollision: true,
+    }),
+    false,
+  );
 });
 
 test('builds link dynamics records from the current robot links', () => {
@@ -266,7 +288,9 @@ test('builds link dynamics records from the current robot links', () => {
   assert.equal(record?.mass, 5);
   assert.deepEqual(record?.centerOfMassLocal.toArray(), [0.1, 0.2, 0.3]);
   assert.deepEqual(record?.diagonalInertia?.toArray(), [1, 2, 3]);
-  assert.ok(record?.principalAxesLocal.angleTo(new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(0, 0, Math.PI / 2, 'ZYX'),
-  )) < 1e-6);
+  assert.ok(
+    record?.principalAxesLocal.angleTo(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'ZYX')),
+    ) < 1e-6,
+  );
 });

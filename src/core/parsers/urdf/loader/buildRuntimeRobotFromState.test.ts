@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
 
+import { createPlaceholderMesh } from '@/core/loaders';
 import { DEFAULT_LINK, GeometryType } from '@/types';
 import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
 import { parseURDF } from '@/core/parsers/urdf/parser';
@@ -102,9 +103,7 @@ test('buildRuntimeRobotFromState applies mesh scale and visual color overrides o
     joints: {},
   };
 
-  let robot:
-    | Awaited<ReturnType<typeof buildRuntimeRobotFromState>>
-    | null = null;
+  let robot: Awaited<ReturnType<typeof buildRuntimeRobotFromState>> | null = null;
   const ready = new Promise<void>((resolve) => {
     manager.onLoad = () => resolve();
   });
@@ -134,7 +133,9 @@ test('buildRuntimeRobotFromState applies mesh scale and visual color overrides o
   const baseLink = robot?.links.base_link;
   assert.ok(baseLink, 'expected base link');
 
-  const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as THREE.Object3D | undefined;
+  const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as
+    | THREE.Object3D
+    | undefined;
   assert.ok(visualGroup, 'expected visual group');
   assert.deepEqual(visualGroup.scale.toArray(), [2, 3, 4]);
   assert.equal(visualGroup.children.length, 1);
@@ -145,8 +146,56 @@ test('buildRuntimeRobotFromState applies mesh scale and visual color overrides o
   const material = mesh.material as THREE.MeshStandardMaterial;
   const parsedColor = parseThreeColorWithOpacity('#12ab34');
   assert.ok(parsedColor, 'expected parsed override color');
-  assert.deepEqual(
-    toFixedColorArray(material.color),
-    toFixedColorArray(parsedColor.color),
+  assert.deepEqual(toFixedColorArray(material.color), toFixedColorArray(parsedColor.color));
+});
+
+test('buildRuntimeRobotFromState keeps placeholder meshes for missing visual assets', async () => {
+  const robotState = {
+    name: 'missing_visual_mesh',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          meshPath: 'package://aliengo_description/meshes/hip.dae',
+        },
+      },
+    },
+    joints: {},
+  };
+
+  const robot = await buildRuntimeRobotFromState({
+    robotName: robotState.name,
+    links: robotState.links,
+    joints: robotState.joints,
+    manager: new THREE.LoadingManager(),
+    loadMeshCb: (path, _manager, done) => {
+      done(createPlaceholderMesh(path));
+    },
+  });
+
+  const baseLink = robot.links.base_link as THREE.Object3D | undefined;
+  assert.ok(baseLink);
+
+  const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as
+    | THREE.Object3D
+    | undefined;
+  assert.ok(visualGroup);
+
+  let placeholderMesh: THREE.Mesh | null = null;
+  visualGroup.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh && child.userData?.isPlaceholder) {
+      placeholderMesh = child as THREE.Mesh;
+    }
+  });
+
+  assert.ok(placeholderMesh);
+  assert.equal(
+    placeholderMesh.userData?.missingMeshPath,
+    'package://aliengo_description/meshes/hip.dae',
   );
 });

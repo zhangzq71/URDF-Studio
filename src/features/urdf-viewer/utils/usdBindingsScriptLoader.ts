@@ -29,7 +29,7 @@ async function ensureClassicScriptLoadedInWorker(src: string): Promise<void> {
     }
 
     const scriptSource = await response.text();
-    const globalEval = (0, eval) as (code: string) => unknown;
+    const globalEval = globalThis.eval.bind(globalThis) as (code: string) => unknown;
     globalEval(`${scriptSource}\n//# sourceURL=${resolvedSrc}`);
   })().catch((error) => {
     workerClassicScriptLoadState.delete(resolvedSrc);
@@ -100,7 +100,8 @@ export function ensureClassicScriptLoaded(src: string, targetDocument?: Document
   const scriptElement = existingScript ?? resolvedDocument.createElement('script');
   if (!existingScript) {
     scriptElement.src = src;
-    const appendTarget = resolvedDocument.head ?? resolvedDocument.documentElement ?? resolvedDocument.body;
+    const appendTarget =
+      resolvedDocument.head ?? resolvedDocument.documentElement ?? resolvedDocument.body;
     appendTarget?.appendChild(scriptElement);
   }
 

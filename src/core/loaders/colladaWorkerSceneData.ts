@@ -15,6 +15,8 @@ interface SerializedSceneImageRecord {
   uuid?: string;
 }
 
+const EXTERNAL_IMAGE_URL_PATTERN = /^(\/\/)|([a-z]+:(\/\/)?)/i;
+
 export function canSerializeColladaInWorker(_content: string): boolean {
   return true;
 }
@@ -98,5 +100,60 @@ export function createSceneFromSerializedColladaData(
   ensureWorkerXmlDomApis();
   const objectLoader = new THREE.ObjectLoader(options.manager);
   objectLoader.setResourcePath(data.resourcePath);
-  return objectLoader.parse(data.sceneJson);
+  const sceneJson = resolveSerializedColladaImageUrls(data, options.manager);
+  return objectLoader.parse(sceneJson);
+}
+
+function resolveSerializedColladaImageUrl(
+  url: string,
+  resourcePath: string,
+  manager?: THREE.LoadingManager,
+): string {
+  const resourceUrl = EXTERNAL_IMAGE_URL_PATTERN.test(url) ? url : `${resourcePath}${url}`;
+
+  if (typeof manager?.resolveURL === 'function') {
+    return manager.resolveURL(resourceUrl);
+  }
+
+  return resourceUrl;
+}
+
+function resolveSerializedColladaImageUrls(
+  data: SerializedColladaSceneData,
+  manager?: THREE.LoadingManager,
+): Record<string, unknown> {
+  const images = Array.isArray(data.sceneJson.images)
+    ? (data.sceneJson.images as SerializedSceneImageRecord[])
+    : null;
+
+  if (!images || images.length === 0) {
+    return data.sceneJson;
+  }
+
+  const resolvedImages = images.map((image) => {
+    if (typeof image.url === 'string') {
+      return {
+        ...image,
+        url: resolveSerializedColladaImageUrl(image.url, data.resourcePath, manager),
+      };
+    }
+
+    if (Array.isArray(image.url)) {
+      return {
+        ...image,
+        url: image.url.map((entry) =>
+          typeof entry === 'string'
+            ? resolveSerializedColladaImageUrl(entry, data.resourcePath, manager)
+            : entry,
+        ),
+      };
+    }
+
+    return image;
+  });
+
+  return {
+    ...data.sceneJson,
+    images: resolvedImages,
+  };
 }

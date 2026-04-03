@@ -20,22 +20,54 @@ interface SerializedPreparedUsdExportCache {
   transferables: ArrayBuffer[];
 }
 
+type PreparedUsdExportCacheTransferBytesCarrier = PreparedUsdExportCacheResult & {
+  __meshFileBytes?: Record<string, Uint8Array>;
+};
+
+function cloneBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer;
+  }
+
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
 async function serializePreparedUsdExportCacheFile(
   path: string,
   blob: Blob,
+  meshFileBytes: Uint8Array | null,
 ): Promise<PreparedUsdExportCacheTransferFile> {
-  return {
-    path,
-    mimeType: blob.type,
-    bytes: await blob.arrayBuffer(),
-  };
+  if (meshFileBytes) {
+    return {
+      path,
+      mimeType: blob.type,
+      bytes: cloneBytesToArrayBuffer(meshFileBytes),
+    };
+  }
+
+  try {
+    return {
+      path,
+      mimeType: blob.type,
+      bytes: await blob.arrayBuffer(),
+    };
+  } catch (error) {
+    throw new Error(
+      `Failed to serialize USD prepared export cache mesh "${path}" (${blob.type || 'application/octet-stream'}, ${blob.size} bytes).`,
+      { cause: error },
+    );
+  }
 }
 
 export async function serializePreparedUsdExportCacheForWorker(
   payload: PreparedUsdExportCacheResult,
 ): Promise<SerializedPreparedUsdExportCache> {
+  const meshFileBytes =
+    (payload as PreparedUsdExportCacheTransferBytesCarrier).__meshFileBytes ?? null;
   const meshFiles = await Promise.all(
-    Object.entries(payload.meshFiles).map(([path, blob]) => serializePreparedUsdExportCacheFile(path, blob)),
+    Object.entries(payload.meshFiles).map(([path, blob]) =>
+      serializePreparedUsdExportCacheFile(path, blob, meshFileBytes?.[path] ?? null),
+    ),
   );
 
   return {

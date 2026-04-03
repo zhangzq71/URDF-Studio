@@ -180,12 +180,18 @@ export interface AssemblyTransform {
   rotation: Euler;
 }
 
+export interface RenderableBounds {
+  min: Vector3;
+  max: Vector3;
+}
+
 /** Assembly component: a URDF parsed into RobotData with namespace */
 export interface AssemblyComponent {
   id: string;
   name: string;
   sourceFile: string;
   robot: RobotData;
+  renderableBounds?: RenderableBounds;
   transform?: AssemblyTransform;
   visible?: boolean;
 }

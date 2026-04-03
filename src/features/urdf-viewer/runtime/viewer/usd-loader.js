@@ -725,8 +725,10 @@ export async function loadUsdStage(args) {
     catch (error) {
         console.error("Failed to create USD driver", error);
         setMessage("Failed to initialize USD renderer for this file.");
+        state.ready = false;
+        state.drawFailed = true;
+        state.drawFailureReason = "driver-init-failed";
         hideProgress();
-        state.ready = true;
         flushLoadProfile("error");
         return state;
     }
@@ -737,8 +739,10 @@ export async function loadUsdStage(args) {
     }
     if (!driver) {
         setMessage("Failed to initialize USD renderer for this file.");
+        state.ready = false;
+        state.drawFailed = true;
+        state.drawFailureReason = "driver-init-missing";
         hideProgress();
-        state.ready = true;
         flushLoadProfile("error");
         return state;
     }
@@ -771,6 +775,7 @@ export async function loadUsdStage(args) {
                 emitRobotMetadataEvent: false,
             });
             if (summary && typeof summary === "object") {
+                lastRuntimeBridgeWarmupSummary = summary;
                 markLoadPhase(`runtime-bridge-warmup-${phaseLabel}`);
             }
             return summary && typeof summary === "object" ? summary : null;
@@ -778,6 +783,28 @@ export async function loadUsdStage(args) {
         catch {
             return null;
         }
+    };
+    let lastRuntimeBridgeWarmupSummary = null;
+    const getRuntimeBridgeWarmupWarningMessage = (summary) => {
+        if (!summary || typeof summary !== "object") {
+            return null;
+        }
+        const driverStageResolveStatus = String(summary.driverStageResolveStatus || "").trim();
+        const driverStageResolveError = String(summary.driverStageResolveError || "").trim();
+        const subsetFailureCount = Math.max(0, Number(summary.snapshotMaterialSubsetFailureCount || 0));
+        const inheritFailureCount = Math.max(0, Number(summary.snapshotMaterialInheritFailureCount || 0));
+        const textureFailureCount = Math.max(0, Number(summary.snapshotTextureFailureCount || 0));
+        const materialFailureCount = subsetFailureCount + inheritFailureCount + textureFailureCount;
+        if (driverStageResolveStatus === "rejected") {
+            return driverStageResolveError
+                ? `Resolving robot metadata... stage lookup failed (${driverStageResolveError}).`
+                : "Resolving robot metadata... stage lookup failed.";
+        }
+        if (materialFailureCount > 0) {
+            const issueLabel = materialFailureCount === 1 ? "issue" : "issues";
+            return `Resolving robot metadata... material fallbacks incomplete (${materialFailureCount} ${issueLabel}).`;
+        }
+        return null;
     };
     const getPendingProtoHydrationCount = (summary) => {
         if (!summary || typeof summary !== "object")
@@ -890,6 +917,9 @@ export async function loadUsdStage(args) {
                 jointCount: 0,
                 dynamicsCount: 0,
                 linkParentCount: 0,
+                stale: false,
+                errorFlags: [],
+                truthLoadError: null,
             };
         }
         try {
@@ -901,6 +931,9 @@ export async function loadUsdStage(args) {
                     jointCount: 0,
                     dynamicsCount: 0,
                     linkParentCount: 0,
+                    stale: false,
+                    errorFlags: [],
+                    truthLoadError: null,
                 };
             }
             const jointCount = Array.isArray(snapshot.jointCatalogEntries)
@@ -912,11 +945,20 @@ export async function loadUsdStage(args) {
             const linkParentCount = Array.isArray(snapshot.linkParentPairs)
                 ? snapshot.linkParentPairs.length
                 : 0;
+            const errorFlags = Array.isArray(snapshot.errorFlags)
+                ? snapshot.errorFlags
+                    .map((entry) => String(entry || "").trim())
+                    .filter((entry) => entry.length > 0)
+                : [];
+            const truthLoadError = String(snapshot.truthLoadError || "").trim() || null;
             return {
                 hasSnapshot: true,
                 jointCount,
                 dynamicsCount,
                 linkParentCount,
+                stale: snapshot.stale === true,
+                errorFlags,
+                truthLoadError,
             };
         }
         catch {
@@ -925,13 +967,36 @@ export async function loadUsdStage(args) {
                 jointCount: 0,
                 dynamicsCount: 0,
                 linkParentCount: 0,
+                stale: false,
+                errorFlags: [],
+                truthLoadError: null,
             };
         }
+    };
+    const buildRobotMetadataReadinessError = () => {
+        const stats = getRobotMetadataSnapshotStats();
+        if (!stats.hasSnapshot) {
+            return new Error(`Robot metadata did not resolve for "${normalizedPath}" before interactive readiness.`);
+        }
+        const details = [];
+        if (stats.stale === true) {
+            details.push("stale");
+        }
+        if (Array.isArray(stats.errorFlags) && stats.errorFlags.length > 0) {
+            details.push(`errorFlags=${stats.errorFlags.join(",")}`);
+        }
+        if (stats.truthLoadError) {
+            details.push(`truthLoadError=${stats.truthLoadError}`);
+        }
+        return new Error(`Robot metadata for "${normalizedPath}" is not ready for interactive use${details.length > 0 ? ` (${details.join("; ")})` : ""}.`);
     };
     const hasResolvedRobotMetadataSnapshot = (options = {}) => {
         const stats = getRobotMetadataSnapshotStats();
         if (!stats.hasSnapshot)
             return false;
+        if (stats.stale === true || stats.errorFlags.length > 0 || !!stats.truthLoadError) {
+            return false;
+        }
         const hasAnyMetadata = stats.jointCount > 0 || stats.dynamicsCount > 0 || stats.linkParentCount > 0;
         if (!hasAnyMetadata) {
             return isLikelyNonRenderableUsdConfig(normalizedPath);
@@ -962,25 +1027,24 @@ export async function loadUsdStage(args) {
         try {
             const maybePromise = activeRenderInterface.startRobotMetadataWarmupForStage(buildRobotMetadataWarmupOptions(options.force === true));
             const normalizedPromise = (maybePromise && typeof maybePromise.then === "function")
-                ? maybePromise.catch(() => null)
+                ? maybePromise
                 : Promise.resolve(maybePromise ?? null);
             primedRobotMetadataWarmupPromise = normalizedPromise;
+            primedRobotMetadataWarmupPromise.catch(() => { });
             return normalizedPromise;
         }
-        catch {
-            return null;
+        catch (error) {
+            const rejectedPromise = Promise.reject(error);
+            rejectedPromise.catch(() => { });
+            primedRobotMetadataWarmupPromise = rejectedPromise;
+            return rejectedPromise;
         }
     };
     const awaitRobotMetadataWarmup = async (activeRenderInterface, options) => {
         const pendingWarmup = startRobotMetadataWarmup(activeRenderInterface, options);
         if (!pendingWarmup)
             return;
-        try {
-            await pendingWarmup;
-        }
-        catch {
-            // Keep load resilient; fallback UI refresh path remains active.
-        }
+        await pendingWarmup;
     };
     const ensureRobotMetadataReadyBeforeInteractive = async () => {
         if (!warmupRobotMetadata)
@@ -994,15 +1058,11 @@ export async function loadUsdStage(args) {
         if (isRobotMetadataReady())
             return;
         const activeRenderInterface = window.renderInterface;
-        if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function")
-            return;
+        if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function") {
+            throw new Error(`Robot metadata warmup API is unavailable for "${normalizedPath}".`);
+        }
         if (primedRobotMetadataWarmupPromise) {
-            try {
-                await primedRobotMetadataWarmupPromise;
-            }
-            catch {
-                // Fall through to the force-refresh path below.
-            }
+            await primedRobotMetadataWarmupPromise;
         }
         if (isRobotMetadataReady()) {
             markLoadPhase("robot-metadata-ready-before-interactive");
@@ -1012,15 +1072,27 @@ export async function loadUsdStage(args) {
         if (!isRobotMetadataReady()) {
             await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
         }
-        if (isRobotMetadataReady()) {
-            markLoadPhase("robot-metadata-ready-before-interactive");
+        if (!isRobotMetadataReady()) {
+            throw buildRobotMetadataReadinessError();
         }
+        markLoadPhase("robot-metadata-ready-before-interactive");
     };
     if (isLikelyNonRenderableUsdConfig(normalizedPath)) {
         runRuntimeBridgeWarmup("driver-init", { force: true });
-        const activeRenderInterface = window.renderInterface;
-        if (activeRenderInterface && typeof activeRenderInterface.startRobotMetadataWarmupForStage === "function") {
-            await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
+        try {
+            await ensureRobotMetadataReadyBeforeInteractive();
+        }
+        catch (error) {
+            console.error("[usd-loader] Failed to resolve robot metadata before interactive readiness.", error);
+            setMessage(error instanceof Error && error.message
+                ? error.message
+                : "Failed to resolve robot metadata before interactive readiness.");
+            state.ready = false;
+            state.drawFailed = true;
+            state.drawFailureReason = "robot-metadata-failed";
+            hideProgress();
+            flushLoadProfile("error");
+            return state;
         }
         if (!isLoadStillActive())
             return state;
@@ -1299,9 +1371,27 @@ export async function loadUsdStage(args) {
         totalCount: null,
     });
     setMessage("Resolving robot metadata...");
-    await ensureRobotMetadataReadyBeforeInteractive();
+    try {
+        await ensureRobotMetadataReadyBeforeInteractive();
+    }
+    catch (error) {
+        console.error("[usd-loader] Failed to resolve robot metadata before interactive readiness.", error);
+        setMessage(error instanceof Error && error.message
+            ? error.message
+            : "Failed to resolve robot metadata before interactive readiness.");
+        state.ready = false;
+        state.drawFailed = true;
+        state.drawFailureReason = "robot-metadata-failed";
+        hideProgress();
+        flushLoadProfile("error");
+        return state;
+    }
     if (!isLoadStillActive())
         return state;
+    const runtimeBridgeWarmupWarningMessage = getRuntimeBridgeWarmupWarningMessage(lastRuntimeBridgeWarmupSummary);
+    if (runtimeBridgeWarmupWarningMessage) {
+        setMessage(runtimeBridgeWarmupWarningMessage);
+    }
     retryStageAxisAlignmentUntilStageMetadata();
     state.ready = true;
     rebuildLinkAxes();

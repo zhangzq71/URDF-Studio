@@ -13,7 +13,6 @@ export { Providers } from './Providers';
 // Sub-components
 export { Header } from './components/Header';
 export { SettingsModal } from './components/SettingsModal';
-export { AboutModal } from './components/AboutModal';
 
 // Hooks
 export * from './hooks';

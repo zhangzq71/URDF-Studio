@@ -4,13 +4,13 @@ import * as THREE from 'three';
 
 import {
   fitPrimitiveFromPoints,
+  fitPrimitiveFromObject3D,
   resolveMJCFMeshBackedPrimitiveGeoms,
 } from './mjcfMeshBackedPrimitiveResolver.ts';
 
 function createBasis(axis: THREE.Vector3): { u: THREE.Vector3; v: THREE.Vector3 } {
-  const reference = Math.abs(axis.z) < 0.9
-    ? new THREE.Vector3(0, 0, 1)
-    : new THREE.Vector3(1, 0, 0);
+  const reference =
+    Math.abs(axis.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
   const u = new THREE.Vector3().crossVectors(reference, axis).normalize();
   const v = new THREE.Vector3().crossVectors(axis, u).normalize();
   return { u, v };
@@ -34,7 +34,8 @@ function generateCylinderPoints(
     const t = -segmentLength / 2 + (segmentLength * ring) / 8;
     for (let segment = 0; segment < 24; segment += 1) {
       const angle = (segment / 24) * Math.PI * 2;
-      const point = center.clone()
+      const point = center
+        .clone()
         .addScaledVector(normalizedAxis, t)
         .addScaledVector(u, Math.cos(angle) * radius)
         .addScaledVector(v, Math.sin(angle) * radius);
@@ -67,7 +68,8 @@ function generateCapsulePoints(
 
       for (let segment = 0; segment < 24; segment += 1) {
         const angle = (segment / 24) * Math.PI * 2;
-        const point = capCenter.clone()
+        const point = capCenter
+          .clone()
           .addScaledVector(normalizedAxis, axisOffset)
           .addScaledVector(u, Math.cos(angle) * radial)
           .addScaledVector(v, Math.sin(angle) * radial);
@@ -79,10 +81,42 @@ function generateCapsulePoints(
   return points;
 }
 
-function assertVectorClose(actual: readonly number[], expected: readonly number[], tolerance: number): void {
+function generateBoxCornerPoints(
+  center: THREE.Vector3,
+  size: THREE.Vector3,
+): Array<{ x: number; y: number; z: number }> {
+  const half = size.clone().multiplyScalar(0.5);
+  const points: Array<{ x: number; y: number; z: number }> = [];
+
+  for (const signX of [-1, 1]) {
+    for (const signY of [-1, 1]) {
+      for (const signZ of [-1, 1]) {
+        pushPoint(
+          points,
+          new THREE.Vector3(
+            center.x + half.x * signX,
+            center.y + half.y * signY,
+            center.z + half.z * signZ,
+          ),
+        );
+      }
+    }
+  }
+
+  return points;
+}
+
+function assertVectorClose(
+  actual: readonly number[],
+  expected: readonly number[],
+  tolerance: number,
+): void {
   assert.equal(actual.length, expected.length);
   actual.forEach((value, index) => {
-    assert.ok(Math.abs(value - expected[index]!) <= tolerance, `index ${index}: expected ${expected[index]}, got ${value}`);
+    assert.ok(
+      Math.abs(value - expected[index]!) <= tolerance,
+      `index ${index}: expected ${expected[index]}, got ${value}`,
+    );
   });
 }
 
@@ -98,11 +132,17 @@ test('fits a mesh-backed cylinder point cloud with stable radius and centerline 
 
   assert.ok(fit);
   assert.ok(Math.abs(fit.radius - radius) <= 1e-3, `expected radius ${radius}, got ${fit.radius}`);
-  assert.ok(Math.abs(fit.segmentLength - segmentLength) <= 2e-3, `expected length ${segmentLength}, got ${fit.segmentLength}`);
+  assert.ok(
+    Math.abs(fit.segmentLength - segmentLength) <= 2e-3,
+    `expected length ${segmentLength}, got ${fit.segmentLength}`,
+  );
   assertVectorClose(fit.center, [center.x, center.y, center.z], 2e-3);
 
   const actualAxis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
-  assert.ok(Math.abs(actualAxis.dot(axis)) >= 0.999, `expected axis ${axis.toArray()}, got ${actualAxis.toArray()}`);
+  assert.ok(
+    Math.abs(actualAxis.dot(axis)) >= 0.999,
+    `expected axis ${axis.toArray()}, got ${actualAxis.toArray()}`,
+  );
 });
 
 test('fits a mesh-backed capsule point cloud and converts total length into MuJoCo segment length', () => {
@@ -117,11 +157,84 @@ test('fits a mesh-backed capsule point cloud and converts total length into MuJo
 
   assert.ok(fit);
   assert.ok(Math.abs(fit.radius - radius) <= 5e-3, `expected radius ${radius}, got ${fit.radius}`);
-  assert.ok(Math.abs(fit.segmentLength - segmentLength) <= 1.5e-2, `expected length ${segmentLength}, got ${fit.segmentLength}`);
+  assert.ok(
+    Math.abs(fit.segmentLength - segmentLength) <= 1.5e-2,
+    `expected length ${segmentLength}, got ${fit.segmentLength}`,
+  );
   assertVectorClose(fit.center, [center.x, center.y, center.z], 5e-3);
 
   const actualAxis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
-  assert.ok(Math.abs(actualAxis.dot(axis)) >= 0.995, `expected axis ${axis.toArray()}, got ${actualAxis.toArray()}`);
+  assert.ok(
+    Math.abs(actualAxis.dot(axis)) >= 0.995,
+    `expected axis ${axis.toArray()}, got ${actualAxis.toArray()}`,
+  );
+});
+
+test('fits mesh-backed capsules with AABB semantics when compiler fitaabb is enabled', () => {
+  const center = new THREE.Vector3(0.0011089, -0.000417, -0.0013828);
+  const size = new THREE.Vector3(0.0266654, 0.0250001, 0.08993);
+  const fit = fitPrimitiveFromPoints(generateBoxCornerPoints(center, size), 'capsule', 'aabb');
+
+  assert.ok(fit);
+  assert.ok(
+    Math.abs(fit.radius - 0.0133327) <= 1e-6,
+    `expected radius 0.0133327, got ${fit.radius}`,
+  );
+  assert.ok(
+    Math.abs(fit.segmentLength - 0.0632646) <= 1e-6,
+    `expected segmentLength 0.0632646, got ${fit.segmentLength}`,
+  );
+  assertVectorClose(fit.center, [center.x, center.y, center.z], 1e-6);
+  assertVectorClose(fit.axis, [0, 0, 1], 1e-6);
+});
+
+test('fits mesh-backed capsules from the axis-aligned bounding box when fitaabb is enabled', () => {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 0.04, 0.04),
+    new THREE.MeshBasicMaterial(),
+  );
+
+  const fit = fitPrimitiveFromObject3D(mesh, 'capsule', { fitaabb: true });
+
+  assert.ok(fit);
+  assertVectorClose(fit.center, [0, 0, 0], 1e-6);
+  const actualAxis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
+  assert.ok(
+    Math.abs(actualAxis.dot(new THREE.Vector3(1, 0, 0))) >= 0.999999,
+    `expected x-axis alignment, got ${actualAxis.toArray()}`,
+  );
+  assert.ok(Math.abs(fit.radius - 0.02) <= 1e-6, `expected radius 0.02, got ${fit.radius}`);
+  assert.ok(
+    Math.abs(fit.segmentLength - 0.04) <= 1e-6,
+    `expected segment length 0.04, got ${fit.segmentLength}`,
+  );
+});
+
+test('fits fitaabb bounds from all mesh vertices, including vertices not referenced by faces', () => {
+  const geometry = new THREE.BoxGeometry(0.08, 0.04, 0.04);
+  const sourcePositions = geometry.getAttribute('position');
+  assert.ok(sourcePositions);
+
+  const positions = new Float32Array(sourcePositions.array.length + 3);
+  positions.set(sourcePositions.array as ArrayLike<number>, 0);
+  positions.set([0.08, 0, 0], sourcePositions.array.length);
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  const fit = fitPrimitiveFromObject3D(mesh, 'capsule', { fitaabb: true });
+
+  assert.ok(fit);
+  assertVectorClose(fit.center, [0.02, 0, 0], 1e-6);
+  const actualAxis = new THREE.Vector3(fit.axis[0], fit.axis[1], fit.axis[2]).normalize();
+  assert.ok(
+    Math.abs(actualAxis.dot(new THREE.Vector3(1, 0, 0))) >= 0.999999,
+    `expected x-axis alignment, got ${actualAxis.toArray()}`,
+  );
+  assert.ok(Math.abs(fit.radius - 0.02) <= 1e-6, `expected radius 0.02, got ${fit.radius}`);
+  assert.ok(
+    Math.abs(fit.segmentLength - 0.08) <= 1e-6,
+    `expected segment length 0.08, got ${fit.segmentLength}`,
+  );
 });
 
 test('resolves mesh-backed primitive geoms into fromto capsules in body space', async () => {
@@ -146,9 +259,7 @@ test('resolves mesh-backed primitive geoms into fromto capsules in body space', 
       classesByQName: new Map(),
       qnamesByClassName: new Map(),
     },
-    meshMap: new Map([
-      ['link1', { name: 'link1', file: 'link1.obj' }],
-    ]),
+    meshMap: new Map([['link1', { name: 'link1', file: 'link1.obj' }]]),
     materialMap: new Map(),
     textureMap: new Map(),
     actuatorMap: new Map(),

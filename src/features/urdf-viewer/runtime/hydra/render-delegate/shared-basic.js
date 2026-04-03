@@ -77,14 +77,14 @@ export function wrapHydraCallbackObject(target, label) {
                     if (result && typeof result.then === "function") {
                         return result.catch((error) => {
                             logHydraCallbackError(`${label}.${String(property)}`, error);
-                            return undefined;
+                            throw error;
                         });
                     }
                     return result;
                 }
                 catch (error) {
                     logHydraCallbackError(`${label}.${String(property)}`, error);
-                    return undefined;
+                    throw error;
                 }
             };
             wrappedMethods.set(property, wrappedMethod);

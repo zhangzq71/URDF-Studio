@@ -9,9 +9,10 @@ export {
   OBJRenderer,
   DAERenderer,
   GLTFRenderer,
-  useLoadingManager
+  useLoadingManager,
 } from './MeshRenderers';
 export { MeshAssetNode } from './MeshAssetNode';
+export { preloadManagedMeshAsset } from './meshAssetPreload';
 
 // Scene Utilities
 export {
@@ -56,6 +57,8 @@ export {
   RESTING_DPR_CAP,
   resolveCanvasDpr,
   useAdaptiveInteractionQuality,
+  useWorkspaceCanvasInteractionState,
+  WorkspaceCanvasInteractionStateProvider,
   WorkspaceOrbitControls,
   LIGHTING_CONFIG,
   STUDIO_ENVIRONMENT_INTENSITY,
@@ -64,7 +67,10 @@ export {
   WORKSPACE_DEFAULT_CAMERA_POSITION,
   WORKSPACE_DEFAULT_CAMERA_UP,
 } from './SceneUtilities';
-export { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from './UnifiedTransformControls';
+export {
+  UnifiedTransformControls,
+  VISUALIZER_UNIFIED_GIZMO_SIZE,
+} from './UnifiedTransformControls';
 export { LoadingHud } from './LoadingHud';
 export {
   buildLoadingHudState,

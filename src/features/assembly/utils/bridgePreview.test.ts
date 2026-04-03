@@ -32,10 +32,12 @@ test('bridgeQuaternionToEulerDegrees maps normalized quaternions back to display
 });
 
 test('normalizeBridgeQuaternion falls back to identity for zero-length input', () => {
-  assert.deepEqual(
-    normalizeBridgeQuaternion({ x: 0, y: 0, z: 0, w: 0 }),
-    { x: 0, y: 0, z: 0, w: 1 },
-  );
+  assert.deepEqual(normalizeBridgeQuaternion({ x: 0, y: 0, z: 0, w: 0 }), {
+    x: 0,
+    y: 0,
+    z: 0,
+    w: 1,
+  });
 });
 
 test('buildBridgePreview includes quaternion metadata derived from euler degrees', () => {
@@ -61,4 +63,32 @@ test('buildBridgePreview includes quaternion metadata derived from euler degrees
   assert.ok(Math.abs((preview?.joint.origin.rpy.y ?? 0) - Math.PI / 2) < 1e-6);
   assert.ok(Math.abs((preview?.joint.origin.quatXyzw?.z ?? 0) - Math.sqrt(0.5)) < 1e-6);
   assert.ok(Math.abs((preview?.joint.origin.quatXyzw?.w ?? 0) - Math.sqrt(0.5)) < 1e-6);
+});
+
+test('buildBridgePreview keeps continuous joints limited to effort and velocity only', () => {
+  const preview = buildBridgePreview({
+    name: 'spin_joint',
+    parentComponentId: 'comp_a',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_b',
+    childLinkId: 'tool_link',
+    jointType: JointType.CONTINUOUS,
+    originXyz: { x: 0, y: 0, z: 0 },
+    axis: { x: 0, y: 0, z: 1 },
+    limitLower: -1.57,
+    limitUpper: 1.57,
+    limitEffort: 35,
+    limitVelocity: 12,
+    rotationMode: 'euler_deg',
+    rotationEulerDeg: { r: 0, p: 0, y: 0 },
+    rotationQuaternion: { x: 0, y: 0, z: 0, w: 1 },
+  });
+
+  assert.ok(preview);
+  assert.deepEqual(preview?.joint.limit, {
+    effort: 35,
+    velocity: 12,
+  });
+  assert.equal('lower' in (preview?.joint.limit ?? {}), false);
+  assert.equal('upper' in (preview?.joint.limit ?? {}), false);
 });

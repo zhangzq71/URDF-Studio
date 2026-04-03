@@ -8,7 +8,7 @@ import {
   type ViewerResourceScope,
   type ViewerRobotDataResolution,
 } from '@/features/urdf-viewer';
-import type { RobotFile, RobotState } from '@/types';
+import type { AssemblyTransform, RobotFile, RobotState } from '@/types';
 
 export const EMPTY_VIEWER_SELECTION = {
   type: null,
@@ -40,6 +40,13 @@ interface BuildUnifiedViewerScenePropsArgs {
   onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
   isMeshPreview?: boolean;
   viewerReloadKey?: number;
+  sourceSceneAssemblyComponentId?: string | null;
+  sourceSceneAssemblyComponentTransform?: AssemblyTransform | null;
+  showSourceSceneAssemblyComponentControls?: boolean;
+  onSourceSceneAssemblyComponentTransform?: (
+    componentId: string,
+    transform: AssemblyTransform,
+  ) => void;
 }
 
 export function buildUnifiedViewerSceneProps({
@@ -67,6 +74,10 @@ export function buildUnifiedViewerSceneProps({
   onCollisionTransform,
   isMeshPreview = false,
   viewerReloadKey = 0,
+  sourceSceneAssemblyComponentId,
+  sourceSceneAssemblyComponentTransform,
+  showSourceSceneAssemblyComponentControls = false,
+  onSourceSceneAssemblyComponentTransform,
 }: BuildUnifiedViewerScenePropsArgs): URDFViewerSceneBaseProps {
   const previewBlocksInteraction = hasActivePreview || !active;
 
@@ -97,5 +108,15 @@ export function buildUnifiedViewerSceneProps({
     onCollisionTransform: hasActivePreview ? undefined : onCollisionTransform,
     isMeshPreview: hasActivePreview ? false : isMeshPreview,
     runtimeInstanceKey: viewerReloadKey,
+    sourceSceneAssemblyComponentId: hasActivePreview ? null : sourceSceneAssemblyComponentId,
+    sourceSceneAssemblyComponentTransform: hasActivePreview
+      ? null
+      : sourceSceneAssemblyComponentTransform,
+    showSourceSceneAssemblyComponentControls: hasActivePreview
+      ? false
+      : showSourceSceneAssemblyComponentControls,
+    onSourceSceneAssemblyComponentTransform: hasActivePreview
+      ? undefined
+      : onSourceSceneAssemblyComponentTransform,
   });
 }

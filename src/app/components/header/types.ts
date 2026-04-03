@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
 
-export type HeaderTranslations = typeof translations['en'];
+export type HeaderTranslations = (typeof translations)['en'];
 export type HeaderMenuKey = 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
 
 export interface HeaderViewConfig {
@@ -35,7 +35,6 @@ export interface HeaderResponsiveLayout {
   showSettingsInline: boolean;
   showLanguageInline: boolean;
   showThemeInline: boolean;
-  showAboutInline: boolean;
   showSecondaryActionInline: boolean;
   showSecondaryActionLabel: boolean;
   showDesktopOverflow: boolean;
@@ -59,7 +58,6 @@ export interface HeaderOverflowMenuProps {
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
-  onOpenAbout: () => void;
   t: HeaderTranslations;
   showQuickAction: boolean;
   showSourceCode: boolean;
@@ -68,6 +66,5 @@ export interface HeaderOverflowMenuProps {
   showSettings: boolean;
   showLanguage: boolean;
   showTheme: boolean;
-  showAbout: boolean;
   showSecondaryAction?: boolean;
 }

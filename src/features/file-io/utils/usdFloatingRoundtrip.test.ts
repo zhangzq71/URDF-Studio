@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 
 import { parseMJCF } from '@/core/parsers/mjcf/mjcfParser';
 import { computeLinkWorldMatrices } from '@/core/robot/kinematics';
-import { JointType, type RobotState } from '@/types';
+import { JointType, type RobotData, type RobotState } from '@/types';
 import { adaptUsdViewerSnapshotToRobotData } from '@/features/urdf-viewer/utils/usdViewerRobotAdapter';
 import { ThreeRenderDelegateCore } from '@/features/urdf-viewer/runtime/hydra/render-delegate/ThreeRenderDelegateCore.js';
 import { exportRobotToUsd } from './usdExport';
@@ -35,7 +35,7 @@ function createFloatingRootRobot(): RobotState {
 }
 
 function buildLinkPaths(robot: RobotState, rootPrimName: string): Map<string, string> {
-  const childJointsByParent = new Map<string, typeof robot.joints[string][]>();
+  const childJointsByParent = new Map<string, (typeof robot.joints)[string][]>();
   Object.values(robot.joints).forEach((joint) => {
     const entries = childJointsByParent.get(joint.parentLinkId) || [];
     entries.push(joint);
@@ -78,10 +78,17 @@ function createRoundtripMetadataSnapshot(
     const rootPrimName = rootPrimMatch[1];
 
     const fakeMeshes = Object.fromEntries(
-      Array.from(buildLinkPaths(robot, rootPrimName).values(), (linkPath) => [`${linkPath}/visuals.proto_mesh_id0`, {}]),
+      Array.from(buildLinkPaths(robot, rootPrimName).values(), (linkPath) => [
+        `${linkPath}/visuals.proto_mesh_id0`,
+        {},
+      ]),
     );
     const delegate = Object.create(ThreeRenderDelegateCore.prototype) as ThreeRenderDelegateCore & {
       meshes: Record<string, object>;
+      getStage: () => {
+        GetRootLayer(): { ExportToString(): string };
+        GetUsedLayers(): Array<{ ExportToString(): string }>;
+      };
     };
 
     delegate.meshes = fakeMeshes;
@@ -100,9 +107,21 @@ function createRoundtripMetadataSnapshot(
       },
       GetUsedLayers() {
         return [
-          { ExportToString() { return layers.baseLayer; } },
-          { ExportToString() { return layers.physicsLayer; } },
-          { ExportToString() { return layers.sensorLayer; } },
+          {
+            ExportToString() {
+              return layers.baseLayer;
+            },
+          },
+          {
+            ExportToString() {
+              return layers.physicsLayer;
+            },
+          },
+          {
+            ExportToString() {
+              return layers.sensorLayer;
+            },
+          },
         ];
       },
     });
@@ -138,8 +157,22 @@ function assertWorldTransformsMatch(source: RobotState, target: RobotState) {
     const maxDelta = sourceElements.reduce((currentMax, sourceValue, index) => {
       return Math.max(currentMax, Math.abs(sourceValue - (targetElements[index] ?? 0)));
     }, 0);
-    assert.ok(maxDelta <= 1e-5, `expected world transform for ${linkName} to roundtrip (max delta ${maxDelta})`);
+    assert.ok(
+      maxDelta <= 1e-5,
+      `expected world transform for ${linkName} to roundtrip (max delta ${maxDelta})`,
+    );
   }
+}
+
+function toRobotState(robot: RobotData | RobotState): RobotState {
+  if ('selection' in robot) {
+    return robot;
+  }
+
+  return {
+    ...robot,
+    selection: { type: null, id: null },
+  };
 }
 
 test('USD roundtrip preserves floating-root joint semantics for MJCF free joints', async () => {
@@ -150,11 +183,16 @@ test('USD roundtrip preserves floating-root joint semantics for MJCF free joints
     assets: {},
   });
 
-  const physicsLayerPath = 'floating_root_robot/usd/configuration/floating_root_robot_description_physics.usd';
+  const physicsLayerPath =
+    'floating_root_robot/usd/configuration/floating_root_robot_description_physics.usd';
   const rootLayerText = await payload.archiveFiles.get(payload.rootLayerPath)?.text();
-  const baseLayerText = await payload.archiveFiles.get('floating_root_robot/usd/configuration/floating_root_robot_description_base.usd')?.text();
+  const baseLayerText = await payload.archiveFiles
+    .get('floating_root_robot/usd/configuration/floating_root_robot_description_base.usd')
+    ?.text();
   const physicsLayerText = await payload.archiveFiles.get(physicsLayerPath)?.text();
-  const sensorLayerText = await payload.archiveFiles.get('floating_root_robot/usd/configuration/floating_root_robot_description_sensor.usd')?.text();
+  const sensorLayerText = await payload.archiveFiles
+    .get('floating_root_robot/usd/configuration/floating_root_robot_description_sensor.usd')
+    ?.text();
 
   assert.ok(rootLayerText, 'expected USD root layer to exist');
   assert.ok(baseLayerText, 'expected USD base layer to exist');
@@ -171,8 +209,13 @@ test('USD roundtrip preserves floating-root joint semantics for MJCF free joints
   });
 
   assert.equal(metadata.source, 'usd-stage');
-  const floatingJointEntry = metadata.jointCatalogEntries.find((entry) => entry.jointName === 'floating_base_joint');
-  assert.ok(floatingJointEntry, 'expected floating_base_joint metadata to survive exported USD parsing');
+  const floatingJointEntry = metadata.jointCatalogEntries.find(
+    (entry) => entry.jointName === 'floating_base_joint',
+  );
+  assert.ok(
+    floatingJointEntry,
+    'expected floating_base_joint metadata to survive exported USD parsing',
+  );
   assert.equal(floatingJointEntry.jointType, 'floating');
   assert.equal(floatingJointEntry.jointTypeName, 'floating');
 
@@ -202,8 +245,10 @@ test('USD roundtrip preserves floating-root joint semantics for MJCF free joints
     return;
   }
 
-  const floatingJoint = Object.values(adapted.robotData.joints).find((joint) => joint.name === 'floating_base_joint');
+  const floatingJoint = Object.values(adapted.robotData.joints).find(
+    (joint) => joint.name === 'floating_base_joint',
+  );
   assert.ok(floatingJoint, 'expected floating_base_joint to survive USD reload');
   assert.equal(floatingJoint?.type, JointType.FLOATING);
-  assertWorldTransformsMatch(robot, adapted.robotData);
+  assertWorldTransformsMatch(robot, toRobotState(adapted.robotData));
 });

@@ -38,35 +38,40 @@ export function TreeEditorHeader({
   return (
     <>
       <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-        <div className="flex bg-element-bg p-0.5 rounded-lg">
-          <button
-            onClick={onSetStructureTab}
-            className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
-              sidebarTab === 'structure'
-                ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
-                : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
-            }`}
-          >
-            <Trees size={13} />
-            {t.simpleMode}
-          </button>
-          <button
-            onClick={onSetWorkspaceTab}
-            className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
-              sidebarTab === 'workspace'
-                ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
-                : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
-            }`}
-          >
-            <LayoutGrid size={13} />
-            {t.proMode}
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <span className="shrink-0 text-[10px] text-text-tertiary font-semibold tracking-[0.02em]">
+            {t.modeLabel}
+          </span>
+          <div className="inline-flex w-max max-w-full shrink-0 rounded-lg bg-segmented-bg p-0.5">
+            <button
+              onClick={onSetStructureTab}
+              className={`flex-none flex items-center justify-center gap-1.5 px-4 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all ${
+                sidebarTab === 'structure'
+                  ? 'bg-segmented-active text-system-blue shadow-sm'
+                  : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
+              }`}
+            >
+              <Trees size={13} />
+              {t.simpleMode}
+            </button>
+            <button
+              onClick={onSetWorkspaceTab}
+              className={`flex-none flex items-center justify-center gap-1.5 px-4 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all ${
+                sidebarTab === 'workspace'
+                  ? 'bg-segmented-active text-system-blue shadow-sm'
+                  : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
+              }`}
+            >
+              <LayoutGrid size={13} />
+              {t.proMode}
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="px-3 py-2 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
         <div className="flex items-center gap-2">
-          <label className="shrink-0 text-[10px] text-text-tertiary uppercase font-bold tracking-wider">
+          <label className="shrink-0 text-[10px] text-text-tertiary font-semibold tracking-[0.02em]">
             {nameLabel}
           </label>
           {isEditingName ? (

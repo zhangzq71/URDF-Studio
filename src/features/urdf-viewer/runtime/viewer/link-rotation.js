@@ -31,6 +31,8 @@ export class LinkRotationController {
         this.posedLinkFrameMatrixByLinkPath = new Map();
         this.subtreeIndexDirty = true;
         this.jointCatalogBuildPromise = null;
+        this.jointCatalogStatus = "idle";
+        this.jointCatalogError = null;
         this.lastJointCatalogBuildAttemptAtMs = 0;
         this.hasAppliedJointPose = false;
         this.jointPoseDirty = false;
@@ -175,6 +177,7 @@ export class LinkRotationController {
         this.lastKnownMeshCount = -1;
         this.lastIdleBasePoseRefreshAtMs = 0;
         this.lastJointCatalogBuildAttemptAtMs = 0;
+        this.setJointCatalogStatus("idle");
     }
     setStageSourcePath(path) {
         const normalized = String(path || "").trim();
@@ -210,15 +213,17 @@ export class LinkRotationController {
                 suppressIdleRefresh: true,
             });
         }
-        catch { }
+        catch (error) {
+            console.error("[link-rotation] Failed to prewarm joint pose pipeline.", error);
+        }
     }
     async prewarmJointCatalog() {
         this.ensureJointCatalogBuildScheduled();
         try {
             await this.ensureJointCatalogReady();
         }
-        catch {
-            // Keep preload best-effort.
+        catch (error) {
+            console.error("[link-rotation] Failed to prewarm joint catalog.", error);
         }
     }
     prewarmInteractivePoseCaches() {
@@ -333,6 +338,7 @@ export class LinkRotationController {
         this.subtreeIndexDirty = true;
         this.jointCatalogBuildPromise = null;
         this.lastJointCatalogBuildAttemptAtMs = 0;
+        this.setJointCatalogStatus("idle");
         this.hasAppliedJointPose = false;
         this.jointPoseDirty = false;
         this.basePoseDirty = true;
@@ -344,6 +350,10 @@ export class LinkRotationController {
         if (this.controls)
             this.controls.enabled = true;
         this.updateCursor();
+    }
+    setJointCatalogStatus(status, error = null) {
+        this.jointCatalogStatus = status;
+        this.jointCatalogError = error ?? null;
     }
     apply(renderInterface, options = {}) {
         const force = options.force === true;
@@ -1225,36 +1235,37 @@ export class LinkRotationController {
             return;
         const maxWaitMs = Number(options.maxWaitMs);
         if (!Number.isFinite(maxWaitMs) || maxWaitMs < 0) {
-            try {
-                await buildPromise;
-            }
-            catch { }
+            await buildPromise;
             return;
         }
         if (maxWaitMs <= 0)
             return;
         let timeoutHandle = null;
+        const timeoutToken = Symbol("joint-catalog-timeout");
         try {
             await Promise.race([
-                buildPromise,
+                buildPromise.then(() => null),
                 new Promise((resolve) => {
-                    timeoutHandle = window.setTimeout(resolve, maxWaitMs);
+                    timeoutHandle = window.setTimeout(() => resolve(timeoutToken), maxWaitMs);
                 }),
             ]);
         }
-        catch { }
-        if (timeoutHandle !== null) {
-            window.clearTimeout(timeoutHandle);
+        finally {
+            if (timeoutHandle !== null) {
+                window.clearTimeout(timeoutHandle);
+            }
         }
     }
     startJointCatalogBuildIfNeeded() {
         if (this.jointCatalogBuildPromise)
             return this.jointCatalogBuildPromise;
         if (this.jointCatalogByLinkPath.size > 0 || this.linkParentPathByLinkPath.size > 0) {
+            this.setJointCatalogStatus("ready");
             return Promise.resolve();
         }
         const cacheKey = this.getJointCatalogCacheKey();
         if (cacheKey && this.restoreJointCatalogFromCache(cacheKey)) {
+            this.setJointCatalogStatus("ready");
             return Promise.resolve();
         }
         const runtimeLinkPathIndex = buildRuntimeLinkPathIndex(this.renderInterface);
@@ -1268,12 +1279,48 @@ export class LinkRotationController {
             && (nowMs - this.lastJointCatalogBuildAttemptAtMs) < this.jointCatalogRebuildCooldownMs) {
             return null;
         }
-        const cachedRenderSnapshot = getRenderRobotMetadataSnapshot(this.renderInterface, this.stageSourcePath);
+        let cachedRenderSnapshot = null;
+        try {
+            cachedRenderSnapshot = getRenderRobotMetadataSnapshot(this.renderInterface, this.stageSourcePath, {
+                strictErrors: true,
+            });
+        }
+        catch (error) {
+            const errorText = String(error?.message || error || "").trim() || "joint-catalog-build-failed";
+            this.setJointCatalogStatus("error", errorText);
+            const buildPromise = Promise.reject(error).finally(() => {
+                this.jointCatalogBuildPromise = null;
+            });
+            void buildPromise.catch(() => { });
+            this.jointCatalogBuildPromise = buildPromise;
+            return buildPromise;
+        }
         const importedFromCachedSnapshot = this.ingestJointCatalogFromRenderSnapshot(cachedRenderSnapshot, runtimeLinkPathIndex);
         if (importedFromCachedSnapshot > 0) {
+            this.setJointCatalogStatus("ready");
             return Promise.resolve();
         }
-        return null;
+        this.lastJointCatalogBuildAttemptAtMs = nowMs;
+        this.setJointCatalogStatus("loading");
+        const initialStage = this.renderInterface?.getStage?.() || null;
+        const buildPromise = Promise.resolve()
+            .then(async () => {
+            await this.buildJointCatalog(initialStage);
+            if (cacheKey && (this.jointCatalogByLinkPath.size > 0 || this.linkParentPathByLinkPath.size > 0)) {
+                this.saveJointCatalogToCache(cacheKey);
+            }
+            this.setJointCatalogStatus("ready");
+        })
+            .catch((error) => {
+            const errorText = String(error?.message || error || "").trim() || "joint-catalog-build-failed";
+            this.setJointCatalogStatus("error", errorText);
+            throw error;
+        })
+            .finally(() => {
+            this.jointCatalogBuildPromise = null;
+        });
+        this.jointCatalogBuildPromise = buildPromise;
+        return buildPromise;
     }
     getDurationParamMsFromQuery(paramName, fallbackMs, minMs, maxMs) {
         void paramName;
@@ -1384,8 +1431,10 @@ export class LinkRotationController {
             ownedRootStage = await this.safeOpenUsdStage(usdModule, this.stageSourcePath);
             stage = ownedRootStage;
         }
-        if (!stage)
-            return;
+        if (!stage) {
+            const stageSuffix = this.stageSourcePath ? ` for ${this.stageSourcePath}` : "";
+            throw new Error(`[link-rotation] Failed to resolve USD stage for joint catalog build${stageSuffix}.`);
+        }
         try {
             const fallbackDelayMs = Math.max(0, Math.floor(this.jointCatalogStageFallbackDelayMs));
             if (fallbackDelayMs > 0) {
@@ -1427,8 +1476,12 @@ export class LinkRotationController {
             const exported = rootLayer.ExportToString();
             return typeof exported === "string" ? exported : String(exported || "");
         }
-        catch {
-            return "";
+        catch (error) {
+            const stageSuffix = this.stageSourcePath ? ` for ${this.stageSourcePath}` : "";
+            console.error(`[link-rotation] Failed to export USD root layer text${stageSuffix}.`, error);
+            throw new Error(`[link-rotation] Failed to export USD root layer text${stageSuffix}.`, {
+                cause: error,
+            });
         }
     }
     async safeOpenUsdStage(usdModule, stagePath) {
@@ -1442,8 +1495,11 @@ export class LinkRotationController {
             }
             return openedStage || null;
         }
-        catch {
-            return null;
+        catch (error) {
+            console.error(`[link-rotation] Failed to open USD stage: ${stagePath}`, error);
+            throw new Error(`[link-rotation] Failed to open USD stage: ${stagePath}`, {
+                cause: error,
+            });
         }
     }
     ingestJointCatalogFromStage(stage, layerText, fallbackRootPaths, runtimeLinkPathIndex) {

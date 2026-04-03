@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @font-face {
   font-family: 'JetBrains Mono';
@@ -91,17 +91,31 @@
   --ui-slider-track: #d7dde6;
   --ui-slider-thumb-bg: #ffffff;
   --ui-slider-thumb-border: rgba(15, 23, 42, 0.12);
-  --ui-slider-thumb-shadow: 0 1px 2px rgba(15, 23, 42, 0.10), 0 4px 10px rgba(15, 23, 42, 0.10);
-  --ui-slider-thumb-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.12), 0 6px 14px rgba(15, 23, 42, 0.14);
-  --ui-slider-thumb-shadow-active: 0 3px 8px rgba(15, 23, 42, 0.14), 0 8px 18px rgba(15, 23, 42, 0.16);
+  --ui-slider-thumb-shadow: 0 1px 2px rgba(15, 23, 42, 0.1), 0 4px 10px rgba(15, 23, 42, 0.1);
+  --ui-slider-thumb-shadow-hover:
+    0 2px 4px rgba(15, 23, 42, 0.12), 0 6px 14px rgba(15, 23, 42, 0.14);
+  --ui-slider-thumb-shadow-active:
+    0 3px 8px rgba(15, 23, 42, 0.14), 0 8px 18px rgba(15, 23, 42, 0.16);
 
   color-scheme: light;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    sans-serif;
   font-size: calc(1rem * var(--font-effective-scale));
 }
 
 .urdf-studio-canvas[data-lang='en'] {
-  --font-language-scale: 0.93;
+  /* Match the app-wide Latin/CJK optical size compensation. */
+  --font-language-scale: 0.95;
 }
 
 .urdf-studio-canvas[data-lang='zh'] {
@@ -156,8 +170,10 @@
     --ui-slider-track: #7d8896;
     --ui-slider-thumb-border: rgba(15, 23, 42, 0.2);
     --ui-slider-thumb-shadow: 0 1px 2px rgba(15, 23, 42, 0.14), 0 4px 10px rgba(15, 23, 42, 0.16);
-    --ui-slider-thumb-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.18), 0 6px 14px rgba(15, 23, 42, 0.20);
-    --ui-slider-thumb-shadow-active: 0 3px 8px rgba(15, 23, 42, 0.2), 0 8px 18px rgba(15, 23, 42, 0.22);
+    --ui-slider-thumb-shadow-hover:
+      0 2px 4px rgba(15, 23, 42, 0.18), 0 6px 14px rgba(15, 23, 42, 0.2);
+    --ui-slider-thumb-shadow-active:
+      0 3px 8px rgba(15, 23, 42, 0.2), 0 8px 18px rgba(15, 23, 42, 0.22);
   }
 
   .urdf-studio-canvas.dark {
@@ -183,7 +199,9 @@
 .urdf-studio-canvas pre,
 .urdf-studio-canvas kbd,
 .urdf-studio-canvas samp {
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace !important;
+  font-family:
+    'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace !important;
 }
 
 .urdf-studio-canvas :where(button, input, select, textarea):focus-visible {
@@ -191,21 +209,65 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 30%, transparent);
 }
 
-.urdf-studio-canvas .text-xs { font-size: calc(0.75rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-sm { font-size: calc(0.875rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-base { font-size: calc(1rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-lg { font-size: calc(1.125rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-xl { font-size: calc(1.25rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-2xl { font-size: calc(1.5rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-3xl { font-size: calc(1.875rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-4xl { font-size: calc(2.25rem * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[8px\] { font-size: calc(8px * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[9px\] { font-size: calc(9px * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[10px\] { font-size: calc(10px * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[11px\] { font-size: calc(11px * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[12px\] { font-size: calc(12px * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[13px\] { font-size: calc(13px * var(--font-effective-scale)) !important; }
-.urdf-studio-canvas .text-\[14px\] { font-size: calc(14px * var(--font-effective-scale)) !important; }
+.urdf-studio-canvas .text-xs {
+  font-size: calc(0.75rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-sm {
+  font-size: calc(0.875rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-base {
+  font-size: calc(1rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-lg {
+  font-size: calc(1.125rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-xl {
+  font-size: calc(1.25rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-2xl {
+  font-size: calc(1.5rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-3xl {
+  font-size: calc(1.875rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-4xl {
+  font-size: calc(2.25rem * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[8px\] {
+  font-size: calc(8px * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[9px\] {
+  font-size: calc(9px * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[10px\] {
+  font-size: calc(10px * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[11px\] {
+  font-size: calc(11px * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[12px\] {
+  font-size: calc(12px * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[13px\] {
+  font-size: calc(13px * var(--font-effective-scale)) !important;
+}
+
+.urdf-studio-canvas .text-\[14px\] {
+  font-size: calc(14px * var(--font-effective-scale)) !important;
+}
 
 .urdf-studio-canvas ::-webkit-scrollbar {
   width: 6px;

@@ -1,11 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
-import type {
-  InteractionHelperKind,
-  RobotFile,
-  RobotState,
-  UrdfJoint,
-  UrdfLink,
-} from '@/types';
+import type { InteractionHelperKind, RobotFile, RobotState, UrdfJoint, UrdfLink } from '@/types';
+import { getLatestUsdStageLoadDebugEntry } from './usdStageLoadDebug';
 
 type HighlightMode = 'link' | 'collision';
 
@@ -183,7 +178,11 @@ export interface RegressionDebugApi {
   getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
   setViewerFlags: (flags: RegressionViewerFlags) => { ok: boolean };
-  setViewerToolMode: (toolMode: string) => { ok: boolean; changed: boolean; activeMode: string | null };
+  setViewerToolMode: (toolMode: string) => {
+    ok: boolean;
+    changed: boolean;
+    activeMode: string | null;
+  };
   setViewerJointAngles: (jointAngles: Record<string, number>) => { ok: boolean; changed: boolean };
 }
 
@@ -217,9 +216,8 @@ let viewerHandlers: ViewerRegressionHandlers | null = null;
 let viewerResourceScopeState: RegressionViewerResourceScopeState | null = null;
 let runtimeRobot: any | null = null;
 let runtimeRevision = 0;
-let projectedInteractionTargetsProvider:
-  | (() => RegressionProjectedInteractionTarget[])
-  | null = null;
+let projectedInteractionTargetsProvider: (() => RegressionProjectedInteractionTarget[]) | null =
+  null;
 
 function toFixedArray(
   value: { x?: number; y?: number; z?: number } | [number, number, number] | undefined | null,
@@ -229,18 +227,10 @@ function toFixedArray(
   }
 
   if (Array.isArray(value)) {
-    return [
-      Number(value[0] ?? 0),
-      Number(value[1] ?? 0),
-      Number(value[2] ?? 0),
-    ];
+    return [Number(value[0] ?? 0), Number(value[1] ?? 0), Number(value[2] ?? 0)];
   }
 
-  return [
-    Number(value.x ?? 0),
-    Number(value.y ?? 0),
-    Number(value.z ?? 0),
-  ];
+  return [Number(value.x ?? 0), Number(value.y ?? 0), Number(value.z ?? 0)];
 }
 
 function summarizeGeometry(geometry: UrdfLink['visual'] | UrdfLink['collision']) {
@@ -361,13 +351,18 @@ function summarizeRobotState(robotState: RobotState) {
   };
 }
 
-function summarizeInteractionSelection(selection: {
-  type: 'link' | 'joint' | null;
-  id: string | null;
-  subType?: 'visual' | 'collision';
-  objectIndex?: number;
-  helperKind?: InteractionHelperKind;
-} | null | undefined) {
+function summarizeInteractionSelection(
+  selection:
+    | {
+        type: 'link' | 'joint' | null;
+        id: string | null;
+        subType?: 'visual' | 'collision';
+        objectIndex?: number;
+        helperKind?: InteractionHelperKind;
+      }
+    | null
+    | undefined,
+) {
   return {
     type: selection?.type ?? null,
     id: selection?.id ?? null,
@@ -457,15 +452,11 @@ function summarizeRuntimeRobot(robot: any) {
 
   const summarizeRuntimeMaterial = (material: any): RuntimeMaterialSummary => {
     const hasTexture = Boolean(material?.map);
-    const color = material?.color?.isColor
-      ? `#${material.color.getHexString()}`
-      : null;
+    const color = material?.color?.isColor ? `#${material.color.getHexString()}` : null;
 
     return {
       type: typeof material?.type === 'string' ? material.type : 'UnknownMaterial',
-      name: typeof material?.name === 'string' && material.name.trim()
-        ? material.name
-        : null,
+      name: typeof material?.name === 'string' && material.name.trim() ? material.name : null,
       hasTexture,
       color,
       transparent: material?.transparent === true,
@@ -477,7 +468,8 @@ function summarizeRuntimeRobot(robot: any) {
     if (child.name === '__com_visual__') helperCounts.centerOfMass += 1;
     if (child.name === '__inertia_box__') helperCounts.inertiaBox += 1;
     if (child.name === '__origin_axes__') helperCounts.originAxes += 1;
-    if (child.name === '__joint_axis__' || child.name === '__joint_axis_helper__') helperCounts.jointAxis += 1;
+    if (child.name === '__joint_axis__' || child.name === '__joint_axis_helper__')
+      helperCounts.jointAxis += 1;
 
     const linkName = resolveRuntimeLinkName(child);
     if (linkName) {
@@ -524,9 +516,10 @@ function summarizeRuntimeRobot(robot: any) {
           visible: child.visible !== false,
           effectiveVisible,
           isPlaceholder,
-          missingMeshPath: typeof child.userData?.missingMeshPath === 'string'
-            ? child.userData.missingMeshPath
-            : null,
+          missingMeshPath:
+            typeof child.userData?.missingMeshPath === 'string'
+              ? child.userData.missingMeshPath
+              : null,
           materials: summarizedMaterials,
         };
         visualMeshes.push(visualMeshSummary);
@@ -548,10 +541,18 @@ function summarizeRuntimeRobot(robot: any) {
   joints.forEach((joint: any) => {
     runtimeJoints.push({
       name: typeof joint?.name === 'string' ? joint.name : '',
-      type: typeof joint?.jointType === 'string' ? joint.jointType : (typeof joint?.type === 'string' ? joint.type : null),
-      angle: typeof joint?.angle === 'number'
-        ? joint.angle
-        : (typeof joint?.jointValue === 'number' ? joint.jointValue : null),
+      type:
+        typeof joint?.jointType === 'string'
+          ? joint.jointType
+          : typeof joint?.type === 'string'
+            ? joint.type
+            : null,
+      angle:
+        typeof joint?.angle === 'number'
+          ? joint.angle
+          : typeof joint?.jointValue === 'number'
+            ? joint.jointValue
+            : null,
       axis: toFixedArray(joint?.axis),
       limit: joint?.limit
         ? {
@@ -566,21 +567,58 @@ function summarizeRuntimeRobot(robot: any) {
     name: typeof robot?.name === 'string' ? robot.name : null,
     linkCount: Array.from(linkMap.values()).length,
     jointCount: runtimeJoints.length,
-    visualGroupCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualGroupCount, 0),
-    collisionGroupCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionGroupCount, 0),
-    visualMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualMeshCount, 0),
-    collisionMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionMeshCount, 0),
-    placeholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.placeholderMeshCount, 0),
-    visiblePlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visiblePlaceholderMeshCount, 0),
-    hiddenPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.hiddenPlaceholderMeshCount, 0),
-    visualPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visualPlaceholderMeshCount, 0),
-    visibleVisualPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.visibleVisualPlaceholderMeshCount, 0),
-    collisionPlaceholderMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.collisionPlaceholderMeshCount, 0),
-    texturedVisualMeshCount: Array.from(linkMap.values()).reduce((sum, entry) => sum + entry.texturedVisualMeshCount, 0),
+    visualGroupCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.visualGroupCount,
+      0,
+    ),
+    collisionGroupCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.collisionGroupCount,
+      0,
+    ),
+    visualMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.visualMeshCount,
+      0,
+    ),
+    collisionMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.collisionMeshCount,
+      0,
+    ),
+    placeholderMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.placeholderMeshCount,
+      0,
+    ),
+    visiblePlaceholderMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.visiblePlaceholderMeshCount,
+      0,
+    ),
+    hiddenPlaceholderMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.hiddenPlaceholderMeshCount,
+      0,
+    ),
+    visualPlaceholderMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.visualPlaceholderMeshCount,
+      0,
+    ),
+    visibleVisualPlaceholderMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.visibleVisualPlaceholderMeshCount,
+      0,
+    ),
+    collisionPlaceholderMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.collisionPlaceholderMeshCount,
+      0,
+    ),
+    texturedVisualMeshCount: Array.from(linkMap.values()).reduce(
+      (sum, entry) => sum + entry.texturedVisualMeshCount,
+      0,
+    ),
     helpers: helperCounts,
     links: Array.from(linkMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
-    placeholderMeshes: placeholderMeshes.sort((a, b) => `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`)),
-    visualMeshes: visualMeshes.sort((a, b) => `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`)),
+    placeholderMeshes: placeholderMeshes.sort((a, b) =>
+      `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`),
+    ),
+    visualMeshes: visualMeshes.sort((a, b) =>
+      `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`),
+    ),
     joints: runtimeJoints.sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
@@ -617,7 +655,10 @@ function summarizeRuntimeSceneTransforms(robot: any) {
         name: typeof child.name === 'string' ? child.name : '',
         position: toFixedArray(child.getWorldPosition?.(new Vector3())),
         quaternion: child.getWorldQuaternion
-          ? child.getWorldQuaternion(new Quaternion()).toArray().map((value: number) => Number(value.toFixed(6))) as [number, number, number, number]
+          ? (child
+              .getWorldQuaternion(new Quaternion())
+              .toArray()
+              .map((value: number) => Number(value.toFixed(6))) as [number, number, number, number])
           : null,
       });
       return;
@@ -629,7 +670,10 @@ function summarizeRuntimeSceneTransforms(robot: any) {
         type: typeof child?.jointType === 'string' ? child.jointType : null,
         position: toFixedArray(child.getWorldPosition?.(new Vector3())),
         quaternion: child.getWorldQuaternion
-          ? child.getWorldQuaternion(new Quaternion()).toArray().map((value: number) => Number(value.toFixed(6))) as [number, number, number, number]
+          ? (child
+              .getWorldQuaternion(new Quaternion())
+              .toArray()
+              .map((value: number) => Number(value.toFixed(6))) as [number, number, number, number])
           : null,
         axis: toFixedArray(child.axis),
       });
@@ -647,7 +691,10 @@ function summarizeRuntimeSceneTransforms(robot: any) {
         name: typeof child.name === 'string' ? child.name : '',
         position: toFixedArray(child.getWorldPosition?.(new Vector3())),
         quaternion: child.getWorldQuaternion
-          ? child.getWorldQuaternion(new Quaternion()).toArray().map((value: number) => Number(value.toFixed(6))) as [number, number, number, number]
+          ? (child
+              .getWorldQuaternion(new Quaternion())
+              .toArray()
+              .map((value: number) => Number(value.toFixed(6))) as [number, number, number, number])
           : null,
       });
     }
@@ -656,7 +703,9 @@ function summarizeRuntimeSceneTransforms(robot: any) {
   return {
     links: links.sort((a, b) => a.name.localeCompare(b.name)),
     joints: joints.sort((a, b) => a.name.localeCompare(b.name)),
-    visualMeshes: visualMeshes.sort((a, b) => `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`)),
+    visualMeshes: visualMeshes.sort((a, b) =>
+      `${a.link}:${a.name}`.localeCompare(`${b.link}:${b.name}`),
+    ),
   };
 }
 
@@ -706,23 +755,81 @@ export function getRegressionSnapshot(): RegressionSnapshot {
     availableFiles: getAvailableFilesSummary(),
     selectedFile: selectedFile ? { name: selectedFile.name, format: selectedFile.format } : null,
     store: robotState ? summarizeRobotState(robotState) : null,
-    interaction: interactionState ? {
-      selection: summarizeInteractionSelection(interactionState.selection),
-      hoveredSelection: summarizeInteractionSelection(interactionState.hoveredSelection),
-    } : null,
+    interaction: interactionState
+      ? {
+          selection: summarizeInteractionSelection(interactionState.selection),
+          hoveredSelection: summarizeInteractionSelection(interactionState.hoveredSelection),
+        }
+      : null,
     viewer: viewerHandlers?.getSnapshot() ?? null,
     runtime: summarizeRuntimeRobot(runtimeRobot),
   };
 }
 
 export function installRegressionDebugApi(targetWindow: Window): void {
-  const waitForRuntimeSnapshot = async (fileName: string, timeoutMs = 3000): Promise<RegressionSnapshot> => {
+  const resolveAvailableFile = (fileName: string): RobotFile | null =>
+    appHandlers?.getAvailableFiles().find((entry) => entry.name === fileName) ?? null;
+
+  const hasCommittedUsdSnapshot = (fileName: string, snapshot: RegressionSnapshot): boolean => {
+    const committedEntry = getLatestUsdStageLoadDebugEntry(
+      targetWindow,
+      fileName,
+      'commit-worker-robot-data',
+      'resolved',
+    );
+    if (!committedEntry) {
+      return false;
+    }
+
+    if (snapshot.selectedFile?.name !== fileName || !snapshot.store) {
+      return false;
+    }
+
+    const expectedLinkCount = Number(committedEntry.detail?.linkCount ?? Number.NaN);
+    const expectedJointCount = Number(committedEntry.detail?.jointCount ?? Number.NaN);
+    if (!Number.isFinite(expectedLinkCount) || !Number.isFinite(expectedJointCount)) {
+      return false;
+    }
+
+    return (
+      snapshot.store.linkCount === expectedLinkCount &&
+      snapshot.store.jointCount === expectedJointCount
+    );
+  };
+
+  const waitForStableSnapshot = async (
+    fileName: string,
+    timeoutMs = 20_000,
+  ): Promise<RegressionSnapshot> => {
     const startedAt = Date.now();
+    const isUsd = resolveAvailableFile(fileName)?.format === 'usd';
 
     while (Date.now() - startedAt < timeoutMs) {
       const snapshot = getRegressionSnapshot();
-      if (snapshot.selectedFile?.name === fileName && snapshot.runtime) {
+      if (
+        isUsd
+          ? getLatestUsdStageLoadDebugEntry(targetWindow, fileName, 'ready', 'resolved') &&
+            hasCommittedUsdSnapshot(fileName, snapshot)
+          : snapshot.selectedFile?.name === fileName && snapshot.runtime
+      ) {
         return snapshot;
+      }
+
+      if (isUsd) {
+        const loadFailedEntry = getLatestUsdStageLoadDebugEntry(
+          targetWindow,
+          fileName,
+          'load-failed',
+        );
+        const commitRejectedEntry = getLatestUsdStageLoadDebugEntry(
+          targetWindow,
+          fileName,
+          'commit-worker-robot-data',
+          'rejected',
+        );
+        if (loadFailedEntry || commitRejectedEntry) {
+          return snapshot;
+        }
       }
 
       await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
@@ -760,7 +867,7 @@ export function installRegressionDebugApi(targetWindow: Window): void {
       setRegressionRuntimeRobot(null);
       const result = await appHandlers.loadRobotByName(fileName);
       const snapshot = result.loaded
-        ? await waitForRuntimeSnapshot(fileName)
+        ? await waitForStableSnapshot(fileName)
         : getRegressionSnapshot();
       return {
         loaded: result.loaded,

@@ -1,12 +1,13 @@
 import { memo, type ReactNode, type RefObject } from 'react';
 import * as THREE from 'three';
 import type { Theme } from '@/types';
+import type { SnapshotCaptureAction } from '@/shared/components/3d/scene/snapshotConfig';
 import { STUDIO_ENVIRONMENT_INTENSITY } from '@/shared/components/3d';
 import { WorkspaceCanvas } from '@/app/components/WorkspaceCanvas';
 
 interface VisualizerCanvasProps {
   theme: Theme;
-  snapshotAction?: RefObject<(() => void) | null>;
+  snapshotAction?: RefObject<SnapshotCaptureAction | null>;
   sceneRef?: RefObject<THREE.Scene | null>;
   robotName?: string;
   onPointerMissed?: () => void;

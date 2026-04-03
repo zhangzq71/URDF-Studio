@@ -1,11 +1,7 @@
 import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { URDFCollider, URDFVisual } from '@/core/parsers/urdf/loader';
-import {
-  createLoadingManager,
-  createMeshLoader,
-  type ColladaRootNormalizationHints,
-} from '@/core/loaders';
+import { createLoadingManager, type ColladaRootNormalizationHints } from '@/core/loaders';
 import { getCollisionGeometryEntries } from '@/core/robot';
 import { GeometryType } from '@/types';
 import type { UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
@@ -29,6 +25,7 @@ import {
   rebuildLinkMeshMapForLink,
   updateVisualMaterial,
 } from './robotLoaderPatchUtils';
+import { createViewerMeshLoader } from './createViewerMeshLoader';
 
 interface PatchCategoryOptions {
   robotModel: THREE.Object3D;
@@ -69,7 +66,8 @@ function patchGeometryCategory({
     ? (child: THREE.Object3D) => (child as any).isURDFCollider
     : (child: THREE.Object3D) => (child as any).isURDFVisual;
 
-  let targetGroup = explicitTargetGroup ?? (linkObject.children.find(groupPredicate) as THREE.Object3D | undefined);
+  let targetGroup =
+    explicitTargetGroup ?? (linkObject.children.find(groupPredicate) as THREE.Object3D | undefined);
 
   if (!targetGroup) {
     targetGroup = isCollision ? new URDFCollider() : new URDFVisual();
@@ -87,10 +85,11 @@ function patchGeometryCategory({
 
   const dims = geometry.dimensions || DEFAULT_VEC3;
   const visualColor = geometry.color || '#808080';
-  const createVisualMaterial = () => createMatteMaterial({
-    color: visualColor,
-    preserveExactColor: Boolean(geometry.color),
-  });
+  const createVisualMaterial = () =>
+    createMatteMaterial({
+      color: visualColor,
+      preserveExactColor: Boolean(geometry.color),
+    });
   const addPrimitive = (mesh: THREE.Mesh) => {
     if (isCollision) {
       markCollisionObject(mesh, linkName);
@@ -117,10 +116,7 @@ function patchGeometryCategory({
   } else if (geometry.type === GeometryType.PLANE) {
     const material = isCollision ? collisionBaseMaterial : createVisualMaterial();
     material.side = THREE.DoubleSide;
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
-      material,
-    );
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
     mesh.scale.set(dims.x || 1, dims.y || 1, 1);
     addPrimitive(mesh);
   } else if (geometry.type === GeometryType.SPHERE || geometry.type === GeometryType.ELLIPSOID) {
@@ -161,14 +157,17 @@ function patchGeometryCategory({
 
     const urdfDir = sourceFileDir ?? '';
     const manager = createLoadingManager(assets, urdfDir);
-    const meshLoader = createMeshLoader(assets, manager, urdfDir, {
+    const meshLoader = createViewerMeshLoader(assets, manager, urdfDir, {
       colladaRootNormalizationHints,
     });
 
     meshLoader(geometry.meshPath, manager, (obj, err) => {
       if (!obj) return;
 
-      if ((targetGroup!.userData.__patchToken as number) !== patchToken || (isPatchTargetValid && !isPatchTargetValid())) {
+      if (
+        (targetGroup!.userData.__patchToken as number) !== patchToken ||
+        (isPatchTargetValid && !isPatchTargetValid())
+      ) {
         disposeObject3D(obj, true, SHARED_MATERIALS);
         return;
       }
@@ -256,18 +255,20 @@ function patchCollisionEntriesInPlace({
 
     applied = true;
 
-    if (patchGeometryGroupInPlace({
-      robotModel,
-      linkObject,
-      category: 'collision',
-      linkData: nextLinkData,
-      previousGeometry: previousEntry.geometry,
-      geometry: nextEntry.geometry,
-      showVisual,
-      showCollision,
-      invalidate,
-      targetGroup: group,
-    })) {
+    if (
+      patchGeometryGroupInPlace({
+        robotModel,
+        linkObject,
+        category: 'collision',
+        linkData: nextLinkData,
+        previousGeometry: previousEntry.geometry,
+        geometry: nextEntry.geometry,
+        showVisual,
+        showCollision,
+        invalidate,
+        targetGroup: group,
+      })
+    ) {
       continue;
     }
 
@@ -366,7 +367,10 @@ function findFirstMeshInObject(object: THREE.Object3D): THREE.Mesh | null {
   return firstMesh;
 }
 
-function patchPrimitiveDimensionsInPlace(targetGroup: THREE.Object3D, geometry: LinkGeometry): boolean {
+function patchPrimitiveDimensionsInPlace(
+  targetGroup: THREE.Object3D,
+  geometry: LinkGeometry,
+): boolean {
   const mesh = findFirstMeshInObject(targetGroup);
   if (!mesh) return false;
 
@@ -442,7 +446,8 @@ function patchGeometryGroupInPlace({
     ? (child: THREE.Object3D) => (child as any).isURDFCollider
     : (child: THREE.Object3D) => (child as any).isURDFVisual;
 
-  const targetGroup = explicitTargetGroup ?? (linkObject.children.find(groupPredicate) as THREE.Object3D | undefined);
+  const targetGroup =
+    explicitTargetGroup ?? (linkObject.children.find(groupPredicate) as THREE.Object3D | undefined);
   if (!targetGroup) return false;
 
   const originChanged = !sameOrigin(previousGeometry.origin, geometry.origin);
@@ -455,8 +460,8 @@ function patchGeometryGroupInPlace({
   }
 
   const isVisible = isCollision
-    ? (showCollision && geometry.visible !== false)
-    : (showVisual && linkData.visible !== false && geometry.visible !== false);
+    ? showCollision && linkData.visible !== false && geometry.visible !== false
+    : showVisual && linkData.visible !== false && geometry.visible !== false;
 
   if (visibilityChanged || category === 'visual') {
     targetGroup.visible = isVisible;
@@ -514,17 +519,19 @@ export function applyGeometryPatchInPlace({
   if (!linkObject) return false;
 
   if (patch.visualChanged) {
-    if (!patchGeometryGroupInPlace({
-      robotModel,
-      linkObject,
-      category: 'visual',
-      linkData: patch.linkData,
-      previousGeometry: patch.previousLinkData.visual,
-      geometry: patch.linkData.visual,
-      showVisual,
-      showCollision,
-      invalidate,
-    })) {
+    if (
+      !patchGeometryGroupInPlace({
+        robotModel,
+        linkObject,
+        category: 'visual',
+        linkData: patch.linkData,
+        previousGeometry: patch.previousLinkData.visual,
+        geometry: patch.linkData.visual,
+        showVisual,
+        showCollision,
+        invalidate,
+      })
+    ) {
       patchGeometryCategory({
         robotModel,
         linkObject,
@@ -561,17 +568,19 @@ export function applyGeometryPatchInPlace({
     });
 
     if (!collisionPatched) {
-      if (!patchGeometryGroupInPlace({
-        robotModel,
-        linkObject,
-        category: 'collision',
-        linkData: patch.linkData,
-        previousGeometry: patch.previousLinkData.collision,
-        geometry: patch.linkData.collision,
-        showVisual,
-        showCollision,
-        invalidate,
-      })) {
+      if (
+        !patchGeometryGroupInPlace({
+          robotModel,
+          linkObject,
+          category: 'collision',
+          linkData: patch.linkData,
+          previousGeometry: patch.previousLinkData.collision,
+          geometry: patch.linkData.collision,
+          showVisual,
+          showCollision,
+          invalidate,
+        })
+      ) {
         patchGeometryCategory({
           robotModel,
           linkObject,

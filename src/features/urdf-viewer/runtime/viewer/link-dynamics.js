@@ -478,6 +478,19 @@ export class LinkDynamicsController {
         this.linkDynamicsBuildPromise = null;
         this.rebuildRequestId = 0;
         this.visibilityKey = "";
+        this.catalogStatus = "idle";
+        this.catalogError = null;
+        this.matrixAccessWarningKeys = new Set();
+    }
+    setCatalogStatus(status, error = null) {
+        this.catalogStatus = status;
+        this.catalogError = error ?? null;
+    }
+    warnMatrixAccessFailureOnce(key, message, ...details) {
+        if (!key || this.matrixAccessWarningKeys.has(key))
+            return;
+        this.matrixAccessWarningKeys.add(key);
+        console.warn(message, ...details);
     }
     setStageSourcePath(stageSourcePath) {
         const normalized = String(stageSourcePath || "").trim();
@@ -490,6 +503,8 @@ export class LinkDynamicsController {
         this.preferredDynamicsFrameMode = null;
         this.linkDynamicsBuildPromise = null;
         this.visibilityKey = "";
+        this.matrixAccessWarningKeys.clear();
+        this.setCatalogStatus("idle");
     }
     setCurrentLinkFrameResolver(resolver) {
         this.currentLinkFrameResolver = typeof resolver === "function" ? resolver : null;
@@ -525,8 +540,8 @@ export class LinkDynamicsController {
         const buildPromise = this.startLinkDynamicsCatalogBuildIfNeeded(renderInterface);
         if (!buildPromise)
             return;
-        void buildPromise.catch(() => {
-            // Keep prewarm best-effort.
+        void buildPromise.catch((error) => {
+            console.error("[LinkDynamicsController] Failed to prewarm link dynamics catalog.", error);
         });
     }
     async prewarmCatalogForInteractive(renderInterface) {
@@ -539,8 +554,8 @@ export class LinkDynamicsController {
         try {
             await buildPromise;
         }
-        catch {
-            // Keep one-shot preload resilient.
+        catch (error) {
+            console.error("[LinkDynamicsController] Failed to prewarm link dynamics catalog for interactive readiness.", error);
         }
     }
     async rebuild(usdRoot, renderInterface, optionsOrVisible) {
@@ -587,8 +602,8 @@ export class LinkDynamicsController {
                     if (this.linkDynamicsByLinkPath.size <= 0)
                         return;
                     void this.rebuild(usdRoot, renderInterface, visibility);
-                }).catch(() => {
-                    // Keep rebuild path resilient when warmup fails.
+                }).catch((error) => {
+                    console.error("[LinkDynamicsController] Failed to rebuild link dynamics markers after catalog warmup.", error);
                 });
             }
             return;
@@ -627,8 +642,8 @@ export class LinkDynamicsController {
                 if (this.linkDynamicsByLinkPath.size <= renderedRecordCount)
                     return;
                 void this.rebuild(usdRoot, renderInterface, visibility);
-            }).catch(() => {
-                // Keep rebuild path resilient when warmup fails.
+            }).catch((error) => {
+                console.error("[link-dynamics] Failed to rebuild link dynamics after catalog warmup.", error);
             });
         }
     }
@@ -653,19 +668,21 @@ export class LinkDynamicsController {
             const driverGetter = renderInterface?.config?.driver;
             driver = typeof driverGetter === "function" ? driverGetter.call(renderInterface) : null;
         }
-        catch {
+        catch (error) {
+            console.warn("[LinkDynamicsController] Failed to resolve USD driver for transform prefetch.", error);
             driver = null;
         }
         if (!driver) {
-            driver = window?.driver || null;
+            const globalWindow = typeof window !== "undefined" ? window : globalThis?.window;
+            driver = globalWindow?.driver || globalThis?.driver || null;
         }
         if (!driver)
             return;
         try {
             prefetch.call(renderInterface, driver, { force: options.force === true });
         }
-        catch {
-            // Keep overlay rebuild resilient; fallback path remains available.
+        catch (error) {
+            console.warn("[LinkDynamicsController] Failed to prefetch link world transforms.", error);
         }
     }
     syncLinkDynamicsTransforms(renderInterface) {
@@ -717,27 +734,65 @@ export class LinkDynamicsController {
         const buildPromise = this.startLinkDynamicsCatalogBuildIfNeeded(renderInterface);
         if (!buildPromise)
             return;
-        try {
-            await buildPromise;
-        }
-        catch { }
+        await buildPromise;
     }
     startLinkDynamicsCatalogBuildIfNeeded(renderInterface) {
         if (this.linkDynamicsBuildPromise)
             return this.linkDynamicsBuildPromise;
-        if (this.linkDynamicsByLinkPath.size > 0)
+        if (this.linkDynamicsByLinkPath.size > 0) {
+            this.setCatalogStatus("ready");
             return Promise.resolve();
-        const cachedRenderSnapshot = getRenderRobotMetadataSnapshot(renderInterface, this.stageSourcePath);
+        }
+        this.setCatalogStatus("loading");
+        let cachedRenderSnapshot = null;
+        try {
+            cachedRenderSnapshot = getRenderRobotMetadataSnapshot(renderInterface, this.stageSourcePath, {
+                strictErrors: true,
+            });
+        }
+        catch (error) {
+            const errorText = String(error?.message || error || "").trim() || "catalog-build-failed";
+            this.setCatalogStatus("error", errorText);
+            const buildPromise = Promise.reject(error).finally(() => {
+                this.linkDynamicsBuildPromise = null;
+            });
+            void buildPromise.catch(() => { });
+            this.linkDynamicsBuildPromise = buildPromise;
+            return buildPromise;
+        }
         const importedFromCachedSnapshot = this.ingestLinkDynamicsFromRenderSnapshot(cachedRenderSnapshot, renderInterface);
         if (importedFromCachedSnapshot > 0) {
+            this.setCatalogStatus("ready");
             return Promise.resolve();
         }
         const stage = renderInterface?.getStage?.() || null;
         const cacheKey = this.getLinkDynamicsCacheKey(renderInterface, stage);
         if (cacheKey && this.restoreLinkDynamicsFromCache(cacheKey)) {
+            this.setCatalogStatus("ready");
             return Promise.resolve();
         }
-        return null;
+        if (!stage) {
+            this.setCatalogStatus("error", "no-stage");
+            return null;
+        }
+        const buildPromise = Promise.resolve()
+            .then(async () => {
+            await this.buildLinkDynamicsCatalog(stage, renderInterface);
+            if (cacheKey && this.linkDynamicsByLinkPath.size > 0) {
+                this.saveLinkDynamicsToCache(cacheKey);
+            }
+            this.setCatalogStatus("ready");
+        })
+            .catch((error) => {
+            const errorText = String(error?.message || error || "").trim() || "catalog-build-failed";
+            this.setCatalogStatus("error", errorText);
+            throw error;
+        })
+            .finally(() => {
+            this.linkDynamicsBuildPromise = null;
+        });
+        this.linkDynamicsBuildPromise = buildPromise;
+        return buildPromise;
     }
     getLinkDynamicsCacheKey(renderInterface, stage) {
         const fromController = String(this.stageSourcePath || "").trim();
@@ -973,7 +1028,9 @@ export class LinkDynamicsController {
             const exported = rootLayer.ExportToString();
             return typeof exported === "string" ? exported : String(exported || "");
         }
-        catch {
+        catch (error) {
+            const stageSuffix = this.stageSourcePath ? ` for ${this.stageSourcePath}` : "";
+            console.error(`[LinkDynamicsController] Failed to export USD root layer text${stageSuffix}.`, error);
             return "";
         }
     }
@@ -988,7 +1045,8 @@ export class LinkDynamicsController {
             }
             return openedStage || null;
         }
-        catch {
+        catch (error) {
+            console.error(`[LinkDynamicsController] Failed to open USD stage: ${stagePath}`, error);
             return null;
         }
     }
@@ -1017,18 +1075,27 @@ export class LinkDynamicsController {
             return null;
         const worldGetter = renderInterface?.getWorldTransformForPrimPath;
         if (typeof worldGetter === "function") {
+            let cloneAttemptError = null;
             try {
                 const matrix = cloneMatrix4FromUnknown(worldGetter.call(renderInterface, linkPath, { clone: true }));
                 if (matrix)
                     return matrix;
             }
-            catch {
+            catch (error) {
+                cloneAttemptError = error;
                 try {
                     const matrix = cloneMatrix4FromUnknown(worldGetter.call(renderInterface, linkPath));
                     if (matrix)
                         return matrix;
                 }
-                catch { }
+                catch (legacyError) {
+                    this.warnMatrixAccessFailureOnce(
+                        `direct-stage-world:${linkPath}`,
+                        `[LinkDynamicsController] Failed to read direct stage link world transform for ${linkPath}.`,
+                        cloneAttemptError,
+                        legacyError,
+                    );
+                }
             }
         }
         return null;
@@ -1043,7 +1110,13 @@ export class LinkDynamicsController {
                 if (matrix)
                     return matrix;
             }
-            catch { }
+            catch (error) {
+                this.warnMatrixAccessFailureOnce(
+                    `preferred-world:${linkPath}`,
+                    `[LinkDynamicsController] Failed to read preferred link world transform for ${linkPath}.`,
+                    error,
+                );
+            }
         }
         const stageOrVisualGetter = renderInterface?.getStageOrVisualLinkWorldTransform;
         if (typeof stageOrVisualGetter === "function") {
@@ -1052,7 +1125,13 @@ export class LinkDynamicsController {
                 if (matrix)
                     return matrix;
             }
-            catch { }
+            catch (error) {
+                this.warnMatrixAccessFailureOnce(
+                    `stage-or-visual-world:${linkPath}`,
+                    `[LinkDynamicsController] Failed to read stage-or-visual link world transform for ${linkPath}.`,
+                    error,
+                );
+            }
         }
         return this.getDirectStageLinkWorldMatrixForPath(renderInterface, linkPath)
             || this.getVisualLinkWorldMatrixForPath(renderInterface, linkPath);
@@ -1067,7 +1146,13 @@ export class LinkDynamicsController {
                 if (matrix)
                     return matrix;
             }
-            catch { }
+            catch (error) {
+                this.warnMatrixAccessFailureOnce(
+                    `visual-world:${linkPath}`,
+                    `[LinkDynamicsController] Failed to read visual link world transform for ${linkPath}.`,
+                    error,
+                );
+            }
         }
         if (!renderInterface.meshes)
             return null;

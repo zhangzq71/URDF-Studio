@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { AssemblyComponent, AssemblyTransform, RobotData, UrdfVisual } from '@/types';
+import type { AssemblyTransform, RenderableBounds, RobotData, UrdfVisual } from '@/types';
 import { GeometryType } from '@/types';
 import { computeLinkWorldMatrices } from './kinematics';
 import { cloneAssemblyTransform, IDENTITY_ASSEMBLY_TRANSFORM } from './assemblyTransforms';
@@ -12,8 +12,13 @@ const UNIT_BOX_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 const UNIT_PLANE_GEOMETRY = new THREE.PlaneGeometry(1, 1);
 const UNIT_CYLINDER_GEOMETRY = new THREE.CylinderGeometry(1, 1, 1, 12, 1);
 const UNIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(1, 12, 12);
-const UNIT_MESH_FALLBACK_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
 const IDENTITY_MATRIX = new THREE.Matrix4().identity();
+
+type AssemblyPlacementComparableComponent = {
+  robot?: RobotData | null;
+  renderableBounds?: RenderableBounds | null;
+  transform?: AssemblyTransform | null;
+};
 
 type GeometryBoundsDescriptor = {
   geometry: THREE.BufferGeometry;
@@ -81,15 +86,7 @@ function createGeometryBoundsDescriptor(geometry: UrdfVisual): GeometryBoundsDes
       };
     }
     case GeometryType.MESH:
-      return {
-        geometry: UNIT_MESH_FALLBACK_GEOMETRY,
-        scale: new THREE.Vector3(
-          Math.max(toFiniteOr(geometry.dimensions.x, 1), 1e-6),
-          Math.max(toFiniteOr(geometry.dimensions.y, 1), 1e-6),
-          Math.max(toFiniteOr(geometry.dimensions.z, 1), 1e-6),
-        ),
-        rotation: new THREE.Euler(0, 0, 0, 'ZYX'),
-      };
+      return null;
     default:
       return null;
   }
@@ -128,12 +125,14 @@ function unionGeometryBounds(
       toFiniteOr(origin.xyz?.y, 0),
       toFiniteOr(origin.xyz?.z, 0),
     ),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(
-      toFiniteOr(origin.rpy?.r, 0),
-      toFiniteOr(origin.rpy?.p, 0),
-      toFiniteOr(origin.rpy?.y, 0),
-      'ZYX',
-    )),
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(
+        toFiniteOr(origin.rpy?.r, 0),
+        toFiniteOr(origin.rpy?.p, 0),
+        toFiniteOr(origin.rpy?.y, 0),
+        'ZYX',
+      ),
+    ),
     new THREE.Vector3(1, 1, 1),
   );
   const childMatrix = new THREE.Matrix4().compose(
@@ -163,41 +162,77 @@ function estimateRobotRenderableBounds(robot: RobotData): THREE.Box3 | null {
 
   Object.entries(robot.links).forEach(([linkId, link]) => {
     const linkMatrix = linkWorldMatrices[linkId] ?? IDENTITY_MATRIX;
+    const linkBounds = new THREE.Box3();
+    const linkHasBounds = { current: false };
 
     getVisualGeometryEntries(link).forEach((entry) => {
-      unionGeometryBounds(bounds, hasBounds, linkMatrix, entry.geometry);
+      unionGeometryBounds(linkBounds, linkHasBounds, linkMatrix, entry.geometry);
     });
 
-    if (!hasBounds.current && link.collision.type !== GeometryType.NONE) {
-      unionGeometryBounds(bounds, hasBounds, linkMatrix, link.collision);
+    if (!linkHasBounds.current && link.collision.type !== GeometryType.NONE) {
+      unionGeometryBounds(linkBounds, linkHasBounds, linkMatrix, link.collision);
     }
 
-    if (!hasBounds.current) {
+    if (!linkHasBounds.current) {
       (link.collisionBodies ?? []).forEach((body) => {
         if (body.type !== GeometryType.NONE) {
-          unionGeometryBounds(bounds, hasBounds, linkMatrix, body);
+          unionGeometryBounds(linkBounds, linkHasBounds, linkMatrix, body);
         }
       });
     }
+
+    if (!linkHasBounds.current) {
+      return;
+    }
+
+    if (!hasBounds.current) {
+      bounds.copy(linkBounds);
+      hasBounds.current = true;
+      return;
+    }
+
+    bounds.union(linkBounds);
   });
 
   return hasBounds.current ? bounds : null;
 }
 
+function createBoxFromRenderableBounds(bounds?: RenderableBounds | null): THREE.Box3 | null {
+  if (!bounds) {
+    return null;
+  }
+
+  return new THREE.Box3(
+    new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+  );
+}
+
+function resolveRenderableBounds(
+  robot: RobotData | null | undefined,
+  renderableBounds?: RenderableBounds | null,
+): THREE.Box3 | null {
+  return (
+    createBoxFromRenderableBounds(renderableBounds) ??
+    (robot ? estimateRobotRenderableBounds(robot) : null)
+  );
+}
+
+export function estimateRobotGroundOffset(
+  robot: RobotData,
+  options: { renderableBounds?: RenderableBounds | null } = {},
+): number {
+  const minZ = resolveRenderableBounds(robot, options.renderableBounds)?.min.z;
+  return Number.isFinite(minZ) ? -Number(minZ) : 0;
+}
+
 function transformBounds(bounds: THREE.Box3, transform?: AssemblyTransform | null): THREE.Box3 {
   const normalized = cloneAssemblyTransform(transform);
   const matrix = new THREE.Matrix4().compose(
-    new THREE.Vector3(
-      normalized.position.x,
-      normalized.position.y,
-      normalized.position.z,
+    new THREE.Vector3(normalized.position.x, normalized.position.y, normalized.position.z),
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(normalized.rotation.r, normalized.rotation.p, normalized.rotation.y, 'ZYX'),
     ),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(
-      normalized.rotation.r,
-      normalized.rotation.p,
-      normalized.rotation.y,
-      'ZYX',
-    )),
     new THREE.Vector3(1, 1, 1),
   );
 
@@ -221,22 +256,25 @@ function buildFallbackBounds(): THREE.Box3 {
 
 export function buildDefaultAssemblyComponentPlacementTransform({
   robot,
+  renderableBounds,
   existingComponents,
   gap = DEFAULT_ASSEMBLY_COMPONENT_PLACEMENT_GAP,
 }: {
   robot: RobotData;
-  existingComponents: AssemblyComponent[];
+  renderableBounds?: RenderableBounds | null;
+  existingComponents: AssemblyPlacementComparableComponent[];
   gap?: number;
 }): AssemblyTransform {
   if (existingComponents.length === 0) {
     return cloneAssemblyTransform(IDENTITY_ASSEMBLY_TRANSFORM);
   }
 
-  const nextBounds = estimateRobotRenderableBounds(robot) ?? buildFallbackBounds();
+  const nextBounds = resolveRenderableBounds(robot, renderableBounds) ?? buildFallbackBounds();
   let maxExistingX = Number.NEGATIVE_INFINITY;
 
   existingComponents.forEach((component) => {
-    const componentBounds = estimateRobotRenderableBounds(component.robot) ?? buildFallbackBounds();
+    const componentBounds =
+      resolveRenderableBounds(component.robot, component.renderableBounds) ?? buildFallbackBounds();
     maxExistingX = Math.max(
       maxExistingX,
       transformBounds(componentBounds, component.transform).max.x,
@@ -251,7 +289,7 @@ export function buildDefaultAssemblyComponentPlacementTransform({
     position: {
       x: maxExistingX + gap - nextBounds.min.x,
       y: 0,
-      z: Number.isFinite(nextBounds.min.z) ? -nextBounds.min.z : 0,
+      z: estimateRobotGroundOffset(robot, { renderableBounds }),
     },
     rotation: { ...IDENTITY_ASSEMBLY_TRANSFORM.rotation },
   });

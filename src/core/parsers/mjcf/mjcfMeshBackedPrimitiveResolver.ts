@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { loadMJCFMeshObject, type MJCFMeshCache } from './mjcfMeshAssetLoader';
 import { applyMeshAssetTransform, resolveMJCFAssetUrl } from './mjcfGeometry';
 import type { MJCFModelBody, MJCFModelGeom, ParsedMJCFModel } from './mjcfModel';
-import type { MJCFMesh } from './mjcfUtils';
+import type { MJCFMesh, MJCFMeshInertiaMode } from './mjcfUtils';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import {
   disposeTransientObject3D,
@@ -11,6 +11,9 @@ import {
 } from './mjcfLoadLifecycle';
 
 const MAX_FIT_POINTS = 4096;
+
+type PrimitiveFitStrategy = 'best-fit' | 'aabb';
+type MeshPrimitiveFitStrategy = 'inertia-box' | 'aabb';
 
 interface PrimitivePoint {
   x: number;
@@ -39,6 +42,20 @@ interface PrimitiveFitCandidate {
   volume: number;
 }
 
+interface MeshTriangle {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  c: THREE.Vector3;
+}
+
+interface ProcessedMeshFrame {
+  meshPosition: THREE.Vector3;
+  meshQuaternion: THREE.Quaternion;
+  inertiaBoxHalfSize: THREE.Vector3;
+  aabbMin: THREE.Vector3;
+  aabbMax: THREE.Vector3;
+}
+
 export interface MJCFFittedPrimitive {
   axis: [number, number, number];
   center: [number, number, number];
@@ -48,6 +65,7 @@ export interface MJCFFittedPrimitive {
 
 interface FitPrimitiveFromMeshAssetParams {
   geomType: 'capsule' | 'cylinder';
+  fitStrategy: MeshPrimitiveFitStrategy;
   meshDef: MJCFMesh;
 }
 
@@ -95,8 +113,10 @@ function addCandidateAxis(axes: PrimitivePoint[], axis: PrimitivePoint): void {
     return;
   }
 
-  const isDuplicate = axes.some((existing) =>
-    Math.abs(existing.x * normalized.x + existing.y * normalized.y + existing.z * normalized.z) > 0.999,
+  const isDuplicate = axes.some(
+    (existing) =>
+      Math.abs(existing.x * normalized.x + existing.y * normalized.y + existing.z * normalized.z) >
+      0.999,
   );
 
   if (!isDuplicate) {
@@ -155,7 +175,11 @@ function computePrincipalAxes(points: PrimitivePoint[]): PrimitivePoint[] {
   ];
 
   for (let iteration = 0; iteration < 16; iteration += 1) {
-    const candidates: Array<[number, number]> = [[0, 1], [0, 2], [1, 2]];
+    const candidates: Array<[number, number]> = [
+      [0, 1],
+      [0, 2],
+      [1, 2],
+    ];
     let pivot: [number, number] = [0, 1];
     let maxValue = 0;
 
@@ -222,7 +246,7 @@ function computePrincipalAxes(points: PrimitivePoint[]): PrimitivePoint[] {
 function createDeterministicRandom(seed: number): () => number {
   let current = seed >>> 0;
   return () => {
-    current = (current + 0x6D2B79F5) >>> 0;
+    current = (current + 0x6d2b79f5) >>> 0;
     let value = Math.imul(current ^ (current >>> 15), 1 | current);
     value ^= value + Math.imul(value ^ (value >>> 7), 61 | value);
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
@@ -247,7 +271,10 @@ function isPointInsideCircle(point: { x: number; y: number }, circle: Circle2D):
   return dx * dx + dy * dy <= (circle.r + 1e-8) * (circle.r + 1e-8);
 }
 
-function createCircleFromDiameter(pointA: { x: number; y: number }, pointB: { x: number; y: number }): Circle2D {
+function createCircleFromDiameter(
+  pointA: { x: number; y: number },
+  pointB: { x: number; y: number },
+): Circle2D {
   const centerX = (pointA.x + pointB.x) / 2;
   const centerY = (pointA.y + pointB.y) / 2;
   return {
@@ -262,11 +289,11 @@ function createCircleFromThreePoints(
   pointB: { x: number; y: number },
   pointC: { x: number; y: number },
 ): Circle2D | null {
-  const determinant = 2 * (
-    pointA.x * (pointB.y - pointC.y) +
-    pointB.x * (pointC.y - pointA.y) +
-    pointC.x * (pointA.y - pointB.y)
-  );
+  const determinant =
+    2 *
+    (pointA.x * (pointB.y - pointC.y) +
+      pointB.x * (pointC.y - pointA.y) +
+      pointC.x * (pointA.y - pointB.y));
 
   if (Math.abs(determinant) <= 1e-10) {
     return null;
@@ -276,16 +303,16 @@ function createCircleFromThreePoints(
   const pointBSquared = pointB.x * pointB.x + pointB.y * pointB.y;
   const pointCSquared = pointC.x * pointC.x + pointC.y * pointC.y;
 
-  const centerX = (
-    pointASquared * (pointB.y - pointC.y) +
-    pointBSquared * (pointC.y - pointA.y) +
-    pointCSquared * (pointA.y - pointB.y)
-  ) / determinant;
-  const centerY = (
-    pointASquared * (pointC.x - pointB.x) +
-    pointBSquared * (pointA.x - pointC.x) +
-    pointCSquared * (pointB.x - pointA.x)
-  ) / determinant;
+  const centerX =
+    (pointASquared * (pointB.y - pointC.y) +
+      pointBSquared * (pointC.y - pointA.y) +
+      pointCSquared * (pointA.y - pointB.y)) /
+    determinant;
+  const centerY =
+    (pointASquared * (pointC.x - pointB.x) +
+      pointBSquared * (pointA.x - pointC.x) +
+      pointCSquared * (pointB.x - pointA.x)) /
+    determinant;
 
   return {
     cx: centerX,
@@ -299,7 +326,7 @@ function computeMinimumEnclosingCircle(points: Array<{ x: number; y: number }>):
     return { cx: 0, cy: 0, r: 0 };
   }
 
-  const shuffled = shuffleDeterministically(points, 0x9E3779B9);
+  const shuffled = shuffleDeterministically(points, 0x9e3779b9);
   let circle: Circle2D = { cx: shuffled[0].x, cy: shuffled[0].y, r: 0 };
 
   for (let i = 0; i < shuffled.length; i += 1) {
@@ -339,9 +366,8 @@ function createPerpendicularBasis(axis: PrimitivePoint): {
   basisV: THREE.Vector3;
 } {
   const axisVector = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
-  const reference = Math.abs(axisVector.z) < 0.9
-    ? new THREE.Vector3(0, 0, 1)
-    : new THREE.Vector3(1, 0, 0);
+  const reference =
+    Math.abs(axisVector.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
   const basisU = new THREE.Vector3().crossVectors(reference, axisVector).normalize();
   const basisV = new THREE.Vector3().crossVectors(axisVector, basisU).normalize();
   return { axis: axisVector, basisU, basisV };
@@ -352,8 +378,10 @@ function computeCapsuleVolume(totalLength: number, radius: number): number {
     return 0;
   }
   const clampedRadius = Math.min(radius, totalLength / 2);
-  return Math.PI * clampedRadius * clampedRadius * totalLength
-    - (2 / 3) * Math.PI * clampedRadius * clampedRadius * clampedRadius;
+  return (
+    Math.PI * clampedRadius * clampedRadius * totalLength -
+    (2 / 3) * Math.PI * clampedRadius * clampedRadius * clampedRadius
+  );
 }
 
 function evaluateCapsuleRadius(points: ProjectedPoint[], radius: number) {
@@ -478,7 +506,9 @@ function computePrimitiveFitsForAxis(
     radial: 0,
   }));
 
-  const circle = computeMinimumEnclosingCircle(projected.map((point) => ({ x: point.u, y: point.v })));
+  const circle = computeMinimumEnclosingCircle(
+    projected.map((point) => ({ x: point.u, y: point.v })),
+  );
   const lineCenter = new THREE.Vector3()
     .copy(basisU)
     .multiplyScalar(circle.cx)
@@ -544,6 +574,665 @@ function computeBestPrimitiveFits(points: PrimitivePoint[]) {
   return {
     cylinder: bestCylinder,
     capsule: bestCapsule,
+  };
+}
+
+function computeAabbPrimitiveFitFromBounds(
+  mins: PrimitivePoint,
+  maxs: PrimitivePoint,
+  geomType: 'capsule' | 'cylinder',
+): PrimitiveFitCandidate | null {
+  const center = {
+    x: (mins.x + maxs.x) / 2,
+    y: (mins.y + maxs.y) / 2,
+    z: (mins.z + maxs.z) / 2,
+  };
+  const candidates: PrimitiveFitCandidate[] = [];
+  const axes: Array<PrimitivePoint> = [
+    { x: 1, y: 0, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    { x: 0, y: 0, z: 1 },
+  ];
+  const extents = {
+    x: maxs.x - mins.x,
+    y: maxs.y - mins.y,
+    z: maxs.z - mins.z,
+  };
+
+  const pushCandidate = (
+    axis: PrimitivePoint,
+    axisExtent: number,
+    radialExtentA: number,
+    radialExtentB: number,
+  ): void => {
+    const radius = Math.max(radialExtentA, radialExtentB) / 2;
+    const axisLength = Math.max(axisExtent, 0);
+    const capsuleSegmentLength = Math.max(axisLength - radius * 2, 0);
+    const primitiveLength = geomType === 'capsule' ? Math.max(axisLength, radius * 2) : axisLength;
+    const volume =
+      geomType === 'capsule'
+        ? computeCapsuleVolume(primitiveLength, radius)
+        : Math.PI * radius * radius * primitiveLength;
+
+    candidates.push({
+      axis,
+      center,
+      radius,
+      length: geomType === 'capsule' ? capsuleSegmentLength + radius * 2 : primitiveLength,
+      volume,
+    });
+  };
+
+  pushCandidate(axes[0], extents.x, extents.y, extents.z);
+  pushCandidate(axes[1], extents.y, extents.x, extents.z);
+  pushCandidate(axes[2], extents.z, extents.x, extents.y);
+
+  return candidates.sort((left, right) => left.volume - right.volume)[0] || null;
+}
+
+function computeAabbPrimitiveFit(
+  points: PrimitivePoint[],
+  geomType: 'capsule' | 'cylinder',
+): PrimitiveFitCandidate | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  const mins = { x: Infinity, y: Infinity, z: Infinity };
+  const maxs = { x: -Infinity, y: -Infinity, z: -Infinity };
+
+  for (const point of points) {
+    mins.x = Math.min(mins.x, point.x);
+    mins.y = Math.min(mins.y, point.y);
+    mins.z = Math.min(mins.z, point.z);
+    maxs.x = Math.max(maxs.x, point.x);
+    maxs.y = Math.max(maxs.y, point.y);
+    maxs.z = Math.max(maxs.z, point.z);
+  }
+
+  return computeAabbPrimitiveFitFromBounds(mins, maxs, geomType);
+}
+
+function tupleToThreeQuaternion(quaternion: [number, number, number, number]): THREE.Quaternion {
+  return new THREE.Quaternion(
+    quaternion[1],
+    quaternion[2],
+    quaternion[3],
+    quaternion[0],
+  ).normalize();
+}
+
+function multiplyQuaternionTuples(
+  left: [number, number, number, number],
+  right: [number, number, number, number],
+): [number, number, number, number] {
+  const [lw, lx, ly, lz] = left;
+  const [rw, rx, ry, rz] = right;
+
+  return [
+    lw * rw - lx * rx - ly * ry - lz * rz,
+    lw * rx + lx * rw + ly * rz - lz * ry,
+    lw * ry - lx * rz + ly * rw + lz * rx,
+    lw * rz + lx * ry - ly * rx + lz * rw,
+  ];
+}
+
+function normalizeQuaternionTuple(
+  quaternion: [number, number, number, number],
+): [number, number, number, number] {
+  const length = Math.hypot(quaternion[0], quaternion[1], quaternion[2], quaternion[3]);
+  if (!Number.isFinite(length) || length <= 1e-12) {
+    return [1, 0, 0, 0];
+  }
+
+  return [
+    quaternion[0] / length,
+    quaternion[1] / length,
+    quaternion[2] / length,
+    quaternion[3] / length,
+  ];
+}
+
+function quaternionTupleToMatrix3(
+  quaternion: [number, number, number, number],
+): [number, number, number, number, number, number, number, number, number] {
+  const [w, x, y, z] = normalizeQuaternionTuple(quaternion);
+  const xx = x * x;
+  const yy = y * y;
+  const zz = z * z;
+  const xy = x * y;
+  const xz = x * z;
+  const yz = y * z;
+  const wx = w * x;
+  const wy = w * y;
+  const wz = w * z;
+
+  return [
+    1 - 2 * (yy + zz),
+    2 * (xy - wz),
+    2 * (xz + wy),
+    2 * (xy + wz),
+    1 - 2 * (xx + zz),
+    2 * (yz - wx),
+    2 * (xz - wy),
+    2 * (yz + wx),
+    1 - 2 * (xx + yy),
+  ];
+}
+
+function transposeMatrix3(
+  matrix: readonly [number, number, number, number, number, number, number, number, number],
+): [number, number, number, number, number, number, number, number, number] {
+  return [
+    matrix[0],
+    matrix[3],
+    matrix[6],
+    matrix[1],
+    matrix[4],
+    matrix[7],
+    matrix[2],
+    matrix[5],
+    matrix[8],
+  ];
+}
+
+function multiplyMatrix3(
+  left: readonly [number, number, number, number, number, number, number, number, number],
+  right: readonly [number, number, number, number, number, number, number, number, number],
+): [number, number, number, number, number, number, number, number, number] {
+  return [
+    left[0] * right[0] + left[1] * right[3] + left[2] * right[6],
+    left[0] * right[1] + left[1] * right[4] + left[2] * right[7],
+    left[0] * right[2] + left[1] * right[5] + left[2] * right[8],
+    left[3] * right[0] + left[4] * right[3] + left[5] * right[6],
+    left[3] * right[1] + left[4] * right[4] + left[5] * right[7],
+    left[3] * right[2] + left[4] * right[5] + left[5] * right[8],
+    left[6] * right[0] + left[7] * right[3] + left[8] * right[6],
+    left[6] * right[1] + left[7] * right[4] + left[8] * right[7],
+    left[6] * right[2] + left[7] * right[5] + left[8] * right[8],
+  ];
+}
+
+function diagonalizeSymmetricMatrixMuJoCo(
+  matrix: readonly [number, number, number, number, number, number, number, number, number],
+): {
+  eigenvalues: [number, number, number];
+  quaternion: [number, number, number, number];
+} {
+  const eigEpsilon = 1e-12;
+  let quaternion: [number, number, number, number] = [1, 0, 0, 0];
+  let eigenvalues: [number, number, number] = [matrix[0], matrix[4], matrix[8]];
+
+  for (let iteration = 0; iteration < 500; iteration += 1) {
+    const eigenvectors = quaternionTupleToMatrix3(quaternion);
+    const rotated = multiplyMatrix3(
+      multiplyMatrix3(transposeMatrix3(eigenvectors), matrix),
+      eigenvectors,
+    );
+
+    eigenvalues = [rotated[0], rotated[4], rotated[8]];
+
+    let pivotRow = 1;
+    let pivotColumn = 2;
+    let rotationAxis = 0;
+    let pivotValue = Math.abs(rotated[5]);
+
+    if (Math.abs(rotated[1]) > pivotValue && Math.abs(rotated[1]) > Math.abs(rotated[2])) {
+      pivotRow = 0;
+      pivotColumn = 1;
+      rotationAxis = 2;
+      pivotValue = Math.abs(rotated[1]);
+    } else if (Math.abs(rotated[2]) > pivotValue) {
+      pivotRow = 0;
+      pivotColumn = 2;
+      rotationAxis = 1;
+      pivotValue = Math.abs(rotated[2]);
+    }
+
+    if (pivotValue < eigEpsilon) {
+      break;
+    }
+
+    const diagonalDelta =
+      (rotated[4 * pivotColumn] - rotated[4 * pivotRow]) /
+      (2 * rotated[3 * pivotRow + pivotColumn]);
+    const tangent =
+      diagonalDelta >= 0
+        ? 1 / (diagonalDelta + Math.sqrt(1 + diagonalDelta * diagonalDelta))
+        : -1 / (-diagonalDelta + Math.sqrt(1 + diagonalDelta * diagonalDelta));
+    const cosine = 1 / Math.sqrt(1 + tangent * tangent);
+
+    if (cosine > 1 - eigEpsilon) {
+      break;
+    }
+
+    const rotationMagnitude = Math.sqrt(Math.max(0, 0.5 - 0.5 * cosine));
+    const nextRotation: [number, number, number, number] = [0, 0, 0, 0];
+    nextRotation[rotationAxis + 1] = diagonalDelta >= 0 ? -rotationMagnitude : rotationMagnitude;
+    if (rotationAxis === 1) {
+      nextRotation[rotationAxis + 1] = -nextRotation[rotationAxis + 1];
+    }
+    nextRotation[0] = Math.sqrt(
+      Math.max(0, 1 - nextRotation[rotationAxis + 1] * nextRotation[rotationAxis + 1]),
+    );
+    quaternion = normalizeQuaternionTuple(
+      multiplyQuaternionTuples(quaternion, normalizeQuaternionTuple(nextRotation)),
+    );
+  }
+
+  for (let index = 0; index < 3; index += 1) {
+    const leadIndex = index % 2;
+    if (eigenvalues[leadIndex] + eigEpsilon < eigenvalues[leadIndex + 1]) {
+      [eigenvalues[leadIndex], eigenvalues[leadIndex + 1]] = [
+        eigenvalues[leadIndex + 1],
+        eigenvalues[leadIndex],
+      ];
+      const swapRotation: [number, number, number, number] = [0.707106781186548, 0, 0, 0];
+      swapRotation[((leadIndex + 2) % 3) + 1] = swapRotation[0];
+      quaternion = normalizeQuaternionTuple(multiplyQuaternionTuples(quaternion, swapRotation));
+    }
+  }
+
+  return { eigenvalues, quaternion };
+}
+
+function collectMeshTriangles(object: THREE.Object3D): MeshTriangle[] {
+  const triangles: MeshTriangle[] = [];
+  const vertexA = new THREE.Vector3();
+  const vertexB = new THREE.Vector3();
+  const vertexC = new THREE.Vector3();
+
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+    const position = geometry?.attributes?.position as THREE.BufferAttribute | undefined;
+    if (!position || position.count < 3) {
+      return;
+    }
+
+    const index = geometry.getIndex();
+    const pushTriangle = (indexA: number, indexB: number, indexC: number) => {
+      triangles.push({
+        a: vertexA.fromBufferAttribute(position, indexA).clone().applyMatrix4(mesh.matrixWorld),
+        b: vertexB.fromBufferAttribute(position, indexB).clone().applyMatrix4(mesh.matrixWorld),
+        c: vertexC.fromBufferAttribute(position, indexC).clone().applyMatrix4(mesh.matrixWorld),
+      });
+    };
+
+    if (index && index.count >= 3) {
+      for (let triangleIndex = 0; triangleIndex + 2 < index.count; triangleIndex += 3) {
+        pushTriangle(
+          index.getX(triangleIndex),
+          index.getX(triangleIndex + 1),
+          index.getX(triangleIndex + 2),
+        );
+      }
+      return;
+    }
+
+    for (let triangleIndex = 0; triangleIndex + 2 < position.count; triangleIndex += 3) {
+      pushTriangle(triangleIndex, triangleIndex + 1, triangleIndex + 2);
+    }
+  });
+
+  return triangles;
+}
+
+function collectMeshVertices(object: THREE.Object3D): THREE.Vector3[] {
+  const vertices: THREE.Vector3[] = [];
+  const vertex = new THREE.Vector3();
+
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+    const position = geometry?.attributes?.position as THREE.BufferAttribute | undefined;
+    if (!position || position.count < 1) {
+      return;
+    }
+
+    for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex += 1) {
+      vertices.push(
+        vertex.fromBufferAttribute(position, vertexIndex).clone().applyMatrix4(mesh.matrixWorld),
+      );
+    }
+  });
+
+  return vertices;
+}
+
+function computeTriangleStats(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  c: THREE.Vector3,
+): {
+  area: number;
+  center: THREE.Vector3;
+  normal: THREE.Vector3;
+} | null {
+  const edgeAB = new THREE.Vector3().subVectors(b, a);
+  const edgeAC = new THREE.Vector3().subVectors(c, a);
+  const normal = new THREE.Vector3().crossVectors(edgeAB, edgeAC);
+  const length = normal.length();
+  if (!Number.isFinite(length) || length <= 1e-12) {
+    return null;
+  }
+
+  return {
+    area: length * 0.5,
+    center: a
+      .clone()
+      .add(b)
+      .add(c)
+      .multiplyScalar(1 / 3),
+    normal: normal.multiplyScalar(1 / length),
+  };
+}
+
+function computeMeshFaceCentroid(triangles: MeshTriangle[]): THREE.Vector3 | null {
+  const centroid = new THREE.Vector3();
+  let totalArea = 0;
+
+  for (const triangle of triangles) {
+    const stats = computeTriangleStats(triangle.a, triangle.b, triangle.c);
+    if (!stats) {
+      continue;
+    }
+
+    centroid.addScaledVector(stats.center, stats.area);
+    totalArea += stats.area;
+  }
+
+  if (totalArea <= 1e-12) {
+    return null;
+  }
+
+  return centroid.multiplyScalar(1 / totalArea);
+}
+
+function computeVolumeWeightedCenterOfMass(
+  triangles: MeshTriangle[],
+  faceCentroid: THREE.Vector3,
+  inertiaMode: MJCFMeshInertiaMode | undefined,
+): {
+  centerOfMass: THREE.Vector3;
+  measure: number;
+} | null {
+  const centerOfMass = new THREE.Vector3();
+  let totalMeasure = 0;
+
+  for (const triangle of triangles) {
+    const stats = computeTriangleStats(triangle.a, triangle.b, triangle.c);
+    if (!stats) {
+      continue;
+    }
+
+    const volume = (stats.center.clone().sub(faceCentroid).dot(stats.normal) * stats.area) / 3;
+    const adjustedVolume = inertiaMode === 'legacy' ? Math.abs(volume) : volume;
+
+    totalMeasure += adjustedVolume;
+    centerOfMass.addScaledVector(
+      stats.center.clone().multiplyScalar(0.75).addScaledVector(faceCentroid, 0.25),
+      adjustedVolume,
+    );
+  }
+
+  if (Math.abs(totalMeasure) <= 1e-12) {
+    return null;
+  }
+
+  return {
+    centerOfMass: centerOfMass.multiplyScalar(1 / totalMeasure),
+    measure: totalMeasure,
+  };
+}
+
+function computeSurfaceWeightedCenterOfMass(triangles: MeshTriangle[]): {
+  centerOfMass: THREE.Vector3;
+  measure: number;
+} | null {
+  const faceCentroid = computeMeshFaceCentroid(triangles);
+  if (!faceCentroid) {
+    return null;
+  }
+
+  const centerOfMass = new THREE.Vector3();
+  let surfaceArea = 0;
+
+  for (const triangle of triangles) {
+    const stats = computeTriangleStats(triangle.a, triangle.b, triangle.c);
+    if (!stats) {
+      continue;
+    }
+
+    surfaceArea += stats.area;
+    centerOfMass.addScaledVector(
+      stats.center.clone().multiplyScalar(0.75).addScaledVector(faceCentroid, 0.25),
+      stats.area,
+    );
+  }
+
+  if (surfaceArea <= 1e-12) {
+    return null;
+  }
+
+  return {
+    centerOfMass: centerOfMass.multiplyScalar(1 / surfaceArea),
+    measure: surfaceArea,
+  };
+}
+
+function computeMeshInertiaTensor(
+  triangles: MeshTriangle[],
+  centerOfMass: THREE.Vector3,
+  inertiaMode: MJCFMeshInertiaMode | undefined,
+): {
+  tensor: [number, number, number, number, number, number, number, number, number];
+  measure: number;
+} | null {
+  const products = [0, 0, 0, 0, 0, 0];
+  let totalMeasure = 0;
+  const coordinatePairs: Array<[0 | 1 | 2, 0 | 1 | 2]> = [
+    [0, 0],
+    [1, 1],
+    [2, 2],
+    [0, 1],
+    [0, 2],
+    [1, 2],
+  ];
+
+  for (const triangle of triangles) {
+    const d = triangle.a.clone().sub(centerOfMass);
+    const e = triangle.b.clone().sub(centerOfMass);
+    const f = triangle.c.clone().sub(centerOfMass);
+    const stats = computeTriangleStats(d, e, f);
+    if (!stats) {
+      continue;
+    }
+
+    const measure =
+      inertiaMode === 'shell' ? stats.area : (stats.center.dot(stats.normal) * stats.area) / 3;
+    const adjustedMeasure = inertiaMode === 'legacy' ? Math.abs(measure) : measure;
+    totalMeasure += adjustedMeasure;
+
+    const vertices = [
+      [d.x, d.y, d.z],
+      [e.x, e.y, e.z],
+      [f.x, f.y, f.z],
+    ] as const;
+    const divisor = inertiaMode === 'shell' ? 12 : 20;
+
+    coordinatePairs.forEach(([leftIndex, rightIndex], productIndex) => {
+      const diagonalTerms = vertices.reduce(
+        (sum, vertex) => sum + 2 * vertex[leftIndex] * vertex[rightIndex],
+        0,
+      );
+      const crossTerms =
+        vertices[0][leftIndex] * vertices[1][rightIndex] +
+        vertices[0][rightIndex] * vertices[1][leftIndex] +
+        vertices[0][leftIndex] * vertices[2][rightIndex] +
+        vertices[0][rightIndex] * vertices[2][leftIndex] +
+        vertices[1][leftIndex] * vertices[2][rightIndex] +
+        vertices[1][rightIndex] * vertices[2][leftIndex];
+
+      products[productIndex] += (adjustedMeasure * (diagonalTerms + crossTerms)) / divisor;
+    });
+  }
+
+  if (Math.abs(totalMeasure) <= 1e-12) {
+    return null;
+  }
+
+  return {
+    tensor: [
+      products[1] + products[2],
+      -products[3],
+      -products[4],
+      -products[3],
+      products[0] + products[2],
+      -products[5],
+      -products[4],
+      -products[5],
+      products[0] + products[1],
+    ],
+    measure: totalMeasure,
+  };
+}
+
+function computeProcessedMeshFrame(
+  object: THREE.Object3D,
+  inertiaMode: MJCFMeshInertiaMode | undefined,
+): ProcessedMeshFrame | null {
+  const triangles = collectMeshTriangles(object);
+  const vertices = collectMeshVertices(object);
+  if (triangles.length === 0) {
+    return null;
+  }
+
+  const faceCentroid = computeMeshFaceCentroid(triangles);
+  if (!faceCentroid) {
+    return null;
+  }
+
+  const centerOfMassResult =
+    inertiaMode === 'shell'
+      ? computeSurfaceWeightedCenterOfMass(triangles)
+      : computeVolumeWeightedCenterOfMass(triangles, faceCentroid, inertiaMode);
+  if (!centerOfMassResult) {
+    return null;
+  }
+
+  const inertiaTensor = computeMeshInertiaTensor(
+    triangles,
+    centerOfMassResult.centerOfMass,
+    inertiaMode,
+  );
+  if (!inertiaTensor) {
+    return null;
+  }
+
+  const { eigenvalues, quaternion } = diagonalizeSymmetricMatrixMuJoCo(inertiaTensor.tensor);
+  const volumeReference = Math.abs(inertiaTensor.measure);
+  if (volumeReference <= 1e-12) {
+    return null;
+  }
+
+  const meshQuaternion = tupleToThreeQuaternion(quaternion);
+  const inverseQuaternion = meshQuaternion.clone().conjugate();
+  const aabbMin = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const aabbMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+
+  const updateBounds = (vertex: THREE.Vector3) => {
+    const rotatedVertex = vertex
+      .clone()
+      .sub(centerOfMassResult.centerOfMass)
+      .applyQuaternion(inverseQuaternion);
+    aabbMin.min(rotatedVertex);
+    aabbMax.max(rotatedVertex);
+  };
+
+  // MuJoCo updates the fitted AABB from all transformed mesh vertices after
+  // reorientation, not only the vertices referenced by triangle faces.
+  for (const vertex of vertices) {
+    updateBounds(vertex);
+  }
+
+  if (!Number.isFinite(aabbMin.x) || !Number.isFinite(aabbMax.x)) {
+    return null;
+  }
+
+  const inertiaBoxHalfSize = new THREE.Vector3(
+    0.5 *
+      Math.sqrt(
+        Math.max(0, (6 * (eigenvalues[1] + eigenvalues[2] - eigenvalues[0])) / volumeReference),
+      ),
+    0.5 *
+      Math.sqrt(
+        Math.max(0, (6 * (eigenvalues[0] + eigenvalues[2] - eigenvalues[1])) / volumeReference),
+      ),
+    0.5 *
+      Math.sqrt(
+        Math.max(0, (6 * (eigenvalues[0] + eigenvalues[1] - eigenvalues[2])) / volumeReference),
+      ),
+  );
+
+  return {
+    meshPosition: centerOfMassResult.centerOfMass,
+    meshQuaternion,
+    inertiaBoxHalfSize,
+    aabbMin,
+    aabbMax,
+  };
+}
+
+function fitPrimitiveFromProcessedMeshFrame(
+  processedMesh: ProcessedMeshFrame,
+  geomType: 'capsule' | 'cylinder',
+  fitStrategy: MeshPrimitiveFitStrategy,
+): MJCFFittedPrimitive | null {
+  const localCenter =
+    fitStrategy === 'aabb'
+      ? processedMesh.aabbMin.clone().add(processedMesh.aabbMax).multiplyScalar(0.5)
+      : new THREE.Vector3(0, 0, 0);
+  const halfExtents =
+    fitStrategy === 'aabb'
+      ? processedMesh.aabbMax.clone().sub(processedMesh.aabbMin).multiplyScalar(0.5)
+      : processedMesh.inertiaBoxHalfSize.clone();
+
+  let radius: number;
+  let halfHeight: number;
+
+  if (fitStrategy === 'aabb') {
+    radius = Math.max(halfExtents.x, halfExtents.y);
+    halfHeight = geomType === 'capsule' ? Math.max(halfExtents.z - radius, 0) : halfExtents.z;
+  } else {
+    radius = (halfExtents.x + halfExtents.y) / 2;
+    halfHeight = geomType === 'capsule' ? Math.max(halfExtents.z - radius / 2, 0) : halfExtents.z;
+  }
+
+  if (!Number.isFinite(radius) || !Number.isFinite(halfHeight)) {
+    return null;
+  }
+
+  const center = localCenter
+    .applyQuaternion(processedMesh.meshQuaternion)
+    .add(processedMesh.meshPosition);
+  const axis = new THREE.Vector3(0, 0, -1)
+    .applyQuaternion(processedMesh.meshQuaternion)
+    .normalize();
+
+  return {
+    axis: [axis.x, axis.y, axis.z],
+    center: [center.x, center.y, center.z],
+    radius,
+    segmentLength: Math.max(halfHeight * 2, 0),
   };
 }
 
@@ -644,9 +1333,15 @@ export function collectMeshPrimitiveFitPoints(
 export function fitPrimitiveFromPoints(
   points: PrimitivePoint[],
   geomType: 'capsule' | 'cylinder',
+  fitStrategy: PrimitiveFitStrategy = 'best-fit',
 ): MJCFFittedPrimitive | null {
-  const fits = computeBestPrimitiveFits(points);
-  const candidate = geomType === 'capsule' ? fits?.capsule : fits?.cylinder;
+  const candidate =
+    fitStrategy === 'aabb'
+      ? computeAabbPrimitiveFit(points, geomType)
+      : (() => {
+          const fits = computeBestPrimitiveFits(points);
+          return geomType === 'capsule' ? fits?.capsule : fits?.cylinder;
+        })();
   if (!candidate) {
     return null;
   }
@@ -656,9 +1351,10 @@ export function fitPrimitiveFromPoints(
     return null;
   }
 
-  const segmentLength = geomType === 'capsule'
-    ? Math.max(candidate.length - candidate.radius * 2, 0)
-    : Math.max(candidate.length, 0);
+  const segmentLength =
+    geomType === 'capsule'
+      ? Math.max(candidate.length - candidate.radius * 2, 0)
+      : Math.max(candidate.length, 0);
 
   return {
     axis: [axis.x, axis.y, axis.z],
@@ -670,6 +1366,7 @@ export function fitPrimitiveFromPoints(
 
 async function fitPrimitiveFromMeshAssetViaUrl(
   geomType: 'capsule' | 'cylinder',
+  fitStrategy: MeshPrimitiveFitStrategy,
   meshDef: MJCFMesh,
   assets: Record<string, string>,
   sourceFileDir: string,
@@ -695,8 +1392,10 @@ async function fitPrimitiveFromMeshAssetViaUrl(
   const transformed = applyMeshAssetTransform(loadedObject, meshDef);
   try {
     throwIfMJCFLoadAborted(abortSignal);
-    transformed.updateMatrixWorld(true);
-    const fit = fitPrimitiveFromPoints(collectMeshPrimitiveFitPoints(transformed), geomType);
+    const fit = fitPrimitiveFromObject3D(transformed, geomType, {
+      fitaabb: fitStrategy === 'aabb',
+      inertia: meshDef.inertia,
+    });
     throwIfMJCFLoadAborted(abortSignal);
     return fit;
   } finally {
@@ -707,9 +1406,19 @@ async function fitPrimitiveFromMeshAssetViaUrl(
 export function fitPrimitiveFromObject3D(
   object: THREE.Object3D,
   geomType: 'capsule' | 'cylinder',
+  options?: { fitaabb?: boolean; inertia?: MJCFMeshInertiaMode },
 ): MJCFFittedPrimitive | null {
   object.updateMatrixWorld(true);
-  return fitPrimitiveFromPoints(collectMeshPrimitiveFitPoints(object), geomType);
+  const processedMesh = computeProcessedMeshFrame(object, options?.inertia ?? 'legacy');
+  if (!processedMesh) {
+    return null;
+  }
+
+  return fitPrimitiveFromProcessedMeshFrame(
+    processedMesh,
+    geomType,
+    options?.fitaabb ? 'aabb' : 'inertia-box',
+  );
 }
 
 function shouldResolveMeshBackedPrimitive(geom: MJCFModelGeom): geom is MJCFModelGeom & {
@@ -717,10 +1426,10 @@ function shouldResolveMeshBackedPrimitive(geom: MJCFModelGeom): geom is MJCFMode
   type: 'capsule' | 'cylinder';
 } {
   return Boolean(
-    geom.mesh
-    && !geom.fromto
-    && (!geom.size || geom.size.length === 0)
-    && (geom.type === 'capsule' || geom.type === 'cylinder'),
+    geom.mesh &&
+    !geom.fromto &&
+    (!geom.size || geom.size.length === 0) &&
+    (geom.type === 'capsule' || geom.type === 'cylinder'),
   );
 }
 
@@ -769,8 +1478,13 @@ function createDefaultMeshPrimitiveFitter(
 ) {
   const meshSpaceFitCache = new Map<string, Promise<MJCFFittedPrimitive | null>>();
 
-  return async ({ geomType, meshDef }: FitPrimitiveFromMeshAssetParams): Promise<MJCFFittedPrimitive | null> => {
+  return async ({
+    geomType,
+    fitStrategy,
+    meshDef,
+  }: FitPrimitiveFromMeshAssetParams): Promise<MJCFFittedPrimitive | null> => {
     const cacheKey = [
+      fitStrategy,
       geomType,
       meshDef.name,
       meshDef.file,
@@ -782,7 +1496,15 @@ function createDefaultMeshPrimitiveFitter(
     if (!meshSpaceFitCache.has(cacheKey)) {
       meshSpaceFitCache.set(
         cacheKey,
-        fitPrimitiveFromMeshAssetViaUrl(geomType, meshDef, assets, sourceFileDir, meshCache, abortSignal),
+        fitPrimitiveFromMeshAssetViaUrl(
+          geomType,
+          fitStrategy,
+          meshDef,
+          assets,
+          sourceFileDir,
+          meshCache,
+          abortSignal,
+        ),
       );
     }
 
@@ -816,6 +1538,7 @@ async function resolveBodyMeshBackedPrimitives(
 
     const fit = await fitPrimitiveFromMeshAsset({
       geomType: geom.type,
+      fitStrategy: parsedModel.compilerSettings.fitaabb ? 'aabb' : 'inertia-box',
       meshDef,
     });
 
@@ -852,7 +1575,12 @@ export async function resolveMJCFMeshBackedPrimitiveGeoms(
     meshCache = new Map(),
     sourceFileDir = '',
     yieldIfNeeded = createMainThreadYieldController(),
-    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(assets, sourceFileDir, meshCache, abortSignal),
+    fitPrimitiveFromMeshAsset = createDefaultMeshPrimitiveFitter(
+      assets,
+      sourceFileDir,
+      meshCache,
+      abortSignal,
+    ),
   }: ResolveMJCFMeshBackedPrimitiveOptions,
 ): Promise<number> {
   return await resolveBodyMeshBackedPrimitives(

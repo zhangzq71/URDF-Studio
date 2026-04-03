@@ -16,12 +16,11 @@ import {
   resolveGeometryHoverTargetFromHits,
 } from './geometryHover.ts';
 
-const findNearestVisualizerHoverTargetWithOptions =
-  findNearestVisualizerHoverTarget as unknown as (
-    root: THREE.Object3D | null,
-    raycaster: THREE.Raycaster,
-    options?: unknown,
-  ) => VisualizerHoverTarget | null;
+const findNearestVisualizerHoverTargetWithOptions = findNearestVisualizerHoverTarget as unknown as (
+  root: THREE.Object3D | null,
+  raycaster: THREE.Raycaster,
+  options?: unknown,
+) => VisualizerHoverTarget | null;
 
 const findNearestVisualizerTargetFromHitsWithOptions =
   findNearestVisualizerTargetFromHits as unknown as (
@@ -53,7 +52,13 @@ function createTaggedMesh(
     depthTest?: boolean;
     isHelper?: boolean;
     renderOrder?: number;
-    interactionLayer?: 'visual' | 'collision' | 'origin-axes' | 'joint-axis' | 'center-of-mass' | 'inertia';
+    interactionLayer?:
+      | 'visual'
+      | 'collision'
+      | 'origin-axes'
+      | 'joint-axis'
+      | 'center-of-mass'
+      | 'inertia';
   } = {},
 ) {
   const wrapper = new THREE.Group();
@@ -86,7 +91,13 @@ function createTaggedSupportPlane(
   target: VisualizerHoverTarget,
   z: number,
   options: {
-    interactionLayer?: 'visual' | 'collision' | 'origin-axes' | 'joint-axis' | 'center-of-mass' | 'inertia';
+    interactionLayer?:
+      | 'visual'
+      | 'collision'
+      | 'origin-axes'
+      | 'joint-axis'
+      | 'center-of-mass'
+      | 'inertia';
   } = {},
 ) {
   const wrapper = new THREE.Group();
@@ -108,7 +119,13 @@ function createTaggedReversedWindingTriangle(
   target: VisualizerHoverTarget,
   material: THREE.Material,
   options: {
-    interactionLayer?: 'visual' | 'collision' | 'origin-axes' | 'joint-axis' | 'center-of-mass' | 'inertia';
+    interactionLayer?:
+      | 'visual'
+      | 'collision'
+      | 'origin-axes'
+      | 'joint-axis'
+      | 'center-of-mass'
+      | 'inertia';
   } = {},
 ) {
   const wrapper = new THREE.Group();
@@ -118,11 +135,10 @@ function createTaggedReversedWindingTriangle(
   };
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    -1, -1, -5,
-    1, -1, -5,
-    0, 1, -5,
-  ]), 3));
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(new Float32Array([-1, -1, -5, 1, -1, -5, 0, 1, -5]), 3),
+  );
   geometry.setIndex([0, 2, 1]);
   geometry.computeVertexNormals();
 
@@ -146,31 +162,50 @@ test('getVisualizerHoverTarget resolves metadata through geometry ancestors', ()
   assert.deepEqual(getVisualizerHoverTarget(mesh), target);
 });
 
+test('getVisualizerHoverTarget preserves helper kinds for tagged helper objects', () => {
+  const target: VisualizerHoverTarget = {
+    type: 'link',
+    id: 'forearm',
+    helperKind: 'inertia',
+  };
+
+  const { wrapper, mesh } = createTaggedMesh(target, -2, {
+    isHelper: true,
+    interactionLayer: 'inertia',
+  });
+  wrapper.updateMatrixWorld(true);
+
+  assert.deepEqual(getVisualizerHoverTarget(mesh), target);
+});
+
 test('findNearestVisualizerHoverTarget prefers the closest tagged link when hits overlap', () => {
   const root = new THREE.Group();
 
-  const far = createTaggedMesh({
-    type: 'link',
-    id: 'far_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -5);
+  const far = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'far_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -5,
+  );
 
-  const near = createTaggedMesh({
-    type: 'link',
-    id: 'near_link',
-    subType: 'visual',
-    objectIndex: 1,
-  }, -2);
+  const near = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'near_link',
+      subType: 'visual',
+      objectIndex: 1,
+    },
+    -2,
+  );
 
   root.add(far.wrapper);
   root.add(near.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -189,21 +224,21 @@ test('findNearestVisualizerHoverTarget ignores closer helper meshes without visu
   );
   helperMesh.position.set(0, 0, -1);
 
-  const tagged = createTaggedMesh({
-    type: 'link',
-    id: 'reachable_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -3);
+  const tagged = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'reachable_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -3,
+  );
 
   root.add(helperMesh);
   root.add(tagged.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -216,36 +251,44 @@ test('findNearestVisualizerHoverTarget ignores closer helper meshes without visu
 test('findNearestVisualizerHoverTarget skips hidden or fully transparent tagged geometry', () => {
   const root = new THREE.Group();
 
-  const hidden = createTaggedMesh({
-    type: 'link',
-    id: 'hidden_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -1, { visible: false });
+  const hidden = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'hidden_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -1,
+    { visible: false },
+  );
 
-  const transparent = createTaggedMesh({
-    type: 'link',
-    id: 'transparent_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -2, { opacity: 0 });
+  const transparent = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'transparent_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -2,
+    { opacity: 0 },
+  );
 
-  const fallback = createTaggedMesh({
-    type: 'link',
-    id: 'fallback_link',
-    subType: 'visual',
-    objectIndex: 4,
-  }, -4);
+  const fallback = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'fallback_link',
+      subType: 'visual',
+      objectIndex: 4,
+    },
+    -4,
+  );
 
   root.add(hidden.wrapper);
   root.add(transparent.wrapper);
   root.add(fallback.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -258,18 +301,19 @@ test('findNearestVisualizerHoverTarget skips hidden or fully transparent tagged 
 test('findNearestVisualizerHoverTarget keeps non-rendering pick proxies raycastable', () => {
   const root = new THREE.Group();
 
-  const pickProxy = createTaggedMesh({
-    type: 'link',
-    id: 'helper_link',
-  }, -1, { colorWrite: false });
+  const pickProxy = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'helper_link',
+    },
+    -1,
+    { colorWrite: false },
+  );
 
   root.add(pickProxy.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -280,29 +324,33 @@ test('findNearestVisualizerHoverTarget keeps non-rendering pick proxies raycasta
 test('findNearestVisualizerHoverTarget prefers overlay helpers over nearer standard geometry', () => {
   const root = new THREE.Group();
 
-  const geometry = createTaggedMesh({
-    type: 'link',
-    id: 'front_geometry',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -1);
+  const geometry = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'front_geometry',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -1,
+  );
 
-  const overlayHelper = createTaggedMesh({
-    type: 'link',
-    id: 'overlay_helper',
-  }, -2, {
-    depthTest: false,
-    isHelper: true,
-  });
+  const overlayHelper = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'overlay_helper',
+    },
+    -2,
+    {
+      depthTest: false,
+      isHelper: true,
+    },
+  );
 
   root.add(geometry.wrapper);
   root.add(overlayHelper.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -313,28 +361,31 @@ test('findNearestVisualizerHoverTarget prefers overlay helpers over nearer stand
 test('findNearestVisualizerHoverTarget prefers collision targets over visual targets when layers overlap', () => {
   const root = new THREE.Group();
 
-  const visual = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -2);
+  const visual = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -2,
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'collision',
-    objectIndex: 1,
-  }, -2.01);
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'collision',
+      objectIndex: 1,
+    },
+    -2.01,
+  );
 
   root.add(visual.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -357,22 +408,23 @@ test('findNearestVisualizerHoverTarget can hit reversed-winding collision meshes
     emissiveIntensity: 0,
   });
 
-  const collision = createTaggedReversedWindingTriangle({
-    type: 'link',
-    id: 'torso_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, material, {
-    interactionLayer: 'collision',
-  });
+  const collision = createTaggedReversedWindingTriangle(
+    {
+      type: 'link',
+      id: 'torso_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    material,
+    {
+      interactionLayer: 'collision',
+    },
+  );
 
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'link',
@@ -385,28 +437,31 @@ test('findNearestVisualizerHoverTarget can hit reversed-winding collision meshes
 test('findNearestVisualizerHoverTarget honors explicit layer priority over legacy collision bias', () => {
   const root = new THREE.Group();
 
-  const visual = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -2);
+  const visual = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -2,
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'collision',
-    objectIndex: 1,
-  }, -2.01);
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'collision',
+      objectIndex: 1,
+    },
+    -2.01,
+  );
 
   root.add(visual.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(
     findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
@@ -424,32 +479,37 @@ test('findNearestVisualizerHoverTarget honors explicit layer priority over legac
 test('findNearestVisualizerHoverTarget deprioritizes floor-like support planes beneath foreground geometry', () => {
   const root = new THREE.Group();
 
-  const floor = createTaggedSupportPlane({
-    type: 'link',
-    id: 'floor_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -2, {
-    interactionLayer: 'collision',
-  });
+  const floor = createTaggedSupportPlane(
+    {
+      type: 'link',
+      id: 'floor_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -2,
+    {
+      interactionLayer: 'collision',
+    },
+  );
 
-  const foreground = createTaggedMesh({
-    type: 'link',
-    id: 'upper_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -1.5, {
-    interactionLayer: 'visual',
-  });
+  const foreground = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'upper_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -1.5,
+    {
+      interactionLayer: 'visual',
+    },
+  );
 
   root.add(floor.wrapper);
   root.add(foreground.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(
     findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
@@ -467,22 +527,23 @@ test('findNearestVisualizerHoverTarget deprioritizes floor-like support planes b
 test('findNearestVisualizerHoverTarget keeps floor-like support planes hoverable when no foreground target overlaps', () => {
   const root = new THREE.Group();
 
-  const floor = createTaggedSupportPlane({
-    type: 'link',
-    id: 'floor_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -2, {
-    interactionLayer: 'collision',
-  });
+  const floor = createTaggedSupportPlane(
+    {
+      type: 'link',
+      id: 'floor_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -2,
+    {
+      interactionLayer: 'collision',
+    },
+  );
 
   root.add(floor.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(
     findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
@@ -500,31 +561,36 @@ test('findNearestVisualizerHoverTarget keeps floor-like support planes hoverable
 test('resolveVisualizerInteractionTargetFromHits prefers the directly hit helper target over overlapping link layers', () => {
   const root = new THREE.Group();
 
-  const helper = createTaggedMesh({
-    type: 'joint',
-    id: 'joint_1',
-  }, -2, {
-    isHelper: true,
-    interactionLayer: 'origin-axes',
-  });
+  const helper = createTaggedMesh(
+    {
+      type: 'joint',
+      id: 'joint_1',
+    },
+    -2,
+    {
+      isHelper: true,
+      interactionLayer: 'origin-axes',
+    },
+  );
 
-  const visual = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -1.5, {
-    interactionLayer: 'visual',
-  });
+  const visual = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -1.5,
+    {
+      interactionLayer: 'visual',
+    },
+  );
 
   root.add(helper.wrapper);
   root.add(visual.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
   const hits = raycaster.intersectObject(root, true);
 
   assert.deepEqual(
@@ -559,26 +625,36 @@ test('findNearestVisualizerTargetFromHits reuses the same nearest-visible filter
   );
   helperMesh.position.set(0, 0, -1);
 
-  const transparent = createTaggedMesh({
-    type: 'link',
-    id: 'transparent_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -2, { opacity: 0 });
+  const transparent = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'transparent_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -2,
+    { opacity: 0 },
+  );
 
-  const near = createTaggedMesh({
-    type: 'link',
-    id: 'near_link',
-    subType: 'collision',
-    objectIndex: 3,
-  }, -3);
+  const near = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'near_link',
+      subType: 'collision',
+      objectIndex: 3,
+    },
+    -3,
+  );
 
-  const far = createTaggedMesh({
-    type: 'link',
-    id: 'far_link',
-    subType: 'visual',
-    objectIndex: 1,
-  }, -5);
+  const far = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'far_link',
+      subType: 'visual',
+      objectIndex: 1,
+    },
+    -5,
+  );
 
   root.add(helperMesh);
   root.add(transparent.wrapper);
@@ -586,10 +662,7 @@ test('findNearestVisualizerTargetFromHits reuses the same nearest-visible filter
   root.add(far.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
   const hits = raycaster.intersectObject(root, true);
 
   assert.deepEqual(findNearestVisualizerTargetFromHits(hits), {
@@ -603,30 +676,34 @@ test('findNearestVisualizerTargetFromHits reuses the same nearest-visible filter
 test('findNearestVisualizerHoverTarget returns joint targets when the joint helper is visually on top', () => {
   const root = new THREE.Group();
 
-  const jointHelper = createTaggedMesh({
-    type: 'joint',
-    id: 'joint_1',
-  }, -1, {
-    depthTest: false,
-    isHelper: true,
-    renderOrder: 10000,
-  });
+  const jointHelper = createTaggedMesh(
+    {
+      type: 'joint',
+      id: 'joint_1',
+    },
+    -1,
+    {
+      depthTest: false,
+      isHelper: true,
+      renderOrder: 10000,
+    },
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'forearm_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -3);
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'forearm_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -3,
+  );
 
   root.add(jointHelper.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
     type: 'joint',
@@ -637,31 +714,36 @@ test('findNearestVisualizerHoverTarget returns joint targets when the joint help
 test('findNearestVisualizerHoverTarget keeps a nearer origin helper above farther collision geometry even when collision has higher layer priority', () => {
   const root = new THREE.Group();
 
-  const originHelper = createTaggedMesh({
-    type: 'link',
-    id: 'base_link',
-  }, -1, {
-    isHelper: true,
-    interactionLayer: 'origin-axes',
-  });
+  const originHelper = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'base_link',
+    },
+    -1,
+    {
+      isHelper: true,
+      interactionLayer: 'origin-axes',
+    },
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'base_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -3, {
-    interactionLayer: 'collision',
-  });
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'base_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -3,
+    {
+      interactionLayer: 'collision',
+    },
+  );
 
   root.add(originHelper.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
 
   assert.deepEqual(
     findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
@@ -674,31 +756,83 @@ test('findNearestVisualizerHoverTarget keeps a nearer origin helper above farthe
   );
 });
 
+test('findNearestVisualizerHoverTarget keeps an overlapping center-of-mass helper above same-link collision geometry', () => {
+  const root = new THREE.Group();
+
+  const centerOfMassHelper = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'base_link',
+      helperKind: 'center-of-mass',
+    },
+    -3,
+    {
+      isHelper: true,
+      interactionLayer: 'center-of-mass',
+      renderOrder: 10000,
+      depthTest: false,
+    },
+  );
+
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'base_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -1,
+    {
+      interactionLayer: 'collision',
+    },
+  );
+
+  root.add(centerOfMassHelper.wrapper);
+  root.add(collision.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+
+  assert.deepEqual(
+    findNearestVisualizerHoverTargetWithOptions(root, raycaster, {
+      interactionLayerPriority: ['collision', 'center-of-mass'],
+    }),
+    {
+      type: 'link',
+      id: 'base_link',
+      helperKind: 'center-of-mass',
+    },
+  );
+});
+
 test('resolveGeometryHoverTargetFromHits promotes collision hover above overlapping visual geometry', () => {
   const root = new THREE.Group();
 
-  const visual = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -2);
+  const visual = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -2,
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'collision',
-    objectIndex: 1,
-  }, -2.01);
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'collision',
+      objectIndex: 1,
+    },
+    -2.01,
+  );
 
   root.add(visual.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
   const hits = raycaster.intersectObject(root, true);
 
   assert.deepEqual(
@@ -713,28 +847,31 @@ test('resolveGeometryHoverTargetFromHits promotes collision hover above overlapp
 test('resolveGeometryHoverTargetFromHits honors explicit visual-first layer priority', () => {
   const root = new THREE.Group();
 
-  const visual = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'visual',
-    objectIndex: 0,
-  }, -2);
+  const visual = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    -2,
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'collision',
-    objectIndex: 1,
-  }, -2.01);
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'collision',
+      objectIndex: 1,
+    },
+    -2.01,
+  );
 
   root.add(visual.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
   const hits = raycaster.intersectObject(root, true);
 
   assert.deepEqual(
@@ -750,40 +887,43 @@ test('resolveGeometryHoverTargetFromHits honors explicit visual-first layer prio
 test('resolveGeometryHoverTargetFromHits yields to a nearer link helper instead of forcing geometry hover', () => {
   const root = new THREE.Group();
 
-  const helper = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-  }, -1, {
-    isHelper: true,
-    interactionLayer: 'origin-axes',
-  });
+  const helper = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+    },
+    -1,
+    {
+      isHelper: true,
+      interactionLayer: 'origin-axes',
+    },
+  );
 
-  const collision = createTaggedMesh({
-    type: 'link',
-    id: 'shared_link',
-    subType: 'collision',
-    objectIndex: 0,
-  }, -3, {
-    interactionLayer: 'collision',
-  });
+  const collision = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'shared_link',
+      subType: 'collision',
+      objectIndex: 0,
+    },
+    -3,
+    {
+      interactionLayer: 'collision',
+    },
+  );
 
   root.add(helper.wrapper);
   root.add(collision.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
   const hits = raycaster.intersectObject(root, true);
   const fallbackTarget = createGeometryHoverTargetSelection('shared_link', 'collision', 0);
 
   assert.equal(
-    resolveGeometryHoverTargetFromHitsWithOptions(
-      fallbackTarget,
-      hits,
-      { interactionLayerPriority: ['collision', 'origin-axes'] },
-    ),
+    resolveGeometryHoverTargetFromHitsWithOptions(fallbackTarget, hits, {
+      interactionLayerPriority: ['collision', 'origin-axes'],
+    }),
     null,
   );
 });
@@ -791,27 +931,25 @@ test('resolveGeometryHoverTargetFromHits yields to a nearer link helper instead 
 test('resolveGeometryHoverTargetFromHits yields to a nearer joint helper instead of forcing geometry hover', () => {
   const root = new THREE.Group();
 
-  const jointHelper = createTaggedMesh({
-    type: 'joint',
-    id: 'joint_1',
-  }, -1, {
-    depthTest: false,
-    isHelper: true,
-    renderOrder: 10000,
-  });
+  const jointHelper = createTaggedMesh(
+    {
+      type: 'joint',
+      id: 'joint_1',
+    },
+    -1,
+    {
+      depthTest: false,
+      isHelper: true,
+      renderOrder: 10000,
+    },
+  );
 
   root.add(jointHelper.wrapper);
   root.updateMatrixWorld(true);
 
-  const raycaster = new THREE.Raycaster(
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3(0, 0, -1),
-  );
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
   const hits = raycaster.intersectObject(root, true);
   const fallbackTarget = createGeometryHoverTargetSelection('shared_link', 'visual', 0);
 
-  assert.equal(
-    resolveGeometryHoverTargetFromHits(fallbackTarget, hits),
-    null,
-  );
+  assert.equal(resolveGeometryHoverTargetFromHits(fallbackTarget, hits), null);
 });

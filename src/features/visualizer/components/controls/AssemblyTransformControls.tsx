@@ -10,6 +10,7 @@ import {
   decomposeJointPivotMatrixToOrigin,
   resolveAssemblyComponentTransformTarget,
 } from '../../utils/assemblyTransformControlsShared';
+import { AssemblySelectionBounds } from './AssemblySelectionBounds';
 
 interface AssemblyTransformControlsProps {
   robot: RobotState;
@@ -17,6 +18,8 @@ interface AssemblyTransformControlsProps {
   assemblySelection?: AssemblySelection;
   transformMode: 'translate' | 'rotate';
   assemblyRoot: THREE.Group | null;
+  sourceSceneComponentRoot?: THREE.Group | null;
+  sourceSceneComponentId?: string | null;
   jointPivots: Record<string, THREE.Group | null>;
   onAssemblyTransform?: (transform: AssemblyTransform) => void;
   onComponentTransform?: (componentId: string, transform: AssemblyTransform) => void;
@@ -29,6 +32,7 @@ interface DragBaseline {
   componentId?: string;
   baseMatrix?: THREE.Matrix4;
   bridgeId?: string;
+  sourceSceneComponent?: boolean;
 }
 
 const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
@@ -36,17 +40,10 @@ const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 function composeTransformMatrix(transform?: AssemblyTransform | null): THREE.Matrix4 {
   const normalized = cloneAssemblyTransform(transform);
   return new THREE.Matrix4().compose(
-    new THREE.Vector3(
-      normalized.position.x,
-      normalized.position.y,
-      normalized.position.z,
+    new THREE.Vector3(normalized.position.x, normalized.position.y, normalized.position.z),
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(normalized.rotation.r, normalized.rotation.p, normalized.rotation.y, 'ZYX'),
     ),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(
-      normalized.rotation.r,
-      normalized.rotation.p,
-      normalized.rotation.y,
-      'ZYX',
-    )),
     UNIT_SCALE,
   );
 }
@@ -80,6 +77,8 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
   assemblySelection,
   transformMode,
   assemblyRoot,
+  sourceSceneComponentRoot = null,
+  sourceSceneComponentId = null,
   jointPivots,
   onAssemblyTransform,
   onComponentTransform,
@@ -89,23 +88,33 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
   const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
   const dragBaselineRef = useRef<DragBaseline | null>(null);
   const targetComponentId = assemblySelection?.type === 'component' ? assemblySelection.id : null;
-  const componentTransformTarget = useMemo(() => (
-    resolveAssemblyComponentTransformTarget({
-      robot,
-      assemblyState,
-      componentId: targetComponentId,
-      jointPivots,
-    })
-  ), [assemblyState, jointPivots, robot, targetComponentId]);
+  const componentTransformTarget = useMemo(
+    () =>
+      resolveAssemblyComponentTransformTarget({
+        robot,
+        assemblyState,
+        componentId: targetComponentId,
+        jointPivots,
+      }),
+    [assemblyState, jointPivots, robot, targetComponentId],
+  );
+  const hasSourceSceneComponentFallback = Boolean(
+    targetComponentId &&
+    sourceSceneComponentRoot &&
+    sourceSceneComponentId &&
+    targetComponentId === sourceSceneComponentId,
+  );
   const componentMoveBlocked = Boolean(
-    targetComponentId
-    && assemblyState
-    && !componentTransformTarget,
+    targetComponentId &&
+    assemblyState &&
+    !componentTransformTarget &&
+    !hasSourceSceneComponentFallback,
   );
 
-  const activeObject = assemblySelection?.type === 'assembly'
-    ? assemblyRoot
-    : componentTransformTarget?.object ?? null;
+  const activeObject =
+    assemblySelection?.type === 'assembly'
+      ? assemblyRoot
+      : (componentTransformTarget?.object ?? sourceSceneComponentRoot ?? null);
 
   const prepareDragBaseline = useCallback(() => {
     if (assemblySelection?.type === 'assembly') {
@@ -113,12 +122,21 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
       return;
     }
 
-    if (
-      assemblySelection?.type !== 'component'
-      || !assemblySelection.id
-      || !assemblyState
-      || !componentTransformTarget?.object
-    ) {
+    if (assemblySelection?.type !== 'component' || !assemblySelection.id || !assemblyState) {
+      dragBaselineRef.current = null;
+      return;
+    }
+
+    if (hasSourceSceneComponentFallback) {
+      dragBaselineRef.current = {
+        type: 'component',
+        componentId: assemblySelection.id,
+        sourceSceneComponent: true,
+      };
+      return;
+    }
+
+    if (!componentTransformTarget?.object) {
       dragBaselineRef.current = null;
       return;
     }
@@ -144,7 +162,7 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
       componentId: assemblySelection.id,
       baseMatrix,
     };
-  }, [assemblySelection, assemblyState, componentTransformTarget]);
+  }, [assemblySelection, assemblyState, componentTransformTarget, hasSourceSceneComponentFallback]);
 
   const commitTransform = useCallback(() => {
     const dragBaseline = dragBaselineRef.current;
@@ -163,7 +181,11 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
     }
 
     if (dragBaseline.bridgeId) {
-      if (!componentTransformTarget?.object || componentTransformTarget.kind !== 'bridge' || !onBridgeTransform) {
+      if (
+        !componentTransformTarget?.object ||
+        componentTransformTarget.kind !== 'bridge' ||
+        !onBridgeTransform
+      ) {
         return;
       }
 
@@ -175,12 +197,25 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
       return;
     }
 
+    if (dragBaseline.sourceSceneComponent) {
+      if (!dragBaseline.componentId || !sourceSceneComponentRoot || !onComponentTransform) {
+        return;
+      }
+
+      sourceSceneComponentRoot.updateMatrix();
+      onComponentTransform(
+        dragBaseline.componentId,
+        decomposeTransformMatrix(sourceSceneComponentRoot.matrix),
+      );
+      return;
+    }
+
     if (
-      !dragBaseline.componentId
-      || !dragBaseline.baseMatrix
-      || !componentTransformTarget?.object
-      || componentTransformTarget.kind !== 'component'
-      || !onComponentTransform
+      !dragBaseline.componentId ||
+      !dragBaseline.baseMatrix ||
+      !componentTransformTarget?.object ||
+      componentTransformTarget.kind !== 'component' ||
+      !onComponentTransform
     ) {
       return;
     }
@@ -192,31 +227,41 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
       .invert()
       .multiply(currentLocalMatrix);
 
-    onComponentTransform(
-      dragBaseline.componentId,
-      decomposeTransformMatrix(nextTransformMatrix),
-    );
-  }, [assemblyRoot, componentTransformTarget, onAssemblyTransform, onBridgeTransform, onComponentTransform]);
+    onComponentTransform(dragBaseline.componentId, decomposeTransformMatrix(nextTransformMatrix));
+  }, [
+    assemblyRoot,
+    componentTransformTarget,
+    onAssemblyTransform,
+    onBridgeTransform,
+    onComponentTransform,
+    sourceSceneComponentRoot,
+  ]);
 
-  const handleDraggingChanged = useCallback((event?: { value?: boolean }) => {
-    const dragging = Boolean(event?.value);
-    setHoverFrozen(dragging);
-    onTransformPendingChange?.(dragging);
+  const handleDraggingChanged = useCallback(
+    (event?: { value?: boolean }) => {
+      const dragging = Boolean(event?.value);
+      setHoverFrozen(dragging);
+      onTransformPendingChange?.(dragging);
 
-    if (dragging) {
-      prepareDragBaseline();
-      return;
-    }
+      if (dragging) {
+        prepareDragBaseline();
+        return;
+      }
 
-    commitTransform();
-    dragBaselineRef.current = null;
-  }, [commitTransform, onTransformPendingChange, prepareDragBaseline, setHoverFrozen]);
+      commitTransform();
+      dragBaselineRef.current = null;
+    },
+    [commitTransform, onTransformPendingChange, prepareDragBaseline, setHoverFrozen],
+  );
 
-  useEffect(() => () => {
-    setHoverFrozen(false);
-    onTransformPendingChange?.(false);
-    dragBaselineRef.current = null;
-  }, [onTransformPendingChange, setHoverFrozen]);
+  useEffect(
+    () => () => {
+      setHoverFrozen(false);
+      onTransformPendingChange?.(false);
+      dragBaselineRef.current = null;
+    },
+    [onTransformPendingChange, setHoverFrozen],
+  );
 
   if (componentMoveBlocked) {
     return (
@@ -233,15 +278,18 @@ export const AssemblyTransformControls = memo(function AssemblyTransformControls
   }
 
   return (
-    <UnifiedTransformControls
-      object={activeObject}
-      mode={transformMode}
-      size={VISUALIZER_UNIFIED_GIZMO_SIZE}
-      translateSpace="world"
-      rotateSpace="local"
-      hoverStyle="single-axis"
-      displayStyle="thick-primary"
-      onDraggingChanged={handleDraggingChanged}
-    />
+    <>
+      <AssemblySelectionBounds object={activeObject} />
+      <UnifiedTransformControls
+        object={activeObject}
+        mode={transformMode}
+        size={VISUALIZER_UNIFIED_GIZMO_SIZE}
+        translateSpace="world"
+        rotateSpace="local"
+        hoverStyle="single-axis"
+        displayStyle="thick-primary"
+        onDraggingChanged={handleDraggingChanged}
+      />
+    </>
   );
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
 import { URDFLink, URDFVisual } from '@/core/parsers/urdf/loader/URDFClasses';
+import { DEFAULT_LINK } from '@/types';
 
 import {
   COLLISION_OVERLAY_RENDER_ORDER,
@@ -99,6 +100,42 @@ test('syncRobotGeometryVisibility applies collision overlays without re-enabling
   assert.equal(collisionMesh.renderOrder, COLLISION_OVERLAY_RENDER_ORDER);
   assert.equal(visualGroup.visible, false);
   assert.equal(visualMesh.visible, false);
+});
+
+test('syncRobotGeometryVisibility hides collisions when the parent link is hidden', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  (collisionGroup as any).isURDFCollider = true;
+
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collisionGroup.add(collisionMesh);
+
+  link.add(collisionGroup);
+  robot.add(link);
+
+  const changed = syncRobotGeometryVisibility({
+    robot,
+    robotLinks: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visible: false,
+      },
+    },
+    showCollision: true,
+    showVisual: true,
+  });
+
+  assert.equal(changed, true);
+  assert.equal(collisionGroup.visible, false);
+  assert.equal(collisionMesh.userData.isCollisionMesh, undefined);
 });
 
 test('syncRobotGeometryVisibility respects non-topmost collision rendering mode', () => {

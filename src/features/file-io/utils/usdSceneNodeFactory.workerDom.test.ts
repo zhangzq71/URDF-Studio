@@ -13,7 +13,10 @@ if (typeof globalThis.ProgressEvent === 'undefined') {
     total: number;
     lengthComputable: boolean;
 
-    constructor(type: string, init: { loaded?: number; total?: number; lengthComputable?: boolean } = {}) {
+    constructor(
+      type: string,
+      init: { loaded?: number; total?: number; lengthComputable?: boolean } = {},
+    ) {
       super(type);
       this.loaded = init.loaded ?? 0;
       this.total = init.total ?? 0;
@@ -38,54 +41,62 @@ const createMeshVisual = (meshPath: string): UrdfVisual => {
 };
 
 const createTexturedTriangleGltfBlob = () => {
-  const positions = new Float32Array([
-    0, 0, 0,
-    1, 0, 0,
-    0, 1, 0,
-  ]);
-  const uv = new Float32Array([
-    0, 0,
-    1, 0,
-    0, 1,
-  ]);
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const uv = new Float32Array([0, 0, 1, 0, 0, 1]);
   const indices = new Uint16Array([0, 1, 2]);
   const positionBytes = new Uint8Array(positions.buffer);
   const uvBytes = new Uint8Array(uv.buffer);
   const indexBytes = new Uint8Array(indices.buffer);
-  const combined = new Uint8Array(positionBytes.byteLength + uvBytes.byteLength + indexBytes.byteLength);
+  const combined = new Uint8Array(
+    positionBytes.byteLength + uvBytes.byteLength + indexBytes.byteLength,
+  );
 
   combined.set(positionBytes, 0);
   combined.set(uvBytes, positionBytes.byteLength);
   combined.set(indexBytes, positionBytes.byteLength + uvBytes.byteLength);
 
-  const textureDataUrl = 'data:image/png;base64,'
-    + 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm0cAAAAASUVORK5CYII=';
+  const textureDataUrl =
+    'data:image/png;base64,' +
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5Wm0cAAAAASUVORK5CYII=';
   const gltf = {
     asset: { version: '2.0' },
     scene: 0,
     scenes: [{ nodes: [0] }],
     nodes: [{ mesh: 0 }],
-    meshes: [{
-      primitives: [{
-        attributes: { POSITION: 0, TEXCOORD_0: 1 },
-        indices: 2,
-        material: 0,
-      }],
-    }],
-    materials: [{
-      pbrMetallicRoughness: {
-        baseColorTexture: { index: 0 },
+    meshes: [
+      {
+        primitives: [
+          {
+            attributes: { POSITION: 0, TEXCOORD_0: 1 },
+            indices: 2,
+            material: 0,
+          },
+        ],
       },
-    }],
+    ],
+    materials: [
+      {
+        pbrMetallicRoughness: {
+          baseColorTexture: { index: 0 },
+        },
+      },
+    ],
     textures: [{ source: 0 }],
     images: [{ uri: textureDataUrl }],
-    buffers: [{
-      uri: `data:application/octet-stream;base64,${Buffer.from(combined).toString('base64')}`,
-      byteLength: combined.byteLength,
-    }],
+    buffers: [
+      {
+        uri: `data:application/octet-stream;base64,${Buffer.from(combined).toString('base64')}`,
+        byteLength: combined.byteLength,
+      },
+    ],
     bufferViews: [
       { buffer: 0, byteOffset: 0, byteLength: positionBytes.byteLength, target: 34962 },
-      { buffer: 0, byteOffset: positionBytes.byteLength, byteLength: uvBytes.byteLength, target: 34962 },
+      {
+        buffer: 0,
+        byteOffset: positionBytes.byteLength,
+        byteLength: uvBytes.byteLength,
+        target: 34962,
+      },
       {
         buffer: 0,
         byteOffset: positionBytes.byteLength + uvBytes.byteLength,
@@ -125,7 +136,7 @@ type WorkerImageGlobalSnapshot = {
   HTMLImageElement: typeof globalThis.HTMLImageElement;
   createImageBitmap: typeof globalThis.createImageBitmap;
   document: typeof globalThis.document;
-  self: (typeof globalThis & { self?: typeof globalThis }).self;
+  self: (typeof globalThis & { self?: typeof globalThis })['self'];
 };
 
 function captureWorkerImageGlobals(): WorkerImageGlobalSnapshot {
@@ -148,7 +159,8 @@ function restoreWorkerImageGlobals(snapshot: WorkerImageGlobalSnapshot): void {
   if (snapshot.HTMLImageElement) {
     globalThis.HTMLImageElement = snapshot.HTMLImageElement;
   } else {
-    delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement }).HTMLImageElement;
+    delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement })
+      .HTMLImageElement;
   }
 
   if (snapshot.Image) {
@@ -160,7 +172,8 @@ function restoreWorkerImageGlobals(snapshot: WorkerImageGlobalSnapshot): void {
   if (snapshot.createImageBitmap) {
     globalThis.createImageBitmap = snapshot.createImageBitmap;
   } else {
-    delete (globalThis as typeof globalThis & { createImageBitmap?: typeof createImageBitmap }).createImageBitmap;
+    delete (globalThis as typeof globalThis & { createImageBitmap?: typeof createImageBitmap })
+      .createImageBitmap;
   }
 
   if (snapshot.self) {
@@ -172,14 +185,20 @@ function restoreWorkerImageGlobals(snapshot: WorkerImageGlobalSnapshot): void {
 
 test('buildUsdVisualSceneNode loads textured GLTF meshes in worker-like environments without DOM image globals', async () => {
   const meshPath = 'meshes/textured_triangle.gltf';
-  const { registry, tempObjectUrls } = createUsdAssetRegistry({}, new Map([[meshPath, createTexturedTriangleGltfBlob()]]));
+  const { registry, tempObjectUrls } = createUsdAssetRegistry(
+    {},
+    new Map([[meshPath, createTexturedTriangleGltfBlob()]]),
+  );
   const snapshot = captureWorkerImageGlobals();
 
   delete (globalThis as typeof globalThis & { document?: Document }).document;
-  delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement }).HTMLImageElement;
+  delete (globalThis as typeof globalThis & { HTMLImageElement?: typeof HTMLImageElement })
+    .HTMLImageElement;
   delete (globalThis as typeof globalThis & { Image?: typeof Image }).Image;
-  delete (globalThis as typeof globalThis & { createImageBitmap?: typeof createImageBitmap }).createImageBitmap;
-  (globalThis as typeof globalThis & { self?: typeof globalThis }).self = globalThis;
+  delete (globalThis as typeof globalThis & { createImageBitmap?: typeof createImageBitmap })
+    .createImageBitmap;
+  (globalThis as typeof globalThis & { self?: Window & typeof globalThis }).self =
+    globalThis as unknown as Window & typeof globalThis;
 
   try {
     const node = await buildUsdVisualSceneNode({

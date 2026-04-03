@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DEFAULT_LINK, GeometryType, type RobotData } from '@/types';
+import { DEFAULT_LINK, GeometryType, JointType, type RobotData } from '@/types';
 import {
   buildAssemblyComponentIdentity,
   namespaceAssemblyRobotData,
@@ -39,7 +39,7 @@ test('namespaceAssemblyRobotData prefixes links, joints, and materials for assem
       wrist_joint: {
         id: 'wrist_joint',
         name: 'wrist_joint',
-        type: 'fixed',
+        type: JointType.FIXED,
         parentLinkId: 'base_link',
         childLinkId: 'tool_link',
         origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },

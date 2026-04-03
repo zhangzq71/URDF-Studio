@@ -21,16 +21,21 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
   (globalThis as { FocusEvent?: typeof FocusEvent }).FocusEvent = dom.window.FocusEvent;
   (globalThis as { KeyboardEvent?: typeof KeyboardEvent }).KeyboardEvent = dom.window.KeyboardEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   if (!('attachEvent' in dom.window.HTMLElement.prototype)) {
@@ -91,7 +96,11 @@ function getButtonByText(container: Element, text: string): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
-function getRequiredElement<T extends Element>(container: ParentNode, selector: string, label: string): T {
+function getRequiredElement<T extends Element>(
+  container: ParentNode,
+  selector: string,
+  label: string,
+): T {
   const element = container.querySelector(selector);
   assert.ok(element, `${label} should exist`);
   return element as T;
@@ -125,21 +134,6 @@ async function changeRangeValue(input: HTMLInputElement, value: number) {
   });
 }
 
-async function changeSelectValue(select: HTMLSelectElement, value: string) {
-  const prototype = select.ownerDocument.defaultView?.HTMLSelectElement.prototype;
-  const valueSetter = prototype
-    ? Object.getOwnPropertyDescriptor(prototype, 'value')?.set
-    : undefined;
-
-  assert.ok(valueSetter, 'HTMLSelectElement value setter should exist');
-
-  await act(async () => {
-    valueSetter.call(select, value);
-    select.dispatchEvent(new Event('input', { bubbles: true }));
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-}
-
 test('MJCF, URDF, SDF, and USD exports expose a custom compression mode with a slider', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -170,12 +164,16 @@ test('workspace export dialog keeps project export separate from the format pick
   let exportedConfig: ExportDialogConfig | null = null;
 
   try {
-    await renderExportDialog(root, (config) => {
-      exportedConfig = config;
-    }, {
-      allowProjectExport: true,
-      defaultFormat: 'project',
-    });
+    await renderExportDialog(
+      root,
+      (config) => {
+        exportedConfig = config;
+      },
+      {
+        allowProjectExport: true,
+        defaultFormat: 'project',
+      },
+    );
 
     const formatPicker = getRequiredElement<HTMLElement>(
       container,
@@ -251,16 +249,61 @@ test('USD export lets the user switch authored layer format to USDA', async () =
 
     await click(getButtonByText(container, 'USD'));
 
-    const fileFormatSelect = Array.from(container.querySelectorAll('select')).find((candidate) => (
-      candidate.textContent?.includes('USDA')
-    ));
-    assert.ok(fileFormatSelect, 'USD file format select should render');
+    const fileFormatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-usd-file-format-picker]',
+      'USD file format picker',
+    );
+    assert.match(fileFormatPicker.textContent ?? '', /USDUSDA/);
 
-    await changeSelectValue(fileFormatSelect as HTMLSelectElement, 'usda');
+    await click(getButtonByText(container, 'USDA'));
     await click(getButtonByText(container, '导出 ZIP'));
 
     assert.ok(exportedConfig, 'USD export should submit a config');
     assert.equal(exportedConfig.usd.fileFormat, 'usda');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD export keeps the layer format and compression controls visually concise', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'USD'));
+
+    const textContent = container.textContent ?? '';
+    assert.doesNotMatch(textContent, /导出为 Isaac Sim 风格的分层包/);
+    assert.doesNotMatch(textContent, /导出前简化 Mesh 三角面/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD layer format row keeps label and segmented buttons vertically centered', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'USD'));
+
+    const fileFormatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-usd-file-format-picker]',
+      'USD file format picker',
+    );
+    const row = fileFormatPicker.parentElement?.parentElement;
+    assert.ok(row, 'USD file format row should exist');
+    assert.match(row.className, /items-center/);
+
+    const layerButtons = Array.from(fileFormatPicker.querySelectorAll('button'));
+    assert.ok(layerButtons.length >= 2, 'USD layer format buttons should render');
+    assert.match(layerButtons[0].className, /inline-flex/);
+    assert.match(layerButtons[0].className, /items-center/);
+    assert.match(layerButtons[0].className, /justify-center/);
   } finally {
     await destroyComponentRoot(dom, root);
   }
@@ -281,7 +324,10 @@ test('custom compression keeps the slider visible and exports the selected MJCF 
     assert.ok(slider, 'custom compression slider should render');
 
     await changeRangeValue(slider, 42);
-    assert.ok(getQualitySlider(container), 'slider should remain visible after custom quality changes');
+    assert.ok(
+      getQualitySlider(container),
+      'slider should remain visible after custom quality changes',
+    );
 
     await click(getButtonByText(container, '导出 ZIP'));
 
@@ -326,6 +372,26 @@ test('MJCF export label omits the XML suffix in the format picker', async () => 
   }
 });
 
+test('export format picker stays as a single compact row at the default dialog width', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    const formatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-export-format-picker]',
+      'format picker',
+    );
+    assert.match(formatPicker.className, /grid-cols-5/);
+
+    const mjcfButton = getButtonByText(container, 'MJCF');
+    assert.doesNotMatch(mjcfButton.className, /flex-col/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('Xacro export moves ROS profile guidance into hover titles instead of inline copy', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -342,7 +408,10 @@ test('Xacro export moves ROS profile guidance into hover titles instead of inlin
     assert.match(xacroProfilePicker.className, /grid-cols-1/);
 
     const ros2Button = getButtonByText(container, 'ROS2 + gazebo_ros2_control');
-    assert.equal(ros2Button.getAttribute('title'), '导出 ros2_control 与 gazebo_ros2_control 约定。');
+    assert.equal(
+      ros2Button.getAttribute('title'),
+      '导出 ros2_control 与 gazebo_ros2_control 约定。',
+    );
     assert.equal(ros2Button.getAttribute('aria-pressed'), 'true');
     assert.match(ros2Button.className, /min-h-\[2\.5rem\]/);
     assert.doesNotMatch(ros2Button.className, /min-h-\[3\.15rem\]/);
@@ -362,7 +431,10 @@ test('Xacro export moves ROS profile guidance into hover titles instead of inlin
     const textContent = container.textContent ?? '';
     assert.doesNotMatch(textContent, /导出为真正的 xacro/);
     assert.doesNotMatch(textContent, /导出 ros2_control 与 gazebo_ros2_control 约定/);
-    assert.doesNotMatch(textContent, /写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称/);
+    assert.doesNotMatch(
+      textContent,
+      /写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称/,
+    );
   } finally {
     await destroyComponentRoot(dom, root);
   }

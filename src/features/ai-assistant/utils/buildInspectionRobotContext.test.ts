@@ -1,8 +1,8 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-import { GeometryType, JointType, type RobotState } from '@/types'
-import { buildInspectionRobotContext } from './buildInspectionRobotContext.ts'
+import { GeometryType, JointType, type RobotState } from '@/types';
+import { buildInspectionRobotContext } from './buildInspectionRobotContext.ts';
 
 test('buildInspectionRobotContext preserves joint engineering fields and MJCF inspection metadata', () => {
   const robot: RobotState = {
@@ -15,11 +15,13 @@ test('buildInspectionRobotContext preserves joint engineering fields and MJCF in
         visual: {
           type: GeometryType.BOX,
           dimensions: { x: 1, y: 2, z: 3 },
+          color: '#ffffff',
           origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
         },
         collision: {
           type: GeometryType.BOX,
           dimensions: { x: 1, y: 2, z: 3 },
+          color: '#000000',
           origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
         },
         inertial: {
@@ -66,17 +68,22 @@ test('buildInspectionRobotContext preserves joint engineering fields and MJCF in
       },
     },
     selection: { type: 'link', id: 'base_link' },
-  }
+  };
 
-  const context = buildInspectionRobotContext(robot)
-  const [joint] = context.joints
+  const context = buildInspectionRobotContext(robot);
+  const [joint] = context.joints;
 
-  assert.equal(joint?.name, 'hip_joint')
-  assert.deepEqual(joint?.origin, { xyz: { x: 0, y: 0.2, z: 0 }, rpy: { r: 0, p: 0, y: 0 } })
-  assert.deepEqual(joint?.limit, { lower: -1, upper: 1, effort: 12, velocity: 8 })
-  assert.deepEqual(joint?.dynamics, { damping: 0.1, friction: 0.2 })
-  assert.deepEqual(joint?.hardware, { armature: 0.03, motorType: 'servo', motorId: 'M1', motorDirection: 1 })
-  assert.equal(joint?.referencePosition, 0.12)
+  assert.equal(joint?.name, 'hip_joint');
+  assert.deepEqual(joint?.origin, { xyz: { x: 0, y: 0.2, z: 0 }, rpy: { r: 0, p: 0, y: 0 } });
+  assert.deepEqual(joint?.limit, { lower: -1, upper: 1, effort: 12, velocity: 8 });
+  assert.deepEqual(joint?.dynamics, { damping: 0.1, friction: 0.2 });
+  assert.deepEqual(joint?.hardware, {
+    armature: 0.03,
+    motorType: 'servo',
+    motorId: 'M1',
+    motorDirection: 1,
+  });
+  assert.equal(joint?.referencePosition, 0.12);
 
-  assert.deepEqual(context.inspectionContext, robot.inspectionContext)
-})
+  assert.deepEqual(context.inspectionContext, robot.inspectionContext);
+});

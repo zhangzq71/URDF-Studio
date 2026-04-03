@@ -167,10 +167,12 @@ function buildPairKey(leftTargetId: string, rightTargetId: string): string {
 }
 
 function compareTargets(left: CollisionTargetRef, right: CollisionTargetRef): number {
-  return left.sequenceIndex - right.sequenceIndex
-    || left.objectIndex - right.objectIndex
-    || left.linkName.localeCompare(right.linkName)
-    || (left.componentName ?? '').localeCompare(right.componentName ?? '');
+  return (
+    left.sequenceIndex - right.sequenceIndex ||
+    left.objectIndex - right.objectIndex ||
+    left.linkName.localeCompare(right.linkName) ||
+    (left.componentName ?? '').localeCompare(right.componentName ?? '')
+  );
 }
 
 function buildCurvePath(from: GraphPoint, to: GraphPoint): string {
@@ -196,7 +198,9 @@ function formatCompactNumber(value: number | null | undefined): string {
   return safeValue.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function getGeometryMetrics(candidate: CollisionOptimizationCandidate): Array<{ label: string; value: string }> {
+function getGeometryMetrics(
+  candidate: CollisionOptimizationCandidate,
+): Array<{ label: string; value: string }> {
   const geometry = candidate.nextGeometry ?? candidate.target.geometry;
   const dimensions = geometry.dimensions;
 
@@ -317,10 +321,7 @@ function expandBounds(bounds: GraphBounds, marginX: number, marginY: number): Gr
   };
 }
 
-function createViewportForBounds(
-  container: HTMLDivElement,
-  bounds: GraphBounds,
-): ViewportState {
+function createViewportForBounds(container: HTMLDivElement, bounds: GraphBounds): ViewportState {
   const availableWidth = Math.max(container.clientWidth - 40, 320);
   const availableHeight = Math.max(container.clientHeight - 40, 240);
   const boundsWidth = Math.max(bounds.maxX - bounds.minX, 180);
@@ -333,46 +334,53 @@ function createViewportForBounds(
 
   return {
     scale,
-    x: (container.clientWidth / 2) - bounds.centerX * scale,
-    y: (container.clientHeight / 2) - bounds.centerY * scale,
+    x: container.clientWidth / 2 - bounds.centerX * scale,
+    y: container.clientHeight / 2 - bounds.centerY * scale,
   };
 }
 
-function pickSummaryCandidate(candidates: CollisionOptimizationCandidate[]): CollisionOptimizationCandidate | null {
+function pickSummaryCandidate(
+  candidates: CollisionOptimizationCandidate[],
+): CollisionOptimizationCandidate | null {
   if (candidates.length === 0) {
     return null;
   }
 
-  return [...candidates].sort((left, right) => {
-    return Number(right.eligible) - Number(left.eligible)
-      || Number(Boolean(right.secondaryTarget)) - Number(Boolean(left.secondaryTarget))
-      || Number(right.target.isPrimary) - Number(left.target.isPrimary)
-      || left.target.sequenceIndex - right.target.sequenceIndex
-      || left.target.objectIndex - right.target.objectIndex;
-  })[0] ?? null;
+  return (
+    [...candidates].sort((left, right) => {
+      return (
+        Number(right.eligible) - Number(left.eligible) ||
+        Number(Boolean(right.secondaryTarget)) - Number(Boolean(left.secondaryTarget)) ||
+        Number(right.target.isPrimary) - Number(left.target.isPrimary) ||
+        left.target.sequenceIndex - right.target.sequenceIndex ||
+        left.target.objectIndex - right.target.objectIndex
+      );
+    })[0] ?? null
+  );
 }
 
-function buildLinkComponentMap(source: CollisionOptimizationSource): Map<string, { componentName?: string }> {
+function buildLinkComponentMap(
+  source: CollisionOptimizationSource,
+): Map<string, { componentName?: string }> {
   if (source.kind === 'robot') {
     return new Map(
-      Object.values(source.robot.links).map((link) => [link.id, { componentName: undefined }] as const),
+      Object.values(source.robot.links).map(
+        (link) => [link.id, { componentName: undefined }] as const,
+      ),
     );
   }
 
   return new Map(
     Object.values(source.assembly.components).flatMap((component) =>
-      Object.values(component.robot.links).map((link) => [
-        link.id,
-        { componentName: component.name },
-      ] as const),
+      Object.values(component.robot.links).map(
+        (link) => [link.id, { componentName: component.name }] as const,
+      ),
     ),
   );
 }
 
 function resolveRobot(source: CollisionOptimizationSource) {
-  return source.kind === 'robot'
-    ? source.robot
-    : mergeAssembly(source.assembly);
+  return source.kind === 'robot' ? source.robot : mergeAssembly(source.assembly);
 }
 
 function buildTreeLayout(source: CollisionOptimizationSource): {
@@ -400,10 +408,9 @@ function buildTreeLayout(source: CollisionOptimizationSource): {
     childrenByParent.set(parentId, children);
   });
 
-  const rootIds = Array.from(new Set([
-    robot.rootLinkId,
-    ...linkIds.filter((linkId) => !childLinkIdSet.has(linkId)),
-  ])).filter(Boolean);
+  const rootIds = Array.from(
+    new Set([robot.rootLinkId, ...linkIds.filter((linkId) => !childLinkIdSet.has(linkId))]),
+  ).filter(Boolean);
 
   const widthCache = new Map<string, number>();
   const measure = (linkId: string): number => {
@@ -413,9 +420,8 @@ function buildTreeLayout(source: CollisionOptimizationSource): {
     }
 
     const children = childrenByParent.get(linkId) ?? [];
-    const width = children.length === 0
-      ? 1
-      : children.reduce((sum, childId) => sum + measure(childId), 0);
+    const width =
+      children.length === 0 ? 1 : children.reduce((sum, childId) => sum + measure(childId), 0);
     widthCache.set(linkId, width);
     return width;
   };
@@ -499,44 +505,49 @@ function buildGraphModel(
     manualMergePairs.map((pair) => buildPairKey(pair.primaryTargetId, pair.secondaryTargetId)),
   );
 
-  const nodes = Array.from(positions.entries()).map(([linkId, center]) => {
-    const linkTargets = [...(targetsByLinkId.get(linkId) ?? [])].sort(compareTargets);
-    const summaryCandidate = pickSummaryCandidate(candidatesByPrimaryLinkId.get(linkId) ?? []);
-    const summaryTarget = summaryCandidate?.target ?? linkTargets[0] ?? null;
-    const linkName = summaryTarget?.linkName ?? linkId;
-    const width = clamp(
-      NODE_PILL_PADDING + linkName.length * 6.1,
-      NODE_MIN_WIDTH,
-      NODE_MAX_WIDTH,
-    );
-    const height = NODE_HEIGHT;
-    const selected = linkTargets.some((target) => {
-      return selection?.type === 'link'
-        && selection.id === target.linkId
-        && selection.subType === 'collision'
-        && (selection.objectIndex ?? 0) === target.objectIndex;
-    });
-    const checked = (candidatesByPrimaryLinkId.get(linkId) ?? [])
-      .some((candidate) => checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate)));
+  const nodes = Array.from(positions.entries())
+    .map(([linkId, center]) => {
+      const linkTargets = [...(targetsByLinkId.get(linkId) ?? [])].sort(compareTargets);
+      const summaryCandidate = pickSummaryCandidate(candidatesByPrimaryLinkId.get(linkId) ?? []);
+      const summaryTarget = summaryCandidate?.target ?? linkTargets[0] ?? null;
+      const linkName = summaryTarget?.linkName ?? linkId;
+      const width = clamp(
+        NODE_PILL_PADDING + linkName.length * 6.1,
+        NODE_MIN_WIDTH,
+        NODE_MAX_WIDTH,
+      );
+      const height = NODE_HEIGHT;
+      const selected = linkTargets.some((target) => {
+        return (
+          selection?.type === 'link' &&
+          selection.id === target.linkId &&
+          selection.subType === 'collision' &&
+          (selection.objectIndex ?? 0) === target.objectIndex
+        );
+      });
+      const checked = (candidatesByPrimaryLinkId.get(linkId) ?? []).some((candidate) =>
+        checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate)),
+      );
 
-    return {
-      id: linkId,
-      linkId,
-      linkName,
-      componentName: linkComponentMeta.get(linkId)?.componentName,
-      x: center.x - width / 2,
-      y: center.y - height / 2,
-      width,
-      height,
-      center,
-      handle: { x: center.x + width / 2 - 6, y: center.y },
-      targetCount: linkTargets.length,
-      summaryTarget,
-      summaryCandidate,
-      selected,
-      checked,
-    };
-  }).sort((left, right) => left.center.y - right.center.y || left.center.x - right.center.x);
+      return {
+        id: linkId,
+        linkId,
+        linkName,
+        componentName: linkComponentMeta.get(linkId)?.componentName,
+        x: center.x - width / 2,
+        y: center.y - height / 2,
+        width,
+        height,
+        center,
+        handle: { x: center.x + width / 2 - 6, y: center.y },
+        targetCount: linkTargets.length,
+        summaryTarget,
+        summaryCandidate,
+        selected,
+        checked,
+      };
+    })
+    .sort((left, right) => left.center.y - right.center.y || left.center.x - right.center.x);
 
   const nodeByLinkId = new Map(nodes.map((node) => [node.linkId, node] as const));
   const relationMap = new Map<string, GraphGroupModel>();
@@ -554,9 +565,12 @@ function buildGraphModel(
     }
 
     const minX = Math.min(sourceNode.x, targetNode.x) - GROUP_PADDING_X;
-    const maxX = Math.max(sourceNode.x + sourceNode.width, targetNode.x + targetNode.width) + GROUP_PADDING_X;
+    const maxX =
+      Math.max(sourceNode.x + sourceNode.width, targetNode.x + targetNode.width) + GROUP_PADDING_X;
     const minY = Math.min(sourceNode.y, targetNode.y) - GROUP_PADDING_Y;
-    const maxY = Math.max(sourceNode.y + sourceNode.height, targetNode.y + targetNode.height) + GROUP_PADDING_Y;
+    const maxY =
+      Math.max(sourceNode.y + sourceNode.height, targetNode.y + targetNode.height) +
+      GROUP_PADDING_Y;
     const pairType: GraphPairType = manualPairKeys.has(pairKey) ? 'manual' : 'auto';
     const existing = relationMap.get(pairKey);
     const checked = checkedCandidateKeys.has(createCollisionOptimizationCandidateKey(candidate));
@@ -649,7 +663,15 @@ export function CollisionOptimizationPlanarGraph({
   const gestureScaleRef = useRef(1);
 
   const model = useMemo(
-    () => buildGraphModel(source, analysis, candidates, checkedCandidateKeys, selection, manualMergePairs),
+    () =>
+      buildGraphModel(
+        source,
+        analysis,
+        candidates,
+        checkedCandidateKeys,
+        selection,
+        manualMergePairs,
+      ),
     [analysis, candidates, checkedCandidateKeys, manualMergePairs, selection, source],
   );
 
@@ -680,18 +702,21 @@ export function CollisionOptimizationPlanarGraph({
     return map;
   }, [model.nodes]);
 
-  const toWorldPoint = useCallback((clientX: number, clientY: number): GraphPoint | null => {
-    const container = containerRef.current;
-    if (!container) {
-      return null;
-    }
+  const toWorldPoint = useCallback(
+    (clientX: number, clientY: number): GraphPoint | null => {
+      const container = containerRef.current;
+      if (!container) {
+        return null;
+      }
 
-    const rect = container.getBoundingClientRect();
-    return {
-      x: (clientX - rect.left - viewport.x) / viewport.scale,
-      y: (clientY - rect.top - viewport.y) / viewport.scale,
-    };
-  }, [viewport.scale, viewport.x, viewport.y]);
+      const rect = container.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left - viewport.x) / viewport.scale,
+        y: (clientY - rect.top - viewport.y) / viewport.scale,
+      };
+    },
+    [viewport.scale, viewport.x, viewport.y],
+  );
 
   const zoomAtClientPoint = useCallback((clientX: number, clientY: number, scaleFactor: number) => {
     const container = containerRef.current;
@@ -744,9 +769,8 @@ export function CollisionOptimizationPlanarGraph({
 
     const handleGestureStart = (event: Event) => {
       const gestureEvent = event as GestureLikeEvent;
-      gestureScaleRef.current = Number.isFinite(gestureEvent.scale) && gestureEvent.scale > 0
-        ? gestureEvent.scale
-        : 1;
+      gestureScaleRef.current =
+        Number.isFinite(gestureEvent.scale) && gestureEvent.scale > 0 ? gestureEvent.scale : 1;
       event.preventDefault();
     };
 
@@ -754,9 +778,10 @@ export function CollisionOptimizationPlanarGraph({
       const gestureEvent = event as GestureLikeEvent;
       event.preventDefault();
 
-      const nextGestureScale = Number.isFinite(gestureEvent.scale) && gestureEvent.scale > 0
-        ? gestureEvent.scale
-        : gestureScaleRef.current;
+      const nextGestureScale =
+        Number.isFinite(gestureEvent.scale) && gestureEvent.scale > 0
+          ? gestureEvent.scale
+          : gestureScaleRef.current;
       const scaleFactor = nextGestureScale / Math.max(gestureScaleRef.current, 1e-4);
       gestureScaleRef.current = nextGestureScale;
       zoomAtClientPoint(gestureEvent.clientX, gestureEvent.clientY, scaleFactor);
@@ -768,8 +793,12 @@ export function CollisionOptimizationPlanarGraph({
     };
 
     container.addEventListener('wheel', handleWheelEvent, { passive: false });
-    container.addEventListener('gesturestart', handleGestureStart as EventListener, { passive: false });
-    container.addEventListener('gesturechange', handleGestureChange as EventListener, { passive: false });
+    container.addEventListener('gesturestart', handleGestureStart as EventListener, {
+      passive: false,
+    });
+    container.addEventListener('gesturechange', handleGestureChange as EventListener, {
+      passive: false,
+    });
     container.addEventListener('gestureend', handleGestureEnd as EventListener, { passive: false });
 
     return () => {
@@ -780,35 +809,41 @@ export function CollisionOptimizationPlanarGraph({
     };
   }, [zoomAtClientPoint]);
 
-  const handleSurfacePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (![0, 1, 2].includes(event.button) || manualConnection) {
-      return;
-    }
+  const handleSurfacePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (![0, 1, 2].includes(event.button) || manualConnection) {
+        return;
+      }
 
-    const target = event.target as HTMLElement;
-    if (target.closest('[data-graph-node]') || target.closest('[data-graph-no-pan="true"]')) {
-      return;
-    }
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-graph-node]') || target.closest('[data-graph-no-pan="true"]')) {
+        return;
+      }
 
-    event.preventDefault();
-    setPanSession({
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startViewport: viewport,
-    });
-  }, [manualConnection, viewport]);
+      event.preventDefault();
+      setPanSession({
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startViewport: viewport,
+      });
+    },
+    [manualConnection, viewport],
+  );
 
-  const handleConnectionStart = useCallback((event: React.PointerEvent<HTMLButtonElement>, target: CollisionTargetRef) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onManualConnectionStart?.(target);
+  const handleConnectionStart = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, target: CollisionTargetRef) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onManualConnectionStart?.(target);
 
-    const point = toWorldPoint(event.clientX, event.clientY);
-    if (point) {
-      onManualConnectionMove?.(point);
-    }
-  }, [onManualConnectionMove, onManualConnectionStart, toWorldPoint]);
+      const point = toWorldPoint(event.clientX, event.clientY);
+      if (point) {
+        onManualConnectionMove?.(point);
+      }
+    },
+    [onManualConnectionMove, onManualConnectionStart, toWorldPoint],
+  );
 
   useEffect(() => {
     if (!manualConnection && !panSession) {
@@ -839,9 +874,14 @@ export function CollisionOptimizationPlanarGraph({
       }
 
       if (manualConnection) {
-        const hitElement = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
-        const targetId = hitElement?.closest<HTMLElement>('[data-graph-node-target-id]')?.dataset.graphNodeTargetId ?? null;
-        const node = targetId ? nodeByTargetId.get(targetId) ?? null : null;
+        const hitElement = document.elementFromPoint(
+          event.clientX,
+          event.clientY,
+        ) as HTMLElement | null;
+        const targetId =
+          hitElement?.closest<HTMLElement>('[data-graph-node-target-id]')?.dataset
+            .graphNodeTargetId ?? null;
+        const node = targetId ? (nodeByTargetId.get(targetId) ?? null) : null;
         const target = node?.summaryTarget ?? null;
         onManualConnectionEnd?.(
           target && target.id !== manualConnection.sourceTargetId ? target : null,
@@ -890,7 +930,7 @@ export function CollisionOptimizationPlanarGraph({
   ]);
 
   const dragSourceNode = manualConnection?.sourceTargetId
-    ? nodeByTargetId.get(manualConnection.sourceTargetId) ?? null
+    ? (nodeByTargetId.get(manualConnection.sourceTargetId) ?? null)
     : null;
 
   return (
@@ -968,7 +1008,8 @@ export function CollisionOptimizationPlanarGraph({
             <div
               className="absolute inset-0 opacity-35"
               style={{
-                backgroundImage: 'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-border-black) 24%, transparent) 1px, transparent 0)',
+                backgroundImage:
+                  'radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-border-black) 24%, transparent) 1px, transparent 0)',
                 backgroundSize: '24px 24px',
               }}
             />
@@ -999,7 +1040,10 @@ export function CollisionOptimizationPlanarGraph({
                   return (
                     <path
                       key={edge.id}
-                      d={buildCurvePath({ x: from.center.x, y: from.center.y + from.height / 2 - 2 }, { x: to.center.x, y: to.center.y - to.height / 2 + 2 })}
+                      d={buildCurvePath(
+                        { x: from.center.x, y: from.center.y + from.height / 2 - 2 },
+                        { x: to.center.x, y: to.center.y - to.height / 2 + 2 },
+                      )}
                       className="stroke-border-black/42 dark:stroke-border-strong/45"
                       strokeWidth={1.8}
                       strokeLinecap="round"
@@ -1052,7 +1096,9 @@ export function CollisionOptimizationPlanarGraph({
                         data-graph-no-pan="true"
                         onClick={() => {
                           if (group.candidate.eligible) {
-                            onToggleCandidate(createCollisionOptimizationCandidateKey(group.candidate));
+                            onToggleCandidate(
+                              createCollisionOptimizationCandidateKey(group.candidate),
+                            );
                           }
                         }}
                         className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-2xl border px-2.5 py-1.5 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
@@ -1067,13 +1113,15 @@ export function CollisionOptimizationPlanarGraph({
 
                         <span className="min-w-0">
                           <span className="flex flex-wrap items-center gap-1">
-                            <span className="rounded-full border border-border-black bg-element-bg px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.16em] text-text-tertiary">
+                            <span className="rounded-full border border-border-black bg-element-bg px-1.5 py-0.5 text-[8px] font-semibold tracking-[0.02em] text-text-tertiary">
                               {group.pairType === 'manual' ? labels.manualPair : labels.autoPair}
                             </span>
                             <span className="truncate text-[10px] font-semibold">{labelText}</span>
                           </span>
                           {metricText ? (
-                            <span className="mt-0.5 block truncate text-[8px] text-text-secondary">{metricText}</span>
+                            <span className="mt-0.5 block truncate text-[8px] text-text-secondary">
+                              {metricText}
+                            </span>
                           ) : null}
                         </span>
                       </button>
@@ -1083,17 +1131,23 @@ export function CollisionOptimizationPlanarGraph({
               })}
 
               {model.nodes.map((node) => {
-                const connectable = manualConnection?.sourceTargetId && node.summaryTarget
-                  ? node.summaryTarget.id !== manualConnection.sourceTargetId
-                    && canCreateManualPair(manualConnection.sourceTargetId, node.summaryTarget.id)
-                  : false;
-                const nodeToneClass = getNodeTone(node, Boolean(manualConnection), Boolean(connectable));
+                const connectable =
+                  manualConnection?.sourceTargetId && node.summaryTarget
+                    ? node.summaryTarget.id !== manualConnection.sourceTargetId &&
+                      canCreateManualPair(manualConnection.sourceTargetId, node.summaryTarget.id)
+                    : false;
+                const nodeToneClass = getNodeTone(
+                  node,
+                  Boolean(manualConnection),
+                  Boolean(connectable),
+                );
                 const summaryCandidate = node.summaryCandidate;
                 const summaryTarget = node.summaryTarget;
                 const summaryType = summaryCandidate?.suggestedType ?? summaryTarget?.geometry.type;
-                const summaryMetricText = summaryCandidate && !summaryCandidate.secondaryTarget
-                  ? getMetricSummary(summaryCandidate)
-                  : '';
+                const summaryMetricText =
+                  summaryCandidate && !summaryCandidate.secondaryTarget
+                    ? getMetricSummary(summaryCandidate)
+                    : '';
 
                 return (
                   <div
@@ -1108,7 +1162,9 @@ export function CollisionOptimizationPlanarGraph({
                       height: node.height,
                     }}
                   >
-                    <div className={`relative h-full rounded-full border shadow-sm ${nodeToneClass}`}>
+                    <div
+                      className={`relative h-full rounded-full border shadow-sm ${nodeToneClass}`}
+                    >
                       <button
                         type="button"
                         data-graph-no-pan="true"
@@ -1118,9 +1174,15 @@ export function CollisionOptimizationPlanarGraph({
                           }
                         }}
                         className="flex h-full w-full items-center gap-1.5 rounded-full px-2.5 pr-9 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
-                        title={node.componentName ? `${node.componentName} / ${node.linkName}` : node.linkName}
+                        title={
+                          node.componentName
+                            ? `${node.componentName} / ${node.linkName}`
+                            : node.linkName
+                        }
                       >
-                        <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${node.checked ? 'bg-system-blue' : 'bg-text-tertiary'}`} />
+                        <span
+                          className={`h-[7px] w-[7px] shrink-0 rounded-full ${node.checked ? 'bg-system-blue' : 'bg-text-tertiary'}`}
+                        />
                         <span className="min-w-0 flex-1 truncate text-[9px] font-semibold text-text-primary">
                           {node.linkName}
                         </span>
@@ -1135,11 +1197,15 @@ export function CollisionOptimizationPlanarGraph({
                         <button
                           type="button"
                           data-graph-no-pan="true"
-                          aria-label={node.checked ? labels.unselectCandidate : labels.selectCandidate}
+                          aria-label={
+                            node.checked ? labels.unselectCandidate : labels.selectCandidate
+                          }
                           disabled={!summaryCandidate.eligible}
                           onClick={() => {
                             if (summaryCandidate.eligible) {
-                              onToggleCandidate(createCollisionOptimizationCandidateKey(summaryCandidate));
+                              onToggleCandidate(
+                                createCollisionOptimizationCandidateKey(summaryCandidate),
+                              );
                             }
                           }}
                           className={`absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
@@ -1148,7 +1214,11 @@ export function CollisionOptimizationPlanarGraph({
                               : 'cursor-not-allowed text-text-tertiary/60'
                           }`}
                         >
-                          {node.checked ? <CheckSquare2 className="h-3 w-3" /> : <Square className="h-3 w-3" />}
+                          {node.checked ? (
+                            <CheckSquare2 className="h-3 w-3" />
+                          ) : (
+                            <Square className="h-3 w-3" />
+                          )}
                         </button>
                       ) : null}
 
@@ -1185,7 +1255,9 @@ export function CollisionOptimizationPlanarGraph({
                             </span>
                           </div>
                           {summaryMetricText ? (
-                            <div className="mt-0.5 truncate text-[7px] text-text-secondary">{summaryMetricText}</div>
+                            <div className="mt-0.5 truncate text-[7px] text-text-secondary">
+                              {summaryMetricText}
+                            </div>
                           ) : null}
                         </div>
                       </div>

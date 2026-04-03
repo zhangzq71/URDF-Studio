@@ -14,5 +14,6 @@ export { useTransformControls } from './useTransformControls';
 export type { TransformControlsState } from './useTransformControls';
 
 export { useClosedLoopDragSync } from './useClosedLoopDragSync';
+export { useCollisionMeshPrewarm } from './useCollisionMeshPrewarm';
 
 export { useVisualizerController } from './useVisualizerController';

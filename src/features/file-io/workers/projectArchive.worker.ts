@@ -4,15 +4,13 @@ import {
   hydrateProjectArchiveEntriesFromWorker,
   type ProjectArchiveWorkerResultPayload,
 } from '../utils/projectArchiveWorkerTransfer.ts';
-import {
-  buildProjectArchiveBlob,
-} from '../utils/projectArchiveZip.ts';
+import { buildProjectArchiveBlob } from '../utils/projectArchiveZip.ts';
 import type {
   ProjectArchiveWorkerRequest,
   ProjectArchiveWorkerResponse,
 } from '../utils/projectArchiveWorker.ts';
 
-const workerScope = self as DedicatedWorkerGlobalScope;
+const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
 function toWorkerErrorMessage(error: unknown): string {
   if (error instanceof Error) {

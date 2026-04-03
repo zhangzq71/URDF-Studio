@@ -1,12 +1,25 @@
 import type { RobotFile } from '@/types';
-import type { PreparedUsdPreloadFile, PreparedUsdStageOpenData } from './usdStageOpenPreparation.ts';
+import type {
+  PreparedUsdPreloadFile,
+  PreparedUsdStageOpenData,
+} from './usdStageOpenPreparation.ts';
 import {
   buildUsdBundlePreloadEntries,
   toVirtualUsdPath,
+  type UsdPreloadEntry,
 } from './usdPreloadSources.ts';
 import { buildCriticalUsdDependencyPaths } from './usdCriticalDependencyPaths.ts';
+import { normalizeUsdInstanceableVisualScopeVisibility } from './usdStageOpenTextNormalization.ts';
 
 export { buildCriticalUsdDependencyPaths } from './usdCriticalDependencyPaths.ts';
+
+const NORMALIZED_USD_BLOB_CACHE_LIMIT = 64;
+type PreparedUsdPreloadPayload = {
+  blob: Blob | null;
+  bytes: Uint8Array | null;
+};
+
+const normalizedUsdBlobCache = new Map<string, Promise<PreparedUsdPreloadPayload>>();
 
 export function resolveUsdStageOpenPreparationConcurrency(preferredConcurrency?: number): number {
   const fallbackConcurrency = Number(globalThis.navigator?.hardwareConcurrency || 4);
@@ -44,6 +57,79 @@ function normalizePreparedUsdError(error: unknown): string {
   return 'Failed to prepare USD preload file';
 }
 
+function shouldNormalizePreparedUsdText(path: string): boolean {
+  const normalizedPath = String(path || '')
+    .trim()
+    .toLowerCase();
+  return normalizedPath.endsWith('.usda');
+}
+
+function cacheNormalizedUsdBlob(
+  cacheKey: string,
+  payloadPromise: Promise<PreparedUsdPreloadPayload>,
+): Promise<PreparedUsdPreloadPayload> {
+  normalizedUsdBlobCache.set(cacheKey, payloadPromise);
+  if (normalizedUsdBlobCache.size > NORMALIZED_USD_BLOB_CACHE_LIMIT) {
+    const oldestEntry = normalizedUsdBlobCache.keys().next();
+    if (!oldestEntry.done) {
+      normalizedUsdBlobCache.delete(oldestEntry.value);
+    }
+  }
+  return payloadPromise;
+}
+
+export function clearNormalizedUsdBlobCache(): void {
+  normalizedUsdBlobCache.clear();
+}
+
+async function loadPreparedUsdBlob(entry: UsdPreloadEntry): Promise<PreparedUsdPreloadPayload> {
+  if (!shouldNormalizePreparedUsdText(entry.path)) {
+    return {
+      blob: await entry.loadBlob(),
+      bytes: null,
+    };
+  }
+
+  const cacheKey = entry.normalizationCacheKey;
+  if (cacheKey) {
+    const cachedBlob = normalizedUsdBlobCache.get(cacheKey);
+    if (cachedBlob) {
+      return await cachedBlob;
+    }
+  }
+
+  const normalizedBlobPromise = (async () => {
+    if (typeof entry.loadText === 'function') {
+      const sourceText = await entry.loadText();
+      const normalizedText = normalizeUsdInstanceableVisualScopeVisibility(sourceText);
+      return {
+        blob: null,
+        bytes: new TextEncoder().encode(normalizedText),
+      };
+    }
+
+    const blob = await entry.loadBlob();
+    const sourceText = await blob.text();
+    const normalizedText = normalizeUsdInstanceableVisualScopeVisibility(sourceText);
+    return {
+      blob: null,
+      bytes: new TextEncoder().encode(normalizedText),
+    };
+  })();
+
+  if (!cacheKey) {
+    return await normalizedBlobPromise;
+  }
+
+  return await cacheNormalizedUsdBlob(
+    cacheKey,
+    normalizedBlobPromise.catch((error) => {
+      normalizedUsdBlobCache.delete(cacheKey);
+      throw error;
+    }),
+  );
+}
+
 export async function prepareUsdStageOpenDataCore(
   sourceFile: Pick<RobotFile, 'name' | 'content' | 'blobUrl'>,
   availableFiles: Array<Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>>,
@@ -58,10 +144,11 @@ export async function prepareUsdStageOpenDataCore(
     resolveUsdStageOpenPreparationConcurrency(),
     async (entry, index): Promise<void> => {
       try {
-        const blob = await entry.loadBlob();
+        const preparedPayload = await loadPreparedUsdBlob(entry);
         preloadFiles[index] = {
           path: entry.path,
-          blob,
+          blob: preparedPayload.blob,
+          bytes: preparedPayload.bytes,
           error: null,
         };
       } catch (error) {

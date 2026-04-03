@@ -8,6 +8,7 @@ interface HoverSelectionLike {
   id: string | null;
   subType?: 'visual' | 'collision';
   objectIndex?: number;
+  helperKind?: string;
 }
 
 type GeometryHoverHit = Pick<THREE.Intersection<THREE.Object3D>, 'object' | 'distance'>;
@@ -68,6 +69,10 @@ export function matchesGeometryHoverSelection(
   }
 
   if (!hoveredSelection.subType) {
+    if (hoveredSelection.helperKind) {
+      return false;
+    }
+
     return (options.allowLabelHoverFallback ?? true) && target.subType === 'visual';
   }
 

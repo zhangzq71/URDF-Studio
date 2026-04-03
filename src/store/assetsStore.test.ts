@@ -51,7 +51,10 @@ test('removeRobotFile clears matching USD scene snapshot cache', () => {
     },
   ]);
 
-  state.setUsdSceneSnapshot('/robots/demo/demo.usd', createUsdSceneSnapshot('/robots/demo/demo.usd'));
+  state.setUsdSceneSnapshot(
+    '/robots/demo/demo.usd',
+    createUsdSceneSnapshot('/robots/demo/demo.usd'),
+  );
   assert.ok(state.getUsdSceneSnapshot('robots/demo/demo.usd'));
 
   state.removeRobotFile('robots/demo/demo.usd');
@@ -76,7 +79,10 @@ test('clearRobotLibrary clears all USD scene snapshot caches', () => {
     },
   ]);
 
-  state.setUsdSceneSnapshot('/robots/demo/demo.usd', createUsdSceneSnapshot('/robots/demo/demo.usd'));
+  state.setUsdSceneSnapshot(
+    '/robots/demo/demo.usd',
+    createUsdSceneSnapshot('/robots/demo/demo.usd'),
+  );
   state.setUsdSceneSnapshot('/robots/alt/alt.usd', createUsdSceneSnapshot('/robots/alt/alt.usd'));
 
   assert.ok(state.getUsdSceneSnapshot('robots/demo/demo.usd'));
@@ -100,7 +106,10 @@ test('removeRobotFile clears matching prepared USD export cache', () => {
     },
   ]);
 
-  state.setUsdPreparedExportCache('/robots/demo/demo.usd', createPreparedUsdExportCache('/robots/demo/demo.usd'));
+  state.setUsdPreparedExportCache(
+    '/robots/demo/demo.usd',
+    createPreparedUsdExportCache('/robots/demo/demo.usd'),
+  );
   assert.ok(state.getUsdPreparedExportCache('robots/demo/demo.usd'));
 
   state.removeRobotFile('robots/demo/demo.usd');
@@ -125,8 +134,14 @@ test('clearRobotLibrary clears all prepared USD export caches', () => {
     },
   ]);
 
-  state.setUsdPreparedExportCache('/robots/demo/demo.usd', createPreparedUsdExportCache('/robots/demo/demo.usd'));
-  state.setUsdPreparedExportCache('/robots/alt/alt.usd', createPreparedUsdExportCache('/robots/alt/alt.usd'));
+  state.setUsdPreparedExportCache(
+    '/robots/demo/demo.usd',
+    createPreparedUsdExportCache('/robots/demo/demo.usd'),
+  );
+  state.setUsdPreparedExportCache(
+    '/robots/alt/alt.usd',
+    createPreparedUsdExportCache('/robots/alt/alt.usd'),
+  );
 
   assert.ok(state.getUsdPreparedExportCache('robots/demo/demo.usd'));
   assert.ok(state.getUsdPreparedExportCache('robots/alt/alt.usd'));
@@ -230,16 +245,19 @@ test('renameRobotFolder renames file, asset, selection, and USD cache paths toge
     error: null,
   });
   state.setUsdSceneSnapshot('robots/demo/demo.usd', createUsdSceneSnapshot('robots/demo/demo.usd'));
-  state.setUsdPreparedExportCache('robots/demo/demo.usd', createPreparedUsdExportCache('robots/demo/demo.usd'));
+  state.setUsdPreparedExportCache(
+    'robots/demo/demo.usd',
+    createPreparedUsdExportCache('robots/demo/demo.usd'),
+  );
 
   const result = state.renameRobotFolder('robots/demo', 'renamed-demo');
   assert.deepEqual(result, { ok: true, nextPath: 'robots/renamed-demo' });
 
   const nextState = useAssetsStore.getState();
-  assert.deepEqual(
-    nextState.availableFiles.map((file) => file.name).sort(),
-    ['robots/renamed-demo/demo.usd', 'robots/renamed-demo/robot.urdf'],
-  );
+  assert.deepEqual(nextState.availableFiles.map((file) => file.name).sort(), [
+    'robots/renamed-demo/demo.usd',
+    'robots/renamed-demo/robot.urdf',
+  ]);
   assert.deepEqual(Object.keys(nextState.assets), ['robots/renamed-demo/meshes/base.stl']);
   assert.deepEqual(Object.keys(nextState.allFileContents), ['robots/renamed-demo/robot.urdf']);
   assert.equal(nextState.selectedFile?.name, 'robots/renamed-demo/demo.usd');
@@ -275,21 +293,20 @@ test('renameRobotFolder rejects conflicting target folders', () => {
   const result = state.renameRobotFolder('robots/demo', 'existing');
   assert.deepEqual(result, { ok: false, reason: 'conflict' });
   assert.deepEqual(
-    useAssetsStore.getState().availableFiles.map((file) => file.name).sort(),
+    useAssetsStore
+      .getState()
+      .availableFiles.map((file) => file.name)
+      .sort(),
     ['robots/demo/robot.urdf', 'robots/existing/other.urdf'],
   );
 });
 
-test('setMotorLibrary preserves default motor brands when incoming library is empty', () => {
+test('setMotorLibrary rejects empty motor library payloads instead of silently restoring defaults', () => {
   resetAssetsStore();
 
   const state = useAssetsStore.getState();
-  const defaultBrands = Object.keys(state.motorLibrary).sort();
-  state.setMotorLibrary({});
 
-  const nextLibrary = useAssetsStore.getState().motorLibrary;
-  const actualBrands = Object.keys(nextLibrary).sort();
-  assert.deepEqual(actualBrands, defaultBrands);
+  assert.throws(() => state.setMotorLibrary({}), /Empty library payload/);
 });
 
 test('setMotorLibrary merges custom brands without losing built-in motors', () => {

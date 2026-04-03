@@ -625,3 +625,75 @@ test('startRobotMetadataWarmupForStage refreshes cached scene snapshots with res
     assert.equal(cachedSceneSnapshot.robotMetadataSnapshot.jointCatalogEntries.length, 1);
     assert.equal(emittedSceneSnapshot?.robotMetadataSnapshot?.jointCatalogEntries?.length, 1);
 });
+
+test('buildRobotMetadataSnapshotForStage marks metadata stale when driver physics record reads fail', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = {
+        driver: {
+            GetRobotMetadataSnapshot() {
+                return {
+                    stageSourcePath: '/robots/two_link_robot.usd',
+                    source: 'usd-stage-cpp',
+                    linkParentPairs: [],
+                    jointCatalogEntries: [],
+                    linkDynamicsEntries: [],
+                };
+            },
+            GetPhysicsJointRecords() {
+                throw new Error('joint-record-fetch-failed');
+            },
+            GetPhysicsLinkDynamicsRecords() {
+                throw new Error('link-dynamics-fetch-failed');
+            },
+        },
+    };
+
+    try {
+        const delegate = createFallbackMetadataDelegate();
+        delegate.getStage = () => null;
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/two_link_robot.usd', null);
+
+        assert.ok(snapshot);
+        assert.equal(snapshot.stale, true);
+        assert.deepEqual(
+            snapshot.errorFlags,
+            ['physics-joint-records-unavailable', 'physics-link-dynamics-unavailable'],
+        );
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('startRobotMetadataWarmupForStage annotates stale metadata when URDF truth load fails', async () => {
+    const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+    delegate._robotMetadataSnapshotByStageSource = new Map();
+    delegate._robotMetadataBuildPromisesByStageSource = new Map();
+    delegate._robotSceneSnapshotByStageSource = new Map();
+    delegate._nowPerfMs = () => 456;
+    delegate.getNormalizedStageSourcePath = () => '/robots/helper_links.usd';
+    delegate.shouldAllowUrdfHttpFallback = () => true;
+    delegate.buildRobotMetadataSnapshotForStage = () => ({
+        stageSourcePath: '/robots/helper_links.usd',
+        generatedAtMs: 456,
+        source: 'usd-stage-cpp',
+        linkParentPairs: [['/Robot/base_link', null]],
+        jointCatalogEntries: [],
+        linkDynamicsEntries: [],
+        meshCountsByLinkPath: {},
+    });
+    delegate.startUrdfTruthLoadForStage = () => Promise.reject(new Error('truth-load-failed'));
+    delegate.emitRobotMetadataSnapshotReady = () => {};
+    delegate.emitRobotSceneSnapshotReady = () => {};
+
+    const snapshot = await delegate.startRobotMetadataWarmupForStage('/robots/helper_links.usd', {
+        force: true,
+        skipIdleWait: true,
+    });
+
+    assert.ok(snapshot);
+    assert.equal(snapshot.stale, true);
+    assert.deepEqual(snapshot.errorFlags, ['urdf-truth-load-failed']);
+    assert.match(String(snapshot.truthLoadError || ''), /truth-load-failed/);
+});

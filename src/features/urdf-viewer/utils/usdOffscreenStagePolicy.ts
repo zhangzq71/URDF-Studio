@@ -1,11 +1,10 @@
+import type { RobotFile } from '@/types';
 import type { ToolMode, URDFViewerProps } from '../types';
 import { supportsUsdWorkerRenderer } from './usdWorkerRendererSupport.ts';
+import { collectUsdStageOpenRelevantVirtualPaths, toVirtualUsdPath } from './usdPreloadSources.ts';
+import { hasBlobBackedLargeUsdaInStageScope } from './usdBlobBackedUsda.ts';
 
-interface OffscreenUsdFileLike {
-  name: string;
-  content?: string | null;
-  format?: string;
-}
+type OffscreenUsdFileLike = Pick<RobotFile, 'name' | 'content' | 'format'>;
 
 interface ShouldUseUsdOffscreenStageOptions {
   toolMode: ToolMode;
@@ -23,26 +22,17 @@ interface ShouldUseUsdOffscreenStageOptions {
 
 const HAND_ARTICULATION_TOKEN_PATTERN =
   /\b(?:[LR]_(?:thumb|index|middle|ring|pinky)(?:_|\b)|(?:left|right)_(?:thumb|index|middle|ring|pinky)(?:_|\b))/i;
-const KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_PATTERNS = [
-  /(?:^|\/)h1_2(?:\/|$)/i,
-];
+const KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_PATTERNS = [/(?:^|\/)h1_2(?:\/|$)/i];
+const EMPTY_OFFSCREEN_USD_FILES: OffscreenUsdFileLike[] = [];
+const handArticulationSupportCache = new WeakMap<
+  OffscreenUsdFileLike,
+  WeakMap<OffscreenUsdFileLike[], boolean>
+>();
 
 function normalizeUsdFileName(name: string | null | undefined): string {
-  return String(name || '').trim().replace(/\\/g, '/');
-}
-
-function getBundlePrefix(sourceFile: OffscreenUsdFileLike | null | undefined): string | null {
-  const normalizedName = normalizeUsdFileName(sourceFile?.name);
-  if (!normalizedName) {
-    return null;
-  }
-
-  const lastSlashIndex = normalizedName.lastIndexOf('/');
-  if (lastSlashIndex < 0) {
-    return '';
-  }
-
-  return normalizedName.slice(0, lastSlashIndex + 1);
+  return String(name || '')
+    .trim()
+    .replace(/\\/g, '/');
 }
 
 function isUsdFileLike(file: OffscreenUsdFileLike | null | undefined): boolean {
@@ -51,39 +41,56 @@ function isUsdFileLike(file: OffscreenUsdFileLike | null | undefined): boolean {
 
 function hasUnsupportedHandArticulation({
   sourceFile,
-  availableFiles = [],
+  availableFiles,
 }: Pick<ShouldUseUsdOffscreenStageOptions, 'sourceFile' | 'availableFiles'>): boolean {
   if (!isUsdFileLike(sourceFile)) {
     return false;
   }
 
-  const candidateFileNames = [sourceFile, ...availableFiles]
-    .map((file) => normalizeUsdFileName(file?.name))
-    .filter((name) => name.length > 0);
-  if (
-    candidateFileNames.some((name) => (
-      KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_PATTERNS.some((pattern) => pattern.test(name))
-    ))
-  ) {
-    return true;
+  const scopedAvailableFiles = availableFiles ?? EMPTY_OFFSCREEN_USD_FILES;
+  const cachedResultsBySource = handArticulationSupportCache.get(sourceFile);
+  const cachedResult = cachedResultsBySource?.get(scopedAvailableFiles);
+  if (cachedResult !== undefined) {
+    return cachedResult;
   }
 
-  const bundlePrefix = getBundlePrefix(sourceFile);
+  const relevantPathSet = new Set(
+    collectUsdStageOpenRelevantVirtualPaths(sourceFile, scopedAvailableFiles),
+  );
   const candidateFiles = [
     sourceFile,
-    ...availableFiles.filter((file) => (
-      isUsdFileLike(file)
-      && file.name !== sourceFile?.name
-      && (bundlePrefix === null || normalizeUsdFileName(file.name).startsWith(bundlePrefix))
-    )),
+    ...scopedAvailableFiles.filter(
+      (file) =>
+        isUsdFileLike(file) &&
+        file.name !== sourceFile.name &&
+        relevantPathSet.has(toVirtualUsdPath(file.name)),
+    ),
   ];
 
-  return candidateFiles.some((file) => {
-    if (typeof file.content !== 'string' || file.content.length === 0) {
-      return false;
-    }
-    return HAND_ARTICULATION_TOKEN_PATTERN.test(file.content);
-  });
+  const candidateFileNames = candidateFiles
+    .map((file) => normalizeUsdFileName(file?.name))
+    .filter((name) => name.length > 0);
+  const hasUnsupportedBundlePattern = candidateFileNames.some((name) =>
+    KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_PATTERNS.some((pattern) => pattern.test(name)),
+  );
+  const hasUnsupportedToken =
+    !hasUnsupportedBundlePattern &&
+    candidateFiles.some((file) => {
+      if (typeof file.content !== 'string' || file.content.length === 0) {
+        return false;
+      }
+      return HAND_ARTICULATION_TOKEN_PATTERN.test(file.content);
+    });
+  const nextResult = hasUnsupportedBundlePattern || hasUnsupportedToken;
+
+  const nextCachedResultsBySource =
+    cachedResultsBySource ?? new WeakMap<OffscreenUsdFileLike[], boolean>();
+  nextCachedResultsBySource.set(scopedAvailableFiles, nextResult);
+  if (!cachedResultsBySource) {
+    handArticulationSupportCache.set(sourceFile, nextCachedResultsBySource);
+  }
+
+  return nextResult;
 }
 
 export function shouldUseUsdOffscreenStage({
@@ -115,6 +122,15 @@ export function shouldUseUsdOffscreenStage({
   }
 
   if (hasUnsupportedHandArticulation({ sourceFile, availableFiles })) {
+    return false;
+  }
+
+  // Imported Unitree ROS USDA bundles keep very large base/configuration sidecars
+  // as blob-backed text placeholders. The current offscreen worker stage-open
+  // path can resolve metadata for those bundles, but stage composition still
+  // fails to materialize the renderable scene. Keep those imports on the proven
+  // main-thread USD stage until the offscreen loader can reliably compose them.
+  if (hasBlobBackedLargeUsdaInStageScope(sourceFile, availableFiles)) {
     return false;
   }
 

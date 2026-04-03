@@ -1,8 +1,8 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-import { GeometryType, JointType, type RobotState } from '@/types'
-import { buildInspectionPromptNotes } from './buildInspectionPromptNotes.ts'
+import { GeometryType, JointType, type RobotState } from '@/types';
+import { buildInspectionPromptNotes } from './buildInspectionPromptNotes.ts';
 
 test('buildInspectionPromptNotes emits MJCF-specific frame and tendon guidance when inspection metadata is available', () => {
   const robot: RobotState = {
@@ -15,11 +15,13 @@ test('buildInspectionPromptNotes emits MJCF-specific frame and tendon guidance w
         visual: {
           type: GeometryType.BOX,
           dimensions: { x: 1, y: 2, z: 3 },
+          color: '#ffffff',
           origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
         },
         collision: {
           type: GeometryType.BOX,
           dimensions: { x: 1, y: 2, z: 3 },
+          color: '#000000',
           origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
         },
       },
@@ -34,6 +36,8 @@ test('buildInspectionPromptNotes emits MJCF-specific frame and tendon guidance w
         origin: { xyz: { x: 0, y: 0.2, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
         axis: { x: 0, y: 1, z: 0 },
         limit: { lower: -1, upper: 1, effort: 12, velocity: 8 },
+        dynamics: { damping: 0.1, friction: 0.2 },
+        hardware: { armature: 0.03, motorType: 'servo', motorId: 'M1', motorDirection: 1 },
       },
     },
     inspectionContext: {
@@ -58,7 +62,7 @@ test('buildInspectionPromptNotes emits MJCF-specific frame and tendon guidance w
       },
     },
     selection: { type: 'link', id: 'base_link' },
-  }
+  };
 
   const notes = buildInspectionPromptNotes(
     robot,
@@ -66,14 +70,14 @@ test('buildInspectionPromptNotes emits MJCF-specific frame and tendon guidance w
       frames: ['frame_alignment'],
       hardware: ['motor_limits', 'armature_config'],
     },
-    'en'
-  )
+    'en',
+  );
 
-  assert.match(notes, /Source-Format Notes/)
-  assert.match(notes, /MJCF/)
-  assert.match(notes, /frame_alignment/)
-  assert.match(notes, /base_link/)
-  assert.match(notes, /tip_site/)
-  assert.match(notes, /finger_tendon/)
-  assert.match(notes, /finger_motor/)
-})
+  assert.match(notes, /Source-Format Notes/);
+  assert.match(notes, /MJCF/);
+  assert.match(notes, /frame_alignment/);
+  assert.match(notes, /base_link/);
+  assert.match(notes, /tip_site/);
+  assert.match(notes, /finger_tendon/);
+  assert.match(notes, /finger_motor/);
+});

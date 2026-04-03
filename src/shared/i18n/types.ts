@@ -79,6 +79,7 @@ export interface TranslationKeys {
   add: string;
   bridgedComponent: string;
   bridgedComponentLockedHint: string;
+  bridgeLimitRangeInvalid: string;
 
   // Property Editor
   properties: string;
@@ -216,6 +217,8 @@ export interface TranslationKeys {
   clickToSelect: string;
   enableLabels: string;
   clickLabels: string;
+  workspaceAssemblyRenderFailedMergedData: string;
+  workspaceAssemblyRenderFailedViewerData: string;
   confirmTransformation: string;
   apply: string;
 
@@ -376,9 +379,11 @@ export interface TranslationKeys {
   edit: string;
   view: string;
   toolbar: string;
+  codeEditor: string;
   sourceCode: string;
   snapshot: string;
   settings: string;
+  general: string;
   language: string;
   theme: string;
   about: string;
@@ -392,10 +397,17 @@ export interface TranslationKeys {
   importWarning: string;
   sourceCodeAutoApply: string;
   fontSize: string;
+  interfaceFontSize: string;
+  fontFamily: string;
+  codeEditorFontSize: string;
   small: string;
   medium: string;
   large: string;
   resetFontSize: string;
+  resetCodeEditorTypography: string;
+  systemMonospace: string;
+  version: string;
+  resources: string;
   documentTitle: string;
   loadingPanel: string;
   loadingEditor: string;
@@ -624,7 +636,7 @@ export interface TranslationKeys {
   exportProgressPackagingDetail: string;
   exportProgressPackagingDetailFile: string;
   exportProgressArchiveFallbackFile: string;
-  
+
   // Feature Convergence
   modelOpacity: string;
   coordinateAxes: string;

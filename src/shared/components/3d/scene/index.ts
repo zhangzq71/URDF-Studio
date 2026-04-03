@@ -46,6 +46,8 @@ export {
   RESTING_DPR_CAP,
   resolveCanvasDpr,
   useAdaptiveInteractionQuality,
+  useWorkspaceCanvasInteractionState,
+  WorkspaceCanvasInteractionStateProvider,
 } from './interactionQuality';
 export { WorkspaceOrbitControls } from './WorkspaceOrbitControls';
 export {

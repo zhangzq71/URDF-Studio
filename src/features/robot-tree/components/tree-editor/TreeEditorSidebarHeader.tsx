@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, LayoutGrid, Trees } from 'lucide-react';
 interface TreeEditorSidebarHeaderProps {
   collapsed?: boolean;
   onToggle?: () => void;
+  modeLabel: string;
   isProMode: boolean;
   simpleModeLabel: string;
   proModeLabel: string;
@@ -26,6 +27,7 @@ interface TreeEditorSidebarHeaderProps {
 export function TreeEditorSidebarHeader({
   collapsed,
   onToggle,
+  modeLabel,
   isProMode,
   simpleModeLabel,
   proModeLabel,
@@ -53,43 +55,52 @@ export function TreeEditorSidebarHeader({
       >
         <div className="flex flex-col gap-0.5 items-center">
           <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
-          {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
+          {collapsed ? (
+            <ChevronRight className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronLeft className="w-3.5 h-3.5" />
+          )}
           <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
         </div>
       </button>
 
       <div className="px-2.5 py-1.5 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-        <div className="flex bg-element-bg p-0.5 rounded-lg">
-          <button
-            onClick={onSwitchToStructure}
-            className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all
-            ${
-              !isProMode
-                ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
-                : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
-            }`}
-          >
-            <Trees size={13} />
-            {simpleModeLabel}
-          </button>
-          <button
-            onClick={onSwitchToWorkspace}
-            className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all
-            ${
-              isProMode
-                ? 'bg-panel-bg dark:bg-segmented-active text-system-blue shadow-sm'
-                : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
-            }`}
-          >
-            <LayoutGrid size={13} />
-            {proModeLabel}
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <span className="shrink-0 text-[10px] text-text-tertiary font-semibold tracking-[0.02em]">
+            {modeLabel}
+          </span>
+          <div className="inline-flex w-max max-w-full shrink-0 rounded-lg bg-segmented-bg p-0.5">
+            <button
+              onClick={onSwitchToStructure}
+              className={`flex-none flex items-center justify-center gap-1.5 px-4 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all
+              ${
+                !isProMode
+                  ? 'bg-segmented-active text-system-blue shadow-sm'
+                  : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
+              }`}
+            >
+              <Trees size={13} />
+              {simpleModeLabel}
+            </button>
+            <button
+              onClick={onSwitchToWorkspace}
+              className={`flex-none flex items-center justify-center gap-1.5 px-4 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all
+              ${
+                isProMode
+                  ? 'bg-segmented-active text-system-blue shadow-sm'
+                  : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
+              }`}
+            >
+              <LayoutGrid size={13} />
+              {proModeLabel}
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="px-2.5 py-1.5 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
         <div className="flex items-center gap-2">
-          <label className="shrink-0 text-[10px] text-text-tertiary uppercase font-bold tracking-wider">
+          <label className="shrink-0 text-[10px] text-text-tertiary font-semibold tracking-[0.02em]">
             {nameLabel}
           </label>
           {isEditingName ? (

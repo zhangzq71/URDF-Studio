@@ -154,9 +154,10 @@ test('resolveRobotFileData returns a ready result for sdf files', () => {
 });
 
 test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () => {
-  const result = resolveRobotFileData({
-    name: 'robots/demo/model.sdf',
-    content: `<?xml version="1.0"?>
+  const result = resolveRobotFileData(
+    {
+      name: 'robots/demo/model.sdf',
+      content: `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="demo_sdf">
     <link name="base_link">
@@ -177,10 +178,11 @@ test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () 
     </link>
   </model>
 </sdf>`,
-    format: 'sdf' as unknown as RobotFile['format'],
-  }, {
-    allFileContents: {
-      'robots/demo/materials/scripts/demo.material': `material Demo/Diffuse
+      format: 'sdf' as unknown as RobotFile['format'],
+    },
+    {
+      allFileContents: {
+        'robots/demo/materials/scripts/demo.material': `material Demo/Diffuse
 {
   technique
   {
@@ -193,8 +195,9 @@ test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () 
     }
   }
 }`,
+      },
     },
-  });
+  );
 
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') {
@@ -204,9 +207,10 @@ test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () 
 });
 
 test('resolveRobotFileData expands included sdf models from bundled file contents', () => {
-  const result = resolveRobotFileData({
-    name: 'robots/assembly/model.sdf',
-    content: `<?xml version="1.0"?>
+  const result = resolveRobotFileData(
+    {
+      name: 'robots/assembly/model.sdf',
+      content: `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="assembly">
     <include>
@@ -224,10 +228,11 @@ test('resolveRobotFileData expands included sdf models from bundled file content
     </joint>
   </model>
 </sdf>`,
-    format: 'sdf' as unknown as RobotFile['format'],
-  }, {
-    allFileContents: {
-      'robots/arm/model.sdf': `<?xml version="1.0"?>
+      format: 'sdf' as unknown as RobotFile['format'],
+    },
+    {
+      allFileContents: {
+        'robots/arm/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="arm">
     <link name="base">
@@ -255,7 +260,7 @@ test('resolveRobotFileData expands included sdf models from bundled file content
     </joint>
   </model>
 </sdf>`,
-      'robots/tool/model.sdf': `<?xml version="1.0"?>
+        'robots/tool/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="tool">
     <link name="base">
@@ -269,8 +274,9 @@ test('resolveRobotFileData expands included sdf models from bundled file content
     </link>
   </model>
 </sdf>`,
+      },
     },
-  });
+  );
 
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') {
@@ -287,7 +293,6 @@ test('resolveRobotFileData returns a parse error when XML parser APIs are unavai
   const previousDomParser = globalThis.DOMParser;
 
   try {
-    // @ts-expect-error intentional test mutation
     delete globalThis.DOMParser;
 
     const result = resolveRobotFileData(createSdfFile());
@@ -334,19 +339,23 @@ test('resolveRobotFileData returns an error result for unsupported formats', () 
 });
 
 test('resolveRobotFileData prefers packaged URDF truth for standalone xacro entries', () => {
-  const result = resolveRobotFileData({
-    name: 'robots/b2w_description/xacro/robot.xacro',
-    content: '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="broken"><link name="wrong_link" /></robot>',
-    format: 'xacro',
-  }, {
-    availableFiles: [
-      {
-        name: 'robots/b2w_description/urdf/b2w_description.urdf',
-        content: '<robot name="b2w_truth"><link name="truth_link" /></robot>',
-        format: 'urdf',
-      },
-    ],
-  });
+  const result = resolveRobotFileData(
+    {
+      name: 'robots/b2w_description/xacro/robot.xacro',
+      content:
+        '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="broken"><link name="wrong_link" /></robot>',
+      format: 'xacro',
+    },
+    {
+      availableFiles: [
+        {
+          name: 'robots/b2w_description/urdf/b2w_description.urdf',
+          content: '<robot name="b2w_truth"><link name="truth_link" /></robot>',
+          format: 'urdf',
+        },
+      ],
+    },
+  );
 
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') {
@@ -355,8 +364,14 @@ test('resolveRobotFileData prefers packaged URDF truth for standalone xacro entr
   assert.equal(result.robotData.name, 'b2w_truth');
   assert.ok(result.robotData.links.truth_link);
   assert.equal(result.robotData.links.wrong_link, undefined);
-  assert.equal(result.resolvedUrdfContent, '<robot name="b2w_truth"><link name="truth_link" /></robot>');
-  assert.equal(result.resolvedUrdfSourceFilePath, 'robots/b2w_description/urdf/b2w_description.urdf');
+  assert.equal(
+    result.resolvedUrdfContent,
+    '<robot name="b2w_truth"><link name="truth_link" /></robot>',
+  );
+  assert.equal(
+    result.resolvedUrdfSourceFilePath,
+    'robots/b2w_description/urdf/b2w_description.urdf',
+  );
 });
 
 test('resolveRobotFileData classifies linkless xacro fragments as source-only previews', () => {

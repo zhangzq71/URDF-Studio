@@ -41,10 +41,16 @@ interface CommonVisualizerProps {
   assets: Record<string, string>;
   lang: Language;
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
+  collisionRevealComponentIdByLinkId?: ReadonlyMap<string, string>;
+  collisionRevealComponentId?: string;
+  revealedCollisionComponentIds?: ReadonlySet<string>;
+  prewarmedCollisionMeshLoadKeys?: ReadonlySet<string>;
+  readyCollisionMeshLoadKeys?: ReadonlySet<string>;
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
   onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
   onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
   onMeshResolved?: (meshLoadKey: string) => void;
+  onPrewarmedMeshResolved?: (meshLoadKey: string) => void;
 }
 
 interface JointNodeProps extends CommonVisualizerProps {
@@ -54,6 +60,10 @@ interface JointNodeProps extends CommonVisualizerProps {
   onRegisterJointPivot?: (jointId: string, pivot: THREE.Group | null) => void;
   onRegisterJointMotion?: (jointId: string, motion: THREE.Group | null) => void;
 }
+
+type JointNodeComponentProps = JointNodeProps & {
+  onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void;
+};
 
 /**
  * JointNode - Renders a joint in the robot hierarchy
@@ -65,7 +75,7 @@ interface JointNodeProps extends CommonVisualizerProps {
  * - Uses unified scene display toggles while runtime mode still drives
  *   interaction-specific branches such as transform behavior
  */
-export const JointNode = memo(function JointNode({
+export const JointNode = memo<JointNodeComponentProps>(function JointNode({
   joint,
   robot,
   childJointsByParent,
@@ -90,12 +100,17 @@ export const JointNode = memo(function JointNode({
   assets,
   lang,
   colladaRootNormalizationHints,
+  collisionRevealComponentIdByLinkId,
+  collisionRevealComponentId,
+  revealedCollisionComponentIds,
+  prewarmedCollisionMeshLoadKeys,
+  readyCollisionMeshLoadKeys,
   onRegisterJointPivot,
   onRegisterJointMotion,
   onRegisterCollisionRef,
   onMeshResolved,
-}: JointNodeProps & { onRegisterCollisionRef?: (linkId: string, objectIndex: number, ref: THREE.Group | null) => void }) {
-
+  onPrewarmedMeshResolved,
+}: JointNodeComponentProps) {
   if (depth > 50) return null;
 
   const isSelected = robot.selection.type === 'joint' && robot.selection.id === joint.id;
@@ -117,20 +132,28 @@ export const JointNode = memo(function JointNode({
   const [isHovered, setIsHovered] = useState(false);
   const hoverFrozen = useSelectionStore((state) => state.hoverFrozen);
   const setHoveredSelection = useSelectionStore((state) => state.setHoveredSelection);
-  const isStoreHovered = useSelectionStore((state) => (
-    state.hoveredSelection.type === 'joint' && state.hoveredSelection.id === joint.id
-  ));
-  const isHelperHovered = useSelectionStore((state) => (
-    state.hoveredSelection.type === 'joint'
-    && state.hoveredSelection.id === joint.id
-    && state.hoveredSelection.subType === undefined
-    && state.hoveredSelection.objectIndex === undefined
-  ));
-  const jointHoverTarget = useMemo<VisualizerHoverTarget>(() => ({ type: 'joint', id: joint.id }), [joint.id]);
+  const isStoreHovered = useSelectionStore(
+    (state) => state.hoveredSelection.type === 'joint' && state.hoveredSelection.id === joint.id,
+  );
+  const isHelperHovered = useSelectionStore(
+    (state) =>
+      state.hoveredSelection.type === 'joint' &&
+      state.hoveredSelection.id === joint.id &&
+      state.hoveredSelection.subType === undefined &&
+      state.hoveredSelection.objectIndex === undefined,
+  );
+  const jointHoverTarget = useMemo<VisualizerHoverTarget>(
+    () => ({ type: 'joint', id: joint.id }),
+    [joint.id],
+  );
   const jointHelperLayer: VisualizerInteractiveLayer = showJointAxes ? 'joint-axis' : 'origin-axes';
+  const jointHelperHoverTarget = useMemo<VisualizerHoverTarget>(
+    () => ({ type: 'joint', id: joint.id, helperKind: jointHelperLayer }),
+    [joint.id, jointHelperLayer],
+  );
   const jointHoverUserData = useMemo(
-    () => createVisualizerHoverUserData(jointHoverTarget, jointHelperLayer),
-    [jointHelperLayer, jointHoverTarget],
+    () => createVisualizerHoverUserData(jointHelperHoverTarget, jointHelperLayer),
+    [jointHelperHoverTarget, jointHelperLayer],
   );
 
   // Register pivot with parent Visualizer component
@@ -164,7 +187,12 @@ export const JointNode = memo(function JointNode({
 
   const clearJointHover = () => {
     const hovered = useSelectionStore.getState().hoveredSelection;
-    if (hovered.type === 'joint' && hovered.id === joint.id && hovered.subType === undefined && hovered.objectIndex === undefined) {
+    if (
+      hovered.type === 'joint' &&
+      hovered.id === joint.id &&
+      hovered.subType === undefined &&
+      hovered.objectIndex === undefined
+    ) {
       useSelectionStore.getState().clearHover();
     }
   };
@@ -179,9 +207,13 @@ export const JointNode = memo(function JointNode({
   };
 
   const handleHelperClick = (event: any) => {
-    const resolvedTarget = resolveVisualizerInteractionTargetFromHits(event.object ?? null, event.intersections ?? [], {
-      interactionLayerPriority,
-    });
+    const resolvedTarget = resolveVisualizerInteractionTargetFromHits(
+      event.object ?? null,
+      event.intersections ?? [],
+      {
+        interactionLayerPriority,
+      },
+    );
     handleJointClick(event, resolvedTarget);
   };
 
@@ -190,7 +222,14 @@ export const JointNode = memo(function JointNode({
       return;
     }
     event.stopPropagation();
-    setHoveredSelection(jointHoverTarget);
+    const resolvedTarget = resolveVisualizerInteractionTargetFromHits(
+      event.object ?? null,
+      event.intersections ?? [],
+      {
+        interactionLayerPriority,
+      },
+    );
+    setHoveredSelection(resolvedTarget ?? jointHelperHoverTarget);
   };
 
   const handleHelperPointerOut = (event: any) => {
@@ -206,7 +245,11 @@ export const JointNode = memo(function JointNode({
   });
 
   const helperSphereOpacity = isSelected ? 0.96 : isHelperHovered || isStoreHovered ? 0.64 : 0.24;
-  const helperSphereColor = isSelected ? '#f59e0b' : isHelperHovered || isStoreHovered ? '#fb923c' : '#fdba74';
+  const helperSphereColor = isSelected
+    ? '#f59e0b'
+    : isHelperHovered || isStoreHovered
+      ? '#fb923c'
+      : '#fdba74';
 
   return (
     <group>
@@ -215,8 +258,11 @@ export const JointNode = memo(function JointNode({
         <>
           {jointPresentation.showConnectorLine && (
             <Line
-              points={[[0, 0, 0], [x, y, z]]}
-              color={isSelected ? "#fbbf24" : "#64748b"}
+              points={[
+                [0, 0, 0],
+                [x, y, z],
+              ]}
+              color={isSelected ? '#fbbf24' : '#64748b'}
               lineWidth={1}
               dashed={jointPresentation.connectorDashed}
               dashSize={jointPresentation.connectorDashed ? 0.02 : undefined}
@@ -226,144 +272,149 @@ export const JointNode = memo(function JointNode({
         </>
       )}
 
-        {/* Joint pivot: represents joint origin in parent-local space */}
-        {/* TransformControls attaches here, modifies position in parent-local frame */}
+      {/* Joint pivot: represents joint origin in parent-local space */}
+      {/* TransformControls attaches here, modifies position in parent-local frame */}
+      <group ref={setJointPivot} position={[x, y, z]} rotation={jointRotation}>
         <group
-            ref={setJointPivot}
-            position={[x, y, z]}
-            rotation={jointRotation}
+          ref={setJointMotionGroup}
+          position={jointMotionPose.position}
+          quaternion={jointMotionPose.quaternion}
         >
-            <group
-                ref={setJointMotionGroup}
-                position={jointMotionPose.position}
-                quaternion={jointMotionPose.quaternion}
-            >
-            {/* Joint group: at origin relative to joint motion, contains visualization and child link */}
-            <group
-                ref={setJointGroup}
-                position={[0, 0, 0]}
-                rotation={[0, 0, 0]}
-            >
-                {showAxes && (
-                    <group
-                        userData={{ isHelper: true, ...jointHoverUserData }}
-                        onClick={handleHelperClick}
-                        onPointerOver={handleHelperPointerOver}
-                        onPointerOut={handleHelperPointerOut}
-                    >
-                        <ThickerAxes
-                            size={frameSize}
-                            onClick={handleHelperClick}
-                        />
-                    </group>
-                )}
+          {/* Joint group: at origin relative to joint motion, contains visualization and child link */}
+          <group ref={setJointGroup} position={[0, 0, 0]} rotation={[0, 0, 0]}>
+            {showAxes && (
+              <group
+                userData={{ isHelper: true, ...jointHoverUserData }}
+                onClick={handleHelperClick}
+                onPointerOver={handleHelperPointerOver}
+                onPointerOut={handleHelperPointerOut}
+              >
+                <ThickerAxes size={frameSize} onClick={handleHelperClick} />
+              </group>
+            )}
 
-          {(showJointLabel || (showJointAxes && joint.type !== 'fixed')) && (
-            <group>
-              {showJointLabel && (
-                <Html center position={[0, 0, 0]} distanceFactor={1.5} className="pointer-events-none" zIndexRange={[0, 0]}>
-                  <div
-                    style={{ transform: `scale(${labelScale})`, transformOrigin: 'center center' }}
-                    className="pointer-events-auto cursor-pointer select-none"
-                    onMouseEnter={() => {
-                      if (!hoverFrozen) {
-                        setIsHovered(true);
-                        setHoveredSelection(jointHoverTarget);
-                      }
-                    }}
-                    onMouseLeave={() => {
-                      setIsHovered(false);
-                      clearJointHover();
-                    }}
-                    onClick={handleJointClick}
+            {(showJointLabel || (showJointAxes && joint.type !== 'fixed')) && (
+              <group>
+                {showJointLabel && (
+                  <Html
+                    center
+                    position={[0, 0, 0]}
+                    distanceFactor={1.5}
+                    className="pointer-events-none"
+                    zIndexRange={[0, 0]}
                   >
-                    {(isSelected || isHovered || isStoreHovered) ? (
-                      <div
-                        className={`
+                    <div
+                      style={{
+                        transform: `scale(${labelScale})`,
+                        transformOrigin: 'center center',
+                      }}
+                      className="pointer-events-auto cursor-pointer select-none"
+                      onMouseEnter={() => {
+                        if (!hoverFrozen) {
+                          setIsHovered(true);
+                          setHoveredSelection(jointHoverTarget);
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        setIsHovered(false);
+                        clearJointHover();
+                      }}
+                      onClick={handleJointClick}
+                    >
+                      {isSelected || isHovered || isStoreHovered ? (
+                        <div
+                          className={`
                           px-1 py-px text-[8px] font-mono rounded border whitespace-nowrap shadow-xl transition-colors
-                          ${isSelected
-                            ? 'bg-blue-600 text-white border-blue-400 z-50'
-                            : 'bg-white/90 dark:bg-[#1C1C1E] text-orange-700 dark:text-orange-200 border-orange-200 dark:border-[#000000] hover:bg-orange-50 dark:hover:bg-[#3A3A3C]'
+                          ${
+                            isSelected
+                              ? 'bg-blue-600 text-white border-blue-400 z-50'
+                              : 'bg-white/90 dark:bg-[#1C1C1E] text-orange-700 dark:text-orange-200 border-orange-200 dark:border-[#000000] hover:bg-orange-50 dark:hover:bg-[#3A3A3C]'
                           }
                         `}
-                      >
-                        {joint.name}
-                      </div>
-                    ) : (
-                      <div className="w-2 h-2 rounded-full bg-orange-400/80 hover:scale-150 transition-transform" />
-                    )}
-                  </div>
-                </Html>
-              )}
-              {showJointAxes && joint.type !== 'fixed' && (
-                <group
-                  userData={{ isHelper: true, ...jointHoverUserData }}
-                  onClick={handleHelperClick}
-                  onPointerOver={handleHelperPointerOver}
-                  onPointerOut={handleHelperPointerOut}
-                >
-                  <JointAxesVisual
-                    joint={joint}
-                    scale={jointAxisSize / 0.35}
-                    hovered={isHelperHovered}
-                    selected={isSelected}
+                        >
+                          {joint.name}
+                        </div>
+                      ) : (
+                        <div className="w-2 h-2 rounded-full bg-orange-400/80 hover:scale-150 transition-transform" />
+                      )}
+                    </div>
+                  </Html>
+                )}
+                {showJointAxes && joint.type !== 'fixed' && (
+                  <group
+                    userData={{ isHelper: true, ...jointHoverUserData }}
+                    onClick={handleHelperClick}
+                    onPointerOver={handleHelperPointerOver}
+                    onPointerOut={handleHelperPointerOut}
+                  >
+                    <JointAxesVisual
+                      joint={joint}
+                      scale={jointAxisSize / 0.35}
+                      hovered={isHelperHovered}
+                      selected={isSelected}
+                    />
+                  </group>
+                )}
+              </group>
+            )}
+
+            {jointPresentation.showHelperSphere && (
+              <group
+                userData={{ isHelper: true, ...jointHoverUserData }}
+                onClick={handleHelperClick}
+                onPointerOver={handleHelperPointerOver}
+                onPointerOut={handleHelperPointerOut}
+              >
+                <mesh renderOrder={10020}>
+                  <sphereGeometry args={[0.014, 16, 16]} />
+                  <meshBasicMaterial
+                    color={helperSphereColor}
+                    opacity={helperSphereOpacity}
+                    transparent
+                    depthWrite={false}
+                    depthTest={false}
                   />
-                </group>
-              )}
-            </group>
-          )}
+                </mesh>
+              </group>
+            )}
 
-          {jointPresentation.showHelperSphere && (
-            <group
-              userData={{ isHelper: true, ...jointHoverUserData }}
-              onClick={handleHelperClick}
-              onPointerOver={handleHelperPointerOver}
-              onPointerOut={handleHelperPointerOut}
-            >
-              <mesh renderOrder={10020}>
-                <sphereGeometry args={[0.014, 16, 16]} />
-                <meshBasicMaterial
-                  color={helperSphereColor}
-                  opacity={helperSphereOpacity}
-                  transparent
-                  depthWrite={false}
-                  depthTest={false}
-                />
-              </mesh>
-            </group>
-          )}
-
-          <RobotNode
-            linkId={joint.childLinkId}
-            robot={robot}
-            childJointsByParent={childJointsByParent}
-            onSelect={onSelect}
-            onUpdate={onUpdate}
-            mode={mode}
-            showGeometry={showGeometry}
-            showVisual={showVisual}
-            showOrigin={showOrigin}
-            showLabels={showLabels}
-            showJointAxes={showJointAxes}
-            jointAxisSize={jointAxisSize}
-            frameSize={frameSize}
-            labelScale={labelScale}
-            showCollision={showCollision}
-            modelOpacity={modelOpacity}
-            showInertia={showInertia}
-            showCenterOfMass={showCenterOfMass}
-            interactionLayerPriority={interactionLayerPriority}
-            transformMode={transformMode}
-            depth={depth + 1}
-            assets={assets}
-            lang={lang}
-            colladaRootNormalizationHints={colladaRootNormalizationHints}
-            onRegisterJointPivot={onRegisterJointPivot}
-            onRegisterJointMotion={onRegisterJointMotion}
-            onRegisterCollisionRef={onRegisterCollisionRef}
-            onMeshResolved={onMeshResolved}
-          />
-        </group>
+            <RobotNode
+              linkId={joint.childLinkId}
+              robot={robot}
+              childJointsByParent={childJointsByParent}
+              onSelect={onSelect}
+              onUpdate={onUpdate}
+              mode={mode}
+              showGeometry={showGeometry}
+              showVisual={showVisual}
+              showOrigin={showOrigin}
+              showLabels={showLabels}
+              showJointAxes={showJointAxes}
+              jointAxisSize={jointAxisSize}
+              frameSize={frameSize}
+              labelScale={labelScale}
+              showCollision={showCollision}
+              modelOpacity={modelOpacity}
+              showInertia={showInertia}
+              showCenterOfMass={showCenterOfMass}
+              interactionLayerPriority={interactionLayerPriority}
+              transformMode={transformMode}
+              depth={depth + 1}
+              assets={assets}
+              lang={lang}
+              colladaRootNormalizationHints={colladaRootNormalizationHints}
+              collisionRevealComponentIdByLinkId={collisionRevealComponentIdByLinkId}
+              collisionRevealComponentId={collisionRevealComponentId}
+              revealedCollisionComponentIds={revealedCollisionComponentIds}
+              prewarmedCollisionMeshLoadKeys={prewarmedCollisionMeshLoadKeys}
+              readyCollisionMeshLoadKeys={readyCollisionMeshLoadKeys}
+              onRegisterJointPivot={onRegisterJointPivot}
+              onRegisterJointMotion={onRegisterJointMotion}
+              onRegisterCollisionRef={onRegisterCollisionRef}
+              onMeshResolved={onMeshResolved}
+              onPrewarmedMeshResolved={onPrewarmedMeshResolved}
+            />
+          </group>
         </group>
       </group>
     </group>

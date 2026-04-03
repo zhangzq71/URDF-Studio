@@ -26,7 +26,17 @@ type CachedMJCFMeshAsset = {
 
 export type MJCFMeshCache = Map<string, CachedMJCFMeshAsset>;
 
-const pendingMJCFMeshAssetLoads = new WeakMap<MJCFMeshCache, Map<string, Promise<CachedMJCFMeshAsset | null>>>();
+const pendingMJCFMeshAssetLoads = new WeakMap<
+  MJCFMeshCache,
+  Map<string, Promise<CachedMJCFMeshAsset | null>>
+>();
+
+function createMJCFMeshLoadError(filePath: string, message: string, cause?: unknown): Error {
+  return new Error(
+    `[MJCFLoader] ${message}: ${filePath}`,
+    cause === undefined ? undefined : { cause },
+  );
+}
 
 export function finalizeLoadedMJCFColladaScene(scene: THREE.Object3D): THREE.Object3D {
   postProcessColladaScene(scene);
@@ -40,7 +50,9 @@ function createDefaultMaterial(): THREE.MeshStandardMaterial {
   });
 }
 
-const cloneMaterialInstance = <TMaterial extends THREE.Material>(material: TMaterial): TMaterial => {
+const cloneMaterialInstance = <TMaterial extends THREE.Material>(
+  material: TMaterial,
+): TMaterial => {
   const clonedMaterial = material.clone() as TMaterial;
   clonedMaterial.userData = {
     ...(material.userData ?? {}),
@@ -85,14 +97,14 @@ const cloneObject3DForReuse = (
   source: THREE.Object3D,
   options: { preserveSkeletons?: boolean } = {},
 ): THREE.Object3D => {
-  const clonedRoot = options.preserveSkeletons
-    ? cloneSkeleton(source)
-    : source.clone(true);
+  const clonedRoot = options.preserveSkeletons ? cloneSkeleton(source) : source.clone(true);
 
   return cloneMaterialsInObject(clonedRoot);
 };
 
-const getPendingMeshAssetLoads = (meshCache: MJCFMeshCache): Map<string, Promise<CachedMJCFMeshAsset | null>> => {
+const getPendingMeshAssetLoads = (
+  meshCache: MJCFMeshCache,
+): Map<string, Promise<CachedMJCFMeshAsset | null>> => {
   const cached = pendingMJCFMeshAssetLoads.get(meshCache);
   if (cached) {
     return cached;
@@ -175,15 +187,16 @@ const loadCachedMJCFMeshAsset = async (
       };
     }
 
-    console.error(`[MJCFLoader] Unsupported mesh format: ${extension}`);
-    return null;
+    throw createMJCFMeshLoadError(filePath, `Unsupported mesh format "${extension}"`);
   } catch (error) {
     if (isMJCFLoadAbortedError(error)) {
       throw error;
     }
+    if (error instanceof Error && error.message.startsWith('[MJCFLoader]')) {
+      throw error;
+    }
 
-    console.error(`[MJCFLoader] Failed to load mesh: ${filePath}`, error);
-    return null;
+    throw createMJCFMeshLoadError(filePath, 'Failed to load mesh', error);
   }
 };
 

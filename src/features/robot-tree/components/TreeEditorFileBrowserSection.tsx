@@ -8,17 +8,23 @@ import type { TreeEditorTranslations } from './treeEditorTypes';
 interface TreeEditorFileBrowserSectionProps {
   availableFiles: RobotFile[];
   canDeleteAllLibraryFiles: boolean;
+  editingFolderPath?: string | null;
   expandedFolders: Set<string>;
   fileBrowserHeight: number;
   fileTree: FileTreeNode[];
+  folderRenameDraft?: string;
+  folderRenameInputRef?: React.RefObject<HTMLInputElement | null>;
   isDragging: boolean;
   isFileBrowserOpen: boolean;
   isProMode: boolean;
   isStructureOpen: boolean;
   onAddComponent?: (file: RobotFile) => void;
+  onCancelFolderRename?: () => void;
+  onCommitFolderRename?: () => void;
   onDeleteFromLibrary?: (target: LibraryDeleteTarget) => void;
   onFileContextMenu: (event: ReactMouseEvent, file: RobotFile) => void;
   onFileLoad?: (file: RobotFile) => void;
+  onFolderRenameDraftChange?: (value: string) => void;
   onFolderContextMenu: (event: ReactMouseEvent, folderPath: string) => void;
   onOpenDeleteAllDialog: () => void;
   onResizeMouseDown: (event: ReactMouseEvent) => void;
@@ -31,17 +37,23 @@ interface TreeEditorFileBrowserSectionProps {
 export function TreeEditorFileBrowserSection({
   availableFiles,
   canDeleteAllLibraryFiles,
+  editingFolderPath,
   expandedFolders,
   fileBrowserHeight,
   fileTree,
+  folderRenameDraft = '',
+  folderRenameInputRef,
   isDragging,
   isFileBrowserOpen,
   isProMode,
   isStructureOpen,
   onAddComponent,
+  onCancelFolderRename = () => {},
+  onCommitFolderRename = () => {},
   onDeleteFromLibrary,
   onFileContextMenu,
   onFileLoad,
+  onFolderRenameDraftChange = () => {},
   onFolderContextMenu,
   onOpenDeleteAllDialog,
   onResizeMouseDown,
@@ -55,17 +67,23 @@ export function TreeEditorFileBrowserSection({
       <TreeEditorFileBrowserContent
         availableFiles={availableFiles}
         canDeleteAllLibraryFiles={canDeleteAllLibraryFiles}
+        editingFolderPath={editingFolderPath}
         expandedFolders={expandedFolders}
         fileTree={fileTree}
+        folderRenameDraft={folderRenameDraft}
+        folderRenameInputRef={folderRenameInputRef ?? { current: null }}
         height={fileBrowserHeight}
         isDragging={isDragging}
         isOpen={isFileBrowserOpen}
         isProMode={isProMode}
         onAddComponent={onAddComponent}
+        onCancelFolderRename={onCancelFolderRename}
+        onCommitFolderRename={onCommitFolderRename}
         onDeleteAll={onOpenDeleteAllDialog}
         onDeleteFromLibrary={onDeleteFromLibrary}
         onFileActivate={onFileLoad}
         onFileContextMenu={onFileContextMenu}
+        onFolderRenameDraftChange={onFolderRenameDraftChange}
         onFolderContextMenu={onFolderContextMenu}
         onToggleOpen={onToggleOpen}
         shouldFillSpace={shouldFillSpace}

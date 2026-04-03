@@ -149,6 +149,92 @@ function createAssemblyState(): AssemblyState {
   };
 }
 
+function createNonRootBridgeAssemblyState(): AssemblyState {
+  return {
+    name: 'workspace',
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    components: {
+      comp_parent: {
+        id: 'comp_parent',
+        name: 'parent',
+        sourceFile: 'robots/parent.urdf',
+        robot: {
+          name: 'parent',
+          rootLinkId: 'parent_root',
+          links: {
+            parent_root: {
+              ...DEFAULT_LINK,
+              id: 'parent_root',
+              name: 'parent_root',
+            },
+          },
+          joints: {},
+        },
+      },
+      comp_child: {
+        id: 'comp_child',
+        name: 'child',
+        sourceFile: 'robots/child.urdf',
+        robot: {
+          name: 'child',
+          rootLinkId: 'child_root',
+          links: {
+            child_root: {
+              ...DEFAULT_LINK,
+              id: 'child_root',
+              name: 'child_root',
+            },
+            child_tool: {
+              ...DEFAULT_LINK,
+              id: 'child_tool',
+              name: 'child_tool',
+            },
+          },
+          joints: {
+            child_mount: {
+              id: 'child_mount',
+              name: 'child_mount',
+              type: JointType.FIXED,
+              parentLinkId: 'child_root',
+              childLinkId: 'child_tool',
+              origin: { xyz: { x: 1.2, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+              dynamics: { damping: 0, friction: 0 },
+              hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+            },
+          },
+        },
+        transform: {
+          position: { x: -1.2, y: 0, z: 0 },
+          rotation: { r: 0, p: 0, y: 0 },
+        },
+      },
+    },
+    bridges: {
+      bridge_child_tool: {
+        id: 'bridge_child_tool',
+        name: 'bridge_child_tool',
+        parentComponentId: 'comp_parent',
+        parentLinkId: 'parent_root',
+        childComponentId: 'comp_child',
+        childLinkId: 'child_tool',
+        joint: {
+          id: 'bridge_child_tool',
+          name: 'bridge_child_tool',
+          type: JointType.FIXED,
+          parentLinkId: 'parent_root',
+          childLinkId: 'child_tool',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          dynamics: { damping: 0, friction: 0 },
+          hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+        },
+      },
+    },
+  };
+}
+
 test('resolveAssemblyComponentTransformTarget uses the incoming bridge joint for bridged child roots', () => {
   const bridgePivot = new THREE.Group();
   const isolatedPivot = new THREE.Group();
@@ -184,6 +270,24 @@ test('resolveAssemblyComponentTransformTarget keeps isolated components on their
     kind: 'component',
     componentId: 'comp_isolated',
     object: isolatedPivot,
+  });
+});
+
+test('resolveAssemblyComponentTransformTarget falls back to the synthetic root pivot for bridged non-root attachments', () => {
+  const componentPivot = new THREE.Group();
+  const target = resolveAssemblyComponentTransformTarget({
+    robot: createRobotState(),
+    assemblyState: createNonRootBridgeAssemblyState(),
+    componentId: 'comp_child',
+    jointPivots: {
+      '__workspace_world__::component::comp_child': componentPivot,
+    },
+  });
+
+  assert.deepEqual(target, {
+    kind: 'component',
+    componentId: 'comp_child',
+    object: componentPivot,
   });
 });
 

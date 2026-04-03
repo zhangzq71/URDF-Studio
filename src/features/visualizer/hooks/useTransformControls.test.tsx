@@ -27,8 +27,10 @@ function installDom() {
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   return dom;
@@ -131,26 +133,32 @@ test('editor rotate controls persist joint origin rotation when rotating the piv
 
     await act(async () => {
       rotateControls.dragging = true;
-      rotateControls.dispatchEvent({ type: 'dragging-changed', value: true });
+      rotateControls.dispatchEvent({ type: 'dragging-changed', value: true } as never);
       selectedPivot.quaternion.setFromEuler(expectedEuler);
       selectedPivot.updateMatrixWorld(true);
     });
 
     await act(async () => {
       rotateControls.dragging = false;
-      rotateControls.dispatchEvent({ type: 'dragging-changed', value: false });
+      rotateControls.dispatchEvent({ type: 'dragging-changed', value: false } as never);
     });
 
     assert.equal(onUpdateCalls.length, 1, 'rotate commit should persist a joint origin update');
     assert.equal(onUpdateCalls[0]?.type, 'joint');
     assert.equal(onUpdateCalls[0]?.id, jointId);
 
-    const update = onUpdateCalls[0]?.data as { origin?: { rpy?: { r?: number; p?: number; y?: number } } };
+    const update = onUpdateCalls[0]?.data as {
+      origin?: { rpy?: { r?: number; p?: number; y?: number } };
+    };
     assert.ok(update.origin?.rpy, 'joint update should include origin rotation');
     assert.ok(Math.abs((update.origin?.rpy?.r ?? 0) - expectedEuler.x) < 1e-6);
     assert.ok(Math.abs((update.origin?.rpy?.p ?? 0) - expectedEuler.y) < 1e-6);
     assert.ok(Math.abs((update.origin?.rpy?.y ?? 0) - expectedEuler.z) < 1e-6);
-    assert.equal(useRobotStore.getState().joints[jointId]?.angle ?? 0, 0, 'pivot rotation should not mutate the joint angle path');
+    assert.equal(
+      useRobotStore.getState().joints[jointId]?.angle ?? 0,
+      0,
+      'pivot rotation should not mutate the joint angle path',
+    );
   } finally {
     await act(async () => {
       root.unmount();
