@@ -6,7 +6,7 @@ export const hasHoveredHandle = (controls: any): boolean =>
 export const preferVisibleControlHit = (
   currentHit: VisibleControlHit | null,
   nextHit: VisibleControlHit,
-  previousOwner?: UniversalOwner
+  previousOwner?: UniversalOwner,
 ) => {
   if (!currentHit) return nextHit;
 
@@ -40,7 +40,7 @@ export const preferVisibleControlHit = (
 export const resolvePreferredVisibleOwner = (
   translateHit: VisibleControlHit | null,
   rotateHit: VisibleControlHit | null,
-  previousOwner: UniversalOwner
+  previousOwner: UniversalOwner,
 ): UniversalOwner => {
   if (!translateHit && !rotateHit) return null;
   if (!translateHit) return 'rotate';
@@ -49,10 +49,35 @@ export const resolvePreferredVisibleOwner = (
   return preferVisibleControlHit(translateHit, rotateHit, previousOwner).owner;
 };
 
+export const resolvePreferredUniversalOwner = ({
+  translateHovered,
+  rotateHovered,
+  translateHit,
+  rotateHit,
+  previousOwner,
+}: {
+  translateHovered: boolean;
+  rotateHovered: boolean;
+  translateHit: VisibleControlHit | null;
+  rotateHit: VisibleControlHit | null;
+  previousOwner: UniversalOwner;
+}): UniversalOwner => {
+  const visibleOwner = resolvePreferredVisibleOwner(translateHit, rotateHit, previousOwner);
+  if (visibleOwner) {
+    return visibleOwner;
+  }
+
+  if (translateHovered !== rotateHovered) {
+    return translateHovered ? 'translate' : 'rotate';
+  }
+
+  return null;
+};
+
 export const resolveUniversalOwner = (
   translateControls: any,
   rotateControls: any,
-  pointerOwner: UniversalOwner
+  pointerOwner: UniversalOwner,
 ): UniversalOwner => {
   if (translateControls.dragging) return 'translate';
   if (rotateControls.dragging) return 'rotate';

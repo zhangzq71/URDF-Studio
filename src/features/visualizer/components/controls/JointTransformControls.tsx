@@ -12,6 +12,8 @@ interface JointTransformControlsProps {
   transformControlsState: TransformControlsState;
 }
 
+const JOINT_GIZMO_THICKNESS_SCALE = 1.6;
+
 /**
  * JointTransformControls - Handles joint TransformControls in editor mode
  *
@@ -45,30 +47,36 @@ export const JointTransformControls = memo(function JointTransformControls({
   const jointId = robot.selection.type === 'joint' ? robot.selection.id : null;
   const joint = jointId ? robot.joints[jointId] : null;
 
-  const syncTranslateProxy = useCallback((proxyTarget: THREE.Object3D | null) => {
-    if (!selectedJointPivot || !proxyTarget) return;
+  const syncTranslateProxy = useCallback(
+    (proxyTarget: THREE.Object3D | null) => {
+      if (!selectedJointPivot || !proxyTarget) return;
 
-    selectedJointPivot.updateMatrixWorld(true);
-    selectedJointPivot.getWorldPosition(worldPositionRef.current);
-    proxyTarget.position.copy(worldPositionRef.current);
+      selectedJointPivot.updateMatrixWorld(true);
+      selectedJointPivot.getWorldPosition(worldPositionRef.current);
+      proxyTarget.position.copy(worldPositionRef.current);
 
-    const parent = selectedJointPivot.parent;
-    if (parent) {
-      parent.getWorldQuaternion(parentQuaternionRef.current);
-      proxyTarget.quaternion.copy(parentQuaternionRef.current);
-    } else {
-      proxyTarget.quaternion.identity();
-    }
+      const parent = selectedJointPivot.parent;
+      if (parent) {
+        parent.getWorldQuaternion(parentQuaternionRef.current);
+        proxyTarget.quaternion.copy(parentQuaternionRef.current);
+      } else {
+        proxyTarget.quaternion.identity();
+      }
 
-    proxyTarget.scale.setScalar(1);
-    proxyTarget.updateMatrixWorld(true);
-  }, [selectedJointPivot]);
+      proxyTarget.scale.setScalar(1);
+      proxyTarget.updateMatrixWorld(true);
+    },
+    [selectedJointPivot],
+  );
 
-  const handleTranslateProxyRef = useCallback((proxy: THREE.Group | null) => {
-    translateProxyRef.current = proxy;
-    setTranslateProxy(proxy);
-    syncTranslateProxy(proxy);
-  }, [syncTranslateProxy]);
+  const handleTranslateProxyRef = useCallback(
+    (proxy: THREE.Group | null) => {
+      translateProxyRef.current = proxy;
+      setTranslateProxy(proxy);
+      syncTranslateProxy(proxy);
+    },
+    [syncTranslateProxy],
+  );
 
   const applyTranslateProxyToPivot = useCallback(() => {
     const proxy = translateProxyRef.current;
@@ -120,34 +128,37 @@ export const JointTransformControls = memo(function JointTransformControls({
     transformControlRef,
   ]);
 
-  const handleDraggingChanged = useCallback((event?: { value?: boolean }) => {
-    const translateControls = transformControlRef.current;
-    const rotateControls = rotateTransformControlRef.current;
+  const handleDraggingChanged = useCallback(
+    (event?: { value?: boolean }) => {
+      const translateControls = transformControlRef.current;
+      const rotateControls = rotateTransformControlRef.current;
 
-    if (event?.value) {
-      if (translateControls?.dragging) {
-        isTranslateDraggingRef.current = true;
-        lastActiveControlRef.current = 'translate';
-      } else if (rotateControls?.dragging) {
-        lastActiveControlRef.current = 'rotate';
+      if (event?.value) {
+        if (translateControls?.dragging) {
+          isTranslateDraggingRef.current = true;
+          lastActiveControlRef.current = 'translate';
+        } else if (rotateControls?.dragging) {
+          lastActiveControlRef.current = 'rotate';
+        }
+        return;
       }
-      return;
-    }
 
-    const isTranslateDragging = Boolean(translateControls?.dragging);
-    isTranslateDraggingRef.current = isTranslateDragging;
+      const isTranslateDragging = Boolean(translateControls?.dragging);
+      isTranslateDraggingRef.current = isTranslateDragging;
 
-    if (!isTranslateDragging) {
-      syncTranslateProxy(translateProxyRef.current);
-      if (lastActiveControlRef.current === 'translate') {
+      if (!isTranslateDragging) {
+        syncTranslateProxy(translateProxyRef.current);
+        if (lastActiveControlRef.current === 'translate') {
+          lastActiveControlRef.current = null;
+        }
+      }
+      if (!rotateControls?.dragging && lastActiveControlRef.current === 'rotate') {
         lastActiveControlRef.current = null;
       }
-    }
-    if (!rotateControls?.dragging && lastActiveControlRef.current === 'rotate') {
-      lastActiveControlRef.current = null;
-    }
-    invalidate();
-  }, [invalidate, rotateTransformControlRef, syncTranslateProxy, transformControlRef]);
+      invalidate();
+    },
+    [invalidate, rotateTransformControlRef, syncTranslateProxy, transformControlRef],
+  );
 
   useFrame(() => {
     const translateControls = transformControlRef.current;
@@ -187,10 +198,10 @@ export const JointTransformControls = memo(function JointTransformControls({
 
   // Don't show TransformControls for fixed joints
   const jointTypeStr = String(joint.type).toLowerCase();
-  if (jointTypeStr === 'fixed' || joint.type === JointType.FIXED || joint.type === JointType.BALL) return null;
+  if (jointTypeStr === 'fixed' || joint.type === JointType.FIXED || joint.type === JointType.BALL)
+    return null;
 
-  const shouldRenderTranslateProxy =
-    transformMode === 'translate' || transformMode === 'universal';
+  const shouldRenderTranslateProxy = transformMode === 'translate' || transformMode === 'universal';
   const canRenderControls = transformMode === 'rotate' || Boolean(translateProxy);
 
   return (
@@ -203,7 +214,7 @@ export const JointTransformControls = memo(function JointTransformControls({
           ref={transformControlRef}
           rotateRef={rotateTransformControlRef}
           object={selectedJointPivot}
-          translateObject={shouldRenderTranslateProxy ? translateProxy ?? undefined : undefined}
+          translateObject={shouldRenderTranslateProxy ? (translateProxy ?? undefined) : undefined}
           // In editor mode the rotate gizmo edits the joint origin/pivot so the
           // entire child subtree follows, rather than only changing joint motion.
           mode={transformMode}
@@ -212,6 +223,7 @@ export const JointTransformControls = memo(function JointTransformControls({
           rotateSpace="local"
           hoverStyle="single-axis"
           displayStyle="thick-primary"
+          displayThicknessScale={JOINT_GIZMO_THICKNESS_SCALE}
           onObjectChange={handleJointObjectChange}
           onDraggingChanged={handleDraggingChanged}
         />

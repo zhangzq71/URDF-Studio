@@ -100,7 +100,34 @@ test('keeps blob-backed large USDA sidecars on the main-thread stage', () => {
   );
 });
 
-test('allows handless humanoid USD bundles to keep using offscreen rendering', () => {
+test('keeps pure .usd roots on the main-thread stage while the overlay renderer is scene-decoupled', () => {
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'B2/usd/b2.usd',
+        format: 'usd',
+        content: '',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'demo_robot/root.usda',
+        format: 'usd',
+        content: '#usda 1.0',
+      },
+      workerRendererSupported: true,
+    }),
+    true,
+  );
+});
+
+test('keeps handless pure .usd humanoid bundles on the main-thread stage too', () => {
   assert.equal(
     shouldUseUsdOffscreenStage({
       toolMode: 'select',
@@ -118,7 +145,7 @@ test('allows handless humanoid USD bundles to keep using offscreen rendering', (
       ],
       workerRendererSupported: true,
     }),
-    true,
+    false,
   );
 });
 

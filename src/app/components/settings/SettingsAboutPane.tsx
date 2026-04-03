@@ -33,16 +33,16 @@ function AboutLinkCard({ href, icon, title, description }: AboutLinkCardProps) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="group flex items-center gap-3 rounded-[10px] px-3 py-2.5 transition-colors hover:bg-settings-muted"
+      className="group flex min-w-0 items-start gap-2.5 rounded-[10px] border border-border-black/60 bg-settings-muted/70 px-3 py-2 transition-colors hover:bg-settings-muted"
     >
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border-black bg-panel-bg text-text-primary">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-border-black bg-panel-bg text-text-primary">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[12px] font-medium text-text-primary transition-colors group-hover:text-settings-accent">
+        <div className="truncate text-[11.5px] font-medium text-text-primary transition-colors group-hover:text-settings-accent">
           {title}
         </div>
-        <div className="mt-0.5 text-[11px] leading-5 text-text-tertiary">{description}</div>
+        <div className="mt-0.5 text-[10px] leading-4.5 text-text-tertiary">{description}</div>
       </div>
       <ArrowRight className="h-3.5 w-3.5 shrink-0 text-text-tertiary transition-all group-hover:translate-x-0.5 group-hover:text-settings-accent" />
     </a>
@@ -51,28 +51,43 @@ function AboutLinkCard({ href, icon, title, description }: AboutLinkCardProps) {
 
 export function SettingsAboutPane({ t }: SettingsAboutPaneProps) {
   return (
-    <div className="space-y-3">
-      <section className="rounded-[12px] border border-border-black bg-settings-card px-4 py-6 text-center">
-        <img src="/logos/logo.png" alt="URDF Studio" className="mx-auto h-14 w-14 object-contain" />
-        <h3 className="mt-3 text-[15px] font-semibold tracking-[-0.01em] text-text-primary">
-          URDF Studio
-        </h3>
-        <div className="mt-2 inline-flex h-7 items-center rounded-[6px] border border-border-black bg-panel-bg px-2.5 text-[11px] font-medium text-text-secondary">
-          {t.version}: v{APP_VERSION}
+    <div className="overflow-hidden rounded-[12px] border border-border-black bg-panel-bg">
+      <section className="px-4 py-3.5">
+        <div className="flex items-start gap-3">
+          <img
+            src="/logos/logo.png"
+            alt="URDF Studio"
+            width={40}
+            height={40}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
+            className="h-10 w-10 shrink-0 object-contain"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-text-primary">
+                URDF Studio
+              </h3>
+              <div className="inline-flex h-6 items-center rounded-[6px] border border-border-black bg-settings-muted/70 px-2 text-[10.5px] font-medium text-text-secondary">
+                {t.version}: v{APP_VERSION}
+              </div>
+            </div>
+            <p className="mt-1 max-w-[30rem] line-clamp-2 text-[11.5px] leading-5 text-text-secondary">
+              {t.aboutDescription}
+            </p>
+          </div>
         </div>
-        <p className="mx-auto mt-3 max-w-[30rem] text-[12px] leading-6 text-text-secondary">
-          {t.aboutDescription}
-        </p>
       </section>
 
-      <section className="rounded-[12px] border border-border-black bg-settings-card p-2">
-        <div className="px-2 pb-2 pt-1 text-[11px] font-medium text-text-tertiary">
+      <section className="border-t border-border-black/70 px-2 pb-2 pt-1.5">
+        <div className="px-2 pb-1.5 pt-0.5 text-[11px] font-medium text-text-tertiary">
           {t.resources}
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <AboutLinkCard
             href="https://github.com/OpenLegged/URDF-Studio"
-            icon={<GitHubMark className="h-5 w-5" />}
+            icon={<GitHubMark className="h-4.5 w-4.5" />}
             title="GitHub"
             description="OpenLegged/URDF-Studio"
           />
@@ -83,11 +98,19 @@ export function SettingsAboutPane({ t }: SettingsAboutPaneProps) {
                 <img
                   src="/logos/Motphys_Logo_only_Black_100x100px.svg"
                   alt="Motphys"
+                  width={20}
+                  height={20}
+                  loading="eager"
+                  decoding="async"
                   className="h-full w-full object-contain p-1 dark:hidden"
                 />
                 <img
                   src="/logos/Motphys_Logo_only_White_100x100px.svg"
                   alt="Motphys"
+                  width={20}
+                  height={20}
+                  loading="eager"
+                  decoding="async"
                   className="hidden h-full w-full object-contain p-1 dark:block"
                 />
               </>
@@ -101,7 +124,11 @@ export function SettingsAboutPane({ t }: SettingsAboutPaneProps) {
               <img
                 src="/logos/d-robotics-logo.jpg"
                 alt="D-Robotics"
-                className="h-full w-full rounded-[inherit] object-cover"
+                width={20}
+                height={20}
+                loading="eager"
+                decoding="async"
+                className="h-full w-full rounded-[inherit] object-contain"
               />
             }
             title={t.aboutDRoboticsName}
@@ -110,9 +137,11 @@ export function SettingsAboutPane({ t }: SettingsAboutPaneProps) {
         </div>
       </section>
 
-      <section className="rounded-[12px] border border-border-black bg-settings-card px-4 py-3 text-[11px] leading-5 text-text-tertiary">
-        <p>{t.aboutCopyright}</p>
-        <p className="mt-1">{t.aboutOpenSource}</p>
+      <section className="border-t border-border-black/70 px-4 py-2.5 text-[10px] leading-4.5 text-text-tertiary">
+        <div className="space-y-0.5">
+          <p>{t.aboutCopyright}</p>
+          <p>{t.aboutOpenSource}</p>
+        </div>
       </section>
     </div>
   );
